@@ -143,10 +143,10 @@ pub(crate) fn handle_terminal_tab_click(app: &mut App, click_col: u16, is_claude
             } else {
                 Focus::TerminalShell
             };
-            if app.expanded_panel.is_some() {
-                app.expanded_panel = None;
+            if app.layout.expanded.is_some() {
+                app.layout.expanded = None;
             } else {
-                app.expanded_panel = Some(target);
+                app.layout.expanded = Some(target);
             }
         }
         TabAction::ScrollLeft => {

@@ -61,7 +61,7 @@ pub(in crate::viewer) fn render_hover_info_overlay(
 
 /// シグネチャ/doc の基本ポップアップ。クリック可能な「N refs」フッター行を持つ。
 fn render_base_popup(frame: &mut Frame, host: Rect, app: &App) -> BaseOutcome {
-    let theme = app.theme.clone();
+    let theme = app.appearance.theme.clone();
     // info への不変借用を先に終わらせてから app.code_nav.hover_info に
     // ヒットテスト用の Rect を書き戻せるよう、所有データとして取り出しておく。
     // 見出しは 1 行に固定する。所属を左、種別を右に置き、種別ごとに行の並びは
@@ -219,13 +219,13 @@ fn highlighted_signature(
 ) -> Vec<Line<'static>> {
     use syntect::easy::HighlightLines;
 
-    let syntax_set = &app.highlight.syntax_set;
+    let syntax_set = &app.appearance.highlight.syntax_set;
     let syntax = crate::viewer::find_syntax(
         syntax_set,
         Some(info.file_path.as_str()),
         info.signature_lines.first().map(String::as_str),
     );
-    let mut h = HighlightLines::new(syntax, &app.highlight.theme);
+    let mut h = HighlightLines::new(syntax, &app.appearance.highlight.theme);
 
     info.signature_lines
         .iter()
@@ -234,7 +234,7 @@ fn highlighted_signature(
             let Ok(ranges) = h.highlight_line(&with_nl, syntax_set) else {
                 return Line::from(Span::styled(
                     text.clone(),
-                    Style::default().fg(app.theme.accent),
+                    Style::default().fg(app.appearance.theme.accent),
                 ));
             };
             Line::from(
@@ -257,7 +257,7 @@ fn highlighted_signature(
 /// 参照一覧（レベル1） — 基本ポップアップの下に配置する（余白がなければ上）。
 /// 各行はクリック可能。
 fn render_refs_list(frame: &mut Frame, host: Rect, app: &App) -> Option<RefsOutcome> {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let base = app.code_nav.hover_info.info_rect;
     let refs = app.code_nav.hover_info.refs.as_ref()?;
 
@@ -330,7 +330,7 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &App) -> Option<RefsOutc
 /// 一覧の右に収まればそこ、収まらなければ下。list_rect は同じフレームで描いた参照一覧の
 /// Rect ([render_refs_list] の戻り値)。
 fn render_preview(frame: &mut Frame, host: Rect, app: &App, list_rect: Rect) -> Option<Rect> {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let preview = app
         .code_nav
         .hover_info

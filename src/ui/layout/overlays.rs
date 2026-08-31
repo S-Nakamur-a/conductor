@@ -25,10 +25,22 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             render_confirming_delete_overlay(frame, area, app);
         }
         crate::app::WorktreeInputMode::ConfirmingUngrab => {
-            render_confirm_overlay(frame, area, app, " Confirm Ungrab ", app.theme.warning);
+            render_confirm_overlay(
+                frame,
+                area,
+                app,
+                " Confirm Ungrab ",
+                app.appearance.theme.warning,
+            );
         }
         crate::app::WorktreeInputMode::ConfirmingReset => {
-            render_confirm_overlay(frame, area, app, " Confirm Reset ", app.theme.error);
+            render_confirm_overlay(
+                frame,
+                area,
+                app,
+                " Confirm Reset ",
+                app.appearance.theme.error,
+            );
         }
         crate::app::WorktreeInputMode::SmartDescription => {
             super::super::dashboard::render_smart_description_overlay(frame, area, app);
@@ -59,7 +71,7 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
             frame,
             area,
             &app.review_state,
-            &app.theme,
+            &app.appearance.theme,
             app.config.ui.icon_set(),
         );
     }
@@ -155,7 +167,13 @@ pub(super) fn render_overlays(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn render_confirming_delete_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    render_confirm_overlay(frame, area, app, " Confirm Delete ", app.theme.error);
+    render_confirm_overlay(
+        frame,
+        area,
+        app,
+        " Confirm Delete ",
+        app.appearance.theme.error,
+    );
 }
 
 /// タイトルとボーダー色をカスタマイズできる、汎用の小さな確認オーバーレイ。
@@ -186,7 +204,7 @@ fn render_confirm_overlay(
 
         let paragraph = ratatui::widgets::Paragraph::new(ratatui::text::Span::styled(
             msg.as_str(),
-            ratatui::style::Style::default().fg(app.theme.fg),
+            ratatui::style::Style::default().fg(app.appearance.theme.fg),
         ));
         frame.render_widget(paragraph, inner);
     }

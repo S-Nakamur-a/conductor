@@ -225,7 +225,7 @@ fn revidere_badge_hit(app: &App, col: u16, row: u16, geom: &ClickGeometry) -> bo
 /// Explorer+Viewer を1つの PTY に合体させている間も Explorer 側は不可。
 fn divider_draggable(app: &App, divider: crate::app::Divider) -> bool {
     use crate::app::Divider;
-    if app.expanded_panel.is_some() {
+    if app.layout.expanded.is_some() {
         return false;
     }
     if app.editor.is_some() && matches!(divider, Divider::ExplorerViewer | Divider::ExplorerSplit) {
@@ -579,7 +579,7 @@ pub fn handle_mouse_event(app: &mut App, mouse: MouseEvent, _frame_area: ratatui
             }
             if row == main_area.y
                 && let Some(target) = geom.expand_button_at(col) {
-                    app.expanded_panel = if app.expanded_panel == Some(target) {
+                    app.layout.expanded = if app.layout.expanded == Some(target) {
                         None
                     } else {
                         Some(target)

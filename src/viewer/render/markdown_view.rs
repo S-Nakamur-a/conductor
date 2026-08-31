@@ -123,13 +123,13 @@ pub(super) fn render_markdown_view(
         let body = app.viewer.content.file_content.join("\n");
         // 折り返された文章がスクロールバーのトラックと決して衝突しないよう
         // 右側に1列確保する（summary view のインセットに合わせている）。
-        app.markdown_cache.render_window(
+        app.appearance.markdown_cache.render_window(
             &key,
             &body,
             inner_width.saturating_sub(1),
-            &app.theme,
-            &app.highlight.syntax_set,
-            &app.highlight.theme,
+            &app.appearance.theme,
+            &app.appearance.highlight.syntax_set,
+            &app.appearance.highlight.theme,
             app.viewer.md_scroll,
             inner_height,
         )

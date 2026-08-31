@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 55_u16.min(area.width.saturating_sub(4));
     let popup_height = 5_u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -62,7 +62,7 @@ pub fn render_update_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
 /// 外部への POST の前に表示し、投稿されるコメント数と、diff の行上にないため
 /// スキップされたコメント数を示す。
 pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let Some(confirm) = app.publish.confirm.as_ref() else {
         return;
     };
@@ -120,7 +120,7 @@ pub fn render_publish_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) 
 }
 
 pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 60_u16.min(area.width.saturating_sub(4));
     let popup_height = 6_u16;
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -148,7 +148,7 @@ pub fn render_update_progress_overlay(frame: &mut Frame, area: Rect, app: &App) 
         '\u{2801}', '\u{2802}', '\u{2804}', '\u{2840}', '\u{2880}', '\u{2820}', '\u{2810}',
         '\u{2808}',
     ];
-    let idx = (app.ui_tick / 4) as usize % braille.len();
+    let idx = (app.ticks.ui() / 4) as usize % braille.len();
 
     let mut lines = Vec::new();
 

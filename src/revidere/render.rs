@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 "[{}] のレビューはまだ無い — W で解析、p でもう一方の区間へ。",
                 crate::revidere::scope_label(app.revidere.scope)
             ))
-            .style(Style::default().fg(app.theme.warning))
+            .style(Style::default().fg(app.appearance.theme.warning))
             .block(bordered(" Review ", app)),
             area,
         );
@@ -139,7 +139,7 @@ fn render_overview(frame: &mut Frame, area: Rect, app: &mut App, review: &Review
     let inner_w = area.width.saturating_sub(2) as usize;
 
     let mut lines: Vec<Line<'static>> = Vec::new();
-    push_overview(&mut lines, review, &app.theme, inner_w);
+    push_overview(&mut lines, review, &app.appearance.theme, inner_w);
 
     let height = area.height.saturating_sub(2) as usize;
     let max_scroll = lines.len().saturating_sub(height);
@@ -172,18 +172,18 @@ fn bordered<'a>(title: &'a str, app: &App) -> Block<'a> {
         .title(Span::styled(
             title,
             Style::default()
-                .fg(app.theme.fg)
+                .fg(app.appearance.theme.fg)
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(app.theme.border_focused))
+        .border_style(Style::default().fg(app.appearance.theme.border_focused))
 }
 
 /// 戻り値は「画面に出した行 → 項目の番号」。見出しの折り返しで 1 項目が何行にも
 /// なるので、クリックした行から割り算では引けない。
 fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review) -> Vec<usize> {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let inner_w = area.width.saturating_sub(4) as usize;
     let sections = review.annotations.sections();
 
@@ -268,9 +268,9 @@ fn render_section_list(frame: &mut Frame, area: Rect, app: &App, review: &Review
 fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Review) {
     let key = (
         area.width,
-        app.highlight.generation,
+        app.appearance.highlight.generation,
         app.revidere.epoch,
-        app.theme.diff_add_bg,
+        app.appearance.theme.diff_add_bg,
     );
 
     let mut cache = app.revidere.diff_cache.take();
@@ -314,7 +314,7 @@ fn render_diff_column(frame: &mut Frame, area: Rect, app: &mut App, review: &Rev
 
 /// 読む順そのものを 1 本の流れとして組み立てる。戻り値は行と、項目ごとの先頭行。
 fn build_diff_lines(app: &App, area: Rect, review: &Review) -> (Vec<Line<'static>>, Vec<usize>) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let inner_w = area.width.saturating_sub(2) as usize;
     let tab_width = app.config.viewer.tab_width;
     let sections = review.annotations.sections();
@@ -581,13 +581,13 @@ fn highlight_block(
     block: &revidere::Block,
     tab_width: usize,
 ) -> Vec<Vec<(Style, String)>> {
-    let syntax_set = &app.highlight.syntax_set;
+    let syntax_set = &app.appearance.highlight.syntax_set;
     let syntax = crate::viewer::find_syntax(
         syntax_set,
         Some(block.path.as_str()),
         block.lines.first().map(|l| l.line.text.as_str()),
     );
-    let mut h = HighlightLines::new(syntax, &app.highlight.theme);
+    let mut h = HighlightLines::new(syntax, &app.appearance.highlight.theme);
 
     block
         .lines
@@ -596,7 +596,10 @@ fn highlight_block(
             // syntect は行末の改行を前提にする。
             let with_nl = format!("{}\n", ordered.line.text);
             let Ok(ranges) = h.highlight_line(&with_nl, syntax_set) else {
-                return vec![(Style::default().fg(app.theme.fg), ordered.line.text.clone())];
+                return vec![(
+                    Style::default().fg(app.appearance.theme.fg),
+                    ordered.line.text.clone(),
+                )];
             };
             let mut col = 0;
             ranges

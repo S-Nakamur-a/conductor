@@ -213,7 +213,7 @@ pub(super) fn render_frame(
         app.terminal.needs_clear = false;
     }
     if app.needs_redraw {
-        app.ui_tick = app.ui_tick.wrapping_add(1);
+        app.ticks.advance_ui();
         expire_status_message(app);
         app.panel_number_overlay.expire_if_due();
 
@@ -232,7 +232,7 @@ fn expire_status_message(app: &mut App) {
     let expired = app
         .status_message
         .as_ref()
-        .is_some_and(|msg| app.ui_tick.wrapping_sub(msg.created_at_tick) >= STATUS_FADE_TICKS);
+        .is_some_and(|msg| app.ticks.ui_since(msg.created_at_tick) >= STATUS_FADE_TICKS);
     if expired {
         app.status_message = None;
     }

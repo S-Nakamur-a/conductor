@@ -81,9 +81,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             let ctx = BuildCtx {
                 entries: &app.reflow.entries,
                 cache: &app.reflow.cache,
-                theme: &app.theme,
-                syntax_set: &app.highlight.syntax_set,
-                syntect_theme: &app.highlight.theme,
+                theme: &app.appearance.theme,
+                syntax_set: &app.appearance.highlight.syntax_set,
+                syntect_theme: &app.appearance.highlight.theme,
                 expanded: app.reflow.expanded,
             };
             build_lines(&ctx, inner_width)

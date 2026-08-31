@@ -38,7 +38,7 @@ pub fn kind_badge_span(
 }
 
 pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_height = 12_u16.min(area.height.saturating_sub(4));
     let popup_width = area.width.saturating_sub(8).min(80);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -143,7 +143,7 @@ pub fn render_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
 pub fn render_delete_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::review_state::PendingDelete;
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let what = match &app.review_state.pending_delete {
         Some(PendingDelete::Reply { .. }) => "this reply",
         Some(PendingDelete::Comment { .. }) => "this comment and all its replies",
@@ -255,7 +255,7 @@ pub fn render_template_picker_overlay(
 }
 
 pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
     let popup_height = area.height.saturating_sub(4).max(10);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -338,8 +338,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
         &comment.body,
         inner_width.saturating_sub(1),
         theme,
-        &app.highlight.syntax_set,
-        &app.highlight.theme,
+        &app.appearance.highlight.syntax_set,
+        &app.appearance.highlight.theme,
     );
     for line in body_md {
         let mut spans = vec![Span::raw(" ")];
@@ -382,8 +382,8 @@ pub fn render_comment_detail_overlay(frame: &mut Frame, area: Rect, app: &mut Ap
                 &reply.body,
                 inner_width.saturating_sub(4),
                 theme,
-                &app.highlight.syntax_set,
-                &app.highlight.theme,
+                &app.appearance.highlight.syntax_set,
+                &app.appearance.highlight.theme,
             );
             for line in reply_md {
                 let mut spans = vec![Span::raw("    ")];

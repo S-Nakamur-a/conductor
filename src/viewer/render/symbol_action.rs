@@ -10,7 +10,7 @@ use crate::app::App;
 
 pub fn render_symbol_action_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let overlay = &app.code_nav.symbol_action;
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
 
     if overlay.actions.is_empty() {
         return;

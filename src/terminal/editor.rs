@@ -131,8 +131,8 @@ impl App {
         if self.focus.current() == Focus::Editor {
             self.focus.enter(Focus::Viewer);
         }
-        if self.expanded_panel == Some(Focus::Editor) {
-            self.expanded_panel = None;
+        if self.layout.expanded == Some(Focus::Editor) {
+            self.layout.expanded = None;
         }
         self.terminal.needs_clear = true;
         Some(panel.path)
@@ -167,7 +167,7 @@ impl App {
         let cols = &self.layout.cache.columns;
         let region_w = cols[1].width.saturating_add(cols[2].width);
         let region_h = cols[1].height;
-        let expanded = self.expanded_panel == Some(Focus::Editor);
+        let expanded = self.layout.expanded == Some(Focus::Editor);
         editor_content_size(region_w, region_h, expanded)
     }
 }

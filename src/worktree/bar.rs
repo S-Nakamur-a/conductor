@@ -80,11 +80,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let muted = app.theme.muted;
-    let success = app.theme.success;
-    let warning = app.theme.warning;
-    let border = app.theme.border_secondary;
-    let error = app.theme.error;
+    let muted = app.appearance.theme.muted;
+    let success = app.appearance.theme.success;
+    let warning = app.appearance.theme.warning;
+    let border = app.appearance.theme.border_secondary;
+    let error = app.appearance.theme.error;
 
     // スマート/通常の worktree がバックグラウンドで作成中 → 一目でわかる
     // よう最も左のマーカーを回転させる。
@@ -103,7 +103,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // 識別マーカー（worktree 作成中は回転する）。
     {
         let icon = if creating {
-            format!("{} ", crate::ui::common::spinner_frame(app.ui_tick))
+            format!("{} ", crate::ui::common::spinner_frame(app.ticks.ui()))
         } else {
             "\u{2387} ".to_string()
         };
@@ -161,7 +161,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 wt.head_time,
                 app.revidere.runs.is_running(&wt.branch),
             );
-            let review_text = review_mark(review, app.ui_tick);
+            let review_text = review_mark(review, app.ticks.ui());
 
             // Claude/Shell セッションタブに合わせて [x]（以前は ✕）。チップの
             // 塗りつぶし背景のすぐ外側に置くので、危険色の赤が読みやすいまま
@@ -243,8 +243,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             // 塗りつぶしたチップにする — チップのテキスト自身が前後の空白を
             // 持っている。
             Style::default()
-                .fg(app.theme.selected_fg)
-                .bg(app.theme.selected_bg)
+                .fg(app.appearance.theme.selected_fg)
+                .bg(app.appearance.theme.selected_bg)
                 .add_modifier(Modifier::BOLD)
         } else if chip.waiting {
             Style::default().fg(warning)
@@ -258,7 +258,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         // 現在のチップは既に強い塗りつぶしを持っているので、その上に hover
         // 背景を重ねてはいない — それ以上区別する余地がないため。
         let chip_style = if !chip.is_current && app.wtbar.hover == Some(WtbarAction::Select(i)) {
-            chip_style.bg(app.theme.gutter_hover_bg)
+            chip_style.bg(app.appearance.theme.gutter_hover_bg)
         } else {
             chip_style
         };
@@ -269,7 +269,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         if !chip.del.is_empty() {
             let del_style = Style::default().fg(error);
             let del_style = if app.wtbar.hover == Some(WtbarAction::Delete(i)) {
-                del_style.bg(app.theme.gutter_hover_bg)
+                del_style.bg(app.appearance.theme.gutter_hover_bg)
             } else {
                 del_style
             };
@@ -285,7 +285,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         if chip.review_width > 0 {
             spans.push(Span::styled(
                 chip.review_text.clone(),
-                review_style(&app.theme, chip.review),
+                review_style(&app.appearance.theme, chip.review),
             ));
             hits.push(x, x + chip.review_width, WtbarAction::Select(i));
             x += chip.review_width;

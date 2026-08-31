@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 pub fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::Focus;
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 72_u16.min(area.width.saturating_sub(4));
     let popup_height = 30_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;

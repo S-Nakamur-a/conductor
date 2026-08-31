@@ -22,7 +22,7 @@ pub(in crate::viewer) fn render_summary_view(
     let inner_height = area.height.saturating_sub(2) as usize;
 
     let (block, lines): (Block, Vec<Line>) = {
-        let theme = &app.theme;
+        let theme = &app.appearance.theme;
         let border_color = if focused {
             theme.border_focused
         } else {
@@ -69,8 +69,8 @@ pub(in crate::viewer) fn render_summary_view(
                 summary,
                 inner_width.saturating_sub(1),
                 theme,
-                &app.highlight.syntax_set,
-                &app.highlight.theme,
+                &app.appearance.highlight.syntax_set,
+                &app.appearance.highlight.theme,
             );
         }
         (block, lines)

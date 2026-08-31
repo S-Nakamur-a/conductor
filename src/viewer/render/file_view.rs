@@ -36,13 +36,13 @@ pub(in crate::viewer) fn render(
     app: &App,
     sticky_declaration: Option<usize>,
 ) -> RenderOutcome {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let vs = &app.viewer;
     let tab_width = app.config.viewer.tab_width;
     let focused = app.focus.current() == Focus::Viewer;
     let border_color = app.animated_border_color(Focus::Viewer);
 
-    let is_expanded = app.expanded_panel == Some(Focus::Viewer);
+    let is_expanded = app.layout.expanded == Some(Focus::Viewer);
     let (expand_label, expand_color) = if is_expanded {
         ("[>=<]", theme.border_focused)
     } else {
@@ -451,7 +451,7 @@ fn build_breadcrumb_line(app: &App) -> Option<Line<'static>> {
         return None;
     }
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let separator = Span::styled(" \u{203a} ", Style::default().fg(theme.muted)); // " › "
     let mut spans: Vec<Span<'static>> = Vec::new();
 

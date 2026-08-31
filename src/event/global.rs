@@ -142,10 +142,10 @@ pub(super) fn dispatch_global_action(app: &mut App, action: Action) -> bool {
             true
         }
         Action::TogglePanelExpand => {
-            if app.expanded_panel == Some(app.focus.current()) {
-                app.expanded_panel = None;
+            if app.layout.expanded == Some(app.focus.current()) {
+                app.layout.expanded = None;
             } else {
-                app.expanded_panel = Some(app.focus.current());
+                app.layout.expanded = Some(app.focus.current());
             }
             true
         }

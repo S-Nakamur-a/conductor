@@ -53,7 +53,7 @@ pub(super) fn render_code_line_rows(
     let annotation = ctx.diff_annotations.get(&line_1);
     let diff_tag = annotation.map(|(tag, _)| *tag);
     let (gutter_prefix, gutter_bg) = match diff_tag {
-        Some(DiffLineTag::Insert) => ("+", Some(app.theme.diff_add_bg)),
+        Some(DiffLineTag::Insert) => ("+", Some(app.appearance.theme.diff_add_bg)),
         Some(DiffLineTag::Delete) => ("-", None),
         _ => (" ", None),
     };
@@ -179,8 +179,14 @@ pub(super) fn render_code_line_rows(
         if !ann_segments.is_empty() {
             // 単語単位の diff: 各セグメントを適切な背景色で描画する。
             let (diff_bg, emphasis_bg) = match ann_tag {
-                DiffLineTag::Insert => (app.theme.diff_add_bg, app.theme.diff_add_bg_emphasis),
-                DiffLineTag::Delete => (app.theme.diff_del_bg, app.theme.diff_del_bg_emphasis),
+                DiffLineTag::Insert => (
+                    app.appearance.theme.diff_add_bg,
+                    app.appearance.theme.diff_add_bg_emphasis,
+                ),
+                DiffLineTag::Delete => (
+                    app.appearance.theme.diff_del_bg,
+                    app.appearance.theme.diff_del_bg_emphasis,
+                ),
                 _ => (Color::Reset, Color::Reset),
             };
 
@@ -205,8 +211,8 @@ pub(super) fn render_code_line_rows(
         } else {
             // 行単位の diff のみ: diff の背景色でシンタックスハイライトを使う。
             let diff_bg = match ann_tag {
-                DiffLineTag::Insert => Some(app.theme.diff_add_bg),
-                DiffLineTag::Delete => Some(app.theme.diff_del_bg),
+                DiffLineTag::Insert => Some(app.appearance.theme.diff_add_bg),
+                DiffLineTag::Delete => Some(app.appearance.theme.diff_del_bg),
                 _ => None,
             };
             syntax_spans_for_line(vs, line_no, diff_bg, theme.fg)
@@ -330,9 +336,9 @@ pub(super) fn render_code_line_rows(
             reply_cid,
             &app.viewer.inline.reply_buffer,
             theme,
-            &app.highlight.syntax_set,
-            &app.highlight.theme,
-            &app.markdown_cache,
+            &app.appearance.highlight.syntax_set,
+            &app.appearance.highlight.theme,
+            &app.appearance.markdown_cache,
             icon_set,
         );
         rows.extend(thread_lines);

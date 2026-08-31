@@ -18,7 +18,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // 別々の構造体フィールドなので Rust ではこれが許される。
     app.layout.cache.update(
         area,
-        app.expanded_panel,
+        app.layout.expanded,
         has_notifications,
         &app.config.layout,
         app.layout.terminal_split_pct,
@@ -126,7 +126,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         status_area,
         _worktree_branch,
         &app.repo.path,
-        &app.theme,
+        &app.appearance.theme,
     );
 }
 
@@ -145,7 +145,7 @@ fn highlight_active_divider(frame: &mut Frame, app: &App) {
         return;
     };
     let lc = &app.layout.cache;
-    let color = app.theme.accent;
+    let color = app.appearance.theme.accent;
 
     // ディバイダを (is_vertical, 固定座標, 対象領域) に解決する。固定座標は
     // 上/左パネルのボーダーセル（edge - 1）で、これが目に見えるディバイダ線になる。

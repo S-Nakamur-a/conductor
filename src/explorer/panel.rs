@@ -15,7 +15,7 @@ use crate::types::Focus;
 impl App {
     fn explorer_ctx(&self) -> Ctx<'_> {
         Ctx {
-            theme: &self.theme,
+            theme: &self.appearance.theme,
             config: &self.config,
             keymap: &self.keymap,
             focused: self.focus.current() == Focus::Explorer,
@@ -30,13 +30,13 @@ impl App {
             hover_tree: &self.list_hover.explorer_tree,
             hover_changes: &self.list_hover.diff_list,
             revidere_badge_hover: self.revidere.badge_hover,
-            tick: self.ui_tick,
+            tick: self.ticks.ui(),
             search: self
                 .viewer
                 .search
                 .search_active
                 .then(|| self.viewer.search.search_query.text()),
-            expanded: self.expanded_panel.is_some(),
+            expanded: self.layout.expanded.is_some(),
             border: self.animated_border_color(Focus::Explorer),
         }
     }
@@ -85,7 +85,7 @@ impl App {
         let in_modal = self.overlays.active == crate::overlay::ActiveOverlay::CommentList;
         let intent = {
             let ctx = Ctx {
-                theme: &self.theme,
+                theme: &self.appearance.theme,
                 config: &self.config,
                 keymap: &self.keymap,
                 focused: true,
@@ -106,7 +106,7 @@ impl App {
         self.set_focus(Focus::Explorer);
         let intent = {
             let ctx = Ctx {
-                theme: &self.theme,
+                theme: &self.appearance.theme,
                 config: &self.config,
                 keymap: &self.keymap,
                 focused: true,
@@ -143,7 +143,7 @@ impl App {
     pub fn explorer_scroll(&mut self, lines: isize, y: u16) {
         let panes = self.explorer_panes(self.explorer_area());
         let ctx = Ctx {
-            theme: &self.theme,
+            theme: &self.appearance.theme,
             config: &self.config,
             keymap: &self.keymap,
             focused: true,

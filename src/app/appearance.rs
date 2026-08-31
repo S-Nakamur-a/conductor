@@ -5,22 +5,38 @@ use super::App;
 use crate::config;
 
 impl App {
+    /// UI パレットを差し替え、そこから色を焼き込んだキャッシュを捨てる。
+    ///
+    /// syntect の作り直しとは分けてある。1 つの早期 return にまとめていた頃は、
+    /// viewer.syntax_theme_file を指定していると syntect の id が変わらないため、
+    /// UI テーマを切り替えても markdown の色が古いまま残った。
+    pub(super) fn install_palette(&mut self, name: String, high_contrast: bool) {
+        self.appearance.theme = super::build_theme(&name, high_contrast);
+        self.appearance.sel.name = name;
+        self.appearance.sel.high_contrast = high_contrast;
+        self.appearance.markdown_cache.clear();
+        // last_width=0 は幅の変化に関わらず build_lines を走らせるための細工。
+        self.reflow.last_width = 0;
+        self.reflow.cache.clear();
+    }
+
     /// span の色はキャッシュに焼き込まれるので、テーマだけ差し替えても古い配色が残る。
     /// テーマを触る経路は必ずここを通すこと。
     fn rebuild_syntect_theme(&mut self) {
         let new_id = config::syntax_theme_id(&self.config);
-        if new_id == self.highlight.theme_id {
+        if new_id == self.appearance.highlight.theme_id {
             return;
         }
 
-        self.highlight.theme = config::syntect_theme_for(&self.config, &self.highlight.themes);
-        self.highlight.theme_id = new_id;
+        self.appearance.highlight.theme =
+            config::syntect_theme_for(&self.config, &self.appearance.highlight.themes);
+        self.appearance.highlight.theme_id = new_id;
         // Viewerのキャッシュキーに混ざる。進めないと内容が同じままなので素通りする。
-        self.highlight.generation = self.highlight.generation.wrapping_add(1);
+        self.appearance.highlight.generation = self.appearance.highlight.generation.wrapping_add(1);
 
         // このキャッシュはUIパレットだけを指紋にしているので、シンタックスのみの
         // 変更では自力で無効化できない。
-        self.markdown_cache.clear();
+        self.appearance.markdown_cache.clear();
 
         // last_width=0 は幅の変化に関わらず build_lines を走らせるための細工。
         self.reflow.last_width = 0;
@@ -30,8 +46,7 @@ impl App {
     /// アクティブなUIテーマをランタイムで切り替える。UIパレットとsyntectの
     /// 両方を切り替えないと、Viewerのコードの配色が取り残される。
     pub fn set_theme(&mut self, name: &str, persist: bool) {
-        self.theme = super::build_theme(name, self.theme_sel.high_contrast);
-        self.theme_sel.name = name.to_string();
+        self.install_palette(name.to_string(), self.appearance.sel.high_contrast);
         self.config.ui.theme = Some(name.to_string());
 
         // configの現在値から解決するので ui.theme を書いた後に呼ぶ。
@@ -62,12 +77,10 @@ impl App {
         // UI / シンタックステーマ
         let new_theme_name = super::resolve_theme_name(new);
         let new_high_contrast = new.ui.high_contrast;
-        if new_theme_name != self.theme_sel.name
-            || new_high_contrast != self.theme_sel.high_contrast
+        if new_theme_name != self.appearance.sel.name
+            || new_high_contrast != self.appearance.sel.high_contrast
         {
-            self.theme = super::build_theme(&new_theme_name, new_high_contrast);
-            self.theme_sel.name = new_theme_name;
-            self.theme_sel.high_contrast = new_high_contrast;
+            self.install_palette(new_theme_name, new_high_contrast);
         }
 
         // 無条件に上書きしてよい。view_mode を書くのは DiffState::new とここだけで、

@@ -64,10 +64,10 @@ pub(super) fn render_worktree_list(
     border_color: Color,
 ) {
     let ctx = RowCtx {
-        theme: &app.theme,
+        theme: &app.appearance.theme,
         // 約 1 秒周期 (60fps で 30 フレーム点灯 / 30 フレーム消灯)。
-        pulse_on: (app.ui_tick / 30).is_multiple_of(2),
-        spinner: crate::ui::common::spinner_frame(app.ui_tick),
+        pulse_on: (app.ticks.ui() / 30).is_multiple_of(2),
+        spinner: crate::ui::common::spinner_frame(app.ticks.ui()),
         focused_cc_wt: (app.focus.current() == crate::app::Focus::TerminalClaude)
             .then(|| app.selected_worktree_path()),
         sessions: collect_session_rows(app),
@@ -108,12 +108,12 @@ fn list_block<'a>(app: &'a App, focused: bool, border_color: Color) -> Block<'a>
         " Worktrees "
     };
 
-    let mut chrome = PanelChrome::new(&app.theme, title, focused, border_color)
-        .with_expand_button(app.expanded_panel == Some(crate::app::Focus::Worktree));
+    let mut chrome = PanelChrome::new(&app.appearance.theme, title, focused, border_color)
+        .with_expand_button(app.layout.expanded == Some(crate::app::Focus::Worktree));
     if grabbed {
         chrome = chrome.with_title_style(
             Style::default()
-                .fg(app.theme.waiting_primary)
+                .fg(app.appearance.theme.waiting_primary)
                 .add_modifier(Modifier::BOLD),
         );
     }

@@ -15,15 +15,15 @@ mod review_history;
 mod review_publish;
 mod state;
 pub use state::{
-    Highlighting, PanelLayout, PanelNumberOverlay, PublishState, RepoState, RevidereState,
-    SessionStats, ThemeSelection, UpdateFlow, ViewRestore, WtbarState,
+    Appearance, ChangeWatch, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
+    RevidereState, SessionStats, Ticks, UpdateFlow, ViewRestore, WtbarState,
 };
 mod types;
 mod update;
 mod view_state;
 pub use view_state::OpenAs;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::config;
@@ -75,10 +75,7 @@ pub struct App {
     pub config: config::Config,
     /// デフォルトにユーザの上書きを重ねた解決済みのマップ。
     pub keymap: KeyMap,
-    /// 描画に使う配色。フレームごとに読まれるので 1 階層浅いところに置く。
-    /// 組み立ての元データは [Self::theme_sel]。
-    pub theme: Theme,
-    pub theme_sel: ThemeSelection,
+    pub appearance: Appearance,
     pub explorer: Explorer,
     pub viewer: ViewerState,
     pub diff_state: DiffState,
@@ -88,32 +85,17 @@ pub struct App {
     pub terminal: TerminalState,
     pub worktree_mgr: WorktreeManager,
     pub status_message: Option<StatusMessage>,
-    /// 選択中 worktree の変更検知ポーリング。署名は (追加, 変更, 削除, 未追跡) 件数。
-    pub last_poll_head_oid: Option<String>,
-    pub last_poll_status: Option<(usize, usize, usize, usize)>,
-
-    /// syntect の共有資源。
-    pub highlight: Highlighting,
-    /// コメント本文の ID 別キャッシュ。インラインスレッドが毎フレーム再パースしない。
-    pub markdown_cache: crate::ui::markdown::MarkdownCache,
-
-    /// 100% に拡大しているパネル。None は通常レイアウト。
-    pub expanded_panel: Option<Focus>,
+    pub change_watch: ChangeWatch,
 
     /// レイアウト矩形のキャッシュ、ターミナル列の分割比、境界のドラッグ。
     pub layout: PanelLayout,
 
     pub list_hover: ListHover,
 
-    /// UI アニメーション用。
-    pub ui_tick: u64,
-    /// デコレーション専用。一定間隔で増える別勘定。
-    pub decoration_tick: u64,
+    pub ticks: Ticks,
 
     /// セッション統計 (ゲーミフィケーション) と ccusage のキャッシュ。
     pub stats: SessionStats,
-    /// ブランチ名 -> HEAD oid。コミットの検知に使う。
-    pub worktree_heads: HashMap<String, String>,
 
     /// 自己更新: 検出 → 確認 → インストール → 再起動。
     pub update: UpdateFlow,
@@ -192,7 +174,7 @@ impl App {
 
     /// スタイル付きのステータスメッセージを設定する。
     pub fn set_status(&mut self, text: String, level: StatusLevel) {
-        self.status_message = Some(StatusMessage::new(text, level, self.ui_tick));
+        self.status_message = Some(StatusMessage::new(text, level, self.ticks.ui()));
     }
 
     /// 通常のinfoステータスメッセージを設定する（後方互換のための省略形）。

@@ -175,12 +175,12 @@ impl App {
             .collect();
         let selected = themes
             .iter()
-            .position(|t| t == &self.theme_sel.name)
+            .position(|t| t == &self.appearance.sel.name)
             .unwrap_or(0);
         self.overlays.theme_picker = crate::overlay::ThemePickerOverlay {
             themes,
             selected,
-            original: self.theme_sel.name.clone(),
+            original: self.appearance.sel.name.clone(),
         };
         self.overlays.active = ActiveOverlay::ThemePicker;
     }
@@ -190,20 +190,15 @@ impl App {
     /// ハイコントラストのテーマ変換をその場で切り替え、選択を永続化し、
     /// テーマ依存のキャッシュを再構築して変更を即座に反映させる。
     fn cmd_toggle_high_contrast(&mut self) {
-        self.theme_sel.high_contrast = !self.theme_sel.high_contrast;
-        self.config.ui.high_contrast = self.theme_sel.high_contrast;
-        self.theme = super::build_theme(&self.theme_sel.name, self.theme_sel.high_contrast);
-
-        // テーマの色を描画済みの span に焼き込んでいるキャッシュは再構築が必要。
-        self.markdown_cache.clear();
-        self.reflow.last_width = 0;
-        self.reflow.cache.clear();
+        let name = self.appearance.sel.name.clone();
+        self.install_palette(name, !self.appearance.sel.high_contrast);
+        self.config.ui.high_contrast = self.appearance.sel.high_contrast;
         self.request_redraw();
 
-        if let Err(e) = crate::config::persist_ui_high_contrast(self.theme_sel.high_contrast) {
+        if let Err(e) = crate::config::persist_ui_high_contrast(self.appearance.sel.high_contrast) {
             log::warn!("failed to persist high_contrast: {e}");
         }
-        let state = if self.theme_sel.high_contrast {
+        let state = if self.appearance.sel.high_contrast {
             "on"
         } else {
             "off"

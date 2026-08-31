@@ -10,7 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_height = 3_u16;
     let popup_width = area.width.saturating_sub(8).min(60);
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -35,7 +35,7 @@ pub fn render_worktree_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
 
 /// ベースブランチの入力オーバーレイ（worktree 作成のステップ2）を描画する。
 pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 22_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
@@ -118,7 +118,7 @@ pub fn render_worktree_base_input_overlay(frame: &mut Frame, area: Rect, app: &A
 
 /// Smart Worktree の説明入力オーバーレイ（複数行）を描画する。
 pub fn render_smart_description_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 80_u16.min(area.width.saturating_sub(4));
     let text_width = popup_width.saturating_sub(2).max(1); // 左右の枠線の内側
 

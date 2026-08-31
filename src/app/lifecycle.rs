@@ -1,9 +1,10 @@
 //! App の構築: config を読み込み、review store を開き、シンタックス
 //! ハイライトの種を仕込み、以前選択していた worktree/view/grab の状態を復元する。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::app::{Appearance, ChangeWatch, Ticks};
 use crate::config;
 use crate::diff_state::{DiffState, DiffViewMode};
 use crate::explorer::Explorer;
@@ -94,6 +95,8 @@ impl App {
             // 最初のフレームで全パネルを描画するための初期値。
             needs_redraw: true,
             focus: crate::app::FocusState::settled(Focus::Explorer),
+            change_watch: ChangeWatch::default(),
+            ticks: Ticks::default(),
             overlays: OverlayManager::default(),
             // 索引の探索起点は repo_path。構造体に move される前に取る。
             code_nav: CodeNav::new(repo_path.clone()),
@@ -110,10 +113,20 @@ impl App {
             worktrees: Default::default(),
             config,
             keymap,
-            theme,
-            theme_sel: ThemeSelection {
-                name: theme_name,
-                high_contrast,
+            appearance: Appearance {
+                theme,
+                sel: ThemeSelection {
+                    name: theme_name,
+                    high_contrast,
+                },
+                highlight: Highlighting {
+                    syntax_set,
+                    themes: syntect_themes,
+                    theme: syntect_theme,
+                    theme_id: syntect_theme_id,
+                    generation: 0,
+                },
+                markdown_cache: crate::ui::markdown::MarkdownCache::new(),
             },
             explorer: Explorer::default(),
             viewer: ViewerState::default(),
@@ -126,30 +139,16 @@ impl App {
             ),
             worktree_mgr: WorktreeManager::default(),
             status_message: None,
-            last_poll_head_oid: None,
-            last_poll_status: None,
-            highlight: Highlighting {
-                syntax_set,
-                themes: syntect_themes,
-                theme: syntect_theme,
-                theme_id: syntect_theme_id,
-                generation: 0,
-            },
-            markdown_cache: crate::ui::markdown::MarkdownCache::new(),
-            expanded_panel: None,
             layout: PanelLayout {
                 terminal_split_pct: config_terminal_split_pct,
                 ..Default::default()
             },
             list_hover: Default::default(),
-            ui_tick: 0,
-            decoration_tick: 0,
             stats: SessionStats {
                 session_id: stats_session_id,
                 today: today_stats,
                 ccusage: None,
             },
-            worktree_heads: HashMap::new(),
             update: UpdateFlow::from_current_process(),
             clipboard: copypasta::ClipboardContext::new().ok(),
             decoration_states: Default::default(),

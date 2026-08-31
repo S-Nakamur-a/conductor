@@ -30,9 +30,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     };
 
     let focused = app.focus.current() == Focus::Editor;
-    let fg = app.theme.fg;
-    let muted = app.theme.muted;
-    let accent = app.theme.accent;
+    let fg = app.appearance.theme.fg;
+    let muted = app.appearance.theme.muted;
+    let accent = app.appearance.theme.accent;
 
     let border_color = app.animated_border_color(Focus::Editor);
     let border_type = if focused {
@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         BorderType::Plain
     };
-    let is_expanded = app.expanded_panel == Some(Focus::Editor);
+    let is_expanded = app.layout.expanded == Some(Focus::Editor);
 
     // タイトル行: ファイル名 + 終了方法のヒント。:q は常に有効（プロセスを終了させ、
     // それによってパネルが閉じる）。Ctrl+Esc は kitty keyboard protocol が必要。
@@ -92,7 +92,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     if let Some(editor) = app.editor.as_ref() {
-        crate::terminal::render::pty::render_pty_cached(frame, inner, &editor.cache, &app.theme);
+        crate::terminal::render::pty::render_pty_cached(
+            frame,
+            inner,
+            &editor.cache,
+            &app.appearance.theme,
+        );
 
         // フォーカスがあり隠れていないときは、IME 用にハードウェアカーソルを配置する。
         if focused

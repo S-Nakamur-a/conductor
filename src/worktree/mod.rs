@@ -167,8 +167,8 @@ impl App {
 
         // 次のポーリングサイクルで冗長なリフレッシュが起きないよう、基準値をスナップショットしておく。
         if let Some(wt) = self.worktrees.selected() {
-            self.last_poll_head_oid = self.worktree_heads.get(&wt.branch).cloned();
-            self.last_poll_status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
+            self.change_watch.head_oid = self.change_watch.heads.get(&wt.branch).cloned();
+            self.change_watch.status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
         }
 
         // アクティブなセッションを新しいワークツリーに合わせて更新する。

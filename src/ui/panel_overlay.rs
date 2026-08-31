@@ -84,7 +84,7 @@ pub fn render_panel_overlay(frame: &mut Frame, app: &App) {
         if panel.area.width < 3 || panel.area.height < 3 {
             continue;
         }
-        render_single_panel_overlay(frame, panel, &app.theme);
+        render_single_panel_overlay(frame, panel, &app.appearance.theme);
     }
 }
 

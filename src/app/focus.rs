@@ -86,7 +86,7 @@ impl App {
         }
 
         // 幅がゼロになってしまうパネルへフォーカスが移るとき、展開中のパネルを畳む。
-        if let Some(expanded) = self.expanded_panel {
+        if let Some(expanded) = self.layout.expanded {
             let dominated = match expanded {
                 Focus::TerminalClaude | Focus::TerminalShell => {
                     matches!(focus, Focus::TerminalClaude | Focus::TerminalShell)
@@ -94,7 +94,7 @@ impl App {
                 other => other == focus,
             };
             if !dominated {
-                self.expanded_panel = None;
+                self.layout.expanded = None;
             }
         }
         // 注意: 単なるフォーカス変更では、あえてここでreflowトランスクリプトを
@@ -154,14 +154,22 @@ impl App {
             crate::anim::eased_progress(self.focus.changed_at().elapsed(), crate::anim::FOCUS_MS);
         if self.focus.current() == panel {
             if t >= 1.0 {
-                self.theme.border_focused
+                self.appearance.theme.border_focused
             } else {
-                crate::theme::Theme::lerp(self.theme.border_unfocused, self.theme.border_focused, t)
+                crate::theme::Theme::lerp(
+                    self.appearance.theme.border_unfocused,
+                    self.appearance.theme.border_focused,
+                    t,
+                )
             }
         } else if self.focus.prev() == panel && t < 1.0 {
-            crate::theme::Theme::lerp(self.theme.border_focused, self.theme.border_unfocused, t)
+            crate::theme::Theme::lerp(
+                self.appearance.theme.border_focused,
+                self.appearance.theme.border_unfocused,
+                t,
+            )
         } else {
-            self.theme.border_unfocused
+            self.appearance.theme.border_unfocused
         }
     }
 

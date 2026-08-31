@@ -15,7 +15,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let focused = app.focus.current() == Focus::TerminalClaude;
     // フォーカス変化時、非フォーカス/フォーカスのボーダー色の間を緩やかに遷移する。
     let border_color = app.animated_border_color(Focus::TerminalClaude);
@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let sessions = app.current_worktree_sessions(crate::pty_manager::SessionKind::ClaudeCode);
 
     let is_expanded = matches!(
-        app.expanded_panel,
+        app.layout.expanded,
         Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
     );
 
@@ -101,7 +101,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // セッションタブ — 水平スクロールするストリップで、[+]/展開ボタンは常に
     // 手が届くよう右端に固定されている（tab_bar を参照）。
     let suppress_blink = focused;
-    let pulse_on = (app.ui_tick / 30).is_multiple_of(2);
+    let pulse_on = (app.ticks.ui() / 30).is_multiple_of(2);
     let tab_items: Vec<crate::ui::tab_bar::TabItem> = sessions
         .iter()
         .map(|(global_idx, session)| {
@@ -228,7 +228,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 frame,
                 inner,
                 &app.terminal.claude.cache,
-                &app.theme,
+                &app.appearance.theme,
             );
 
             // フォーカスがあり、スクロールバックしておらず、このパネルを覆う

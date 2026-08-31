@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 pub fn render_command_palette_overlay(frame: &mut Frame, area: Rect, app: &App) {
     use crate::command_palette;
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let popup_width = 70_u16.min(area.width.saturating_sub(4));
     let popup_height = 24_u16.min(area.height.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;

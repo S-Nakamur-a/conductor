@@ -12,7 +12,7 @@ use crate::overlay::RefRow;
 /// area の中央に参照オーバーレイポップアップを描画する。
 pub fn render_references_overlay(frame: &mut Frame, area: Rect, app: &App) {
     let overlay = &app.code_nav.references;
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
 
     // ポップアップの寸法を計算する: 幅70%、高さ60%、中央寄せ。
     let popup_width = (area.width as f32 * 0.7).clamp(40.0, 100.0) as u16;

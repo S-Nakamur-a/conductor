@@ -173,7 +173,7 @@ impl LoopState {
     /// 領域の持ち主が変わったかを判定し、変わっていたらハードクリアを予約する。
     pub fn note_layout_change(&mut self, app: &mut App) {
         let key = (
-            app.expanded_panel,
+            app.layout.expanded,
             app.editor.is_some(),
             app.reflow.active,
             app.config.layout.explorer_width_pct,

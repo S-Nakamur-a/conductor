@@ -23,9 +23,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let focused = app.focus.current() == Focus::Worktree;
     let border_color = if focused {
-        app.theme.border_focused
+        app.appearance.theme.border_focused
     } else {
-        app.theme.border_unfocused
+        app.appearance.theme.border_unfocused
     };
 
     // ゾーンのレイアウト計算。
@@ -65,7 +65,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // ゾーン2: 詳細セクション。
     if zones[1].height >= 3 {
-        let theme = &app.theme;
+        let theme = &app.appearance.theme;
         detail::render_detail(frame, zones[1], app, theme, border_color);
     }
 
@@ -75,7 +75,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             frame,
             zones[2],
             &app.decoration_states,
-            &app.theme,
+            &app.appearance.theme,
             decoration_mode,
         );
     }

@@ -109,7 +109,7 @@ pub(super) fn render_diff_view(
     // コメントスレッドは、コメントされた各範囲の最終行の後に挿入される
     // （レビューコメントが diff の中にそのまま見え、デフォルトで展開された状態になる）。
     let (lines, screen_row_map, screen_entry_map) = {
-        let theme = &app.theme;
+        let theme = &app.appearance.theme;
         let vs = &app.viewer;
         let tab_width = app.config.viewer.tab_width;
         let gutter_width = digit_count(vs.diff_view.diff_view_max_line_no);
@@ -202,9 +202,9 @@ pub(super) fn render_diff_view(
                     reply_cid,
                     &vs.inline.reply_buffer,
                     theme,
-                    &app.highlight.syntax_set,
-                    &app.highlight.theme,
-                    &app.markdown_cache,
+                    &app.appearance.highlight.syntax_set,
+                    &app.appearance.highlight.theme,
+                    &app.appearance.markdown_cache,
                     app.config.ui.icon_set(),
                 );
                 for (l, rt) in thread {
@@ -255,10 +255,10 @@ pub(super) fn render_diff_view(
     frame.render_widget(ratatui::widgets::Clear, area);
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
-    let tab_row = super::file_view::render_tab_row(frame, area, &app.theme, &app.viewer);
+    let tab_row = super::file_view::render_tab_row(frame, area, &app.appearance.theme, &app.viewer);
 
     // 選択ヒントのオーバーレイを表示する。
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let vs = &app.viewer;
 
     // diff の行数がパネルに収まりきらない場合にスクロールバーを描画する —

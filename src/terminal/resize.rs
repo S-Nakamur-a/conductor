@@ -16,7 +16,7 @@ impl App {
     ) {
         let cols = &self.layout.cache.columns;
         let is_terminal_expanded = matches!(
-            self.expanded_panel,
+            self.layout.expanded,
             Some(crate::types::Focus::TerminalClaude | crate::types::Focus::TerminalShell)
         );
         let border_cols: u16 = if is_terminal_expanded { 0 } else { 2 };

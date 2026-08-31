@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::ui::common::color::{format_tokens, name_to_color};
 
 pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let wt_name = app
         .worktrees
         .get(app.worktrees.selected_index())

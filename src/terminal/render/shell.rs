@@ -15,7 +15,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let focused = app.focus.current() == Focus::TerminalShell;
     let border_color = app.animated_border_color(Focus::TerminalShell);
 
@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     let sessions = app.current_worktree_sessions(crate::pty_manager::SessionKind::Shell);
 
     let is_expanded = matches!(
-        app.expanded_panel,
+        app.layout.expanded,
         Some(crate::app::Focus::TerminalClaude | crate::app::Focus::TerminalShell)
     );
 
@@ -150,7 +150,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
                 frame,
                 inner,
                 &app.terminal.shell.cache,
-                &app.theme,
+                &app.appearance.theme,
             );
 
             // フォーカスがあり、スクロールバックしておらず、オーバーレイがこのパネルを

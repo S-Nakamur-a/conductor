@@ -37,10 +37,10 @@ pub enum Divider {
 
 impl App {
     pub(super) fn cmd_toggle_panel_expand(&mut self) {
-        if self.expanded_panel == Some(self.focus.current()) {
-            self.expanded_panel = None;
+        if self.layout.expanded == Some(self.focus.current()) {
+            self.layout.expanded = None;
         } else {
-            self.expanded_panel = Some(self.focus.current());
+            self.layout.expanded = Some(self.focus.current());
         }
     }
 

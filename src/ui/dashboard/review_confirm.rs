@@ -10,7 +10,7 @@ use crate::app::App;
 use crate::overlay::RevidereArtifact;
 
 pub fn render_revidere_confirm_overlay(frame: &mut Frame, area: Rect, app: &App) {
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let confirm = &app.overlays.revidere_confirm;
     let popup_width = 64_u16.min(area.width.saturating_sub(4));
     let popup_height = 7_u16;

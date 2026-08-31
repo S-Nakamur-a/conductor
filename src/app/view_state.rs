@@ -152,9 +152,9 @@ impl App {
     /// 現在読み込まれているファイル内容にsyntectハイライトを実行する。
     pub fn rehighlight_viewer(&mut self) {
         // borrow checkerを満たすため、フィールドを分離して借用する。
-        let syntax_set = &self.highlight.syntax_set;
-        let theme = &self.highlight.theme;
-        let generation = self.highlight.generation;
+        let syntax_set = &self.appearance.highlight.syntax_set;
+        let theme = &self.appearance.highlight.theme;
+        let generation = self.appearance.highlight.generation;
         self.viewer.highlight_content(syntax_set, theme, generation);
     }
 
@@ -206,7 +206,7 @@ impl App {
             None => return,
         };
 
-        let current_head = self.worktree_heads.get(&wt.branch).cloned();
+        let current_head = self.change_watch.heads.get(&wt.branch).cloned();
         // staged をここに含めているのは、git add / git reset を可視化するため。
         // 他の3つはインデックスを先にチェックして1ファイルにつき1バケットで
         // 数えるため、変更済みファイルをステージしても値は変わらない — かつ
@@ -216,22 +216,11 @@ impl App {
         // ことになる。
         let current_status = (wt.added, wt.modified, wt.deleted, wt.staged);
 
-        let head_changed = self.last_poll_head_oid.as_ref() != current_head.as_ref();
-        let status_changed = self.last_poll_status != Some(current_status);
-
-        if head_changed || status_changed {
-            log::debug!(
-                "Change detected for worktree '{}': head_changed={}, status_changed={}",
-                wt.branch,
-                head_changed,
-                status_changed,
-            );
+        if self.change_watch.record(current_head, current_status) {
+            log::debug!("Change detected for worktree '{}'", wt.branch);
             self.refresh_diff();
             self.refresh_viewer();
         }
-
-        self.last_poll_head_oid = current_head;
-        self.last_poll_status = Some(current_status);
     }
 
     /// Viewerを、生のMarkdownソースとレンダリング済みの文章表示の間で切り替える。

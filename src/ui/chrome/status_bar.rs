@@ -11,10 +11,10 @@ use ratatui::widgets::Paragraph;
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     use crate::app::StatusLevel;
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
 
     if let Some(ref msg) = app.status_message {
-        let age = app.ui_tick.wrapping_sub(msg.created_at_tick);
+        let age = app.ticks.ui_since(msg.created_at_tick);
 
         // レベルに応じた色。
         let fg_color = match msg.level {
@@ -26,7 +26,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &crate::app::App) {
 
         // 最初の約500ms（30 tick）は背景をフラッシュさせる。
         let bg_color = if age < 30 {
-            if (age / 5) % 2 == 0 {
+            if (age / 5).is_multiple_of(2) {
                 match msg.level {
                     StatusLevel::Success => theme.status_bg_success,
                     StatusLevel::Error => theme.status_bg_error,

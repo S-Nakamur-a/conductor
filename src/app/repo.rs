@@ -228,13 +228,13 @@ impl App {
                             })
                             .collect();
                         for (branch, head_oid) in head_updates {
-                            if let Some(old) = self.worktree_heads.get(&branch)
+                            if let Some(old) = self.change_watch.heads.get(&branch)
                                 && old != &head_oid
                             {
                                 self.record_stat("commits_made");
                                 changed = true;
                             }
-                            self.worktree_heads.insert(branch, head_oid);
+                            self.change_watch.heads.insert(branch, head_oid);
                         }
                     }
                     Err(e) => {
@@ -280,7 +280,7 @@ impl App {
         if !mode.has_animation() {
             return false;
         }
-        self.decoration_tick = self.decoration_tick.wrapping_add(1);
+        self.ticks.advance_decoration();
         let activity = if self.terminal.cc_waiting_worktrees.is_empty() {
             DecorationActivity::Calm
         } else {
@@ -288,7 +288,7 @@ impl App {
         };
         crate::worktree::decoration::tick_decoration(
             &mut self.decoration_states,
-            self.decoration_tick,
+            self.ticks.decoration(),
             width,
             height,
             activity,

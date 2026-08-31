@@ -39,7 +39,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let active = app.menu.focus.active_index();
     let hover = app.menu.hover;
 
@@ -191,14 +191,14 @@ pub fn render_dropdown(frame: &mut Frame, frame_area: Rect, app: &mut App) {
     let block = Block::default()
         .title(format!(" {} ", menu.title))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.theme.accent));
+        .border_style(Style::default().fg(app.appearance.theme.accent));
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
 
     // 各行の描画。
     let visible = inner.height as usize;
     let start = scroll.min(rows.len().saturating_sub(visible.max(1)));
-    let theme = &app.theme;
+    let theme = &app.appearance.theme;
     let mut lines: Vec<Line> = Vec::new();
     let mut hits: Vec<ItemHit> = Vec::new();
 
