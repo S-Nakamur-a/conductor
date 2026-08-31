@@ -44,6 +44,7 @@ pub(crate) use self::overlay_helpers::open_filename_search;
 
 /// ディスパッチ用に統一したオーバーレイ/モーダルの状態。複数の
 /// bool/enum チェックを単一の判別子に集約する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EffectiveOverlay {
     /// アップデートの確認/進行状況/失敗ダイアログ。
     UpdateState,
@@ -69,37 +70,72 @@ enum EffectiveOverlay {
     None,
 }
 
+/// [effective_overlay] が実際に読む App の状態。
+///
+/// 順位そのものは App を組み立てずに確かめたい。入れ替わっても落ちる場所は無く、
+/// 「別のモーダルが開いているのに入力が違う所へ行く」形でしか現れないため。
+#[derive(Clone, Copy, Default)]
+struct OverlayFlags {
+    update: bool,
+    publish_confirm: bool,
+    comment_detail: bool,
+    review_input: bool,
+    worktree_input: bool,
+    active: ActiveOverlay,
+    filename_search: bool,
+    viewer_search: bool,
+    review_search: bool,
+    template_picker: bool,
+}
+
+impl From<&App> for OverlayFlags {
+    fn from(app: &App) -> Self {
+        Self {
+            update: app.update.is_active(),
+            publish_confirm: app.publish.confirm.is_some(),
+            comment_detail: app.review_state.comment_detail_active,
+            review_input: app.review_state.input_mode != ReviewInputMode::Normal,
+            worktree_input: app.worktree_mgr.input_mode != WorktreeInputMode::Normal,
+            active: app.overlays.active,
+            filename_search: app.viewer.filename_search.filename_search_active,
+            viewer_search: app.viewer.search.search_active,
+            review_search: app.review_state.search_active,
+            template_picker: app.review_state.template_picker_active,
+        }
+    }
+}
+
 /// 入力を消費すべき、唯一の有効なオーバーレイ/モーダルを判定する。
-fn effective_overlay(app: &App) -> EffectiveOverlay {
-    if app.update.is_active() {
+fn effective_overlay(f: OverlayFlags) -> EffectiveOverlay {
+    if f.update {
         return EffectiveOverlay::UpdateState;
     }
-    if app.publish.confirm.is_some() {
+    if f.publish_confirm {
         return EffectiveOverlay::PublishConfirm;
     }
-    if app.review_state.comment_detail_active {
+    if f.comment_detail {
         return EffectiveOverlay::CommentDetail;
     }
-    if app.review_state.input_mode != ReviewInputMode::Normal {
+    if f.review_input {
         return EffectiveOverlay::ReviewInput;
     }
-    if app.worktree_mgr.input_mode != WorktreeInputMode::Normal {
+    if f.worktree_input {
         return EffectiveOverlay::WorktreeInput;
     }
-    match app.overlays.active {
+    match f.active {
         ActiveOverlay::None => {}
         other => return EffectiveOverlay::Active(other),
     }
-    if app.viewer.filename_search.filename_search_active {
+    if f.filename_search {
         return EffectiveOverlay::FilenameSearch;
     }
-    if app.viewer.search.search_active {
+    if f.viewer_search {
         return EffectiveOverlay::ViewerSearch;
     }
-    if app.review_state.search_active {
+    if f.review_search {
         return EffectiveOverlay::ReviewSearch;
     }
-    if app.review_state.template_picker_active {
+    if f.template_picker {
         return EffectiveOverlay::ReviewTemplate;
     }
     EffectiveOverlay::None
@@ -144,7 +180,7 @@ fn stage_menu(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
 
 /// 段2: オーバーレイ / モーダルのディスパッチ — アクティブな間はすべてのキーを消費する。
 fn stage_overlay(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
-    match effective_overlay(app) {
+    match effective_overlay(OverlayFlags::from(&*app)) {
         EffectiveOverlay::UpdateState => handle_update_key(app, key),
         EffectiveOverlay::PublishConfirm => handle_publish_confirm_key(app, key),
         EffectiveOverlay::CommentDetail => handle_comment_detail_key(app, key),
@@ -468,3 +504,70 @@ fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
 // 見るしかない — App::new が実際に git 処理を行うため、ここで単独
 // unit test するための安価な pure-fn の切れ目がなく、手動/統合テストで
 // カバーしている。
+
+#[cfg(test)]
+mod overlay_priority_tests {
+    use super::*;
+
+    /// 1 段ぶん: その段を立てる手続きと、そのとき選ばれるべきもの。
+    type Rung = (fn(&mut OverlayFlags), EffectiveOverlay);
+
+    /// 上から順に、入力を取る権利が強い。この並びが唯一の真実。
+    const LADDER: &[Rung] = &[
+        (|f| f.update = true, EffectiveOverlay::UpdateState),
+        (
+            |f| f.publish_confirm = true,
+            EffectiveOverlay::PublishConfirm,
+        ),
+        (|f| f.comment_detail = true, EffectiveOverlay::CommentDetail),
+        (|f| f.review_input = true, EffectiveOverlay::ReviewInput),
+        (|f| f.worktree_input = true, EffectiveOverlay::WorktreeInput),
+        (
+            |f| f.active = ActiveOverlay::Help,
+            EffectiveOverlay::Active(ActiveOverlay::Help),
+        ),
+        (
+            |f| f.filename_search = true,
+            EffectiveOverlay::FilenameSearch,
+        ),
+        (|f| f.viewer_search = true, EffectiveOverlay::ViewerSearch),
+        (|f| f.review_search = true, EffectiveOverlay::ReviewSearch),
+        (
+            |f| f.template_picker = true,
+            EffectiveOverlay::ReviewTemplate,
+        ),
+    ];
+
+    #[test]
+    fn each_rung_alone_selects_itself() {
+        for (set, expected) in LADDER {
+            let mut f = OverlayFlags::default();
+            set(&mut f);
+            assert_eq!(effective_overlay(f), *expected);
+        }
+    }
+
+    #[test]
+    fn the_higher_rung_wins_over_every_lower_one() {
+        for (i, (set_hi, expected)) in LADDER.iter().enumerate() {
+            for (set_lo, lower) in &LADDER[i + 1..] {
+                let mut f = OverlayFlags::default();
+                set_hi(&mut f);
+                set_lo(&mut f);
+                assert_eq!(
+                    effective_overlay(f),
+                    *expected,
+                    "{expected:?} より下の {lower:?} が勝っている"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_open_dispatches_to_the_focused_panel() {
+        assert_eq!(
+            effective_overlay(OverlayFlags::default()),
+            EffectiveOverlay::None
+        );
+    }
+}
