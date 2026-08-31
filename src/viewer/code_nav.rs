@@ -1594,11 +1594,9 @@ pub struct Building {
 
     #[test]
     fn extract_symbol_from_line_skips_trailing_comment_and_string_hits() {
-        // プレフィックスチェックを置き換えた元の不具合: 実際の文の後ろに
-        // トレイリングコメントが続くケース。x は1文字なので単独では除外され、
-        // build/the/index はコメントの中にあるため、行全体が今は何も
-        // 解決しない――以前の実装は行の「始まり方」しか見ておらず、行の途中の
-        // // より後を見ていなかったため "build" を返してしまっていた。
+        // 実際の文の後ろにトレイリングコメントが続くケース。x は 1 文字なので単独では除外され、
+        // build/the/index はコメントの中にあるため、行全体が何も解決しない。行の「始まり方」
+        // だけを見ると "build" を返してしまう。
         let src = "fn f() {\n    let x = 1; // build the index\n}\n";
         let mask = crate::symbol_index::CodeMask::compute(src, "lib.rs");
         let line = src.lines().nth(1).unwrap();
