@@ -95,7 +95,7 @@ impl Harness {
 }
 
 #[test]
-fn real_transcripts_hold_the_layout_invariants() {
+fn 実際のトランスクリプトでもレイアウトの不変条件が保たれる() {
     let Some(files) = corpus_files() else {
         eprintln!("CONDUCTOR_TRANSCRIPT_CORPUS unset — skipping corpus sweep");
         return;
@@ -155,7 +155,7 @@ fn real_transcripts_hold_the_layout_invariants() {
 }
 
 #[test]
-fn rebuilding_at_a_previous_width_reproduces_it() {
+fn 前の幅で組み直すと同じ結果になる() {
     let Some(files) = corpus_files() else {
         eprintln!("CONDUCTOR_TRANSCRIPT_CORPUS unset — skipping corpus sweep");
         return;

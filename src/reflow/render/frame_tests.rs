@@ -50,7 +50,7 @@ fn one_row(glyph: &str, skip: bool) -> Buffer {
 /// 検証する: それが無いと、MoveTo が無条件に発行されている場合でもこのテストは通って
 /// しまい、set_skip について何も証明しないことになる。
 #[test]
-fn skipping_forces_an_absolute_move() {
+fn 飛ばすときは絶対位置指定になる() {
     // 前フレームは検証対象のセルで実際に違いを持たなければならない。空のバッファ2つを
     // 比較すると、カラム1は変化なしのままなので diff がそこを省略し、いずれにせよ
     // 絶対位置の移動が発行されてしまう — 対照群として成立するには、上書きすべき何かが
@@ -78,7 +78,7 @@ fn skipping_forces_an_absolute_move() {
 /// 残しうるすべての経路は強制的な再描画を行う必要がある
 /// （App::open_reflow と super::render を参照）。
 #[test]
-fn skipped_cell_is_not_repainted() {
+fn 飛ばしたセルは塗り直さない() {
     let mut prev = Buffer::empty(Rect::new(0, 0, 20, 1));
     prev[(1u16, 0u16)].set_char('X');
 
@@ -120,7 +120,7 @@ fn entry(role: Role, blocks: Vec<DisplayBlock>) -> LogEntry {
 /// 穴はグリフがどこにあってもその直後に置かれる — グリフの位置は常にカラム0とは
 /// 限らない: ⎿ の結果行はカラム2までインデントされる。
 #[test]
-fn marks_the_hole() {
+fn 穴に印を付ける() {
     // assistant のプロース: ⏺ は col0 にあるので、穴は col1。
     let assistant = build(
         &[entry(
@@ -149,7 +149,7 @@ fn marks_the_hole() {
 /// user ターンはフル幅の背景ブロックなので、その内側に未書き込みのセルがあると
 /// 欠けとして見えてしまう。そもそも ❯ は幅が曖昧なグリフでもない。
 #[test]
-fn user_turns_get_no_hole() {
+fn ユーザのターンには穴を空けない() {
     let holes = build(
         &[entry(Role::User, vec![DisplayBlock::Text("hi".into())])],
         false,
@@ -160,7 +160,7 @@ fn user_turns_get_no_hole() {
 /// 定数自体をガードする: もしグリフが穴のロジックの知らないものに差し替えられたら、
 /// この対策は黙って効かなくなってしまう。
 #[test]
-fn every_ambiguous_gutter_glyph_is_registered() {
+fn 幅の曖昧なガターのグリフは全部登録されている() {
     for glyph in [
         ASSISTANT_MARKER,
         TOOL_RESULT_GLYPH,
@@ -189,7 +189,7 @@ fn every_ambiguous_gutter_glyph_is_registered() {
 /// されてしまっていた: 未書き込みのセルは決して塗られないので、その文字が消え、
 /// 前フレームがそこに描いていたものがそのまま残ってしまう。
 #[test]
-fn a_glyph_in_body_text_gets_no_hole() {
+fn 本文中のグリフには穴を空けない() {
     // ⏺ が継続行に落ちるくらい十分長くする。継続行はマーカーではなく空白インデントを
     // 持つので、その行の他の何もそこに穴を望まない。
     let text = format!("{} \u{23fa} tail", "word ".repeat(20));
@@ -215,7 +215,7 @@ fn a_glyph_in_body_text_gets_no_hole() {
 /// helpers::truncate_to_width と user_text::wrap_plain_text との整合性のために
 /// 残してある。このテストは、その2つが揃って守るべき不変条件を固定するものである。
 #[test]
-fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
+fn 全角や複数文字のクラスタでも穴はずれない() {
     // ⎿ は続くものが何であれ   ⎿   プレフィックスのカラム2に位置するので、
     // これらすべての本文について穴はカラム3にある。
     for body in [
@@ -249,7 +249,7 @@ fn wide_and_multi_char_clusters_do_not_shift_the_hole() {
 /// 収まっていなければならない — この2つの不変条件をまとめて、幅広文字のコンテンツで
 /// 検証する。これこそがこの仕組みの存在理由である。
 #[test]
-fn holes_stay_inside_the_line_for_wide_content() {
+fn 幅広の中身でも穴は行の中に収まる() {
     use unicode_width::UnicodeWidthStr;
 
     let theme = crate::theme::Theme::default();
@@ -338,14 +338,14 @@ fn screen_text(buf: &Buffer) -> String {
 /// 同じくらい重要なこととして、ヒット領域も無い — そうでないと、その場所への
 /// クリックが動作し続けてしまう。
 #[test]
-fn no_badge_while_following() {
+fn 追従中はバッジを出さない() {
     let (hit, buf) = draw_badge(40, 6, true);
     assert_eq!(hit, None);
     assert!(!screen_text(&buf).contains("(G)"), "{}", screen_text(&buf));
 }
 
 #[test]
-fn detached_draws_the_badge_bottom_right_and_reports_its_rect() {
+fn 離れて読むときは右下にバッジを描き矩形を返す() {
     let (hit, buf) = draw_badge(40, 6, false);
     let rect = hit.expect("detached view must offer a way back");
 
@@ -368,7 +368,7 @@ fn detached_draws_the_badge_bottom_right_and_reports_its_rect() {
 /// バッジは読めないほど切り詰められるのではなく、より短いラベルへと段階的に縮んでいき、
 /// 最短のものすら収まらない場合には完全に消える — Claude 用のカラムは狭くなりうる。
 #[test]
-fn badge_shrinks_with_the_panel_and_eventually_gives_up() {
+fn バッジはパネルに合わせて縮み最後は諦める() {
     // フルラベルに十分な幅（20カラム + 余裕1）。
     assert_eq!(draw_badge(21, 3, false).0.map(|r| r.width), Some(20));
     // それより1カラム足りない: " Latest (G) "（12）にフォールバック。
@@ -383,7 +383,7 @@ fn badge_shrinks_with_the_panel_and_eventually_gives_up() {
 /// バッジはパネルの右端に接して配置されるため、端末がそれより広く描くグリフがあると
 /// 末尾が境界線にはみ出してしまう。
 #[test]
-fn badge_labels_are_plain_ascii() {
+fn バッジのラベルは素のasciiだけ() {
     for label in JUMP_BADGE_LABELS {
         assert!(
             label.is_ascii(),
@@ -396,7 +396,7 @@ fn badge_labels_are_plain_ascii() {
 /// ラベルは長い順に並んでいる。render_jump_badge は収まる最初のものを選ぶので、
 /// 並び順を誤ると、黙ってより短いものが優先されてしまう。
 #[test]
-fn badge_labels_are_ordered_longest_first() {
+fn バッジのラベルは長い順に並ぶ() {
     let widths: Vec<usize> = JUMP_BADGE_LABELS
         .iter()
         .map(|l| UnicodeWidthStr::width(*l))
@@ -464,7 +464,7 @@ fn build_at(entries: &[LogEntry], width: usize) -> BuiltLines {
 /// 幅の変更後も同じターンを見ていなければならない — 最新のターンでもなく、
 /// 古い行番号を偶然引き継いだ無関係なテキストでもない。
 #[test]
-fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
+fn 狭くしても離れて読む人は同じターンに留まる() {
     const INNER: usize = 20;
     let entries = reflow_fixture();
 
@@ -512,7 +512,7 @@ fn narrowing_keeps_a_detached_reader_on_the_same_turn() {
 /// もう半分のケース: 最新のターンに乗っていた人は、その後も乗っていなければならない。
 /// さもないと、この修正は1つの壊れたケースを別の壊れたケースに置き換えただけになる。
 #[test]
-fn narrowing_keeps_a_follower_on_the_newest_turn() {
+fn 狭くしても追従中は最新のターンに留まる() {
     const INNER: usize = 20;
     let entries = reflow_fixture();
 
@@ -548,7 +548,7 @@ fn narrowing_keeps_a_follower_on_the_newest_turn() {
 /// パネルを広げるのは鏡合わせのケースである: 折り返し行が減り、追従している読者は
 /// 末尾より手前に取り残されてはならない。
 #[test]
-fn widening_keeps_a_follower_on_the_newest_turn() {
+fn 広くしても追従中は最新のターンに留まる() {
     const INNER: usize = 20;
     let entries = reflow_fixture();
 

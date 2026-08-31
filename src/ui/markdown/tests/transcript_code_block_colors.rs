@@ -76,7 +76,7 @@ fn assert_word_fg(lines: &[Line<'static>], word: &str, color: Color) {
 }
 
 #[test]
-fn transcript_code_block_has_no_card_chrome() {
+fn transcriptのコードブロックにカードの装飾は無い() {
     // 背景色なし、字下げなし、空のパディング行なし — 内容は0列目から始まり、
     // ブロックはソースの行数ぴったりの行数になる。
     let lines = code_lines("rust", "let x = 1;");
@@ -92,7 +92,7 @@ fn transcript_code_block_has_no_card_chrome() {
 }
 
 #[test]
-fn transcript_code_block_rust_colours() {
+fn transcriptのコードブロックのrustの配色() {
     let src = "// a line comment\n\
 /// a doc comment\n\
 fn f(a: &str, b: bool) -> Option<u32> {\n\
@@ -134,7 +134,7 @@ struct S { field: Vec<u8> }";
 }
 
 #[test]
-fn transcript_code_block_python_colours() {
+fn transcriptのコードブロックのpythonの配色() {
     let src = "# python comment\n\
 import os\n\
 def g(x=1, *args):\n\
@@ -170,7 +170,7 @@ class C(object):\n\
 }
 
 #[test]
-fn transcript_code_block_bash_colours() {
+fn transcriptのコードブロックのbashの配色() {
     let src = "# shell comment\n\
 export FOO=bar\n\
 if [ -f \"$HOME/.zshrc\" ]; then\n\
@@ -199,7 +199,7 @@ fi";
 }
 
 #[test]
-fn transcript_code_block_json_colours() {
+fn transcriptのコードブロックのjsonの配色() {
     let src = "{\"a\": 1, \"b\": true, \"c\": null, \"d\": [\"x\", 2.5]}";
     let lines = code_lines("json", src);
 

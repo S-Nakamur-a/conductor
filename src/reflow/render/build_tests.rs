@@ -37,7 +37,7 @@ fn fixtures() -> (
 /// build_lines は借用したフィクスチャだけで呼び出せなければならない — このテストの
 /// どこにも App は構築されない。空の entry リストは退化しているが有効な入力である。
 #[test]
-fn build_lines_runs_without_an_app() {
+fn 行の構築はappを立てずに走る() {
     let (theme, syntax_set, syntect_theme) = fixtures();
     let cache = MarkdownCache::new();
     let entries: Vec<LogEntry> = Vec::new();
@@ -145,7 +145,7 @@ fn only_visible_line<'a>(lines: &'a [Line<'a>]) -> &'a Line<'a> {
 // Counted カテゴリ: 1つのサマリー行への集約
 
 #[test]
-fn read_results_collapse_into_aggregated_count_line() {
+fn readの結果は件数の1行にまとまる() {
     let entries = vec![
         entry(
             Role::Assistant,
@@ -164,7 +164,7 @@ fn read_results_collapse_into_aggregated_count_line() {
 }
 
 #[test]
-fn read_results_singular_count_uses_singular_noun() {
+fn 結果が1件のときは単数形になる() {
     let entries = vec![results_entry(&[(
         counted(CountedBucket::Read, false),
         false,
@@ -176,7 +176,7 @@ fn read_results_singular_count_uses_singular_noun() {
 }
 
 #[test]
-fn search_bucket_results_fold_into_one_pattern_summary() {
+fn 検索の結果はパターンの要約1行にまとまる() {
     let entries = vec![results_entry(&[
         (counted(CountedBucket::Search, false), false),
         (counted(CountedBucket::Search, false), false),
@@ -188,7 +188,7 @@ fn search_bucket_results_fold_into_one_pattern_summary() {
 }
 
 #[test]
-fn bash_ls_collapses_to_listed_directories_summary() {
+fn bashのlsは一覧の要約にまとまる() {
     let entries = vec![results_entry(&[
         (counted(CountedBucket::List, true), false),
         (counted(CountedBucket::List, true), false),
@@ -200,7 +200,7 @@ fn bash_ls_collapses_to_listed_directories_summary() {
 }
 
 #[test]
-fn counted_result_ignores_is_error_and_still_aggregates_normally() {
+fn 集計対象はis_errorを無視して普通にまとまる() {
     // 実測: Counted は is_error を無視する。失敗した Read でもエラー色は付かず、
     // 普通のサマリー行へ折り込まれる。
     let entries = vec![results_entry(&[(
@@ -219,7 +219,7 @@ fn counted_result_ignores_is_error_and_still_aggregates_normally() {
 // Inline カテゴリ: 呼び出しごとの ⏺ Name(arg) 行
 
 #[test]
-fn edit_tool_collapses_to_update_display_name() {
+fn editはupdateという表示名にまとまる() {
     let entries = vec![entry(
         Role::Assistant,
         vec![tool_use("Edit", json!({"file_path": "/tmp/out.txt"}))],
@@ -232,7 +232,7 @@ fn edit_tool_collapses_to_update_display_name() {
 }
 
 #[test]
-fn inline_tool_use_renders_bold_name_and_text_colored_arg_not_gray() {
+fn インラインの呼び出しは名前が太字で引数は本文色() {
     let entries = vec![entry(
         Role::Assistant,
         vec![tool_use("Write", json!({"file_path": "/tmp/out.txt"}))],
@@ -263,7 +263,7 @@ fn inline_tool_use_renders_bold_name_and_text_colored_arg_not_gray() {
 // Hidden カテゴリ: どちらの位置でも何も描画しない
 
 #[test]
-fn todowrite_renders_nothing_in_collapsed_mode() {
+fn 折りたたみ表示ではtodowriteは何も描かない() {
     let entries = vec![
         entry(
             Role::Assistant,
@@ -282,7 +282,7 @@ fn todowrite_renders_nothing_in_collapsed_mode() {
 // カバー済み（is_error を完全に無視する）
 
 #[test]
-fn inline_error_result_draws_multiline_error_block() {
+fn インラインのエラーは複数行のブロックで描く() {
     // 失敗した Bash(false) 呼び出しの実測カラムレイアウト: ⎿ は col2、本文は
     // （先頭に "Error: " を付けて）1行目は col4 から、継続行は col5 から。
     // "Error: " のプレフィックスは最初の行にしか付かない。
@@ -332,7 +332,7 @@ fn inline_error_result_draws_multiline_error_block() {
 }
 
 #[test]
-fn non_erroring_inline_result_renders_nothing() {
+fn エラーでないインラインの結果は何も描かない() {
     let entries = vec![entry(
         Role::User,
         vec![tool_result(ResultKind::Inline, &["all good"], false)],
@@ -342,7 +342,7 @@ fn non_erroring_inline_result_renders_nothing() {
 }
 
 #[test]
-fn errored_tool_use_marker_turns_error_colored() {
+fn 失敗した呼び出しのマーカーはエラー色になる() {
     let entries = vec![entry(
         Role::Assistant,
         vec![tool_use_errored("Bash", json!({"command": "false"}), true)],
@@ -357,7 +357,7 @@ fn errored_tool_use_marker_turns_error_colored() {
 // Thinking ブロック: 折り畳み時の1行 vs 展開時のヘッダー+本文
 
 #[test]
-fn thinking_block_collapsed_renders_one_line_summary() {
+fn thinkingは折りたたみで1行の要約になる() {
     let entries = vec![entry(Role::Assistant, vec![thinking("let me reason", 12)])];
     let lines = build(&entries, false);
     assert_eq!(
@@ -367,7 +367,7 @@ fn thinking_block_collapsed_renders_one_line_summary() {
 }
 
 #[test]
-fn thinking_block_collapsed_has_no_glyph_and_starts_at_column_two() {
+fn 折りたたみのthinkingはグリフ無しで2桁目から始まる() {
     // 仕様: col2、グリフ無し — 展開時のヘッダーが使う * マーカーではなく、
     // ただの2スペースインデント。
     let entries = vec![entry(Role::Assistant, vec![thinking("let me reason", 3)])];
@@ -377,7 +377,7 @@ fn thinking_block_collapsed_has_no_glyph_and_starts_at_column_two() {
 }
 
 #[test]
-fn thinking_block_collapsed_bolds_only_the_duration_span() {
+fn 折りたたみのthinkingは時間だけを太字にする() {
     let entries = vec![entry(Role::Assistant, vec![thinking("let me reason", 12)])];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
@@ -407,7 +407,7 @@ fn thinking_block_collapsed_bolds_only_the_duration_span() {
 }
 
 #[test]
-fn thinking_block_expanded_shows_header_and_body_unchanged() {
+fn 展開したthinkingは見出しと本文をそのまま出す() {
     let entries = vec![entry(Role::Assistant, vec![thinking("let me reason", 12)])];
     let lines = build(&entries, true);
     let texts = non_blank_texts(&lines);
@@ -425,7 +425,7 @@ fn thinking_block_expanded_shows_header_and_body_unchanged() {
 // Teammate-message ブロック: 折り畳み時のサマリー vs 展開時の本文
 
 #[test]
-fn teammate_message_collapsed_renders_one_line_summary() {
+fn teammateのメッセージは折りたたみで1行の要約になる() {
     let entries = vec![entry(
         Role::User,
         vec![teammate_message("alice", "please review PR 42")],
@@ -438,7 +438,7 @@ fn teammate_message_collapsed_renders_one_line_summary() {
 }
 
 #[test]
-fn teammate_message_collapsed_line_is_entirely_inactive() {
+fn 折りたたみのteammateの行は操作対象にならない() {
     let entries = vec![entry(
         Role::User,
         vec![teammate_message("alice", "please review PR 42")],
@@ -455,7 +455,7 @@ fn teammate_message_collapsed_line_is_entirely_inactive() {
 }
 
 #[test]
-fn teammate_message_collapsed_ignores_the_body_entirely() {
+fn 折りたたみのteammateは本文を一切見ない() {
     // 折り畳みモードでは id しかレンダリングされない — 本文テキストは短くても
     // サマリー行に漏れてはならない。
     let entries = vec![entry(Role::User, vec![teammate_message("alice", "hi")])];
@@ -466,7 +466,7 @@ fn teammate_message_collapsed_ignores_the_body_entirely() {
 }
 
 #[test]
-fn teammate_message_expanded_shows_header_without_hint_then_body() {
+fn 展開したteammateは見出しの後に本文を出す() {
     let entries = vec![entry(
         Role::User,
         vec![teammate_message("alice", "please review PR 42")],
@@ -487,7 +487,7 @@ fn teammate_message_expanded_shows_header_without_hint_then_body() {
 // Expanded モード（conductor 独自の ctrl+o 相当のトグル）
 
 #[test]
-fn expanded_mode_shows_raw_tool_name_not_the_collapsed_alias() {
+fn 展開表示では別名ではなく素のツール名を出す() {
     // 折り畳みモードは Edit を Update として表示するが、展開モードは各呼び出しを
     // 個別に描画するので、代わりに tool 自身の生の名前を表示しなければならない。
     let entries = vec![entry(
@@ -504,7 +504,7 @@ fn expanded_mode_shows_raw_tool_name_not_the_collapsed_alias() {
 // user ターンはフル幅の背景ブロックとして描画される
 
 #[test]
-fn user_text_renders_the_marker_glyph_not_the_assistant_bullet() {
+fn ユーザの本文はassistantの点ではなく専用のマーカーで描く() {
     let entries = vec![entry(
         Role::User,
         vec![DisplayBlock::Text("hi".to_string())],
@@ -515,7 +515,7 @@ fn user_text_renders_the_marker_glyph_not_the_assistant_bullet() {
 }
 
 #[test]
-fn user_text_marker_and_body_carry_the_background_fill_color() {
+fn ユーザの本文はマーカーも中身も背景色を持つ() {
     let entries = vec![entry(
         Role::User,
         vec![DisplayBlock::Text("hi".to_string())],
@@ -534,7 +534,7 @@ fn user_text_marker_and_body_carry_the_background_fill_color() {
 }
 
 #[test]
-fn user_text_bypasses_markdown_rendering() {
+fn ユーザの本文はmarkdownとして描かない() {
     // user のプロンプト内の Markdown 構文は、文字通りの文字として描画されなければ
     // ならない — 太字や見出しなどのパースはしない。user 入力は文章ではなく生の
     // テキストであるため。
@@ -554,7 +554,7 @@ fn user_text_bypasses_markdown_rendering() {
 }
 
 #[test]
-fn user_text_preserves_source_newlines_as_separate_lines() {
+fn ユーザの本文の改行はそれぞれ別の行になる() {
     let entries = vec![entry(
         Role::User,
         vec![DisplayBlock::Text("first line\nsecond line".to_string())],
@@ -567,7 +567,7 @@ fn user_text_preserves_source_newlines_as_separate_lines() {
 // 可視ブロックが1つも無い entry のために余計な空行は生まれない
 
 #[test]
-fn entries_with_no_visible_blocks_produce_no_stray_blank_line() {
+fn 見える中身が無いエントリは余計な空行を出さない() {
     // TodoWrite だけの entry（Hidden カテゴリ）が2つの可視テキストターンの間に
     // ある。それは何も生成してはならない — 自身の空行区切りすら含めて —
     // そのため "hello" と "world" の間には空行がちょうど1つあり、2つではない。
@@ -598,7 +598,7 @@ fn entries_with_no_visible_blocks_produce_no_stray_blank_line() {
 }
 
 #[test]
-fn counted_only_tool_use_entry_produces_no_stray_blank_line() {
+fn 集計だけの呼び出しも余計な空行を出さない() {
     // Read の tool_use（Counted カテゴリ）は tool_use の位置には何も描画しない —
     // 代わりに集約されたサマリーが、対になる tool_result の位置に描画される
     // （上の Counted 集約テストを参照）。そのような呼び出しだけを持つ entry も
@@ -630,7 +630,7 @@ fn counted_only_tool_use_entry_produces_no_stray_blank_line() {
 }
 
 #[test]
-fn expanded_mode_shows_every_result_line_with_no_cap() {
+fn 展開表示では結果の行を上限なく全部出す() {
     let raw_lines: Vec<String> = (0..12).map(|i| format!("line{i}")).collect();
     let raw_refs: Vec<&str> = raw_lines.iter().map(String::as_str).collect();
     let entries = vec![entry(
@@ -678,7 +678,7 @@ fn counted(bucket: CountedBucket, from_bash: bool) -> ResultKind {
 }
 
 #[test]
-fn hidden_result_draws_nothing_even_when_it_errored() {
+fn 隠す結果は失敗しても何も描かない() {
     // 実測: is_error を持つ結果の TodoWrite は、ネイティブの出力を1行も
     // 生成しなかった。Hidden は失敗時も隠れたままである。
     let entries = vec![results_entry(&[(ResultKind::Hidden, true)])];
@@ -686,7 +686,7 @@ fn hidden_result_draws_nothing_even_when_it_errored() {
 }
 
 #[test]
-fn several_buckets_fold_into_one_comma_joined_line() {
+fn 複数のバケットは読点で繋いだ1行にまとまる() {
     // 実測: ls×2 + Grep + Read は1行としてレンダリングされ、節は
     // search -> read -> list の順で並び、先頭の動詞だけが大文字始まりになる。
     let entries = vec![results_entry(&[
@@ -702,7 +702,7 @@ fn several_buckets_fold_into_one_comma_joined_line() {
 }
 
 #[test]
-fn two_buckets_keep_the_measured_order_and_casing() {
+fn バケットの並びと大小は実測どおりに保つ() {
     // 実測: ls + Read は "Read 1 file, listed 1 directory" とレンダリングされる。
     let entries = vec![results_entry(&[
         (counted(CountedBucket::List, true), false),
@@ -715,7 +715,7 @@ fn two_buckets_keep_the_measured_order_and_casing() {
 }
 
 #[test]
-fn shell_cat_counts_only_when_the_read_tool_is_absent() {
+fn シェルのcatはreadが無いときだけ数える() {
     // Bash(cat ...) と Read の実測された5通りの組み合わせ。
     let cases: [(&[(ResultKind, bool)], &str); 5] = [
         (
@@ -776,7 +776,7 @@ fn annotation(text: &str) -> DisplayBlock {
 /// 描くのと同じように検証する — コマンドとその annotation の間に空行が無いことも
 /// 含めて。これが区切り抑制ルールの理由である。
 #[test]
-fn compact_group_matches_the_native_layout() {
+fn compactのまとまりは本物と同じ形になる() {
     let entries = vec![
         entry(Role::Assistant, vec![DisplayBlock::CompactBoundary]),
         entry(Role::User, vec![DisplayBlock::Text("/compact".into())]),
@@ -810,7 +810,7 @@ fn compact_group_matches_the_native_layout() {
 }
 
 #[test]
-fn an_annotation_never_starts_a_new_turn() {
+fn 注記は新しいターンを始めない() {
     // entry の後に通常付く空行区切りは、次の entry が annotation のみの場合は
     // 抑制される。そのため ⏺ reply と、CLI がそれに付随させた ⎿ 行は
     // くっついたままになる。
@@ -833,7 +833,7 @@ fn an_annotation_never_starts_a_new_turn() {
 }
 
 #[test]
-fn a_notice_draws_an_assistant_bullet() {
+fn お知らせはassistantの点を出す() {
     let entries = vec![entry(
         Role::User,
         vec![DisplayBlock::Notice(
@@ -847,7 +847,7 @@ fn a_notice_draws_an_assistant_bullet() {
 }
 
 #[test]
-fn long_annotations_and_notices_stay_inside_the_panel() {
+fn 長い注記もお知らせもパネルの中に収まる() {
     // どちらの形式も CLI から渡される長さに上限の無いテキストを持つ
     // （worktree の外を指す ../../.. パスは長くなる）ため、どちらも
     // クリップされなければならない。
@@ -879,7 +879,7 @@ fn long_annotations_and_notices_stay_inside_the_panel() {
 }
 
 #[test]
-fn a_long_annotation_wraps_instead_of_being_elided() {
+fn 長い注記は省略ではなく折り返す() {
     // 実測: worktree の外から compact をまたいで持ち越されたファイルは、どんな
     // パネルにも収まらないほど長い ../../../… パスを持つことがある。Claude Code は
     // それを切り詰めるのではなく、本文の下に揃えた継続行へ流し込む。改行はパスの
@@ -919,7 +919,7 @@ fn a_long_annotation_wraps_instead_of_being_elided() {
 }
 
 #[test]
-fn two_text_blocks_in_one_user_turn_are_separated() {
+fn 同じターンの中の2つの本文は分けて描く() {
     // 実測: 例えばプロンプトと付加された <system-reminder> のように、2つの
     // テキストブロックを持つ user メッセージは、詰まった1組としてではなく、
     // 間に空行を挟んだ2つの ❯ ターンとして描画される。entry レベルの区切りは
