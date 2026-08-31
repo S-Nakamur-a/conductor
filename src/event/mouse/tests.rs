@@ -1,14 +1,9 @@
-//! マウスのヒットテストジオメトリ、ダブルクリック判定、左マージンの
-//! クリック分類に対する単体テスト。
+//! マウスのヒットテストジオメトリと、左マージンのクリック分類。
 
-use super::{
-    ClickGeometry, Column, in_fold_zone, register_double_click, register_double_click_on,
-    terminal_tab_row_at,
-};
+use super::{ClickGeometry, Column, in_fold_zone, terminal_tab_row_at};
 use crate::viewer::mouse::{
     MarginClickAction, MarginZone, classify_margin_click, thread_anchor_line,
 };
-use std::time::{Duration, Instant};
 
 /// 指定したカラム境界でClickGeometryを構築する。幅/高さは、[<=>] 展開ボタン
 /// （各カラム境界の手前5列、幅7以上が必要）がテスト可能になるよう設定する。
@@ -210,63 +205,6 @@ fn expand_button_absent_for_narrow_columns() {
     let g = geom(5, 50, 90);
     assert_eq!(g.expand_button_at(0), None);
     assert_eq!(g.expand_button_at(4), None);
-}
-
-#[test]
-fn double_click_within_threshold() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    // 前回のクリックから100ms後のクリックはダブルクリックになる。
-    let is_double = register_double_click(&mut last, t0 + Duration::from_millis(100));
-    assert!(is_double);
-    assert_eq!(last, t0 + Duration::from_millis(100));
-}
-
-#[test]
-fn single_click_beyond_threshold() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    // 400ms後のクリックはダブルクリックにならない（境界は含まない）。
-    assert!(!register_double_click(
-        &mut last,
-        t0 + Duration::from_millis(400)
-    ));
-    // しきい値を大きく超えたクリックも同様。
-    let t1 = t0 + Duration::from_millis(400);
-    assert!(!register_double_click(
-        &mut last,
-        t1 + Duration::from_millis(500)
-    ));
-}
-
-#[test]
-fn indexed_double_click_requires_same_idx() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    let mut last_idx = 0usize;
-    // idx 5への最初のクリック: 時間窓の中であっても、記録されているidx（0）と
-    // 異なるのでダブルクリックにはならない。
-    let first =
-        register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(50));
-    assert!(!first);
-    assert_eq!(last_idx, 5);
-    // 窓の中で同じidxへの2回目のクリック: ダブルクリックになる。
-    let second =
-        register_double_click_on(&mut last, &mut last_idx, 5, t0 + Duration::from_millis(100));
-    assert!(second);
-}
-
-#[test]
-fn indexed_double_click_resets_on_different_idx() {
-    let t0 = Instant::now();
-    let mut last = t0;
-    let mut last_idx = 3usize;
-    // 素早いクリックだが行が異なる → ダブルクリックにはならず、記録される
-    // インデックス/時刻が更新されるので、次のクリックはこれと比較される。
-    let hit = register_double_click_on(&mut last, &mut last_idx, 7, t0 + Duration::from_millis(10));
-    assert!(!hit);
-    assert_eq!(last_idx, 7);
-    assert_eq!(last, t0 + Duration::from_millis(10));
 }
 
 // メニューバーのクリック

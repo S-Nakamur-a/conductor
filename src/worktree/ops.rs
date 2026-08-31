@@ -7,6 +7,7 @@ use std::sync::mpsc;
 
 use crate::text_input::TextInput;
 use crate::types::{GrabbedBranch, PendingWorktree, WorktreeInputMode, WorktreeOpResult};
+use crate::widget::click::ClickTracker;
 
 /// worktree 管理の状態。
 pub struct WorktreeManager {
@@ -14,16 +15,15 @@ pub struct WorktreeManager {
     pub input_mode: WorktreeInputMode,
     /// worktree 名の入力バッファ。
     pub input_buffer: TextInput,
-    /// worktree の空白部分を最後にクリックした時刻 (ダブルクリック判定用)。
-    pub blank_last_click: std::time::Instant,
-    /// worktree バーの空白部分を最後にクリックした時刻 (ダブルクリックでの作成の
-    /// 判定用)。blank_last_click と分けてあるのは、カラムの空白へのクリックと
-    /// バーの空白へのクリックが誤ってダブルクリックとして結合しないようにするため。
-    pub wtbar_blank_last_click: std::time::Instant,
-    /// worktree 一覧の項目を最後にクリックした時刻 (ダブルクリック判定用)。
-    pub item_last_click: std::time::Instant,
-    /// 最後にクリックした worktree 一覧項目の添字。
-    pub item_last_click_idx: usize,
+    /// カラムの空白へのクリック。
+    ///
+    /// バーの空白と分けてあるのは、別々の場所への 1 回ずつが誤ってダブルクリック
+    /// として結合しないようにするため。
+    pub blank_clicks: ClickTracker,
+    /// worktree バーの空白へのクリック。
+    pub wtbar_blank_clicks: ClickTracker,
+    /// worktree 一覧の項目へのクリック。
+    pub item_clicks: ClickTracker,
     /// ステップ 1 で入力されたブランチ名。ステップ 2 (ベースブランチ選択) の
     /// あいだ保持する。
     pub pending_branch: String,
@@ -54,10 +54,9 @@ impl Default for WorktreeManager {
         Self {
             input_mode: WorktreeInputMode::Normal,
             input_buffer: TextInput::new(),
-            blank_last_click: std::time::Instant::now(),
-            wtbar_blank_last_click: std::time::Instant::now(),
-            item_last_click: std::time::Instant::now(),
-            item_last_click_idx: usize::MAX,
+            blank_clicks: ClickTracker::default(),
+            wtbar_blank_clicks: ClickTracker::default(),
+            item_clicks: ClickTracker::default(),
             pending_branch: String::new(),
             base_branch_list: Vec::new(),
             base_branch_selected: 0,

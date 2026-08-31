@@ -5,7 +5,7 @@ use crossterm::event::{KeyModifiers, MouseEvent};
 use crate::app::{App, Focus};
 use crate::terminal::link as terminal_link;
 
-use crate::event::mouse::{ClickGeometry, register_double_click};
+use crate::event::mouse::ClickGeometry;
 use crate::terminal::input::{handle_terminal_tab_click, spawn_terminal_session};
 
 /// 右カラム（Claudeターミナル / Shell）内の左クリックを処理する。
@@ -102,10 +102,7 @@ pub(crate) fn handle_terminal_column_click(
             .is_empty()
         {
             // 新しいClaude Codeセッションを起動するにはダブルクリックが必要。
-            if register_double_click(
-                &mut app.terminal.claude.blank_last_click,
-                std::time::Instant::now(),
-            ) {
+            if app.terminal.claude.blank_clicks.is_double(0) {
                 spawn_terminal_session(app);
             }
         }
@@ -119,10 +116,7 @@ pub(crate) fn handle_terminal_column_click(
             .is_empty()
         {
             // 新しいShellセッションを起動するにはダブルクリックが必要。
-            if register_double_click(
-                &mut app.terminal.shell.blank_last_click,
-                std::time::Instant::now(),
-            ) {
+            if app.terminal.shell.blank_clicks.is_double(0) {
                 spawn_terminal_session(app);
             }
         }

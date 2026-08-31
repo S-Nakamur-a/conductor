@@ -51,39 +51,6 @@ fn terminal_tab_row_at(col: u16, row: u16, geom: &ClickGeometry) -> Option<bool>
     }
 }
 
-/// 2回のクリックをダブルクリックとみなす最大間隔（ミリ秒）。
-const DOUBLE_CLICK_MS: u128 = 400;
-
-/// now にクリックを記録し、last に保存されている前回のクリックとダブル
-/// クリックを構成するか（つまり間隔が [DOUBLE_CLICK_MS] 未満か）を返す。
-/// *last を now に更新する。
-///
-/// crate::worktree::mouse からも呼ばれるため crate 全体に公開している。
-pub(crate) fn register_double_click(
-    last: &mut std::time::Instant,
-    now: std::time::Instant,
-) -> bool {
-    let is_double = now.duration_since(*last).as_millis() < DOUBLE_CLICK_MS;
-    *last = now;
-    is_double
-}
-
-/// [register_double_click] と同様だが、さらにクリックが前回と同じ idx に
-/// 当たっていることを要求する。*last と *last_idx の両方を更新する。
-///
-/// crate::explorer::mouse からも呼ばれるため crate 全体に公開している。
-pub(crate) fn register_double_click_on(
-    last: &mut std::time::Instant,
-    last_idx: &mut usize,
-    idx: usize,
-    now: std::time::Instant,
-) -> bool {
-    let same_idx = *last_idx == idx;
-    *last_idx = idx;
-    // register_double_click は必ず先に実行するので、*last はどちらにせよ更新される。
-    register_double_click(last, now) && same_idx
-}
-
 /// 画面上の行オフセット（inner_yからの相対値）を、インラインスレッド行を
 /// 考慮した1始まりのファイル行番号に解決する。画面行マッピングが無い場合は
 /// 単純な算術にフォールバックする。

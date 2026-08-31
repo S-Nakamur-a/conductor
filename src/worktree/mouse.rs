@@ -1,7 +1,7 @@
 //! Worktreeカラム（worktreeリスト / インラインセッション）のクリック処理。
 
 use crate::app::{App, Focus};
-use crate::event::mouse::{ClickGeometry, register_double_click, register_double_click_on};
+use crate::event::mouse::ClickGeometry;
 
 /// Worktreeカラム（worktreeリスト / インラインセッション）内の左クリックを処理する。
 pub(crate) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &ClickGeometry) {
@@ -12,12 +12,7 @@ pub(crate) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &Click
 
     if !app.worktrees.rows.is_empty() && item_row < app.worktrees.rows.len() {
         // ダブルクリック検出。
-        let is_double = register_double_click_on(
-            &mut app.worktree_mgr.item_last_click,
-            &mut app.worktree_mgr.item_last_click_idx,
-            item_row,
-            std::time::Instant::now(),
-        );
+        let is_double = app.worktree_mgr.item_clicks.is_double(item_row);
 
         app.set_focus(Focus::Worktree);
         app.worktrees.row_selected = item_row;
@@ -39,10 +34,7 @@ pub(crate) fn handle_worktree_column_click(app: &mut App, row: u16, geom: &Click
         }
     } else {
         // worktree項目より下の空白部分へのクリック。
-        let is_double = register_double_click(
-            &mut app.worktree_mgr.blank_last_click,
-            std::time::Instant::now(),
-        );
+        let is_double = app.worktree_mgr.blank_clicks.is_double(0);
 
         if is_double {
             // ダブルクリック → worktree作成ダイアログを開く。

@@ -2,6 +2,7 @@
 //! [TerminalPane] にまとめ、[TerminalState] がそれを 2 つ並べる。
 
 use crate::hit_map::ColumnSpans;
+use crate::widget::click::ClickTracker;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -21,8 +22,8 @@ pub struct TerminalPane {
     /// スクロールバックのオフセット。0 が最新。
     pub scroll: usize,
     pub cache: PtyRenderCache,
-    /// 空白部分の直近のクリック時刻。ダブルクリック判定に使う。
-    pub blank_last_click: Instant,
+    /// 空白部分へのクリック。
+    pub blank_clicks: ClickTracker,
     /// PTY のリーダースレッドがこのパネル向けの出力を出したときに立つ。
     pub dirty: bool,
     /// タブ列で最初に見えているタブの添字。
@@ -43,7 +44,7 @@ impl TerminalPane {
             size,
             scroll: 0,
             cache: PtyRenderCache::default(),
-            blank_last_click: Instant::now(),
+            blank_clicks: ClickTracker::default(),
             dirty: true,
             tab_scroll: 0,
             tab_reveal: false,
