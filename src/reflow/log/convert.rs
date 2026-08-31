@@ -121,14 +121,10 @@ fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     Some((id.to_string(), body.trim().to_string()))
 }
 
-/// user のテキストブロックを、Claude Code の実際の UI が表示する内容
-/// （Conductor 独自の <teammate-message> ラッパーについては、それ用に定義した
-/// 表示ブロック）へ正規化する。
+/// user のテキストを、Claude Code の UI が実際に見せている形へ正規化する。
 ///
-/// セッションログは、素の user ターンの中に CLI が特別に描画する（または
-/// 全く描画しない）いくつかのラッパー形式を記録している。生のまま残すと、
-/// reflow トランスクリプトがユーザが直前まで見ていた画面とまるで違うものに
-/// なってしまう。
+/// ログは CLI が特別に描く (あるいは全く描かない) ラッパー形式を素の user ターン
+/// の中に記録している。生のまま出すと、直前まで見ていた画面と別物になる。
 ///
 /// * <teammate-message teammate_id="...">…</teammate-message> — 別のエージェント
 ///   チームメイトからのメッセージ。DisplayBlock::TeammateMessage に畳み込む。
@@ -209,34 +205,18 @@ fn normalise_user_text(text: String) -> Option<DisplayBlock> {
     (!trimmed.is_empty()).then(|| DisplayBlock::Text(trimmed.to_string()))
 }
 
-/// Content の値を表示用ブロックへ変換し、2つの表層形式（素の文字列と型付き
-/// ブロック配列）を同じフラットな表現へ正規化する。
+/// [Content] の 2 つの表層形式 (素の文字列と型付きブロック配列) を、同じ平坦な
+/// 表示ブロックの列へ正規化する。
 ///
-/// is_user が真なら user ターンのラッパー正規化（スラッシュコマンド、
-/// local-command の stdout、タスク通知。normalise_user_text 参照）を適用する。
-/// assistant のテキストは手を加えない。これらのタグを正当に *引用* して
-/// いる場合があるため。
+/// assistant のテキストには手を加えない。ラッパーのタグを正当に引用している
+/// ことがあるため、正規化は is_user のときだけ ([normalise_user_text])。
 ///
-/// tool_kinds は、セッション全体で共有する tool_use の id → ResultKind の
-/// ペアリングマップ（session.rs 参照）。Counted カテゴリの tool_use
-/// ブロックは自分の id でこの bucket を書き込み、tool_result ブロックは
-/// その id を引いて復元する（Inline/Hidden な呼び出しは生のツール名を
-/// ここでは保持していない ── 必要なら分類時点で log::debug! できる程度
-/// ため None になる。分類時に対応する tool_use が見つからなかった場合
-/// （ログが途中で切れている場合など）も None）。このマップは1回の呼び出し
-/// より長く生き、セッション内の全レコードを通して引き回される。これに
-/// より、あるレコードの tool_use を、後のレコードの tool_result から
-/// 見つけられる。
-///
-/// errored_ids は、tool_result がエラーを報告した tool_use_id をセッション
-/// 全体で事前スキャンした集合（session.rs::scan_errored_tool_use_ids 参照）。
-/// tool_use は対応する tool_result に到達するより前に描画されるため必要になる。
-///
-/// thinking_duration_secs は、このレコードについてあらかじめ計算した
-/// 「Thought for Ns」の値（session.rs::thinking_duration_secs 参照）で、
-/// ここで見つかるすべての Thinking ブロックに適用する。1レコードは
-/// 全コンテンツブロックに対して1つのタイムスタンプしか持たないため、
-/// 1レコード内に複数の Thinking ブロックがあってもこの値を共有する。
+/// 引数のうち 3 つはセッション全体を見ないと決まらない (どれも session.rs が作る):
+/// tool_kinds は tool_use の id と結果種別の対応で、1 回の呼び出しより長く生きる
+/// ため、後のレコードの tool_result から前のレコードの tool_use を引ける。
+/// errored_ids が事前スキャンなのは、tool_use が対応する結果より先に描かれるから。
+/// thinking_duration_secs はレコードに 1 つしか無いので、複数の Thinking が
+/// あっても同じ値を共有する。
 pub(super) fn content_to_display_blocks(
     content: Content,
     is_user: bool,
