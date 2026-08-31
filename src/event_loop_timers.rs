@@ -212,11 +212,8 @@ pub(crate) fn poll_watchers(
     }
 }
 
-/// 意味索引の作り直しを 1 周進める。
-///
-/// 成果は選択中の worktree ではなく索引そのものに乗るので、生成が終わったら
-/// 読み直す。生成が向いていたツリーと今の選択が違えば `Slot` が取り込みを拒み、
-/// [`crate::app::App::start_semantic_index_load`] が正しい向きで読み直す。
+/// 成果は選択中の worktree ではなく索引そのものに乗るので、終わったら読み直す。
+/// 向きが違えば `Slot` が取り込みを拒み、正しい向きで読み直される。
 fn tick_semantic_regeneration(app: &mut App) {
     let repo_root = app.repo.path.clone();
     let tree_root = app.selected_worktree_path();

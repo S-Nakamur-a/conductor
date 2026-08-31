@@ -140,9 +140,7 @@ impl GitStatusMap {
         self.by_path.keys().any(|k| k.starts_with(&prefix))
     }
 
-    /// path/ 配下の status エントリが全て untracked かどうか。
-    /// [has_descendants] と組み合わせて初めて意味を持つ — それ以外では
-    /// 空虚に true になる。
+    /// [has_descendants] と組み合わせて初めて意味を持つ。それ以外では空虚に true になる。
     fn all_descendants_untracked(&self, path: &str) -> bool {
         let prefix = format!("{path}/");
         self.by_path

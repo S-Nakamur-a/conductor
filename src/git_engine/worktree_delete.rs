@@ -128,11 +128,8 @@ impl GitEngine {
         Ok(())
     }
 
-    /// 指定したパスに対応する libgit2 の worktree 名を探す。
-    ///
-    /// worktree 名はブランチ名と異なる場合がある(例えば feature/foo から
-    /// foo という名前の worktree が作られる)ので、登録済みの全 worktree を
-    /// 走査してパスで照合する。
+    /// worktree 名はブランチ名と違うことがある (feature/foo から foo が作られる等) ので、
+    /// 登録済みを全部走査してパスで照合する。
     fn find_worktree_name_by_path(&self, target: &Path) -> Option<String> {
         let names = self.repo.worktrees().ok()?;
         for name in names.iter().flatten() {

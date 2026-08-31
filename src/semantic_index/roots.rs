@@ -41,12 +41,8 @@ impl Language {
         }
     }
 
-    /// 入れ子になった目印を別の索引ルートとして扱うか。
-    ///
-    /// Rust の入れ子は workspace の member で、ルートに向けた rust-analyzer が
-    /// まとめて見る。別に立てると同じソースを 2 度索引したうえ、ピーク 2.3GiB の
-    /// producer が本数だけ増える。go.mod と tsconfig.json は逆で、そこがモジュール /
-    /// プロジェクトの境界になるため、外側の索引には入らない。
+    /// Rust の入れ子は workspace member なのでルートの rust-analyzer がまとめて見る
+    /// (別に立てると 2.3GiB の producer が本数だけ増える)。go.mod と tsconfig.json は逆。
     fn nests(self) -> bool {
         match self {
             Language::Rust => false,
@@ -263,10 +259,8 @@ impl IndexRoot {
         }
     }
 
-    /// 成果物のファイル名の幹。
-    ///
-    /// 区切りを `_` に潰すだけだと `a/b` と `a_b` が同じ名前になり、2 本の索引が
-    /// 同じファイルを取り合う。元の `_` を重ねて逃がすことで 1 対 1 に保つ。
+    /// 区切りを `_` に潰すだけだと `a/b` と `a_b` が同名になり 2 本が同じファイルを
+    /// 取り合う。元の `_` を重ねて逃がすことで 1 対 1 に保つ。
     fn stem(&self) -> String {
         let mut stem = format!("index.{}", self.lang.tag());
         let subroot = self.subroot.to_string_lossy();

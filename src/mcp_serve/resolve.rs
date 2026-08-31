@@ -110,11 +110,8 @@ pub(super) fn resolve_db_path_with(
     )
 }
 
-/// <root>/.conductor/conductor.db。
-///
-/// [crate::review_store::db_path] は使わない。あちらは .conductor
-/// ディレクトリを副作用として作ってしまうため — 上の探索経路は、何も
-/// 残さずに候補を調べられなければならない。
+/// [crate::review_store::db_path] は使わない。あちらは .conductor を副作用で作るが、
+/// 上の探索経路は何も残さずに候補を調べられなければならない。
 fn conductor_db(root: &Path) -> PathBuf {
     root.join(".conductor").join("conductor.db")
 }

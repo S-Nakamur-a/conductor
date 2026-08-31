@@ -12,10 +12,8 @@ fn test_signature() -> git2::Signature<'static> {
     git2::Signature::now("test", "test@test.com").unwrap()
 }
 
-/// parent(None ならルートコミット)の上に、指定したフラットなファイル内容で
-/// コミットを作る。parent のツリーに既にあるファイルはそのまま引き継がれる。
-/// ref は一切更新しない。呼び出し側が明示的にブランチ/タグを返り値の oid に
-/// 向けるので、どの ref が存在するかはテストが完全に制御する。
+/// parent のツリーにあるファイルは引き継ぐ。ref は一切更新しないので、どの ref が
+/// 存在するかはテストが完全に制御できる。
 fn commit_files(
     repo: &git2::Repository,
     parent: Option<&git2::Commit>,

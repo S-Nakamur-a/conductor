@@ -5,11 +5,8 @@ use super::App;
 use crate::config;
 
 impl App {
-    /// 現在のconfigからsyntectのハイライトテーマを組み直し、ハイライト済みspanを
-    /// 持つキャッシュをすべて無効化する。
-    ///
-    /// span色はキャッシュに焼き込まれるので、テーマだけ差し替えても画面には古い
-    /// 配色が残る。テーマを触る経路は必ずここを通すこと。
+    /// span の色はキャッシュに焼き込まれるので、テーマだけ差し替えても古い配色が残る。
+    /// テーマを触る経路は必ずここを通すこと。
     fn rebuild_syntect_theme(&mut self) {
         let new_id = config::syntax_theme_id(&self.config);
         if new_id == self.highlight.theme_id {

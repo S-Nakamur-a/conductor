@@ -68,12 +68,8 @@ impl GrepSearchOverlay {
         false
     }
 
-    /// インクリメンタル grep 検索を開始する。
-    ///
-    /// 短いクエリ(3文字以下)では2段階検索を使う:
-    ///   phase1 — 最近変更されたファイルだけを検索する(高速)
-    ///   phase2 — フル検索(並行して実行し、phase1 の結果を置き換える)
-    /// 長いクエリではフル検索だけを実行する。
+    /// 3 文字以下では 2 段階にする。phase1 が最近変更されたファイルだけを速く返し、
+    /// 並行して走る phase2 のフル検索が結果を置き換える。
     fn start(&mut self, root: &Path) {
         let query = self.query.text().to_string();
         if query.is_empty() {

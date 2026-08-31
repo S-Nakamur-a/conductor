@@ -157,10 +157,7 @@ pub fn icon_set_for_term_program(term_program: &str) -> Option<IconSet> {
     None
 }
 
-/// ESC ] 11 ; rgb:RRRR/GGGG/BBBB ST をパースして相対輝度を返す。
-///
-/// 各チャネルは 16 進 4 桁の値 (0000-FFFF)。輝度の計算には一般的な慣習に合わせて
-/// 上位バイト (先頭 2 桁) を使う。
+/// 各チャネルは 16 進 4 桁 (0000-FFFF)。輝度には慣習に合わせて上位バイトを使う。
 fn parse_osc11_luminance(response: &str) -> Option<f64> {
     // OSC の前後を剥がしてから rgb:…/…/… の部分を取り出す。
     let inner = response

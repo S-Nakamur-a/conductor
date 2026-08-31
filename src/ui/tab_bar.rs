@@ -276,9 +276,8 @@ mod tests {
         captured
     }
 
-    /// TestBackend に描画し、terminal を返すことでセルスタイルを直接検査できる
-    /// ようにする（render_hits のヒット領域出力では答えられない hover 背景/色の
-    /// アサーション用）。
+    /// terminal を返してセルスタイルを直接見られるようにする。ヒット領域の出力では
+    /// 答えられない hover の背景色を確かめるため。
     fn render_buffer(
         width: u16,
         items: &[TabItem],
@@ -355,9 +354,8 @@ mod tests {
         }
     }
 
-    /// 2つのタブ: 0がアクティブ、1が非アクティブ — アクティブと非アクティブの
-    /// close ボタンのスタイルを区別でき、hover スタイルが漏れ出ないことを
-    /// 証明するための2つ目の Close ヒットも用意できる。
+    /// アクティブと非アクティブで close ボタンのスタイルを区別でき、hover が漏れない
+    /// ことを示す 2 つ目の Close ヒットも取れる。
     fn two_tabs() -> Vec<TabItem> {
         vec![
             TabItem {

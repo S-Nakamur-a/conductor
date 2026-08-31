@@ -476,10 +476,7 @@ fn artifact_stamp(
     Some((path, modified))
 }
 
-/// revidere の解析を 1 回最後まで走らせる。ブロッキング。
-///
-/// 説明もれ検査に落ちても失敗にはしない。読める成果物ができている以上、
-/// 画面に出さずに捨てる理由が無い。
+/// 説明もれ検査に落ちても失敗にしない。読める成果物ができている以上、捨てる理由が無い。
 fn run_analyze(
     worktree: &std::path::Path,
     force: bool,
@@ -532,8 +529,6 @@ impl ::revidere::Ai for AiSeam {
     }
 }
 
-/// 貯めた応答の鍵に混ぜる、呼び先の見分け。
-///
 /// 答えを出しているものが変わったら別物として扱えればよいので、provider と
 /// その provider が実際に叩く先だけを並べる。
 fn identity(api: &crate::config::ApiConfig) -> String {

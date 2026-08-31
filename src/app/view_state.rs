@@ -394,13 +394,8 @@ enum RestoreDisposition {
     Keep,
 }
 
-/// Viewerがいま何を表示しているかから、期限が来たビュー復元の運命を決める。
-///
-/// [App::consume_pending_view_restore] から切り出しているのは、どちらの
-/// 誤答も静かに起きるため: Keep であるべきところで Drop すると
-/// ブランチの保存済みファイルを黙って消してしまい、Drop であるべき
-/// ところで Keep すると古い値のまま黙って固定してしまう。どちらも
-/// クラッシュとして表面化しないので、この真理値表はテストで固定している。
+/// どちらの誤答も静かに起きる。Keep すべきを Drop すると保存済みファイルを黙って
+/// 消し、Drop すべきを Keep すると古い値で固定する。真理値表はテストで固定してある。
 fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDisposition {
     if has_open_file {
         RestoreDisposition::Drop
@@ -411,12 +406,8 @@ fn restore_disposition(has_open_file: bool, showing_summary: bool) -> RestoreDis
     }
 }
 
-/// diffを計算すべき対象のbaseブランチを解決する: worktreeの保存済み
-/// base ref（PR intake時に記録される — save_worktree_base_branch 参照）が
-/// 優先される。PRは設定されたmainブランチ以外（例: release/develop）を
-/// 対象にすることがあるため。main_branch は、保存済みbaseが無いworktree
-/// （通常のworktree、またはレビューDBが使えない場合）のフォールバックとして
-/// のみ使われる。
+/// PR intake が記録した base ref を優先する。PR は main 以外 (release/develop など) を
+/// 対象にすることがあるため。main_branch は保存済み base が無いときだけ使う。
 fn resolve_diff_base_branch(saved_base: Option<String>, main_branch: &str) -> String {
     saved_base.unwrap_or_else(|| main_branch.to_string())
 }

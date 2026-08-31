@@ -129,11 +129,8 @@ fn is_suspicious_ref(ref_name: &str) -> bool {
     ref_name.starts_with('-')
 }
 
-/// dir が、はぐれた・壊れたディレクトリ (中断された取り込みの残骸、ユーザーが
-/// 手で作った空のディレクトリなど) ではなく本物の git worktree に見えるかどうか。
-/// worktree では .git はディレクトリではなくファイル (gitdir へのポインタ) だが、
-/// ここではどちらも受け入れる。この検査は「明らかに worktree ではない」を弾ければ
-/// 十分で、git の内部まで完全に検証する必要は無い。
+/// worktree では .git がファイル (gitdir へのポインタ) だが、ここではどちらも通す。
+/// 「明らかに worktree ではない」を弾ければ十分で、git の内部までは検証しない。
 fn is_valid_worktree_dir(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
