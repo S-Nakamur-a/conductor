@@ -6,14 +6,14 @@ use std::path::Path;
 
 /// スモークテスト: このソースファイル自身を含むリポジトリを開く。
 #[test]
-fn open_this_repo() {
+fn このリポジトリを開ける() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let _engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
 }
 
 /// スモークテスト: worktree を一覧する(少なくとも main が含まれるはず)。
 #[test]
-fn list_worktrees_includes_main() {
+fn worktree一覧はmainを含む() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
     let worktrees = engine.list_worktrees().expect("list_worktrees() failed");
@@ -31,7 +31,7 @@ fn list_worktrees_includes_main() {
 /// まるごと動かなくなる。HEAD を解決できないだけで一覧ごと落とさない、という
 /// のが worktree_info_at の設計 (head_oid は Option) なので、それを固定する。
 #[test]
-fn list_worktrees_handles_repo_without_commits() {
+fn コミットの無いリポジトリでも一覧が取れる() {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let repo_path = tmp.path().join("fresh");
     std::fs::create_dir_all(&repo_path).unwrap();
@@ -56,7 +56,7 @@ fn list_worktrees_handles_repo_without_commits() {
 /// main_worktree_path() が linked worktree から開いた場合でも正しいパスを
 /// 返すことを確認する。
 #[test]
-fn main_worktree_path_from_linked_worktree() {
+fn リンクされたworktreeからmainのパスを引く() {
     use std::fs;
 
     // 一時的な最小限の git リポジトリと linked worktree を作成する。
@@ -103,7 +103,7 @@ fn main_worktree_path_from_linked_worktree() {
 
 /// main_worktree_path() が main リポジトリからでも動作することを確認する。
 #[test]
-fn main_worktree_path_from_main_repo() {
+fn mainリポジトリからmainのパスを引く() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let engine = GitEngine::open(Path::new(&manifest)).expect("should open repo");
     let main_path = engine.main_worktree_path().expect("main_worktree_path()");
@@ -116,7 +116,7 @@ fn main_worktree_path_from_main_repo() {
 }
 
 #[test]
-fn remote_url_to_https_base_normalises_every_remote_spelling() {
+fn リモートurlはどの綴りでも同じhttpsに正規化する() {
     for url in [
         "git@github.com:owner/repo.git",
         "https://github.com/owner/repo.git",
@@ -149,7 +149,7 @@ fn temp_repo_engine() -> (tempfile::TempDir, GitEngine) {
 
 /// grab の状態がセッション ID なしで正しく往復することを確認するテスト。
 #[test]
-fn grab_state_roundtrip_without_session() {
+fn grab状態はセッション無しで往復する() {
     let (_tmp, engine) = temp_repo_engine();
 
     let branch = "test-branch";
@@ -174,7 +174,7 @@ fn grab_state_roundtrip_without_session() {
 
 /// grab の状態がセッション ID ありで正しく往復することを確認するテスト。
 #[test]
-fn grab_state_roundtrip_with_session() {
+fn grab状態はセッション付きで往復する() {
     let (_tmp, engine) = temp_repo_engine();
 
     let branch = "feature-x";
@@ -201,7 +201,7 @@ fn grab_state_roundtrip_with_session() {
 /// 後方互換性のテスト: 3行の wt-grab ファイル(セッション ID なし)を
 /// 読み込む。
 #[test]
-fn grab_state_load_legacy_format() {
+fn 旧形式のgrab状態も読める() {
     let (_tmp, engine) = temp_repo_engine();
 
     // レガシーな3行のファイルを直接書き込む。
@@ -272,7 +272,7 @@ fn commit_on_branch(repo: &Repository, branch_name: &str, message: &str) {
 }
 
 #[test]
-fn fetch_refspec_creates_local_branch() {
+fn fetch_refspecはローカルブランチを作る() {
     let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
     commit_on_branch(&origin_repo, "feature", "a PR head");
 
@@ -291,7 +291,7 @@ fn fetch_refspec_creates_local_branch() {
 }
 
 #[test]
-fn fetch_refspec_reports_failure_for_unknown_ref() {
+fn 知らないrefへのfetch_refspecは失敗を返す() {
     let (_origin_tmp, _local_tmp, _origin_repo, engine) = temp_repo_with_origin();
     let err = engine
         .fetch_refspec("refs/heads/does-not-exist:refs/heads/pr-1")
@@ -300,7 +300,7 @@ fn fetch_refspec_reports_failure_for_unknown_ref() {
 }
 
 #[test]
-fn create_worktree_for_existing_branch_checks_out_branch() {
+fn 既存ブランチのworktree作成はそのブランチを出す() {
     let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
     commit_on_branch(&origin_repo, "feature", "a PR head");
     engine
@@ -328,7 +328,7 @@ fn create_worktree_for_existing_branch_checks_out_branch() {
 }
 
 #[test]
-fn create_worktree_for_existing_branch_rejects_existing_dir() {
+fn 既にあるディレクトリへのworktree作成は拒む() {
     let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
     commit_on_branch(&origin_repo, "feature", "a PR head");
     engine
@@ -347,7 +347,7 @@ fn create_worktree_for_existing_branch_rejects_existing_dir() {
 }
 
 #[test]
-fn ensure_base_ref_available_creates_missing_local_branch() {
+fn 無いローカルブランチは作られる() {
     // origin は設定済みだが main をまだ fetch していないローカル
     // リポジトリ。"ローカルブランチが無い" 経路を確認するために使う。
     let origin_tmp = tempfile::tempdir().unwrap();
@@ -386,7 +386,7 @@ fn ensure_base_ref_available_creates_missing_local_branch() {
 }
 
 #[test]
-fn ensure_base_ref_available_fast_forwards_existing_local_branch() {
+fn 既にあるローカルブランチは早送りされる() {
     let (origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
     let before = engine
         .repo
@@ -417,7 +417,7 @@ fn ensure_base_ref_available_fast_forwards_existing_local_branch() {
 }
 
 #[test]
-fn ensure_base_ref_available_leaves_diverged_branch_untouched() {
+fn 分岐したブランチには触らない() {
     let (_origin_tmp, _local_tmp, origin_repo, engine) = temp_repo_with_origin();
 
     // ローカルのみのコミットで、ローカルの main を origin の main から

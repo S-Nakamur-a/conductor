@@ -132,7 +132,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn change_summary_save_get_and_replace() {
+    fn 変更サマリの保存と取得と置き換え() {
         let store = test_store();
 
         // 書き込まれるまでは存在しない。
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn pr_review_meta_upsert_and_get() {
+    fn prレビューのメタ情報のupsertと取得() {
         let store = test_store();
 
         assert!(store.get_pr_review_meta("feat/x").unwrap().is_none());

@@ -48,7 +48,7 @@ fn transcript_texts(dir: &Path, session_id: &str) -> Vec<String> {
 }
 
 #[test]
-fn session_id_selects_the_log_among_siblings() {
+fn session_idが兄弟の中からログを選ぶ() {
     // 3 つのセッションが同じプロジェクトディレクトリを共有する(同じ
     // worktree の 3 つの Claude パネル)。mtime がどうであれ、それぞれの
     // id は自分自身のログに解決すること。
@@ -63,7 +63,7 @@ fn session_id_selects_the_log_among_siblings() {
 }
 
 #[test]
-fn idle_session_is_not_displaced_by_a_newer_sibling() {
+fn 止まっているセッションは新しい兄弟に追い出されない() {
     // 回帰: メインエージェントが停止しサブエージェントだけ動いているパネルは
     // 自分のセッションログに何も書かない (サブエージェントのターンは
     // <session-id>/subagents/*.jsonl に入る)。その結果、このログはディレクトリ
@@ -97,7 +97,7 @@ fn idle_session_is_not_displaced_by_a_newer_sibling() {
 }
 
 #[test]
-fn unknown_session_id_resolves_to_nothing() {
+fn 知らないsession_idは何にも解決しない() {
     // 解決不能な id に対しては「履歴なし」が正しい答え。ディレクトリに
     // たまたまあるログにフォールバックすると別の会話を見せてしまう。
     let dir = tempfile::tempdir().expect("tmp dir");
@@ -107,7 +107,7 @@ fn unknown_session_id_resolves_to_nothing() {
 }
 
 #[test]
-fn empty_project_dir_resolves_to_nothing() {
+fn 空のプロジェクトディレクトリは何にも解決しない() {
     let dir = tempfile::tempdir().expect("tmp dir");
     assert!(session_log_in_dir(dir.path(), "aaa").is_none());
 }
@@ -184,7 +184,7 @@ fn resolve(dir: &Path, pinned: &str, spawned_at: SystemTime) -> String {
 }
 
 #[test]
-fn clear_rotation_is_followed() {
+fn clearによるローテーションを追える() {
     // clear 前の会話で止まらず、clear 後に書かれたログへ移ること。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(600));
@@ -200,7 +200,7 @@ fn clear_rotation_is_followed() {
 }
 
 #[test]
-fn repeated_clears_chain_to_the_newest_log() {
+fn clearを繰り返しても最新のログまで辿れる() {
     // /clear を複数回。連鎖の末端 (いま書かれているログ) まで辿ること。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(900));
@@ -217,7 +217,7 @@ fn repeated_clears_chain_to_the_newest_log() {
 }
 
 #[test]
-fn clear_with_no_output_yet_still_resolves() {
+fn 出力がまだ無いclearでも解決する() {
     // clear 直後、まだ 1 ターンも書かれていない状態。ローテーション先は
     // /clear レコードだけを持つが、それでもそちらへ移ること
     // (clear 前の会話を見せてはいけない)。
@@ -230,7 +230,7 @@ fn clear_with_no_output_yet_still_resolves() {
 }
 
 #[test]
-fn fresh_sibling_session_does_not_hijack() {
+fn 新しく始めた兄弟セッションは横取りしない() {
     // 回帰: 同じワークツリーで後から起動しただけの別セッション。/clear で
     // 始まっていないので後続ではない。以前はこれを続きとみなして他人の会話を
     // 表示していた (idle_session_is_not_displaced_by_a_newer_sibling 参照)。
@@ -248,7 +248,7 @@ fn fresh_sibling_session_does_not_hijack() {
 }
 
 #[test]
-fn log_pinned_by_another_panel_is_not_followed() {
+fn 他のパネルがpinしているログは追わない() {
     // 別パネルが自分のログとして pin している id は後続候補から外す
     // (そのパネルが --resume で clear 済みセッションを開いている場合)。
     let dir = tempfile::tempdir().expect("tmp dir");
@@ -269,7 +269,7 @@ fn log_pinned_by_another_panel_is_not_followed() {
 }
 
 #[test]
-fn clear_predating_the_spawn_is_not_followed() {
+fn 起動より前のclearは追わない() {
     // 古いセッションを --resume した直後は pin したログの mtime が何日も前に
     // なりうる。起動より前に始まっていた /clear 始まりのログは自分の続きでは
     // ないので辿らない。
@@ -292,7 +292,7 @@ fn clear_predating_the_spawn_is_not_followed() {
 }
 
 #[test]
-fn clear_long_after_the_last_turn_is_not_followed() {
+fn 最終ターンからかけ離れたclearは追わない() {
     // 前のターンから何時間も空いて始まった /clear 始まりのログは、自分の
     // 続きなのか、同じワークツリーで別に起動した claude なのかログからは
     // 区別できない。推測せず自分のログに留まる (この場合はこのバグの修正が
@@ -311,7 +311,7 @@ fn clear_long_after_the_last_turn_is_not_followed() {
 }
 
 #[test]
-fn unrotated_session_resolves_to_itself() {
+fn ローテーションしていなければ自分自身に解決する() {
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(600));
     write_plain_log(dir.path(), "solo", spawned, &["プロンプト"]);
@@ -320,7 +320,7 @@ fn unrotated_session_resolves_to_itself() {
 }
 
 #[test]
-fn missing_pinned_log_resolves_to_itself() {
+fn pinしたログが無ければ自分自身に解決する() {
     // ログがまだディスクに無い (起動直後) 段階では連鎖の起点が無い。
     // ディレクトリ内の別ログに飛ばず、pin した id をそのまま返すこと。
     let dir = tempfile::tempdir().expect("tmp dir");
@@ -336,7 +336,7 @@ fn missing_pinned_log_resolves_to_itself() {
 }
 
 #[test]
-fn rotated_transcript_shows_only_post_clear_turns() {
+fn ローテーション後はclear以降のターンだけが出る() {
     // 通しの確認: 解決したログを実際に読み、clear 前のターンが出ないこと。
     let dir = tempfile::tempdir().expect("tmp dir");
     let spawned = ago(Duration::from_secs(600));
@@ -355,7 +355,7 @@ fn rotated_transcript_shows_only_post_clear_turns() {
 }
 
 #[test]
-fn symlinked_session_log_resolves() {
+fn symlinkされたセッションログも解決する() {
     // migrate_session は grab したブランチのセッションを、新しい worktree の
     // プロジェクトディレクトリへシンボリックリンクする。解決はそのリンクを
     // たどれなければならない。

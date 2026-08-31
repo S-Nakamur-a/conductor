@@ -359,7 +359,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn open_sets_wal_journal_mode() {
+    fn openはwalジャーナルモードにする() {
         // WAL はファイルバックのデータベースでのみ有効になる。test_store() が
         // 使う :memory: では切り替わらないため、この PRAGMA を検証するには
         // 実際の tempdir 上の DB が必要になる。
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_commit_ref_defaults_to_head() {
+    fn v4のcommit_refは既定でheadになる() {
         let store = test_store();
         // commit_ref を省略して挿入する。v4 スキーマのデフォルトが埋めるはずで、
         // これにより Node 側の MCP 書き込み元は 'HEAD' をミラーする必要がなくなる。
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_check_rejects_worktree_branch_mismatch() {
+    fn v4のcheckはworktreeとbranchの食い違いを拒む() {
         let store = test_store();
         // worktree != branch（両方 non-null）は CHECK に違反しなければならない。
         // これにより、ずれた書き込み元は到達不能な行を挿入するのではなく
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_check_allows_null_branch() {
+    fn v4のcheckはnullのbranchを許す() {
         let store = test_store();
         // branch カラムが存在する前に作られた旧レコードは branch IS NULL であり、
         // CHECK はそれを許可し続けなければならない。
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_an_existing_v5_db_all_the_way_forward() {
+    fn 既存のv5から最後まで移行できる() {
         // ディスク上にある v6 より前のデータベースをシミュレートする。まず新規
         // ストアを開き（最新バージョンまで一気にマイグレーションされる）、それを
         // 手作業で v5 データベースの姿まで巻き戻し、ReviewStore::open が実際に

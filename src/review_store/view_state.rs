@@ -64,7 +64,7 @@ mod tests {
     use super::super::test_support::test_store;
 
     #[test]
-    fn view_state_save_and_get() {
+    fn ビュー状態の保存と取得() {
         let store = test_store();
 
         // 存在しない worktree は None を返す。
@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_worktree_save_and_get() {
+    fn 選択中worktreeの保存と取得() {
         let store = test_store();
 
         assert_eq!(store.get_selected_worktree().unwrap(), None);

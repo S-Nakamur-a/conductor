@@ -89,7 +89,7 @@ fn build_fixture() -> tempfile::TempDir {
 }
 
 #[test]
-fn git_status_map_classify_untracked_dir_is_untracked_like_its_contents() {
+fn 未追跡のディレクトリは中身と同じく未追跡になる() {
     // newdir/ は作成されただけで一度も add していないので、配下の全パスが
     // 新規になる。ディレクトリの行は子と一緒に薄暗く表示されなければ
     // ならない: 親を通常の tracked 色で表示しつつ中のファイルだけ薄暗く
@@ -103,7 +103,7 @@ fn git_status_map_classify_untracked_dir_is_untracked_like_its_contents() {
 }
 
 #[test]
-fn git_status_map_classify_tracked_dir_stays_tracked() {
+fn 追跡中のディレクトリは追跡中のまま() {
     // リポジトリルートのコミット済みファイルはトップレベルに直接あるので、
     // 兄弟の一部が untracked だからといって祖先ディレクトリが untracked と
     // 誤判定されてはならない。build2/ は untracked なファイルしか持たない
@@ -116,7 +116,7 @@ fn git_status_map_classify_tracked_dir_stays_tracked() {
 }
 
 #[test]
-fn git_status_map_classify_sibling_sharing_a_prefix_is_not_ignored() {
+fn 接頭辞を共有する兄弟は無視されない() {
     // .gitignore に載っているのは build/ であって build2/ ではない。祖先の
     // ルックアップは現状 HashMap の完全一致なのでこのテストは通る —
     // これが starts_with スキャンに緩められた場合に大きく失敗させるために
@@ -128,7 +128,7 @@ fn git_status_map_classify_sibling_sharing_a_prefix_is_not_ignored() {
 }
 
 #[test]
-fn classify_reports_the_state_each_fixture_was_built_into() {
+fn 分類は各フィクスチャが作られた状態を答える() {
     let tmp = build_fixture();
     let map = GitStatusMap::load(tmp.path()).unwrap();
     // build/ は libgit2 が 1 エントリに折りたたむ (実測)。ディレクトリ側の
@@ -188,7 +188,7 @@ fn build_case_colliding_fixture() -> tempfile::TempDir {
 // ため。実行時に return すると、検証していないのに緑になる。
 #[cfg(target_os = "macos")]
 #[test]
-fn git_status_map_case_colliding_entry_is_not_deleted() {
+fn 大小が衝突するエントリは削除扱いにしない() {
     let tmp = build_case_colliding_fixture();
     if !fs_ignores_case(tmp.path()) {
         eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");
@@ -202,7 +202,7 @@ fn git_status_map_case_colliding_entry_is_not_deleted() {
 }
 
 #[test]
-fn git_status_map_real_deletion_is_reported() {
+fn 本当の削除はちゃんと報告する() {
     let tmp = build_fixture();
     fs::remove_file(tmp.path().join("untouched.txt")).unwrap();
 

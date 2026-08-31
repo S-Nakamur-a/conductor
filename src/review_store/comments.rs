@@ -297,7 +297,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn add_and_retrieve_review() {
+    fn コメントを足して取り出す() {
         let store = test_store();
 
         let review = store
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn update_body() {
+    fn 本文を編集する() {
         let store = test_store();
 
         let review = store
@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn line_range_and_author() {
+    fn 行範囲と書き手を持つ() {
         let store = test_store();
 
         // worktree と branch には同じブランチ名を持たせる（v4 の CHECK が強制
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_published_hides_reviews_from_unpublished_query() {
+    fn 投稿済みの印は未投稿の一覧から外す() {
         let store = test_store();
 
         let r1 = store
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_reviews_filters_by_status() {
+    fn 未解決の一覧は状態で絞る() {
         let store = test_store();
 
         let pending = store
@@ -488,7 +488,7 @@ mod tests {
     /// branch フィルタ "feat/x" に対しては両方の行が返ってこなければ
     /// ならない。
     #[test]
-    fn pending_reviews_matches_branch_or_worktree_column() {
+    fn 未解決の一覧はbranchかworktreeのどちらかに当たる() {
         let store = test_store();
 
         // v4 の CHECK（branch IS NULL OR worktree = branch）は worktree を
@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_reviews_filters_by_file_path() {
+    fn 未解決の一覧はファイルパスで絞る() {
         let store = test_store();
 
         let a = store
@@ -566,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_id_prefix_finds_by_8char_prefix() {
+    fn 先頭8文字のプレフィックスで引ける() {
         let store = test_store();
 
         let review = store
@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_id_prefix_returns_none_when_no_match() {
+    fn 当たらなければnoneを返す() {
         let store = test_store();
         store
             .add_review(
@@ -613,7 +613,7 @@ mod tests {
     /// プレフィックスは16進数と - だけを通す。検証が緩むと、id 順で最初に
     /// 来たコメントに解決されてしまう。セキュリティ上重要な抜け穴。
     #[test]
-    fn resolve_id_prefix_rejects_invalid_prefixes() {
+    fn 不正なプレフィックスは拒む() {
         let store = test_store();
         store
             .add_review(
@@ -646,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_id_prefix_is_deterministic_with_multiple_matches() {
+    fn 複数当たっても決定的に1件を返す() {
         let store = test_store();
 
         // プレフィックスを共有するように手作りした id。実際の UUID は
@@ -678,7 +678,7 @@ mod tests {
     /// 来たコメントにサイレントにマッチしてしまい、他人のコメントを
     /// 解決・返信した上で成功したと報告することになる。
     #[test]
-    fn resolve_id_prefix_rejects_prefixes_shorter_than_advertised() {
+    fn 公表より短いプレフィックスは拒む() {
         let store = test_store();
         let review = store
             .add_review(

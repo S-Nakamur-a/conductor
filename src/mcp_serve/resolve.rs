@@ -144,7 +144,7 @@ mod tests {
     /// 開いてしまい、すべてのツールが成功して自分の書き込みも読み戻せるのに、終了時に
     /// 全部消える。
     #[test]
-    fn parse_db_arg_reads_both_flag_forms_and_rejects_missing_values() {
+    fn parse_db_argは両方の書き方を読み値の無い指定を拒む() {
         let cases: [(&[&str], Option<&str>); 6] = [
             (&["mcp-serve", "--db", "/tmp/a.db"], Some("/tmp/a.db")),
             (&["mcp-serve", "--db=/tmp/b.db"], Some("/tmp/b.db")),
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_db_path_rejects_an_empty_explicit_path() {
+    fn 明示された空パスは拒む() {
         assert!(resolve_db_path_with(Some(PathBuf::new()), None).is_err());
         assert!(resolve_db_path_with(None, Some(PathBuf::new())).is_err());
     }
@@ -174,7 +174,7 @@ mod tests {
     ///
     /// 両方の値が与えられているので、どちらの分岐を消してもこのテストは失敗する。
     #[test]
-    fn explicit_db_arg_beats_env() {
+    fn 明示の_db引数は環境変数に勝つ() {
         let resolved = resolve_db_path_with(
             Some(PathBuf::from("/explicit/a.db")),
             Some(PathBuf::from("/from-env/b.db")),
@@ -187,7 +187,7 @@ mod tests {
     /// マーケットプレイスプラグインの .mcp.json は引数を一切渡さないので、
     /// この分岐を失うと TUI 内の全セッションが壊れる。
     #[test]
-    fn env_is_used_when_no_db_arg() {
+    fn db引数が無ければ環境変数を使う() {
         let resolved = resolve_db_path_with(None, Some(PathBuf::from("/from-env/b.db"))).unwrap();
         assert_eq!(resolved, PathBuf::from("/from-env/b.db"));
     }
@@ -197,7 +197,7 @@ mod tests {
     /// フォールスルーしてしまうと、マイグレーションは問題なく通り、TUI には
     /// 何も表示されないのに全てのツールが成功を報告することになる。
     #[test]
-    fn discovery_failure_is_an_error_not_a_fresh_database() {
+    fn 見つからないときは新規作成ではなくエラー() {
         let dir = tempfile::tempdir().unwrap();
         let probe = dir.path().join(".conductor").join("conductor.db");
         // 健全性チェック: 作られていたはずのパスがまだ存在しないことを確認する。
@@ -218,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_pipe_sits_beside_the_database() {
+    fn リフレッシュ用パイプはデータベースの隣に置く() {
         assert_eq!(
             refresh_pipe_path(Path::new("/r/.conductor/conductor.db")),
             Some(PathBuf::from("/r/.conductor/refresh.pipe"))
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_on_a_normal_checkout() {
+    fn 普通のチェックアウトでのブランチ名() {
         let dir = tempfile::tempdir().unwrap();
         let repo = init_repo_with_commit(dir.path());
         // git2::Repository::init は、環境が init.defaultBranch を上書きしない
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_is_none_when_head_is_detached() {
+    fn detached_headならブランチはnoneになる() {
         let dir = tempfile::tempdir().unwrap();
         let repo = init_repo_with_commit(dir.path());
         let oid = repo.head().unwrap().target().unwrap();
@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_is_none_before_the_first_commit() {
+    fn 最初のコミット前はブランチがnoneになる() {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         // HEAD が指しているのは unborn branch である — detached ではないが、

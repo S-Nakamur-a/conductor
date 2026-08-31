@@ -386,7 +386,7 @@ mod tests {
     // tools/list
 
     #[test]
-    fn tool_router_lists_exactly_the_seven_tools() {
+    fn 公開するツールはちょうど7つ() {
         let tools = McpServer::tool_router().list_all();
         let names: std::collections::BTreeSet<&str> =
             tools.iter().map(|t| t.name.as_ref()).collect();
@@ -436,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_comment_reports_not_found() {
+    fn 無いコメントの解決はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.resolve_comment(Parameters(CommentIdOnly {
             comment_id: "deadbeef".into(),
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_comment_marks_it_resolved() {
+    fn 解決するとコメントに印が付く() {
         let (server, _dir) = test_server();
         let id = server
             .store()
@@ -479,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn get_comment_thread_reports_not_found() {
+    fn 無いスレッドの取得はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.get_comment_thread(Parameters(CommentIdOnly {
             comment_id: "deadbeef".into(),
@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_to_comment_reports_not_found() {
+    fn 無いコメントへの返信はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.reply_to_comment(Parameters(ReplyToComment {
             comment_id: "deadbeef".into(),
@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_to_comment_stores_a_claude_authored_reply() {
+    fn 返信はclaude名義で保存される() {
         let (server, _dir) = test_server();
         let id = server
             .store()

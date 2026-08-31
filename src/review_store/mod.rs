@@ -60,7 +60,7 @@ mod tests {
     use super::db_path;
 
     #[test]
-    fn db_path_creates_directory() {
+    fn db_pathはディレクトリを作る() {
         let tmp = std::env::temp_dir().join("conductor_test_db_path");
         // 前回実行の残骸を掃除する
         let _ = std::fs::remove_dir_all(&tmp);

@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn add_and_get_replies() {
+    fn 返信を足して取り出す() {
         let store = test_store();
 
         let review = store
@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn replies_cascade_delete() {
+    fn 親を消すと返信も消える() {
         let store = test_store();
 
         let review = store
@@ -194,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_reply_removes_only_that_reply_not_the_parent() {
+    fn 返信の削除は親を消さない() {
         let store = test_store();
         let review = store
             .add_review(
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn update_reply_body_edits_only_that_reply() {
+    fn 返信の編集はその返信だけに効く() {
         let store = test_store();
         let review = store
             .add_review(
