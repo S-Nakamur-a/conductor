@@ -113,25 +113,10 @@ fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     Some((id.to_string(), body.trim().to_string()))
 }
 
-/// user のテキストを、Claude Code の UI が実際に見せている形へ正規化する。
-///
-/// ログは CLI が特別に描く (あるいは全く描かない) ラッパー形式を素の user ターン
-/// の中に記録している。生のまま出すと、直前まで見ていた画面と別物になる。
-///
-/// * <teammate-message teammate_id="...">…</teammate-message> — 別のエージェント
-///   チームメイトからのメッセージ。DisplayBlock::TeammateMessage に畳み込む。
-/// * <command-name>/foo</command-name>…<command-args>bar</command-args> —
-///   スラッシュコマンドの呼び出し。CLI は "> /foo bar" として表示する。
-/// * <local-command-stdout>…</local-command-stdout> — ローカルコマンドの
-///   出力。ラップを外して表示する（ここでサニタイズする。生の ANSI を
-///   含むことがあるため）。
-/// * <task-notification>…</task-notification> — バックグラウンドタスクの
-///   完了。メッセージ全体を通知の <summary> 行に畳み込む。
-///
-/// <system-reminder> はこのリストに *含まれない* — そのままにしている理由は
-/// この関数の末尾にあるコメントを参照。
-///
-/// 表示できるものが何も残らなかった場合は None を返す。
+/// ログは CLI が特別に描く (あるいは全く描かない) ラッパー形式を素の user ターンの中に
+/// 記録している。生のまま出すと、直前まで見ていた画面と別物になる。畳むのは
+/// teammate-message / command-name+args / local-command-stdout / task-notification の 4 つ。
+/// <system-reminder> を残す理由はこの関数の末尾にある。何も残らなければ None。
 fn normalise_user_text(text: String) -> Option<DisplayBlock> {
     // ラッパー形式が認識されるのはメッセージの先頭だけ（実際にそこに書かれる
     // ため）。ユーザがプロンプトの途中でこれらのタグに *言及* しているだけの

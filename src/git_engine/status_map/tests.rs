@@ -9,10 +9,8 @@
 use super::*;
 use std::fs;
 
-/// コミット済みファイル1つでリポジトリを作り、classify() が区別すべき
-/// 全組み合わせをカバーする6ファイルを追加で配置する。さらに .gitignore
-/// で ignored と宣言した build/ ディレクトリ(prefix 継承を確認するため
-/// ネストしたファイルも含む)を用意する。リポジトリのルートパスを返す。
+/// classify() が区別すべき全組み合わせ 6 ファイルと、.gitignore で ignored にした build/
+/// (prefix 継承を見るためネストしたファイル込み) を置き、リポジトリのルートを返す。
 fn build_fixture() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("create temp dir");
     let root = tmp.path();

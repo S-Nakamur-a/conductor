@@ -1,9 +1,8 @@
 use super::*;
 use crate::viewer::ViewerState;
 
-/// [Explorer::load_file_tree] は自身では Viewer 側を書き換えない
-/// ([TreeReload] を返すだけ)ので、テストでも本番の App 配線層と同じ後始末を
-/// ここで行う。
+/// [Explorer::load_file_tree] は自分では Viewer を書き換えない ([TreeReload] を返すだけ)
+/// ので、テストでも本番の配線層と同じ後始末をここでやる。
 fn reload(explorer: &mut Explorer, vs: &mut ViewerState, root: &Path, tab_width: usize) {
     let reload = explorer.load_file_tree(root, vs.content.current_file.as_deref());
     if reload.root_changed {

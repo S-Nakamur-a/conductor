@@ -56,9 +56,8 @@ fn is_text_input_key(key: &KeyEvent) -> bool {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
-/// テキストフィルタも持つオーバーレイ（コマンドパレット、ファイル名検索など）の
-/// リストナビゲーション。素の印字可能キーはフィルタ側に落ちるため、非テキスト
-/// キー（矢印、PageUp/Down）だけがナビゲーションになる。j/k/g はタイプされる。
+/// 素の印字可能キーはフィルタ側に落ちるので、矢印や PageUp/Down だけがナビになる。
+/// j/k/g はタイプされる。
 fn filterable_overlay_list_nav(
     keymap: &KeyMap,
     key: &KeyEvent,

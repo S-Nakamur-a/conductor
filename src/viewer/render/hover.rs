@@ -211,10 +211,8 @@ fn render_base_popup(frame: &mut Frame, host: Rect, app: &App) -> BaseOutcome {
     }
 }
 
-/// シグネチャの各行を、定義があるファイルの文法で色付けする。
-///
-/// シグネチャは宣言の断片なので、パーサの状態はファイル先頭からの続きにならない。
-/// 全部を単色にするよりは読める、という割り切りは revidere のハンク表示と同じ。
+/// シグネチャは宣言の断片なのでパーサの状態が続かない。全部を単色にするよりは読める、
+/// という割り切りは revidere のハンク表示と同じ。
 fn highlighted_signature(
     app: &App,
     info: &crate::viewer::hover_info::HoverInfo,
@@ -329,9 +327,8 @@ fn render_refs_list(frame: &mut Frame, host: Rect, app: &App) -> Option<RefsOutc
     })
 }
 
-/// コードプレビュー（レベル2） — クリックした参照の周辺ソース行。一覧の
-/// 右側に収まればそこに、収まらなければ下に配置する。list_rect は同じフレームで
-/// 描いた参照一覧の Rect（[render_refs_list] の戻り値）。
+/// 一覧の右に収まればそこ、収まらなければ下。list_rect は同じフレームで描いた参照一覧の
+/// Rect ([render_refs_list] の戻り値)。
 fn render_preview(frame: &mut Frame, host: Rect, app: &App, list_rect: Rect) -> Option<Rect> {
     let theme = &app.theme;
     let preview = app

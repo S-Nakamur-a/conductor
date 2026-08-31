@@ -159,10 +159,7 @@ pub fn render_decoration(
     }
 }
 
-/// 絵文字セルの行優先グリッドを組み立て、[Paragraph] として描画する。
-///
-/// このヘルパーは全モードで共有される。各グリッドセルは None（スペースとして
-/// 描画）か Some(emoji)（幅2カラムのスタイル付き span として描画）のいずれか。
+/// 全モードで共有する。各セルは None (スペース) か Some(emoji) (幅 2 カラム)。
 fn render_grid(frame: &mut Frame, area: Rect, grid: &[Vec<Option<&str>>], theme: &Theme) {
     let lines: Vec<Line> = grid
         .iter()
@@ -186,9 +183,7 @@ fn render_grid(frame: &mut Frame, area: Rect, grid: &[Vec<Option<&str>>], theme:
     frame.render_widget(paragraph, area);
 }
 
-/// tick カウンタから導出する単純な疑似乱数。
-///
-/// 暗号学的な安全性はない — アニメーションに変化をつけられれば十分という位置づけ。
+/// 暗号学的な安全性は無い。アニメーションに変化が付けば十分という位置づけ。
 fn pseudo_random(tick: u64, seed: u64) -> u64 {
     let mut x = tick.wrapping_mul(6364136223846793005).wrapping_add(seed);
     x ^= x >> 16;

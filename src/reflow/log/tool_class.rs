@@ -127,14 +127,9 @@ fn classify_bash(input: &Value) -> ToolCategory {
     }
 }
 
-/// 指定した1つの引数キーを読んで Inline カテゴリを組み立てる。値が空また
-/// は無い場合は arg: None にし、レンダラが括弧ごと省略できるようにする
-/// （⏺ Name() ではなく ⏺ Name）。
-///
-/// 値はツールの *出力* と同様にサニタイズする。引数は生の JSON であり
-/// （複数行の Bash コマンドやタブを含むパターンなど）、1つの表示範囲の中に
-/// 改行やタブがあると端末と ratatui 自身のカラム計算がずれ、行が異常に
-/// 幅広く表示されてしまう。
+/// 値が空か無ければ arg: None にして、レンダラが括弧ごと省ける (⏺ Name) ようにする。
+/// 引数は生の JSON なので出力と同様にサニタイズする — 改行やタブが混ざると端末と
+/// ratatui のカラム計算がずれて行が異常に広がる。
 fn inline(display_name: &str, input: &Value, key: &str) -> ToolCategory {
     let arg = input
         .get(key)

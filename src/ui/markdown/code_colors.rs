@@ -81,13 +81,8 @@ struct StringState {
 }
 
 impl StringState {
-    /// トークン1つ分のスコープスタックから状態を更新する。このトークンが中断されていない
-    /// （赤色の）文字列部分にあれば Some(true)、中断された文字列の一部（デリミタや
-    /// 埋め込み式の後のリテラルテキスト）であれば Some(false)、トークン自体が
-    /// string.quoted.* にスコープされていなければ None を返す（呼び出し元は他の分類
-    /// ルールの評価を続けるべき、ということ。これは Python の {x} のような、文字列の
-    /// スコープを完全に外れつつも文字列の範囲内には留まっている埋め込み式トークンを
-    /// カバーするため）。
+    /// None は「トークンが string.quoted.* にスコープされていない」で、呼び出し元は他の分類を
+    /// 続けること。Python の {x} のように、文字列のスコープを外れつつ範囲内に留まる場合がある。
     fn observe(&mut self, scopes: &[String]) -> Option<bool> {
         let has_quoted = scopes.iter().any(|s| s.starts_with("string.quoted."));
         if has_quoted && !self.in_string {
@@ -255,9 +250,8 @@ fn classify(
     Category::Reset
 }
 
-/// 既に改行で終端されたソース行1つをハイライトする。stack と string_state を呼び出し
-/// 間で引き継ぐことで、複数トークンにまたがる構文（原理的には複数行文字列も）を
-/// 一貫して分類できるようにする。
+/// stack と string_state を呼び出し間で引き継ぐことで、複数トークンにまたがる構文
+/// (原理的には複数行文字列も) を一貫して分類できる。
 fn classify_line(
     line: &str,
     ops: &[(usize, ScopeStackOp)],

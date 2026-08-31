@@ -199,11 +199,8 @@ fn go_to_implementation_at(app: &mut App, line_idx: usize, occurrence: usize, sy
     }
 }
 
-/// 索引が導出した実装先を、ジャンプか一覧にする。
-///
-/// 索引に impl ブロックの符号が無い形 (ジェネリックな impl) では、着地点はその
-/// ブロックの最初のメソッドになる。飛び先の行そのものより「どの型の実装か」が
-/// 要る情報なので、一覧にはその型を並べる。
+/// impl ブロックの符号が無い形 (ジェネリックな impl) では着地点が最初のメソッドになる。
+/// 行そのものより「どの型の実装か」が要る情報なので、一覧にはその型を並べる。
 fn apply_semantic_implementations(
     app: &mut App,
     symbol: &str,

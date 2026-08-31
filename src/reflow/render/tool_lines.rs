@@ -238,16 +238,8 @@ fn bucket_summary_line(
     fit_styled_line(MARKER_COLS, &parts, width)
 }
 
-/// Inline カテゴリのエラーブロック。失敗した Bash(false) のキャプチャからカラム単位で
-/// 実測したもの:
-/// ```text
-/// ⏺ Bash(false)
-///  ⎿ Error: bash: command failed with exit code 1
-///     second line of the error
-/// ```
-/// （⏺ の行自体はここではなく [render_tool_use] が描く）。1行目: col0 に灰色のスペース1個、
-/// col2 に ⎿、本文（先頭に "Error: " を付加）は col5 から。続きの行: 本文は同じく col5 から、
-/// "Error: " プレフィックスは無し。
+/// 失敗した Bash(false) のキャプチャからカラム単位で実測。1 行目は col0 に灰色のスペース、
+/// col2 に ⎿、本文 ("Error: " 付き) は col5 から。続きの行は col5 から接頭辞なし。
 fn inline_error_lines(lines: &[String], width: usize, styles: &ToolStyles) -> Vec<Line<'static>> {
     let first_budget = width.saturating_sub(5);
     let cont_budget = width.saturating_sub(5);

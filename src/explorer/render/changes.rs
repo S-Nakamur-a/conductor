@@ -61,13 +61,8 @@ enum FileStageState {
     Committed,
 }
 
-/// git のステータスビットからファイルのステージ状態を分類する。None は
-/// GitStatusMap にそのパスのエントリが全く無かったことを意味し、つまり
-/// HEAD に対してクリーンな状態 — それがここでの Committed にあたる。
-///
-/// 判定順序が重要: 編集して git add し、さらに編集する、といった操作を
-/// すると WT_* と INDEX_* の両方のビットが立つことがある。この場合は
-/// unstaged を優先させたいので WT_* のチェックを先に行う。
+/// None は GitStatusMap にエントリが無い、つまり HEAD に対してクリーン (= Committed)。
+/// 編集 → add → さらに編集で WT_* と INDEX_* が両方立つので、unstaged を優先して先に見る。
 fn file_stage_state(status: Option<git2::Status>) -> FileStageState {
     let Some(status) = status else {
         return FileStageState::Committed;
@@ -255,12 +250,8 @@ pub(super) fn render(
     frame.render_widget(list, area);
 }
 
-/// changed-files ブロックのタイトルを組み立てる。— diff error サフィックスは
-/// 「何かが失敗してベースからの変更が欠けている」場合と、本当に
-/// (0) である場合を区別するためのもの。これが無いと両者は同じ見た目になる。
-/// あえて "base error" とはしていない: base ref の解決失敗はよくある原因の
-/// 一つに過ぎず、HEAD が解決できない場合や merge-base が見つからない場合も
-/// ここに含まれるため。
+/// diff error の接尾辞は、失敗して変更が欠けている場合と本当に (0) の場合を見分けるため。
+/// "base error" としないのは、HEAD の解決失敗や merge-base 不在もここに入るから。
 fn changes_title(total: usize, has_error: bool, icon_set: crate::icons::IconSet) -> String {
     let icon = crate::icons::PANEL_CHANGED.labeled(icon_set);
     if has_error {
@@ -278,9 +269,7 @@ pub(crate) fn changes_banner_rows(has_error: bool) -> usize {
     usize::from(has_error)
 }
 
-/// ファイルパスに対して GitHub 風のコメント数バッジ（例: 💬3）のテキストと色を
-/// 組み立てる。レビューコメントが無ければ None。未解決のコメントがあれば
-/// accent 色、全て解決済みなら muted 色になる。
+/// コメントが無ければ None。未解決があれば accent、全て解決済みなら muted。
 fn comment_badge(ctx: &Ctx, file_path: &str) -> Option<(String, ratatui::style::Color)> {
     use crate::review_store::CommentStatus;
     let mut total = 0usize;
@@ -349,9 +338,8 @@ mod tests {
         assert_eq!(changes_banner_rows(true), 1);
     }
 
-    /// 色の対応表を status_color の実装から独立して再現する — 期待する色を
-    /// ここでテーマから再導出しておけば、status_color 内で2色を取り違えた
-    /// バグも検出できる。
+    /// 色の対応表を status_color の実装から独立に再現する。期待色をテーマから再導出して
+    /// おけば、status_color 内で 2 色を取り違えたバグも捕まる。
     fn diff_file_status_color(
         theme: &Theme,
         status: Option<git2::Status>,

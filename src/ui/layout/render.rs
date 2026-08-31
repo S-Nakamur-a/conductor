@@ -136,11 +136,8 @@ fn is_border_glyph(s: &str) -> bool {
     matches!(s.chars().next(), Some(c) if ('\u{2500}'..='\u{257F}').contains(&c))
 }
 
-/// 現在 hover 中またはドラッグ中のディバイダをテーマのアクセントカラーで塗る。
-/// crossterm では OS のカーソル形状を切り替えられないので、GUI でいう
-/// col-resize/row-resize カーソルの代わりの表現になる。ドラッグ中はホバーより
-/// 優先され、ドラッグ中にカーソルが1セルずれても境界を光らせたままにする。
-/// ボーダーのグリフだけ再着色するので、パネルの内容には触れない。
+/// crossterm では OS のカーソル形状を変えられないので、GUI の col-resize/row-resize の
+/// 代わりになる。ドラッグ中はホバーより優先し、1 セルずれても光らせ続ける。
 fn highlight_active_divider(frame: &mut Frame, app: &App) {
     use crate::app::Divider;
 

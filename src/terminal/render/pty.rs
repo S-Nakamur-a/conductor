@@ -40,11 +40,8 @@ struct ScreenSnapshot {
     cursor_position: (u16, u16),
 }
 
-/// vt100 画面の内容の、その時点でのスナップショットを取得する。
-///
-/// PTY リーダースレッドが mutex を保持しているときにブロックしないよう
-/// try_lock を使う。ロックが競合している場合は None を返す — その場合
-/// 呼び出し側は以前キャッシュした描画結果を再利用すべき。
+/// リーダースレッドが mutex を持っている間ブロックしないよう try_lock を使う。競合したら
+/// None を返すので、呼び出し側は前回の描画結果を使い回すこと。
 fn snapshot_screen(
     screen_arc: &Arc<Mutex<vt100::Parser>>,
     scroll_offset: usize,

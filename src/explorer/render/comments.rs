@@ -128,9 +128,8 @@ pub(super) fn render(
     frame.render_widget(List::new(items).block(block), area);
 }
 
-/// トップレベルのコメント行を組み立てる。存在しない comment_idx（ティックのずれ）
-/// では None を返し、その行を静かに省く — 上のファイルツリー/Changed files と同じ、
-/// インデックスの古さに対する扱い。
+/// 存在しない comment_idx (ティックのずれ) では None を返して行を静かに省く。
+/// 上のツリーや Changed files と同じ、インデックスの古さへの扱い。
 #[allow(clippy::too_many_arguments)]
 fn comment_row(
     comment_idx: usize,

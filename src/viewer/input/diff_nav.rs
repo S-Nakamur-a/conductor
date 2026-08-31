@@ -32,11 +32,8 @@ pub(super) fn prev_change_block(lines: &[UnifiedDiffEntry], from: usize) -> Opti
     (0..from).rev().find(|&i| is_change_block_start(lines, i))
 }
 
-/// diff のエントリがレビューコメントを持つなら true。Line は新ファイル側の
-/// 行番号にコメントがあれば一致し、折りたたまれた ExpandableContext はその
-/// 範囲内の隠れた行のいずれかにコメントがあれば一致する。これにより、
-/// 現在折りたたみの中に入っているコメントにもジャンプできる（着地先は
-/// 展開できるよう折りたたみ自体になる）。
+/// 折りたたまれた ExpandableContext は範囲内の隠れた行にコメントがあれば一致する。
+/// これで折りたたみの中のコメントにも飛べる (着地先は展開できるよう折りたたみ自体)。
 fn entry_has_comment<V>(entry: &UnifiedDiffEntry, comments: &HashMap<usize, V>) -> bool {
     match entry {
         UnifiedDiffEntry::Line {

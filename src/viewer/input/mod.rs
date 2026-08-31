@@ -25,11 +25,8 @@ use code_nav::{
 use diff_nav::{next_change_block, next_comment_line, prev_change_block, prev_comment_line};
 use inline_reply::{handle_inline_reply_input, start_inline_reply, toggle_inline_thread};
 
-/// 'g' — シンボルヒントを表示し、2つ目のキー（gd、gi、gr、gg、またはヒント
-/// ラベル）を待つ。プレーンファイルビューと統合 diff ビューの両方で共有され、
-/// g の意味を両ビューで揃えている。diff モードでは、呼び出し側が先に
-/// content.file_scroll を diff カーソルの位置に同期させる責任を持つ —
-/// ヒントも同じ同期後の位置から構築される。
+/// 素のファイルビューと統合 diff で共有し、g の意味を揃える。diff では呼び出し側が先に
+/// content.file_scroll を diff カーソルへ同期させる — ヒントも同じ位置から作る。
 fn enter_g_prefix_mode(app: &mut App) {
     app.viewer.pending_g_key = true;
     // 推定した viewer の高さでヒントを構築する（実際のコンテンツでクリップされる）。
@@ -236,11 +233,8 @@ pub(crate) fn handle_viewer_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent
     None
 }
 
-/// 'z' の2打鍵目を処理する（vim の折りたたみ）。
-///
-/// 対象はカーソル行（＝ビューポート最上行）。その行がブロックの見出しでなければ、
-/// それを含む最も内側のブロックが動く — vim の za/zc と同じ。zm/zr だけは行では
-/// なく入れ子の深さを対象にし、その段のブロックをファイル全体でまとめて動かす。
+/// 対象はカーソル行 (ビューポート最上行)。見出しでなければそれを含む最も内側のブロックが
+/// 動く (vim の za/zc と同じ)。zm/zr だけは行ではなく深さを対象にする。
 fn handle_fold_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Char('a') => {

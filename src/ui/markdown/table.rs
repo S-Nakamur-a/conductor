@@ -102,9 +102,8 @@ fn rendered_width(text: &str, theme: &Theme) -> usize {
     )))
 }
 
-/// 行（セル + 2スペース区切り）が width に収まるよう、自然な列幅を縮める。
-/// 最も広い列を1ずつ繰り返し削る（比例配分ではない — 稀にしかない幅広テーブルの
-/// ためにそこまでやる必要はない）。どの列も最低1列は確保する。
+/// 最も広い列を 1 ずつ削る。比例配分にしないのは、稀にしかない幅広テーブルのために
+/// そこまでやる必要が無いため。どの列も最低 1 列は確保する。
 fn fit_col_widths(natural: &[usize], width: usize) -> Vec<usize> {
     let ncols = natural.len();
     if ncols == 0 {
@@ -124,12 +123,8 @@ fn fit_col_widths(natural: &[usize], width: usize) -> Vec<usize> {
     w
 }
 
-/// テーブルの行1本を、一番背の高いセルに必要な数だけの Line に描画する。
-///
-/// 各セルは列幅で折り返し、アライメントに従ってパディングするので、どの列も
-/// すべての行で同じ列数を提供し、グリッドが揃った状態を保つ。丈の短いセルは
-/// 下側を空行でパディングする。生成された各行は、極端に小さい幅に対する最終的な
-/// 防御として width にハードクリップする。
+/// 各セルを列幅で折り返してアライメントでパディングするので、どの列も全行で同じ列数を
+/// 出しグリッドが揃う。丈の短いセルは下を空行で埋め、最後に width でハードクリップする。
 fn render_table_row(
     cells: &[String],
     widths: &[usize],
@@ -169,10 +164,7 @@ fn render_table_row(
         .collect()
 }
 
-/// テキストを、ちょうど col_w 桁の表示幅の行に折り返す: インラインマークアップを
-/// 描画し、単語境界で折り返し、align に従って各行をパディングする。常に最低1行を
-/// 返す（空セルは空行1つになる）ので、行の高さはセルの最大値になり、決してゼロには
-/// ならない。
+/// 常に最低 1 行を返す (空セルは空行 1 つ)。行の高さがセルの最大値になり、ゼロにならない。
 fn wrap_cell(text: &str, col_w: usize, align: Align, base: Style, theme: &Theme) -> Vec<Vec<Cell>> {
     if col_w == 0 {
         return vec![Vec::new()];
@@ -209,9 +201,7 @@ fn pad_cell_line(cells: Vec<Cell>, col_w: usize, align: Align, base: Style) -> V
     }
 }
 
-/// セルを最大 width 桁の表示幅までハードクリップする（省略記号なし）。列の計算が
-/// 収まりきらない場合（例: 幅3のパネルに4列のテーブル）でも、すべてのテーブル行を
-/// 幅の上限内に収める最終防御。
+/// 列の計算が収まりきらない場合 (幅 3 のパネルに 4 列など) でも、全行を幅の上限に収める最終防御。
 fn clip_cells(cells: Vec<Cell>, width: usize) -> Vec<Cell> {
     let mut out = Vec::new();
     let mut w = 0;

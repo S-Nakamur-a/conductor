@@ -160,11 +160,7 @@ fn char_with_modifiers(c: char, mods: KeyModifiers) -> Vec<u8> {
     }
 }
 
-/// crossterm の修飾子から xterm 用の modifier パラメータを計算する。
-///
-/// xterm は修飾子を 1 + bitmask としてエンコードする:
-///   Shift = 1, Alt = 2, Ctrl = 4, Super/Meta = 8。
-/// 修飾子が何もなければ 1 を返す。
+/// xterm は 1 + bitmask で符号化する: Shift 1, Alt 2, Ctrl 4, Super 8。修飾なしは 1。
 fn xterm_modifier_param(modifiers: &KeyModifiers) -> u8 {
     let mut param: u8 = 1;
     if modifiers.contains(KeyModifiers::SHIFT) {
@@ -180,17 +176,9 @@ fn xterm_modifier_param(modifiers: &KeyModifiers) -> u8 {
     param
 }
 
-/// 矢印キーと修飾キーの組み合わせから ANSI エスケープシーケンスを組み立てる。
-///
-/// macOS の Cmd（Super）は一般的なターミナルと同じ挙動にマップする:
-/// Cmd+Left/Right → Home/End、Cmd+Up/Down → PageUp/PageDown。
-///
-/// app_cursor は対象プログラムのアプリケーションカーソルキーモード（DECCKM）
-/// を表す。これが有効で修飾キーが押されていない場合、矢印キーは CSI
-/// （ESC [ A）ではなく SS3（ESC O A）として送る — ページャやエディタが
-/// バインドしている形式で、less や bat での矢印キースクロールが効くのは
-/// このためである。修飾キーがある場合、DECCKM に関わらず xterm は常に
-/// CSI の 1;<param> 形式を使う。
+/// macOS の Cmd は一般的な端末に合わせる (Cmd+Left/Right → Home/End)。DECCKM が有効で
+/// 修飾なしのときは CSI ではなく SS3 で送る — less や bat の矢印スクロールはこれで効く。
+/// 修飾があるときは DECCKM に関わらず CSI の 1;<param> 形式になる。
 fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers, app_cursor: bool) -> Vec<u8> {
     // Cmd+矢印 → Home/End/PageUp/PageDown（macOS の慣習）。
     if modifiers.contains(KeyModifiers::SUPER) {
@@ -215,12 +203,8 @@ fn arrow_with_modifiers(dir: u8, modifiers: &KeyModifiers, app_cursor: bool) -> 
     }
 }
 
-/// 「tilde」形式のキー（Delete、Insert、PageUp など）と修飾キーから ANSI
-/// シーケンスを組み立てる。
-///
-/// 修飾キーなし: ESC [ <num> ~（Delete なら \x1b[3~）。
-/// 修飾キーあり: ESC [ <num> ; <param> ~。
-/// 特殊ケース: Alt+Delete → ESC + d（単語単位の前方削除）。
+/// 修飾なしは ESC [ <num> ~、ありは ESC [ <num> ; <param> ~。
+/// Alt+Delete だけ ESC + d (単語単位の前方削除)。
 fn tilde_key_with_modifiers(num: u8, modifiers: &KeyModifiers) -> Vec<u8> {
     // Alt+Delete → 単語単位の前方削除（readline の慣習）。
     if num == 3
