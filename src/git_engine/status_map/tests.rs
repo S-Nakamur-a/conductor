@@ -128,60 +128,23 @@ fn git_status_map_classify_sibling_sharing_a_prefix_is_not_ignored() {
 }
 
 #[test]
-fn git_status_map_classify_untouched_file_is_tracked() {
+fn classify_reports_the_state_each_fixture_was_built_into() {
     let tmp = build_fixture();
     let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("untouched.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_staged_only_file_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("staged_only.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_unstaged_only_file_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("unstaged_only.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_file_staged_and_then_edited_is_tracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("both.txt"), TreeGitState::Tracked);
-}
-
-#[test]
-fn git_status_map_classify_never_added_file_is_untracked() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    assert_eq!(map.classify("untracked.txt"), TreeGitState::Untracked);
-}
-
-#[test]
-fn git_status_map_classify_gitignored_dir_itself_is_ignored() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    // FileTreeEntry::path はディレクトリであっても末尾スラッシュを
-    // 一切持たないが、libgit2 の折りたたまれた ignored ディレクトリの
-    // キー("build/")は持つ — classify() が両方の形式をチェックして
-    // いる場合のみこのテストは通る。
-    assert_eq!(map.classify("build"), TreeGitState::Ignored);
-}
-
-#[test]
-fn git_status_map_classify_file_under_gitignored_dir_inherits_ignored_via_prefix() {
-    let tmp = build_fixture();
-    let map = GitStatusMap::load(tmp.path()).unwrap();
-    // libgit2 は build/deep/x.txt を個別に報告するのではなく、build/ を
-    // 1つの status エントリに折りたたむ(実測で確認済み)。そのため
-    // classify() が完全一致のルックアップではなく実際に祖先の
-    // プレフィックスを遡っている場合のみこのテストは通る。
-    assert_eq!(map.classify("build/deep/x.txt"), TreeGitState::Ignored);
+    // build/ は libgit2 が 1 エントリに折りたたむ (実測)。ディレクトリ側の
+    // キーは末尾スラッシュを持つのに FileTreeEntry::path は持たないので、
+    // 両方の綴りを見て、かつ祖先のプレフィックスを遡らないと通らない。
+    for (path, want) in [
+        ("untouched.txt", TreeGitState::Tracked),
+        ("staged_only.txt", TreeGitState::Tracked),
+        ("unstaged_only.txt", TreeGitState::Tracked),
+        ("both.txt", TreeGitState::Tracked),
+        ("untracked.txt", TreeGitState::Untracked),
+        ("build", TreeGitState::Ignored),
+        ("build/deep/x.txt", TreeGitState::Ignored),
+    ] {
+        assert_eq!(map.classify(path), want, "{path}");
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -338,42 +338,28 @@ mod tests {
         assert_eq!(changes_banner_rows(true), 1);
     }
 
-    /// 色の対応表を status_color の実装から独立に再現する。期待色をテーマから再導出して
-    /// おけば、status_color 内で 2 色を取り違えたバグも捕まる。
-    fn diff_file_status_color(
-        theme: &Theme,
-        status: Option<git2::Status>,
-    ) -> ratatui::style::Color {
-        status_color(theme, file_stage_state(status))
-    }
-
     #[test]
-    fn diff_file_status_color_untracked_is_hint() {
+    fn each_git_status_resolves_to_its_own_colour() {
         let theme = Theme::default();
-        let status = Some(git2::Status::WT_NEW);
-        assert_eq!(diff_file_status_color(&theme, status), theme.hint);
-    }
-
-    #[test]
-    fn diff_file_status_color_unstaged_is_error() {
-        let theme = Theme::default();
-        let status = Some(git2::Status::WT_MODIFIED);
-        assert_eq!(diff_file_status_color(&theme, status), theme.error);
-    }
-
-    #[test]
-    fn diff_file_status_color_staged_is_warning() {
-        let theme = Theme::default();
-        let status = Some(git2::Status::INDEX_MODIFIED);
-        assert_eq!(diff_file_status_color(&theme, status), theme.warning);
-    }
-
-    #[test]
-    fn diff_file_status_color_committed_is_success() {
-        let theme = Theme::default();
-        // None は「GitStatusMap にこのパスのエントリが無い」ことを表し、
-        // つまり HEAD に対してクリーンな状態。
-        assert_eq!(diff_file_status_color(&theme, None), theme.success);
+        for (status, want) in [
+            (Some(git2::Status::WT_NEW), theme.hint),
+            (Some(git2::Status::WT_MODIFIED), theme.error),
+            (Some(git2::Status::INDEX_MODIFIED), theme.warning),
+            // 両方のビットが立つのは add したあとさらに編集した場合。staged と
+            // 表示すると、その上に載っている未コミットの変更が隠れる。
+            (
+                Some(git2::Status::INDEX_MODIFIED | git2::Status::WT_MODIFIED),
+                theme.error,
+            ),
+            // None は GitStatusMap にエントリが無い、つまり HEAD に対してクリーン。
+            (None, theme.success),
+        ] {
+            assert_eq!(
+                status_color(&theme, file_stage_state(status)),
+                want,
+                "{status:?}"
+            );
+        }
     }
 
     /// 状態が変わっても幅が変わらないこと。当たり判定は幅を定数から導いて
@@ -442,22 +428,5 @@ mod tests {
             .count() as u16;
         assert!(badge_cols(0, 20, title_w).is_none());
         assert!(badge_cols(0, 40, title_w).is_some());
-    }
-
-    /// 編集して git add し、さらに編集したファイルは WT_* と INDEX_* の
-    /// 両方のビットを同時に持つ。この場合 staged ではなく unstaged（error）
-    /// に解決されなければならない — 作業ツリーの編集の方がより新しく重要な
-    /// 状態であり、"staged" と表示すると staged の上にさらに uncommitted な
-    /// 変更があることが隠れてしまう。
-    #[test]
-    fn diff_file_status_color_staged_and_unstaged_resolves_to_unstaged() {
-        let theme = Theme::default();
-        let status = Some(git2::Status::INDEX_MODIFIED | git2::Status::WT_MODIFIED);
-        assert_eq!(
-            file_stage_state(status),
-            FileStageState::Unstaged,
-            "both staged and unstaged bits set must resolve to Unstaged"
-        );
-        assert_eq!(diff_file_status_color(&theme, status), theme.error);
     }
 }
