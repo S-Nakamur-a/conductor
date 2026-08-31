@@ -313,19 +313,19 @@ mod tests {
     }
 
     #[test]
-    fn non_rust_file_yields_nothing() {
+    fn rustでないファイルからは何も出ない() {
         let src = lines("fn main() {}\n#[test]\nfn t() {}");
         assert!(scan_rust_test_runs(&src, "README.md").is_empty());
     }
 
     #[test]
-    fn file_outside_src_or_tests_yields_nothing() {
+    fn srcとtestsの外のファイルからは何も出ない() {
         let src = lines("#[test]\nfn t() {}");
         assert!(scan_rust_test_runs(&src, "benches/bench.rs").is_empty());
     }
 
     #[test]
-    fn detects_file_module_and_func() {
+    fn ファイルとモジュールと関数を見つける() {
         let src = lines(
             "pub fn foo() {}\n\
              \n\
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn tokio_test_async_fn_is_detected() {
+    fn tokio_testのasync関数も見つける() {
         let src = lines(
             "#[cfg(test)]\n\
              mod tests {\n\
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_modules_build_full_paths() {
+    fn 入れ子のモジュールは完全なパスになる() {
         let src = lines(
             "#[cfg(test)]\n\
              mod tests {\n\
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn cfg_test_module_without_tests_yields_nothing() {
+    fn テストの無いcfg_testモジュールからは何も出ない() {
         // ヘルパーしか無い #[cfg(test)] モジュールはテストのスコープではない。
         let src = lines(
             "#[cfg(test)]\n\
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn mod_rs_maps_to_directory_module() {
+    fn mod_rsはディレクトリのモジュールに対応する() {
         let src = lines("#[test]\nfn t() {}\n");
         let runs = scan_rust_test_runs(&src, "src/app/mod.rs");
         // app/mod.rs はモジュール app。トップレベルの #[test] はその直下に置かれる。
@@ -420,7 +420,7 @@ mod tests {
     }
 
     #[test]
-    fn crate_root_runs_all_for_file_button() {
+    fn クレートルートのファイルボタンは全部を走らせる() {
         let src = lines("#[test]\nfn t() {}\n");
         let runs = scan_rust_test_runs(&src, "src/main.rs");
         // クレートルートではモジュール接頭辞が無いので、ファイルボタンは全部を実行する。
@@ -429,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_file_uses_test_flag() {
+    fn 統合テストのファイルはtestフラグを使う() {
         let src = lines("#[test]\nfn smoke() {}\n");
         let runs = scan_rust_test_runs(&src, "tests/e2e.rs");
         assert_eq!(runs[&1].command, "cargo test --test 'e2e'");
@@ -440,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn hostile_file_name_is_shell_quoted() {
+    fn 厄介なファイル名はシェル用に引用する() {
         // シングルクォートを含むパス (信用できないリポジトリならあり得る) は、
         // モジュール接頭辞の '\'' エスケープで無力化されなければならない。
         let src = lines("#[test]\nfn t() {}\n");

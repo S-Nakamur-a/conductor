@@ -232,7 +232,7 @@ mod tests {
     /// 報告してくる症状は「カーソルが見えない」と「マウスの挙動がおかしい」の
     /// 2 つで、それがちょうどこの 2 つのリセットに対応する。
     #[test]
-    fn panic_hook_restores_terminal() {
+    fn panicのフックが端末を戻す() {
         let mut buf: Vec<u8> = Vec::new();
         restore_terminal_modes(&mut buf).expect("writing to a Vec cannot fail");
         let seq = String::from_utf8(buf).expect("escape sequences are ASCII");

@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn build_file_comment_cache_keeps_resolved_for_badges() {
+    fn バッジのために解決済みのコメントも残す() {
         let mut state = ReviewState::new();
         state.comments = vec![
             comment("c1", 10, CommentStatus::Pending),
@@ -595,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn build_file_comment_cache_supports_overlapping_ranges() {
+    fn 重なった範囲も扱える() {
         // 範囲が入れ子になる 2 つのコメント (L10-L20 と L11-L19) は共存できなければ
         // ならない。共有する行は両方を持ち、それぞれが自分の終端行 (💬 バッジと
         // インラインスレッドが置かれる行) を別々に保つ。

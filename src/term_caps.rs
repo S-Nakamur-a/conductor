@@ -184,7 +184,7 @@ mod tests {
     // auto_theme_for_background の純粋関数としてのテスト。
 
     #[test]
-    fn auto_theme_configured_always_returns_none() {
+    fn 設定済みなら自動テーマはnoneを返す() {
         // ユーザーがテーマを固定している。自動検出がそれを上書きしてはいけない。
         assert!(super::auto_theme_for_background(0.9, Some("dracula")).is_none());
         assert!(super::auto_theme_for_background(0.9, Some("catppuccin-mocha")).is_none());
@@ -192,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_theme_light_background_selects_latte() {
+    fn 明るい背景ではlatteを選ぶ() {
         // 明るい背景 (輝度 > 0.5) かつテーマ未設定。
         let t = super::auto_theme_for_background(0.9, None);
         assert_eq!(t, Some("catppuccin-latte"));
@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_theme_dark_background_returns_none() {
+    fn 暗い背景ではnoneを返す() {
         assert!(super::auto_theme_for_background(0.1, None).is_none());
         assert!(super::auto_theme_for_background(0.0, None).is_none());
         assert!(super::auto_theme_for_background(0.499, None).is_none());
@@ -213,7 +213,7 @@ mod tests {
     /// OSC11 の応答から背景輝度を読む。終端が BEL の端末と、8bit (2 桁) チャネルで
     /// 応答する端末があるので、どちらも同じ輝度になること。
     #[test]
-    fn parse_osc11_luminance_reads_every_response_spelling() {
+    fn osc11の応答はどの綴りでも輝度を読める() {
         let cases = [
             ("\x1b]11;rgb:0000/0000/0000\x1b\\", Some(0.0)),
             ("\x1b]11;rgb:ffff/ffff/ffff\x1b\\", Some(1.0)),
@@ -237,7 +237,7 @@ mod tests {
 
     /// Nerd Font のシンボルを同梱している端末だけを Nerd と判定すること。
     #[test]
-    fn icon_set_only_for_terminals_bundling_the_symbols() {
+    fn シンボルを同梱する端末だけnerdと判定する() {
         use crate::icons::IconSet;
         for name in ["ghostty", "Ghostty", "WezTerm", "wezterm"] {
             assert_eq!(
@@ -251,7 +251,7 @@ mod tests {
     /// フォントを同梱しない端末と、tmux 越しで内側が見えない場合は判定しないこと。
     /// ここで推測すると、Nerd Font を入れていないユーザの画面が tofu で埋まる。
     #[test]
-    fn icon_set_declines_to_guess() {
+    fn 判らない端末では推測しない() {
         for name in [
             "kitty",
             "Alacritty",

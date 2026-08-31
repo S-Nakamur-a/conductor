@@ -275,47 +275,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn newer_major() {
+    fn メジャーが新しい() {
         assert!(is_newer("2.0.0", "1.9.9"));
     }
 
     #[test]
-    fn newer_minor() {
+    fn マイナーが新しい() {
         assert!(is_newer("1.1.0", "1.0.9"));
     }
 
     #[test]
-    fn newer_patch() {
+    fn パッチが新しい() {
         assert!(is_newer("1.0.1", "1.0.0"));
     }
 
     #[test]
-    fn same_version() {
+    fn 同じバージョン() {
         assert!(!is_newer("1.0.0", "1.0.0"));
     }
 
     #[test]
-    fn older_version() {
+    fn 古いバージョン() {
         assert!(!is_newer("0.9.0", "1.0.0"));
     }
 
     #[test]
-    fn invalid_latest() {
+    fn latestが不正() {
         assert!(!is_newer("abc", "1.0.0"));
     }
 
     #[test]
-    fn invalid_current() {
+    fn currentが不正() {
         assert!(!is_newer("1.0.0", "abc"));
     }
 
     #[test]
-    fn two_part_version() {
+    fn バージョンが2要素だけ() {
         assert!(!is_newer("1.0", "1.0.0"));
     }
 
     #[test]
-    fn current_version_is_valid() {
+    fn いまのバージョンは妥当() {
         let v = current_version();
         let parts: Vec<&str> = v.split('.').collect();
         assert_eq!(
@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn current_target_triple_returns_some() {
+    fn いまのターゲットトリプルが取れる() {
         let triple = current_target_triple();
         if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
             assert!(
@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn find_binary_asset_matches_current_platform() {
+    fn いまのプラットフォーム向けの資産を見つける() {
         let assets = make_assets();
         let found = find_binary_asset(&assets);
         if current_target_triple().is_some() {
@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn find_binary_asset_no_match() {
+    fn 一致する資産が無ければ何も返さない() {
         let assets = vec![ReleaseAsset {
             name: "conductor-0.28.0-s390x-unknown-linux-gnu.tar.gz".to_string(),
             download_url: "https://example.com/s390x.tar.gz".to_string(),
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn find_binary_asset_ignores_non_tar_gz() {
+    fn tar_gz以外の資産は無視する() {
         let triple = match current_target_triple() {
             Some(t) => t,
             None => return,
@@ -389,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn find_binary_asset_empty() {
+    fn 資産が空なら何も返さない() {
         assert!(find_binary_asset(&[]).is_none());
     }
 }

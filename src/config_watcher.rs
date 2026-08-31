@@ -92,7 +92,7 @@ mod tests {
     use super::matches_config_file;
 
     #[test]
-    fn matches_exact_filename() {
+    fn ファイル名が完全一致する() {
         let filename = OsStr::new("config.toml");
         assert!(matches_config_file(
             Path::new("/home/user/.config/conductor/config.toml"),
@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn does_not_match_with_extension() {
+    fn 拡張子が付いていれば一致しない() {
         let filename = OsStr::new("config.toml");
         assert!(!matches_config_file(
             Path::new("/home/user/.config/conductor/config.toml.tmp"),
@@ -110,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn does_not_match_different_filename() {
+    fn 別のファイル名には一致しない() {
         let filename = OsStr::new("config.toml");
         assert!(!matches_config_file(
             Path::new("/home/user/.config/conductor/other.toml"),
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn does_not_match_parent_dir_only() {
+    fn 親ディレクトリだけでは一致しない() {
         let filename = OsStr::new("config.toml");
         assert!(!matches_config_file(
             Path::new("/home/user/.config/conductor/"),
@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_when_path_is_just_filename() {
+    fn パスがファイル名だけでも一致する() {
         let filename = OsStr::new("config.toml");
         assert!(matches_config_file(Path::new("config.toml"), filename));
     }

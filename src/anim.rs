@@ -28,7 +28,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn progress_is_zero_at_start_and_one_at_end() {
+    fn 進みは開始で0終了で1になる() {
         assert_eq!(eased_progress(Duration::ZERO, 180), 0.0);
         assert_eq!(eased_progress(Duration::from_millis(180), 180), 1.0);
         // 終端を過ぎたぶんは完了側にクランプされる。
@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_is_monotonic_and_bounded_midway() {
+    fn 進みは単調で途中も範囲に収まる() {
         let a = eased_progress(Duration::from_millis(45), 180);
         let b = eased_progress(Duration::from_millis(90), 180);
         let c = eased_progress(Duration::from_millis(135), 180);
@@ -46,7 +46,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_duration_is_instantly_complete() {
+    fn 長さ0なら即座に完了する() {
         assert_eq!(eased_progress(Duration::ZERO, 0), 1.0);
     }
 }

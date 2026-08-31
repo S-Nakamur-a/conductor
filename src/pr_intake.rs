@@ -308,20 +308,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_suspicious_ref_rejects_leading_dash() {
+    fn 先頭がダッシュのrefは拒む() {
         assert!(is_suspicious_ref("--upload-pack=evil"));
         assert!(!is_suspicious_ref("main"));
         assert!(!is_suspicious_ref("release/1.0"));
     }
 
     #[test]
-    fn parse_pr_input_accepts_bare_number() {
+    fn 素の番号を受け付ける() {
         assert_eq!(parse_pr_input("279"), Ok(279));
         assert_eq!(parse_pr_input("  42  "), Ok(42));
     }
 
     #[test]
-    fn parse_pr_input_accepts_github_url() {
+    fn githubのurlを受け付ける() {
         assert_eq!(
             parse_pr_input("https://github.com/S-Nakamur-a/conductor/pull/279"),
             Ok(279)
@@ -333,14 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_pr_input_rejects_garbage() {
+    fn でたらめな入力は拒む() {
         assert_eq!(
             parse_pr_input("not-a-pr"),
             Err(PrIntakeError::InvalidInput("not-a-pr".to_string()))
         );
     }
     #[test]
-    fn classify_failure_text_maps_gh_and_git_stderr_to_actionable_errors() {
+    fn ghとgitのstderrを手の打てるエラーに直す() {
         let cases = [
             (
                 1,
@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn display_messages_are_actionable() {
+    fn エラー文は次の手が分かる形になっている() {
         assert!(
             PrIntakeError::GhNotAuthenticated
                 .to_string()
@@ -386,7 +386,7 @@ mod tests {
     /// 再入場: intake_pr は gh も git も一切触らずに既存の worktree ディレクトリを
     /// 再利用しなければならない (gh が入っていなくても動くように)。
     #[test]
-    fn intake_pr_reenters_existing_worktree_without_gh_or_network() {
+    fn 既にあるworktreeにはghも通信も無しで入り直す() {
         let parent = tempfile::tempdir().unwrap();
         // OS の一時ディレクトリ自体が symlink になっているプラットフォーム
         // (macOS の /tmp -> /private/tmp など) でも等しく比較できるよう
@@ -419,7 +419,7 @@ mod tests {
     /// Ready を返して空のレビュー画面を見せるのではなく、行動につながる
     /// メッセージで失敗しなければならない。
     #[test]
-    fn intake_pr_reenters_broken_directory_fails_with_actionable_message() {
+    fn 壊れたディレクトリでは手の打てるエラーで落ちる() {
         let parent = tempfile::tempdir().unwrap();
         let parent_path = parent.path().canonicalize().unwrap();
         let repo_path = parent_path.join("repo");
@@ -449,7 +449,7 @@ mod tests {
     /// このリポジトリ自身の worktree に触れないよう、一時ディレクトリへ clone する。
     #[test]
     #[ignore]
-    fn intake_pr_against_real_pr() {
+    fn 実在するprに対する取り込み() {
         let parent = tempfile::tempdir().unwrap();
         let repo_path = parent.path().join("repo");
         let mut fetch_opts = git2::FetchOptions::new();

@@ -267,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn single_write_produces_event() {
+    fn 書き込み1回でイベントが出る() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let listener = RefreshPipe::from_path(pipe_path.clone()).unwrap();
@@ -285,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_writes_produce_events() {
+    fn 複数回の書き込みでその数だけイベントが出る() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let listener = RefreshPipe::from_path(pipe_path.clone()).unwrap();
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn no_event_without_write() {
+    fn 書き込みが無ければイベントも出ない() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let listener = RefreshPipe::from_path(pipe_path).unwrap();
@@ -321,7 +321,7 @@ mod tests {
     /// 「conductor が動いていない」経路。libc::open は ENOENT で失敗するが、
     /// ここで panic してはいけない。
     #[test]
-    fn signal_refresh_on_nonexistent_path_returns_immediately() {
+    fn パイプが無ければ即座に返る() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("does-not-exist.pipe");
         signal_refresh(&pipe_path); // panic しないこと
@@ -334,7 +334,7 @@ mod tests {
     /// ここで退行したときに CI がハングするのではなくテストが落ちるよう、
     /// バックグラウンドスレッドでタイムアウト付きで実行する。
     #[test]
-    fn signal_refresh_with_no_reader_returns_immediately() {
+    fn 読み手がいなければ即座に返る() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
@@ -357,7 +357,7 @@ mod tests {
     /// 着地して、その実体が何であれ先頭バイトを潰す。FIFO かどうかの確認は書き込みの
     /// 前に来なければならない。
     #[test]
-    fn signal_refresh_will_not_write_into_a_regular_file() {
+    fn 普通のファイルには書き込まない() {
         let dir = tempfile::tempdir().unwrap();
         let not_a_pipe = dir.path().join("refresh.pipe");
         let original = "IMPORTANT PRE-EXISTING CONTENT";
@@ -377,7 +377,7 @@ mod tests {
     /// FIFO が外から消えると読み取りスレッドは誰も辿り着けない inode の
     /// open() で寝たままになり、突いても起きない。終了はそれでも進むこと。
     #[test]
-    fn dropping_a_listener_whose_pipe_vanished_does_not_hang() {
+    fn パイプが消えたリスナを畳んでもハングしない() {
         let dir = tempfile::tempdir().unwrap();
         let pipe_path = dir.path().join("refresh.pipe");
         let listener = RefreshPipe::from_path(pipe_path.clone()).unwrap();

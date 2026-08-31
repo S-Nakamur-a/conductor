@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn build_caller_accepts_the_known_providers() {
+    fn 既知のプロバイダは受け入れる() {
         // 綴りは大小と前後の空白を無視する。
         for provider in ["gemini", "GEMINI", "  gemini  "] {
             assert!(
@@ -346,7 +346,7 @@ mod tests {
     /// Conductor が claude CLI を自分で起動することは決してあってはならない。エラーは
     /// command を指し示さねばならない — Claude を使う構成はそちらで組むから。
     #[test]
-    fn build_caller_rejects_the_removed_claude_provider() {
+    fn 削除したclaudeプロバイダは拒む() {
         let err = build_caller(&api("claude"), &TaskEnv::default())
             .err()
             .unwrap();
@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn build_caller_rejects_unknown_provider() {
+    fn 知らないプロバイダは拒む() {
         let err = build_caller(&api("ollama"), &TaskEnv::default())
             .err()
             .unwrap();
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn build_caller_rejects_empty_command() {
+    fn 空のコマンドは拒む() {
         let cfg = ApiConfig {
             provider: "command".to_string(),
             command: Vec::new(),
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn tail_chars_takes_last_n() {
+    fn tail_charsは末尾n文字を取る() {
         assert_eq!(tail_chars("hello", 3), "llo");
         assert_eq!(tail_chars("hi", 5), "hi");
         assert_eq!(tail_chars("hi", 0), "");
@@ -395,7 +395,7 @@ mod tests {
         }
 
         #[test]
-        fn echoes_prompt_via_stdin() {
+        fn プロンプトをstdinで渡せる() {
             let caller = sh("cat", 5);
             let cancel = Arc::new(AtomicBool::new(false));
             let out = caller.complete("SYS", "USER", &cancel).unwrap();
@@ -406,7 +406,7 @@ mod tests {
         /// コマンドが、問われている当のコードへ辿り着く唯一の手段がこれなので、
         /// これは実装の細部ではなくプロトコルの一部。
         #[test]
-        fn runs_in_the_task_working_directory() {
+        fn コマンドはタスクの作業ディレクトリで動く() {
             let dir = tempfile::tempdir().unwrap();
             let caller = CommandCaller {
                 cmd: vec!["sh".to_string(), "-c".to_string(), "pwd".to_string()],
@@ -427,7 +427,7 @@ mod tests {
         /// 組み立てた caller を覗くのではなく振る舞いで検証する。設定側はタイムアウトを
         /// 完全に無効にしてあるので、kill されるのはタスク自身の値が届いたときだけ。
         #[test]
-        fn task_timeout_overrides_the_configured_one() {
+        fn タスク側のタイムアウトが設定値を上書きする() {
             let cfg = ApiConfig {
                 provider: "command".to_string(),
                 command: vec!["sh".to_string(), "-c".to_string(), "sleep 30".to_string()],
@@ -455,7 +455,7 @@ mod tests {
         /// エージェント型 CLI) は設定で直接指定する。ラッパースクリプト無しで
         /// それを可能にしているのが {prompt}。
         #[test]
-        fn prompt_placeholder_delivers_via_argv() {
+        fn プレースホルダがあればargvで渡す() {
             let caller = CommandCaller {
                 // printf %s は引数をそのまま出すので、stdout は argv に着地したものそのものになる。
                 cmd: vec![
@@ -475,7 +475,7 @@ mod tests {
         /// さらに、プロンプトが stdin にも届いてはいけない。届くとモデルが 2 回
         /// 見ることになる。cat なら stdin の内容をそのまま後ろに足してしまう。
         #[test]
-        fn prompt_placeholder_leaves_stdin_empty() {
+        fn プレースホルダがあればstdinは空のまま() {
             let caller = CommandCaller {
                 cmd: vec![
                     "sh".to_string(),
@@ -496,7 +496,7 @@ mod tests {
         /// どこにもプレースホルダが無ければ stdin での受け渡しが保たれる。
         /// stdin 型のツール (ollama run …) がこれに依存している。
         #[test]
-        fn without_a_placeholder_the_prompt_still_goes_to_stdin() {
+        fn プレースホルダが無ければstdinで渡す() {
             let caller = sh("cat", 5);
             let out = caller
                 .complete("SYS", "USER", &Arc::new(AtomicBool::new(false)))
@@ -508,7 +508,7 @@ mod tests {
         /// フラグとして受け取りたいツールでも、ユーザーが設定に特定の worktree を
         /// ハードコードせずに済む。
         #[test]
-        fn workdir_placeholder_expands_to_the_task_directory() {
+        fn workdirのプレースホルダはタスクのディレクトリに展開される() {
             let dir = tempfile::tempdir().unwrap();
             let caller = CommandCaller {
                 cmd: vec![
@@ -529,7 +529,7 @@ mod tests {
         }
 
         #[test]
-        fn nonzero_exit_surfaces_stderr() {
+        fn 非ゼロ終了はstderrを表に出す() {
             let caller = sh("echo boom >&2; exit 1", 5);
             let cancel = Arc::new(AtomicBool::new(false));
             let err = caller.complete("s", "u", &cancel).unwrap_err();
@@ -538,7 +538,7 @@ mod tests {
         }
 
         #[test]
-        fn empty_success_is_an_error() {
+        fn 成功しても出力が空ならエラー() {
             let caller = sh("exit 0", 5);
             let cancel = Arc::new(AtomicBool::new(false));
             let err = caller.complete("s", "u", &cancel).unwrap_err();
@@ -549,7 +549,7 @@ mod tests {
         /// 書き込みを待ってから時間を見る作りだと、ここで止まったままタイムアウトもキャンセルも
         /// 効かない。レビューのプロンプトは実際にこの大きさになる。
         #[test]
-        fn a_command_that_never_reads_stdin_still_times_out() {
+        fn stdinを読まないコマンドでもタイムアウトする() {
             let caller = sh("sleep 30", 1);
             let cancel = Arc::new(AtomicBool::new(false));
             let big = "x".repeat(1 << 20);
@@ -560,7 +560,7 @@ mod tests {
         }
 
         #[test]
-        fn times_out_without_waiting_for_the_command() {
+        fn コマンドの終了を待たずにタイムアウトする() {
             let caller = sh("sleep 5", 1);
             let cancel = Arc::new(AtomicBool::new(false));
             let start = Instant::now();
@@ -573,7 +573,7 @@ mod tests {
         }
 
         #[test]
-        fn preset_cancel_returns_immediately() {
+        fn 先にキャンセルされていれば即座に返る() {
             let caller = sh("sleep 5", 0);
             let cancel = Arc::new(AtomicBool::new(true));
             let start = Instant::now();
@@ -583,7 +583,7 @@ mod tests {
         }
 
         #[test]
-        fn missing_program_is_a_spawn_error() {
+        fn 実行ファイルが無ければ起動エラーになる() {
             let caller = CommandCaller {
                 cmd: vec!["definitely_not_a_real_binary_xyzzy".to_string()],
                 timeout_secs: 5,

@@ -163,13 +163,13 @@ mod tests {
     }
 
     #[test]
-    fn non_test_file_yields_nothing() {
+    fn テストでないファイルからは何も出ない() {
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         assert!(scan_go_test_runs(&src, "foo/foo.go").is_empty());
     }
 
     #[test]
-    fn detects_file_func_and_subtest() {
+    fn ファイルと関数とサブテストを見つける() {
         let src = lines(
             "package foo\n\
              \n\
@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn test_main_is_not_offered_as_a_runnable_test() {
+    fn test_mainは実行できるテストとして出さない() {
         let src = lines(
             "package foo\n\
              func TestMain(m *testing.M) {}\n\
@@ -222,14 +222,14 @@ mod tests {
     }
 
     #[test]
-    fn root_file_targets_current_dir() {
+    fn ルート直下のファイルはカレントディレクトリを対象にする() {
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "x_test.go");
         assert_eq!(runs[&2].command, "go test -run '^TestX$' '.'");
     }
 
     #[test]
-    fn hostile_directory_name_is_shell_quoted() {
+    fn 厄介なディレクトリ名はシェル用に引用する() {
         // シェルのメタ文字を含むディレクトリ名 (信用できないリポジトリならあり得る)
         // はクォートで無力化されなければならない。; はクォートの内側に留まる。
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn single_quote_in_directory_is_escaped() {
+    fn ディレクトリ名の単引用符はエスケープする() {
         let src = lines("package foo\nfunc TestX(t *testing.T) {}");
         let runs = scan_go_test_runs(&src, "o'clock/x_test.go");
         // '\'' はクォートを閉じ、エスケープしたクォートを足し、また開く。
@@ -246,13 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn no_tests_means_no_buttons() {
+    fn テストが無ければボタンも出ない() {
         let src = lines("package foo\nfunc helper() {}\n");
         assert!(scan_go_test_runs(&src, "foo_test.go").is_empty());
     }
 
     #[test]
-    fn subtest_outside_test_func_is_ignored() {
+    fn テスト関数の外のサブテストは無視する() {
         let src = lines(
             "package foo\n\
              func helper() {\n\

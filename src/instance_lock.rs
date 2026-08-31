@@ -79,7 +79,7 @@ mod tests {
     /// ロックファイルは残る。掃除しないのが正しい — 消しに行くと、別の
     /// プロセスが既に作って掴んだ実体を消してしまう。
     #[test]
-    fn a_second_acquire_is_refused_until_the_first_is_dropped() {
+    fn 先に取ったロックを離すまで次の取得は拒まれる() {
         let dir = tempfile::tempdir().unwrap();
         let first = acquire(dir.path())
             .unwrap()
@@ -97,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn different_repositories_do_not_block_each_other() {
+    fn 別のリポジトリ同士は邪魔し合わない() {
         let a = tempfile::tempdir().unwrap();
         let b = tempfile::tempdir().unwrap();
         let _lock_a = acquire(a.path()).unwrap().expect("repo a");
@@ -108,7 +108,7 @@ mod tests {
     /// ロックの fd がそこを生き延びると、新しいイメージは自分自身が握った
     /// ロックに弾かれて「既に開いています」で起動できなくなる。
     #[test]
-    fn the_lock_does_not_survive_exec() {
+    fn ロックはexecを越えて残らない() {
         let dir = tempfile::tempdir().unwrap();
         let lock = acquire(dir.path()).unwrap().expect("acquire");
         // SAFETY: fd は lock が所有していて有効。F_GETFD は何も変更しない。

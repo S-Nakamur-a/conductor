@@ -390,7 +390,7 @@ mod tests {
     /// 全ファイルアイコンがどちらの文字セットでも1カラム幅であること。ここが崩れると
     /// アイコンより右の内容が1列ずれ、行がパネル端からはみ出す。
     #[test]
-    fn file_icons_are_single_column() {
+    fn ファイルのアイコンは1カラム幅() {
         for icon in sample_file_icons() {
             for set in [IconSet::Nerd, IconSet::Unicode] {
                 let glyph = icon.glyph(set);
@@ -407,7 +407,7 @@ mod tests {
     /// UI アイコンも同じ制約に従うこと。フォールバック側は空 (この文字セットでは
     /// 描かない) を許すが、描くなら1カラムでなければならない。
     #[test]
-    fn ui_glyphs_are_single_column() {
+    fn uiのグリフは1カラム幅() {
         for (name, glyph) in all_glyphs() {
             assert_eq!(
                 glyph.get(IconSet::Nerd).width(),
@@ -424,7 +424,7 @@ mod tests {
 
     /// 展開マーカーもアイコンと同じく、どちらの文字セットでも幅1であること。
     #[test]
-    fn expand_arrows_are_single_column() {
+    fn 展開の矢印は1カラム幅() {
         for set in [IconSet::Nerd, IconSet::Unicode] {
             for expanded in [true, false] {
                 let arrow = expand_arrow(expanded, set);
@@ -441,7 +441,7 @@ mod tests {
     /// フォールバック側が Nerd Font の私用領域に入り込んでいないこと。
     /// 入っていると Nerd Font の無い端末で tofu になる。
     #[test]
-    fn unicode_fallback_avoids_private_use_area() {
+    fn フォールバックは私用領域を避ける() {
         let fallbacks = sample_file_icons()
             .iter()
             .map(|i| i.glyph(IconSet::Unicode))
@@ -466,7 +466,7 @@ mod tests {
     ///
     /// 罫線のグリフ (COMMENT_SPAN、RANGE_END) は Nerd Font に依存しないので除く。
     #[test]
-    fn nerd_glyphs_stay_in_bmp_private_use_area() {
+    fn nerdのグリフはbmpの私用領域に収まる() {
         let box_drawing = ["\u{2502}", "\u{2570}"];
         let nerd_glyphs = sample_file_icons()
             .iter()
