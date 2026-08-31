@@ -322,8 +322,7 @@ Only what two or more panels draw with. `layout/` splits the frame and calls eac
 panel's own `render`; `chrome/` draws the full-width rows above and below it;
 `common/` holds the primitives (panel borders, colour maths, chip-strip paging,
 key-chord formatting). `dashboard/` and the loose overlay files are the remaining
-exception — overlays whose owning panel has not been decided yet, tracked in
-`scripts/shared-layers.txt` under `[移行待ち]`.
+exception — overlays whose owning panel has not been decided yet.
 
 ### Data Paths
 
