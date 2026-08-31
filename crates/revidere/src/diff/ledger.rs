@@ -115,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn positions_include_added_and_deleted_but_not_context() {
+    fn 位置には追加と削除が入り文脈は入らない() {
         let d = parse(
             "\
 diff --git a/src/a.rs b/src/a.rs
@@ -139,7 +139,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn deleted_file_yields_only_old_side_positions() {
+    fn 削除されたファイルは前像側の位置だけを出す() {
         // ファイル全体の削除でも、後像の行番号を作らない。
         let d = parse(
             "\
@@ -165,7 +165,7 @@ index 1111111..0000000
     }
 
     #[test]
-    fn binary_file_yields_exactly_one_file_level_position() {
+    fn バイナリはファイル単位の位置をちょうど1つ出す() {
         // 行が無くても黙って消さない。消すと「変更が無かった」と区別が付かない。
         let d = parse(
             "\
@@ -178,7 +178,7 @@ Binary files a/logo.png and b/logo.png differ
     }
 
     #[test]
-    fn pure_rename_without_hunks_yields_a_file_level_position() {
+    fn ハンクの無い純粋なリネームはファイル単位の位置になる() {
         let d = parse(
             "\
 diff --git a/src/old.rs b/src/new.rs
@@ -192,7 +192,7 @@ rename to src/new.rs
     }
 
     #[test]
-    fn mode_only_change_yields_a_file_level_position() {
+    fn モードだけの変更もファイル単位の位置になる() {
         let d = parse(
             "\
 diff --git a/run.sh b/run.sh
@@ -204,7 +204,7 @@ new mode 100755
     }
 
     #[test]
-    fn positions_are_ordered_by_path_then_side_then_line() {
+    fn 位置はパスと側と行の順に並ぶ() {
         let d = parse(
             "\
 diff --git a/b.rs b/b.rs
@@ -234,7 +234,7 @@ diff --git a/a.rs b/a.rs
     }
 
     #[test]
-    fn ledger_folds_consecutive_lines_into_ranges() {
+    fn 台帳は連続した行を範囲に畳む() {
         let d = parse(
             "\
 diff --git a/a.txt b/a.txt
@@ -252,7 +252,7 @@ diff --git a/a.txt b/a.txt
     }
 
     #[test]
-    fn fold_ranges_splits_on_gaps() {
+    fn 範囲の畳みは間が空くと分かれる() {
         assert_eq!(fold_ranges(&[1, 2, 3, 7, 10, 11]), "1-3, 7, 10-11");
         assert_eq!(fold_ranges(&[]), "");
         assert_eq!(fold_ranges(&[4]), "4");

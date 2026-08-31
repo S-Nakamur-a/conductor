@@ -270,7 +270,7 @@ index 1111111..2222222 100644
 ";
 
     #[test]
-    fn line_numbers_follow_both_sides_independently() {
+    fn 行番号は前像と後像を別々に追う() {
         let d = parse(BASIC);
         let f = &d.files[0];
         assert_eq!(f.path, "src/a.rs");
@@ -287,13 +287,13 @@ index 1111111..2222222 100644
     }
 
     #[test]
-    fn hunk_header_keeps_function_context() {
+    fn ハンクの見出しは関数の文脈を残す() {
         let d = parse(BASIC);
         assert_eq!(d.files[0].hunks[0].header, "fn outer()");
     }
 
     #[test]
-    fn hunk_header_without_counts_is_accepted() {
+    fn 件数の無いハンクの見出しも受け入れる() {
         let d = parse(
             "\
 diff --git a/a.txt b/a.txt
@@ -310,7 +310,7 @@ diff --git a/a.txt b/a.txt
     }
 
     #[test]
-    fn added_file_is_kind_added_and_named_by_the_new_path() {
+    fn 追加されたファイルは追加種別で新しいパスの名前になる() {
         let d = parse(
             "\
 diff --git a/src/new.rs b/src/new.rs
@@ -328,7 +328,7 @@ index 0000000..1111111
     }
 
     #[test]
-    fn deleted_file_keeps_its_former_path_as_its_name() {
+    fn 削除されたファイルは元のパスを名前に残す() {
         // 削除ファイルは後像が無いので、前像のパスで呼べるようにする。
         let d = parse(
             "\
@@ -348,7 +348,7 @@ index 1111111..0000000
     }
 
     #[test]
-    fn pure_rename_without_hunks_is_kind_renamed() {
+    fn ハンクの無い純粋なリネームはリネーム種別になる() {
         let d = parse(
             "\
 diff --git a/src/old.rs b/src/new.rs
@@ -364,7 +364,7 @@ rename to src/new.rs
     }
 
     #[test]
-    fn mode_only_change_without_hunks_is_kind_mode_only() {
+    fn ハンクの無いモードだけの変更はモード種別になる() {
         let d = parse(
             "\
 diff --git a/run.sh b/run.sh
@@ -376,7 +376,7 @@ new mode 100755
     }
 
     #[test]
-    fn rename_header_split_falls_back_to_the_last_b_slash() {
+    fn リネームの見出しの分割は最後のbスラッシュに落ちる() {
         // old_path 自身が " b/" を含むと、真ん中で機械的に割ると別のパスに
         // なる。候補が複数あるときは最後（本当の区切り）を採る。
         let d = parse(
@@ -394,7 +394,7 @@ rename to weird2.rs
     }
 
     #[test]
-    fn no_newline_marker_does_not_advance_line_numbers() {
+    fn 改行なしの印は行番号を進めない() {
         let d = parse(
             "\
 diff --git a/a.txt b/a.txt
@@ -414,7 +414,7 @@ diff --git a/a.txt b/a.txt
     }
 
     #[test]
-    fn empty_line_inside_a_hunk_counts_as_context() {
+    fn ハンクの中の空行は文脈として数える() {
         // 空の文脈行を捨てると、それ以降の行番号が全部ずれる。
         let d = parse(
             "\
@@ -435,7 +435,7 @@ diff --git a/a.txt b/a.txt
     }
 
     #[test]
-    fn an_unexpected_line_inside_a_hunk_is_skipped_without_advancing() {
+    fn ハンクの中の想定外の行は進めずに飛ばす() {
         let d = parse(
             "\
 diff --git a/a.txt b/a.txt
@@ -454,7 +454,7 @@ diff --git a/a.txt b/a.txt
     }
 
     #[test]
-    fn multiple_files_are_separated() {
+    fn 複数のファイルは分けて扱う() {
         let d = parse(&format!(
             "{BASIC}{}",
             "\

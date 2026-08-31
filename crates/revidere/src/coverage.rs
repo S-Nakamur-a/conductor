@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn every_ledger_position_covered_by_exactly_one_section_is_complete() {
+    fn 台帳の全位置がちょうど1項目に属せば完全() {
         let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 5)]);
         let c = check(
             &l,
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn a_position_no_section_claims_is_unclassified_not_dropped() {
+    fn 誰も名乗らない位置は落とさず未分類にする() {
         let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 40)]);
         let c = check(
             &l,
@@ -144,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn deleted_lines_are_not_covered_by_a_new_side_range() {
+    fn 削除行は後像側の範囲では覆えない() {
         // 後像行番号だけで塗ろうとすると削除行が残る、という一番効く検査。
         let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::Old, 4)]);
         let c = check(
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[test]
-    fn two_sections_claiming_the_same_position_is_a_conflict_not_classified() {
+    fn 同じ位置を2項目が名乗れば衝突であって分類済みではない() {
         let l = ledger(&[("src/x.rs", Side::New, 4)]);
         let c = check(
             &l,
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn one_section_overlapping_its_own_ranges_is_not_a_conflict() {
+    fn 同じ項目の中の範囲の重なりは衝突ではない() {
         // 同じ項目が範囲を重ねて書いても、二重計上を conflicts に出さない。
         // 出すと本当の取り合いと区別が付かなくなる。
         let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 5)]);
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_pointing_past_the_ledger_is_reported_as_unknown() {
+    fn 台帳の外を指す範囲は未知として報告する() {
         // 行番号を作られたときに気付けるようにする。
         let l = ledger(&[("src/x.rs", Side::New, 4)]);
         let c = check(
@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn no_sections_at_all_leaves_the_whole_ledger_unclassified() {
+    fn 項目が無ければ台帳は丸ごと未分類になる() {
         let l = ledger(&[("src/x.rs", Side::New, 4)]);
         let c = check(&l, &[]);
         assert_eq!(c.unclassified.len(), 1);
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn gap_summary_groups_unclassified_positions_by_file_and_side_with_sorted_lines() {
+    fn 説明もれの要約はファイルと側でまとめ行を並べる() {
         let gaps = vec![
             Position::new("src/x.rs", Side::New, 8),
             Position::new("src/x.rs", Side::New, 3),

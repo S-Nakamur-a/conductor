@@ -26,7 +26,7 @@ fn cfg_with(theme: &str) -> Config {
 ///
 /// [Theme::all_names] を回しているので、新しいテーマを足せば自動でここに乗る。
 #[test]
-fn every_theme_maps_to_a_syntect_theme_of_the_same_lightness() {
+fn 全テーマが同じ明暗のsyntectテーマに対応する() {
     let ts = two_face::theme::extra();
     for name in crate::theme::Theme::all_names() {
         let luma = theme_bg_luma(&syntect_theme_for(&cfg_with(name), &ts));
@@ -47,7 +47,7 @@ fn every_theme_maps_to_a_syntect_theme_of_the_same_lightness() {
 /// 全テーマ分の解決結果を集め、重複が過度に無いこと(=別テーマがまとめて同じ
 /// 配色に落ちていないこと)を確かめる。
 #[test]
-fn syntect_theme_for_covers_every_builtin_theme() {
+fn 組み込みテーマは全部が自前のsyntectテーマを持つ() {
     let ts = two_face::theme::extra();
     let names = crate::theme::Theme::all_names();
 
@@ -92,7 +92,7 @@ fn syntect_theme_for_covers_every_builtin_theme() {
 /// 残っていた。two-face のテーマに寄せたことで着色範囲が広がっているのを
 /// 固定する。
 #[test]
-fn syntect_theme_colors_most_tokens_across_languages() {
+fn 主要言語で十分な割合のトークンに色が付く() {
     use syntect::easy::HighlightLines;
     use syntect::util::LinesWithEndings;
 
@@ -162,7 +162,7 @@ fn syntect_theme_colors_most_tokens_across_languages() {
 /// syntect_theme_for: ui.theme が viewer.theme より優先されること。テーマピッカーは
 /// ui.theme に書き込むので、ここがずれると UI の配色だけが変わってコードの配色が残る。
 #[test]
-fn syntect_theme_for_prefers_ui_theme_over_viewer_theme() {
+fn ui_themeはviewer_themeより優先される() {
     let ts = two_face::theme::extra();
     let cfg = Config {
         ui: UiConfig {
@@ -185,7 +185,7 @@ fn syntect_theme_for_prefers_ui_theme_over_viewer_theme() {
 
 /// syntect_theme_for: ui.theme 未設定なら viewer.theme に後方互換で落ちること。
 #[test]
-fn syntect_theme_for_falls_back_to_viewer_theme() {
+fn ui_themeが無ければviewer_themeへ落ちる() {
     let ts = two_face::theme::extra();
     let cfg = Config {
         ui: UiConfig::default(),
@@ -200,7 +200,7 @@ fn syntect_theme_for_falls_back_to_viewer_theme() {
 
 /// syntax_theme_id: テーマが変われば別の指紋になり、同じなら同じになること。
 #[test]
-fn syntax_theme_id_tracks_theme_and_file() {
+fn 構文テーマのidはテーマ名とファイルを追う() {
     let a = cfg_with("dracula");
     let b = cfg_with("nord");
     assert_ne!(syntax_theme_id(&a), syntax_theme_id(&b));
@@ -227,14 +227,14 @@ fn syntax_theme_id_tracks_theme_and_file() {
 
 /// syntect_theme_for: 未知テーマ名はパニックせず既定へフォールバック。
 #[test]
-fn syntect_theme_for_unknown_falls_back_without_panic() {
+fn 知らないテーマ名でも落ちずに落ち着く() {
     let ts = two_face::theme::extra();
     let _ = syntect_theme_for(&cfg_with("nonexistent-theme-xyz"), &ts); // パニックしないこと
 }
 
 /// syntect_theme_for: 存在しないパスの syntax_theme_file はパニックしないこと。
 #[test]
-fn syntect_theme_for_missing_theme_file_falls_back_without_panic() {
+fn テーマファイルが無くても落ちずに落ち着く() {
     let ts = two_face::theme::extra();
     let cfg = Config {
         viewer: ViewerConfig {

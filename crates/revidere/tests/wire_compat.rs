@@ -10,7 +10,7 @@ fn demo() -> revidere::Annotations {
 }
 
 #[test]
-fn the_artifact_taken_from_real_data_still_loads() {
+fn 実データから取った成果物が今も読める() {
     let a = demo();
     assert!(!a.sections().is_empty(), "項目が 1 つも無い");
     assert!(
@@ -26,7 +26,7 @@ fn the_artifact_taken_from_real_data_still_loads() {
 /// 項目が指す位置を、ライブラリが実際に引ける形で持っていること。
 /// 読めはするが 1 つも引けない、という壊れ方をここで捕まえる。
 #[test]
-fn the_sections_in_the_real_artifact_point_at_positions() {
+fn 実成果物の項目は位置を指している() {
     let a = demo();
     let ranges: usize = a.sections().iter().map(|s| s.ranges.len()).sum();
     assert!(ranges > 0, "どの項目も範囲を持っていない");

@@ -525,7 +525,7 @@ fn build_enclosure_fixture(root: &Path) -> PathBuf {
 
 /// 内側が先。いちばん内側だけを出す呼び出し側が、並べ替えずに先頭を取れる。
 #[test]
-fn enclosures_come_innermost_first() {
+fn 囲みは内側が先に来る() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let index_path = build_enclosure_fixture(root);
@@ -544,7 +544,7 @@ fn enclosures_come_innermost_first() {
 
 /// 囲むものが無い行と、答えられない索引は別物として返る。
 #[test]
-fn nothing_enclosing_is_not_the_same_as_no_answer() {
+fn 囲むものが無いことと答えられないことは違う() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     let index_path = build_enclosure_fixture(root);

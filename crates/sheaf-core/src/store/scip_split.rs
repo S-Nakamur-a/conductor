@@ -201,20 +201,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn varint_reads_multibyte() {
+    fn varintは複数バイトを読める() {
         let mut pos = 0;
         assert_eq!(varint(&[0x96, 0x01], &mut pos).unwrap(), 150);
         assert_eq!(pos, 2);
     }
 
     #[test]
-    fn varint_rejects_truncated_input() {
+    fn varintは途切れた入力を拒む() {
         let mut pos = 0;
         assert!(varint(&[0x96], &mut pos).is_err());
     }
 
     #[test]
-    fn length_beyond_buffer_is_malformed() {
+    fn バッファを越える長さは壊れているとみなす() {
         // field 2, wire 2, 長さ 100 だが本体は 1 バイトしかない
         let mut pos = 0;
         let buf = [0x12u8, 100, 0x00];
@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn document_encoding_selects_column_meaning() {
+    fn documentの符号化が桁の意味を決める() {
         assert_eq!(
             resolve_column_encoding(ENCODING_UNSPECIFIED).unwrap(),
             ColumnEncoding::Ambiguous
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn text_encoding_rejects_non_utf8_disk_encoding() {
+    fn utf8でないディスク上の符号化は拒む() {
         assert!(check_text_encoding(ENCODING_UNSPECIFIED).is_ok());
         assert!(check_text_encoding(ENCODING_UTF8).is_ok());
         assert!(check_text_encoding(ENCODING_UTF16).is_err());

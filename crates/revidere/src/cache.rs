@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_answer_comes_back() {
+    fn 貯めた答えが戻ってくる() {
         let dir = tmp();
         let c = Cache::new(dir.clone(), true);
         let k = key(ai(), "sys", "user", "diff");
@@ -154,7 +154,7 @@ mod tests {
     /// 変更一覧が同じでも中身が違えば別物。作業ツリーを見ているときに、同じ行を
     /// 書き換えるとこうなる。ここで当たると、前の内容のレビューを黙って返す。
     #[test]
-    fn the_same_ledger_with_different_content_is_a_miss() {
+    fn 同じ台帳でも中身が違えば当たらない() {
         let dir = tmp();
         let c = Cache::new(dir.clone(), true);
         let before = key(ai(), "sys", "user", "-  let a = 1;\n+  let a = 2;");
@@ -166,7 +166,7 @@ mod tests {
 
     /// 呼び先が変われば、答えを出すモデルも変わる。
     #[test]
-    fn a_different_ai_is_a_miss() {
+    fn 呼び先が変われば当たらない() {
         let dir = tmp();
         let c = Cache::new(dir.clone(), true);
         c.put(&key(ai(), "s", "u", "d"), "A").unwrap();
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_cache_never_reads() {
+    fn 無効なキャッシュは読まない() {
         let dir = tmp();
         Cache::new(dir.clone(), true)
             .put(&key(ai(), "s", "u", "d"), "A")
@@ -196,7 +196,7 @@ mod tests {
 
     /// 壊れたファイルは「無い」として扱う。聞き直せば済む。
     #[test]
-    fn a_corrupt_entry_is_a_miss() {
+    fn 壊れた項目は当たらない() {
         let dir = tmp();
         let c = Cache::new(dir.clone(), true);
         let k = key(ai(), "s", "u", "d");
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn old_entries_are_pruned() {
+    fn 古い項目は掃除される() {
         let dir = tmp();
         std::fs::create_dir_all(&dir).unwrap();
         for i in 0..5 {

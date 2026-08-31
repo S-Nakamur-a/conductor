@@ -191,7 +191,7 @@ mod tests {
     /// 子は自分の重要度に関わらず親の直後。周辺のテストでも、検証している
     /// 中核の隣に出る。これをやらないと重要度順で末尾へ沈む。
     #[test]
-    fn a_child_follows_its_parent_regardless_of_importance() {
+    fn 子は重要度に関わらず親の直後に来る() {
         let sections = vec![
             section("実装A", Importance::Core, vec![]),
             section("実装B", Importance::Core, vec![]),
@@ -206,7 +206,7 @@ mod tests {
 
     /// 親子の鎖は 3 段以上でも森として成り立つ。深さは制限しない。
     #[test]
-    fn a_chain_of_three_or_more_is_a_forest_too() {
+    fn 親子の鎖は3段以上でも森として成り立つ() {
         let sections = vec![
             section("下位API", Importance::Core, vec![]),
             section("呼び出し側", Importance::Follow, vec![("下位API", true)]),
@@ -226,7 +226,7 @@ mod tests {
     /// primary 以外の関係は並びに影響しない。結合テストが 2 つの中核を
     /// まとめて検証していても、背骨は primary の 1 本だけ。
     #[test]
-    fn only_the_primary_relation_shapes_the_order() {
+    fn 並びを決めるのは主の関係だけ() {
         let sections = vec![
             section("実装A", Importance::Core, vec![]),
             section("実装B", Importance::Core, vec![]),
@@ -244,7 +244,7 @@ mod tests {
     /// 親を辿って巡回しても、全ての項目がちょうど 1 回だけ並びに出る。
     /// 出ない項目があると、その項目が持つ変更行が画面から消える。
     #[test]
-    fn a_cycle_does_not_lose_or_repeat_any_section() {
+    fn 循環しても項目を落とさず重複もしない() {
         let sections = vec![
             section("A", Importance::Core, vec![("B", true)]),
             section("B", Importance::Core, vec![("A", true)]),
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn a_section_naming_itself_as_primary_has_no_parent() {
+    fn 自分を主に指す項目には親が無い() {
         let sections = vec![section("A", Importance::Core, vec![("A", true)])];
         let f = Forest::build(&sections);
         assert_eq!(f.parent(0), None);
@@ -266,7 +266,7 @@ mod tests {
     /// 実在しない相手を指したことは黙って捨てず dangling に残す。
     /// 捨てると、モデルが在ると言った項目が無かったことに気付けない。
     #[test]
-    fn a_relation_pointing_at_an_unknown_title_is_reported_as_dangling() {
+    fn 知らない題を指す関係は宙ぶらりんとして報告する() {
         let sections = vec![section("A", Importance::Core, vec![("架空の項目", true)])];
         let f = Forest::build(&sections);
         assert_eq!(f.parent(0), None);
@@ -276,7 +276,7 @@ mod tests {
     /// 同じ title が 2 つあるときは先着で解決する。後着を採ると、関係の相手が
     /// 成果物の並び順で変わる。
     #[test]
-    fn a_duplicate_title_resolves_to_the_first_section() {
+    fn 同じ題が2つあれば先の項目に解決する() {
         let sections = vec![
             section("同じ名前", Importance::Core, vec![]),
             section("同じ名前", Importance::Core, vec![]),
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn no_relations_at_all_falls_back_to_plain_importance_order() {
+    fn 関係が無ければ素の重要度順に落ちる() {
         let sections = vec![
             section("周辺の変更", Importance::Minor, vec![]),
             section("主目的", Importance::Core, vec![]),

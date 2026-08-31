@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn added_lines_resolve_through_the_new_side() {
+    fn 追加行は後像側から解決する() {
         let a = sample();
         assert_eq!(a.owner(&Position::new("src/a.rs", Side::New, 10)), Some(0));
         assert_eq!(a.owner(&Position::new("src/a.rs", Side::New, 12)), Some(0));
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn deleted_lines_are_only_reachable_through_the_old_side() {
+    fn 削除行は前像側からしか辿れない() {
         // 削除行を後像に寄せていないことの担保。ここが両方から引けたら、
         // 位置モデルが縮んでいる。
         let a = sample();
@@ -198,14 +198,14 @@ mod tests {
     }
 
     #[test]
-    fn file_level_changes_resolve_without_a_line() {
+    fn ファイル単位の変更は行番号なしで解決する() {
         let a = sample();
         assert_eq!(a.owner(&Position::file("logo.png")), Some(1));
         assert_eq!(a.owner(&Position::file("src/a.rs")), None);
     }
 
     #[test]
-    fn a_different_schema_version_is_rejected_as_its_own_error() {
+    fn スキーマ版違いは専用のエラーで拒む() {
         // 版を上げるたびに書き換えずに済むよう、今の版から差し替える。
         let current = format!("\"schema\": {}", crate::review::SCHEMA_VERSION);
         let other = sample_json().replace(&current, "\"schema\": 99");
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn broken_json_is_a_different_error_from_a_schema_mismatch() {
+    fn 壊れたjsonはスキーマ違いとは別のエラー() {
         match Annotations::from_json("{ not json") {
             Err(LoadError::Json(_)) => {}
             other => panic!("JSON 破損として拒否されるはず: {other:?}"),
@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn a_contested_line_keeps_the_first_section() {
+    fn 取り合いになった行は先の項目が持つ() {
         let contested = sample_json().replace(
             r#"{"path":"src/a.rs","side":"old","start":9,"end":9}"#,
             r#"{"path":"src/a.rs","side":"new","start":10,"end":10}"#,
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn every_importance_has_a_distinct_recommended_color() {
+    fn 重要度ごとに色が重ならない() {
         let mut seen = Vec::new();
         for i in Importance::ORDER {
             let rgb = i.recommended_rgb();

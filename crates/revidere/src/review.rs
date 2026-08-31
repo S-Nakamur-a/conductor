@@ -318,7 +318,7 @@ mod tests {
     /// 成果物の置き場は、書く側と読む側が同じ 1 つの関数から得る。
     /// ここが割れると「書いたのに読まれない」が黙って起きる。
     #[test]
-    fn the_artifact_lives_under_the_host_directory() {
+    fn 成果物はホストのディレクトリの下に置く() {
         let p = artifact_path(std::path::Path::new("/repo"), Scope::Base);
         assert_eq!(p, std::path::Path::new("/repo/.conductor/review.json"));
         assert!(p.starts_with(std::path::Path::new("/repo").join(DIR)));
@@ -327,7 +327,7 @@ mod tests {
     /// 2 つの区間が同じファイルを取り合うと、片方を見ている間にもう片方が
     /// 消える。別々の置き場であることを固定する。
     #[test]
-    fn the_two_scopes_do_not_share_a_file() {
+    fn 区間が違えばファイルを共有しない() {
         let repo = std::path::Path::new("/repo");
         assert_ne!(
             artifact_path(repo, Scope::Base),
@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_expands_to_every_line_between_both_ends_inclusive() {
+    fn 範囲は両端を含む全ての行に展開される() {
         let got: Vec<u32> = range(Side::New, Some(10), Some(12))
             .positions()
             .iter()
@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_with_only_a_start_yields_a_single_position() {
+    fn 始点だけの範囲は位置1つになる() {
         assert_eq!(
             range(Side::Old, Some(4), None).positions(),
             vec![Position::new("src/x.rs", Side::Old, 4)]
@@ -363,14 +363,14 @@ mod tests {
     }
 
     #[test]
-    fn a_reversed_range_yields_nothing_rather_than_panicking() {
+    fn 逆向きの範囲は落ちずに何も返さない() {
         // start > end はモデルの誤りなので、ここで黙って直さず空にする。
         // 結果として当該位置が unclassified に落ち、検査で表に出る。
         assert!(range(Side::New, Some(9), Some(2)).positions().is_empty());
     }
 
     #[test]
-    fn a_file_side_range_ignores_any_line_numbers() {
+    fn ファイル側の範囲は行番号を無視する() {
         let r = Range {
             path: "logo.png".into(),
             side: Side::File,
@@ -383,7 +383,7 @@ mod tests {
     /// 重要度の 4 値が JSON との間で往復する。serde の名前が JSON とずれると、
     /// 成果物を読んだ側で重要度だけが黙って落ちる。
     #[test]
-    fn every_importance_round_trips_through_its_json_name() {
+    fn 重要度はjsonの名前を往復する() {
         for (imp, name) in [
             (Importance::Core, "core"),
             (Importance::Ripple, "ripple"),
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn side_serializes_to_a_lowercase_json_string() {
+    fn sideは小文字のjson文字列になる() {
         let p = Position::new("src/x.rs", Side::Old, 7);
         let s = serde_json::to_string(&p).unwrap();
         assert!(s.contains("\"side\":\"old\""), "{s}");

@@ -17,7 +17,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn blob_hash_matches_git() {
+    fn blob_hashはgitと一致する() {
         assert_eq!(
             blob_hash(b"hello\n"),
             "ce013625030ba8dba906f756967f9e9ca394464a"
