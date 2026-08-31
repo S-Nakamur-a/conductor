@@ -153,8 +153,8 @@ pub struct PendingUnderline {
     pub has_jump_modifier: bool,
 }
 
-/// ホバーとダブルクリックの追跡。行番号はいずれも 1 始まり。
-pub struct ClickTracker {
+/// ポインタの居場所 — ホバー、ジャンプ下線、gutter のドラッグ。行番号は 1 始まり。
+pub struct PointerState {
     pub hover_line: Option<usize>,
     /// カーソルが gutter (行番号の領域) の上にあるときだけ入る。
     pub hover_gutter_line: Option<usize>,
@@ -167,7 +167,7 @@ pub struct ClickTracker {
     pub gutter_drag_anchor: Option<usize>,
 }
 
-impl Default for ClickTracker {
+impl Default for PointerState {
     fn default() -> Self {
         Self {
             hover_line: None,
@@ -243,7 +243,7 @@ pub struct ViewerState {
     pub filename_search: FilenameSearchState,
     /// 画像・動画を ASCII アートとして出す。
     pub media_state: MediaState,
-    pub click: ClickTracker,
+    pub click: PointerState,
     /// タブ行のクリック領域。描画が書き、マウス処理が幅を計算し直さずに同じ
     /// ジオメトリを引けるようにする。
     pub tab_row_hits: crate::hit_map::ColumnSpans<crate::ui::tab_bar::TabAction>,

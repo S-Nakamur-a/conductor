@@ -433,7 +433,7 @@ pub struct HoverInfoOverlay {
     /// 毎フレームの処理で落とされる。
     pub shown_file: Option<String>,
     /// info が説明しているシンボルのソース行 (1 始まり)。ポップアップが
-    /// 表示されているあいだ、ClickTracker::hover_symbol とは独立に描画側が
+    /// 表示されているあいだ、PointerState::hover_symbol とは独立に描画側が
     /// そのシンボルをハイライトし続けられるようにする。マウスは既にそこから
     /// 外れているかもしれないし、ポップアップの離脱猶予の中にいるかもしれないが、
     /// 下線そのものにはそうした猶予が無いため。

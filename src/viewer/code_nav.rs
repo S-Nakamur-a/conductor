@@ -530,7 +530,7 @@ impl App {
             // できるようにする。
             self.code_nav.hover_info.shown_file = if info.is_some() { file } else { None };
             // 対象のシンボルは info が表示されている間はハイライトし続ける。これは
-            // ClickTracker::hover_symbol（マウスがすでに離れているかもしれず、また
+            // PointerState::hover_symbol（マウスがすでに離れているかもしれず、また
             // 離脱の猶予も一切ない）とは独立している。
             if info.is_some() {
                 self.code_nav.hover_info.target_line = line;
@@ -1340,7 +1340,7 @@ pub fn underline_color_kind(
 /// ホバー情報ポップアップの対象シンボルが query_line を含んでいるか、
 /// 含んでいればそのハイライト範囲を返す。ポップアップが非表示か別の行を
 /// 説明している間は None を返し、その場合レンダラはその行について
-/// ClickTracker::hover_symbol（下線）側の情報にフォールバックする。
+/// PointerState::hover_symbol（下線）側の情報にフォールバックする。
 pub fn popup_highlight_range(
     popup_shown: bool,
     target_line: usize,
