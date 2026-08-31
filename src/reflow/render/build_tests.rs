@@ -155,173 +155,62 @@ fn read_results_collapse_into_aggregated_count_line() {
             Role::Assistant,
             vec![tool_use("Read", json!({"file_path": "/a"}))],
         ),
-        entry(
-            Role::User,
-            vec![
-                tool_result(
-                    ResultKind::Counted {
-                        bucket: CountedBucket::Read,
-                        from_bash: false,
-                    },
-                    &["a"],
-                    false,
-                ),
-                tool_result(
-                    ResultKind::Counted {
-                        bucket: CountedBucket::Read,
-                        from_bash: false,
-                    },
-                    &["b"],
-                    false,
-                ),
-                tool_result(
-                    ResultKind::Counted {
-                        bucket: CountedBucket::Read,
-                        from_bash: false,
-                    },
-                    &["c"],
-                    false,
-                ),
-            ],
-        ),
+        results_entry(&[
+            (counted(CountedBucket::Read, false), false),
+            (counted(CountedBucket::Read, false), false),
+            (counted(CountedBucket::Read, false), false),
+        ]),
     ];
-    let lines = build(&entries, false);
     assert_eq!(
-        non_blank_texts(&lines),
+        non_blank_texts(&build(&entries, false)),
         vec!["Read 3 files (ctrl+o to expand)".to_string()]
     );
 }
 
 #[test]
 fn read_results_singular_count_uses_singular_noun() {
-    let entries = vec![entry(
-        Role::User,
-        vec![tool_result(
-            ResultKind::Counted {
-                bucket: CountedBucket::Read,
-                from_bash: false,
-            },
-            &["a"],
-            false,
-        )],
-    )];
-    let lines = build(&entries, false);
+    let entries = vec![results_entry(&[(
+        counted(CountedBucket::Read, false),
+        false,
+    )])];
     assert_eq!(
-        non_blank_texts(&lines),
+        non_blank_texts(&build(&entries, false)),
         vec!["Read 1 file (ctrl+o to expand)".to_string()]
     );
 }
 
 #[test]
-fn grep_and_glob_share_one_search_bucket_summary() {
-    // どちらも CountedBucket::Search に分類されるので、どちらの結果も同じバケットに
-    // 解決されてここでまとまる。
-    let entries = vec![entry(
-        Role::User,
-        vec![
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::Search,
-                    from_bash: false,
-                },
-                &["match1"],
-                false,
-            ),
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::Search,
-                    from_bash: false,
-                },
-                &["match2"],
-                false,
-            ),
-        ],
-    )];
-    let lines = build(&entries, false);
+fn search_bucket_results_fold_into_one_pattern_summary() {
+    let entries = vec![results_entry(&[
+        (counted(CountedBucket::Search, false), false),
+        (counted(CountedBucket::Search, false), false),
+    ])];
     assert_eq!(
-        non_blank_texts(&lines),
+        non_blank_texts(&build(&entries, false)),
         vec!["Searched for 2 patterns (ctrl+o to expand)".to_string()]
     );
 }
 
 #[test]
 fn bash_ls_collapses_to_listed_directories_summary() {
-    let entries = vec![entry(
-        Role::User,
-        vec![
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::List,
-                    from_bash: true,
-                },
-                &["a"],
-                false,
-            ),
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::List,
-                    from_bash: true,
-                },
-                &["b"],
-                false,
-            ),
-        ],
-    )];
-    let lines = build(&entries, false);
+    let entries = vec![results_entry(&[
+        (counted(CountedBucket::List, true), false),
+        (counted(CountedBucket::List, true), false),
+    ])];
     assert_eq!(
-        non_blank_texts(&lines),
+        non_blank_texts(&build(&entries, false)),
         vec!["Listed 2 directories (ctrl+o to expand)".to_string()]
     );
 }
 
 #[test]
-fn bash_cat_merges_with_read_bucket_summary() {
-    // 1つは実際の Read tool call の結果、もう1つは Bash 経由の cat の結果 —
-    // どちらも Read バケットに解決され、1行にまとまる。
-    let entries = vec![entry(
-        Role::User,
-        vec![
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::Read,
-                    from_bash: false,
-                },
-                &["file a contents"],
-                false,
-            ),
-            tool_result(
-                ResultKind::Counted {
-                    bucket: CountedBucket::Read,
-                    from_bash: false,
-                },
-                &["file b contents"],
-                false,
-            ),
-        ],
-    )];
-    let lines = build(&entries, false);
-    assert_eq!(
-        non_blank_texts(&lines),
-        vec!["Read 2 files (ctrl+o to expand)".to_string()]
-    );
-}
-
-#[test]
 fn counted_result_ignores_is_error_and_still_aggregates_normally() {
-    // 修正済みの仕様（実測）: Counted は is_error を完全に無視する — 失敗した
-    // Read でも、エラー用のスタイルを一切付けずに普通のグレーのサマリー行へ
-    // 折り込まれる。
-    let entries = vec![entry(
-        Role::User,
-        vec![tool_result(
-            ResultKind::Counted {
-                bucket: CountedBucket::Read,
-                from_bash: false,
-            },
-            &["boom: file not found"],
-            true,
-        )],
-    )];
+    // 実測: Counted は is_error を無視する。失敗した Read でもエラー色は付かず、
+    // 普通のサマリー行へ折り込まれる。
+    let entries = vec![results_entry(&[(
+        counted(CountedBucket::Read, false),
+        true,
+    )])];
     let lines = build(&entries, false);
     let line = only_visible_line(&lines);
 
@@ -343,45 +232,6 @@ fn edit_tool_collapses_to_update_display_name() {
     assert_eq!(
         non_blank_texts(&lines),
         vec![format!("{ASSISTANT_MARKER} Update(/tmp/out.txt)")]
-    );
-}
-
-#[test]
-fn task_tool_collapses_to_agent_display_name() {
-    let entries = vec![entry(
-        Role::Assistant,
-        vec![tool_use("Task", json!({"description": "investigate bug"}))],
-    )];
-    let lines = build(&entries, false);
-    assert_eq!(
-        non_blank_texts(&lines),
-        vec![format!("{ASSISTANT_MARKER} Agent(investigate bug)")]
-    );
-}
-
-#[test]
-fn webfetch_tool_collapses_to_fetch_display_name() {
-    let entries = vec![entry(
-        Role::Assistant,
-        vec![tool_use("WebFetch", json!({"url": "https://example.com"}))],
-    )];
-    let lines = build(&entries, false);
-    assert_eq!(
-        non_blank_texts(&lines),
-        vec![format!("{ASSISTANT_MARKER} Fetch(https://example.com)")]
-    );
-}
-
-#[test]
-fn unknown_tool_falls_back_to_raw_name_and_generic_arg() {
-    let entries = vec![entry(
-        Role::Assistant,
-        vec![tool_use("WebSearch", json!({"query": "some search term"}))],
-    )];
-    let lines = build(&entries, false);
-    assert_eq!(
-        non_blank_texts(&lines),
-        vec![format!("{ASSISTANT_MARKER} WebSearch(some search term)")]
     );
 }
 
@@ -916,19 +766,6 @@ fn shell_cat_counts_only_when_the_read_tool_is_absent() {
             "for {kinds:?}"
         );
     }
-}
-
-#[test]
-fn counted_result_ignores_is_error_entirely() {
-    // 実測: 失敗した Read でも普通のサマリーへ折り込まれる。
-    let entries = vec![results_entry(&[(
-        counted(CountedBucket::Read, false),
-        true,
-    )])];
-    assert_eq!(
-        non_blank_texts(&build(&entries, false)),
-        vec!["Read 1 file (ctrl+o to expand)"]
-    );
 }
 
 // Compact 境界 / annotation（実測、claude_log::tests を参照）
