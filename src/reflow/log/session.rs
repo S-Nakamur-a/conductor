@@ -152,17 +152,8 @@ pub fn load_session(path: &Path) -> Vec<LogEntry> {
     entries
 }
 
-/// attachment が描画する ⎿ 1行、または何も描画しない残り約27種別なら None。
-///
-/// 再開後のトランスクリプトで実測した形式:
-/// ```text
-///   ⎿  Read alpha.rs (42 lines)
-///   ⎿  Referenced file beta.yml
-/// ```
-/// displayPath はそのまま使う。Claude Code 側で既にセッションの cwd に対する
-/// 相対パスになっており、worktree の外のファイルに付く長い ../../.. の
-/// プレフィックスも含めて済んでいるため。行数の無い file attachment は
-/// 0 と表示せず、括弧の部分ごと省略する。
+/// displayPath はそのまま使う。Claude Code 側で既にセッションの cwd 相対になって
+/// いる。行数の無い file attachment は 0 と出さず、括弧ごと省略する。
 fn attachment_line(attachment: &super::schema::Attachment) -> Option<String> {
     let path = attachment
         .display_path
@@ -188,11 +179,8 @@ fn attachment_line(attachment: &super::schema::Attachment) -> Option<String> {
     }
 }
 
-/// 折りたたまれた Thinking ブロックの「Thought for Ns」行のための、prev と
-/// this の RFC3339 タイムスタンプの秒単位の差分。どちらかのタイムスタンプが
-/// 無い/パースに失敗した場合、または計算結果がゼロ以下の場合（クロックの
-/// ずれや、2レコードが同じ秒に収まった場合など）は 1 にフォールバックする
-/// （仕様上 0 にはしない）。
+/// タイムスタンプが無い・壊れている・差が 0 以下 (同じ秒に収まった等) のときは 1 に
+/// 落とす。仕様上 0 にはしない。
 fn thinking_duration_secs(prev: Option<&str>, this: Option<&str>) -> u64 {
     let (Some(prev), Some(this)) = (prev, this) else {
         return 1;
@@ -207,10 +195,8 @@ fn thinking_duration_secs(prev: Option<&str>, this: Option<&str>) -> u64 {
     if diff <= 0 { 1 } else { diff as u64 }
 }
 
-/// フィルタしていないレコード全体を対象に、対応する tool_result ブロックが
-/// エラーを報告した tool_use_id をすべて集める。エントリ構築パスが
-/// （後にある）tool_result レコードに到達する前に tool_use のマーカー色を
-/// 解決するために使う。load_session の事前スキャンのコメントを参照。
+/// エントリ構築が後続の tool_result に到達する前に tool_use のマーカー色を決める
+/// ため、フィルタ前の全レコードを先に舐める。
 fn scan_errored_tool_use_ids(records: &[LogRecord]) -> HashSet<String> {
     let mut ids = HashSet::new();
     for record in records {

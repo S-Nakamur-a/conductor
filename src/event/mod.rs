@@ -250,11 +250,8 @@ fn stage_panel_popup(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     Some(key)
 }
 
-/// 段4: Reflow トランスクリプトビューと PTY フォーカス。
-/// フォーカス固有ハンドラより先に置く必要がある。そうしないとキーが
-/// Claude へ転送されてしまう。dispatch_pty_key に括り出すことで、
-/// reflow-over-Claude のケースと素の PTY フォーカスのケースが1つの
-/// コードパスを共有する。
+/// 段4: Reflow ビューと PTY フォーカス。フォーカス別ハンドラより先に置かないと
+/// キーが Claude へ転送される。
 fn stage_pty(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     if (app.reflow.active && app.focus == Focus::TerminalClaude) || app.focus.is_pty() {
         return dispatch_pty_key(app, key);
@@ -293,11 +290,8 @@ fn stage_focus(app: &mut App, key: KeyEvent) {
     }
 }
 
-/// pinned 状態のインタラクティブな hover モーダルスタックのキー操作。
-/// Esc は開いている最も深い階層を1段階戻す (プレビュー → refs リスト →
-/// ポップアップ全体)。Up/Down (または k/j) は references の選択を動かす。
-/// Enter は選択中の reference のプレビューを開くか、プレビューが既に
-/// 表示されていればその位置へジャンプする。
+/// Esc は最も深い階層を 1 段戻す (プレビュー → refs リスト → ポップアップ全体)。
+/// Enter は選択中のプレビューを開くか、出ていればその位置へ飛ぶ。
 fn handle_hover_modal_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     match key.code {
         KeyCode::Esc => {
@@ -326,11 +320,8 @@ fn handle_hover_modal_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     None
 }
 
-/// PTY がフォーカスされているパネル (Claude/Shell/Editor) 向け、または
-/// Claude terminal の上に重なる reflow トランスクリプトビュー向けに、
-/// キーイベントをディスパッチする。呼び出し側は app.focus.is_pty() か
-/// reflow-over-Claude の条件が成り立つときにしかこれを呼んではならない
-/// — 段 4 (stage_pty) がこれを保証する。
+/// app.focus.is_pty() か reflow-over-Claude が成り立つときにしか呼んではならない。
+/// 段 4 ([stage_pty]) がそれを保証する。
 fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     // Reflow トランスクリプトビュー — アクティブな間はすべてのキーを
     // 消費する。ペインのリサイズ/ズーム/パネルオーバーレイは、スクロール
@@ -412,12 +403,8 @@ fn dispatch_pty_key(app: &mut App, key: KeyEvent) -> Option<KeyEvent> {
     None
 }
 
-/// terminal 専用のアクション (スクロールバック、離脱、ファイルを開く) を
-/// 処理する。terminal の状態が必要で、他のどのパネルでも意味を持たないため
-/// dispatch_global_action を経由できない。処理したら true を返す。それ以外
-/// のアクションでは false を返す (呼び出し側はそれを dispatch_global_action
-/// へ渡す)。terminal パネルがフォーカスされている間しか呼ばれないので、
-/// unreachable!() の分岐は成立する。
+/// terminal の状態を要り、他のパネルでは意味を持たないので dispatch_global_action を
+/// 経由できない。処理したら true。terminal にフォーカスがある間しか呼ばれない。
 fn handle_terminal_only_action(app: &mut App, action: Action) -> bool {
     match action {
         Action::LeaveTerminal => {

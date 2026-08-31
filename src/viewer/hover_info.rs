@@ -189,12 +189,8 @@ fn has_member_list(kind: &str) -> bool {
     )
 }
 
-/// def_idx (0 始まり) から始まる宣言を、本体を閉じる波括弧まで丸ごと取り出す。
-/// 本体を持たない宣言 (`struct Foo;`, `struct Foo(u32);`) と、閉じ波括弧が
-/// [MAX_DEFINITION_SCAN] 行以内に見つからないものは None。
-///
-/// 波括弧は字面で数えるので、文字列リテラルの中の波括弧には騙される。
-/// 定義位置しか分かっていない他ファイルを構文解析する余裕はここには無い。
+/// 波括弧は字面で数えるので文字列リテラル内の波括弧に騙される。定義位置しか分かって
+/// いない他ファイルを構文解析する余裕はここには無い。
 fn extract_definition(lines: &[&str], def_idx: usize) -> Option<Vec<String>> {
     let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
     let mut out = Vec::new();
@@ -234,9 +230,8 @@ fn brace_delta(line: &str) -> i32 {
     })
 }
 
-/// def_idx (0 始まり) から始まる宣言のシグネチャを取り出す。{ で終わる最初の行
-/// (波括弧は除去) まで、または ; / = で終わる宣言までを含め、上限は
-/// [MAX_SIGNATURE_LINES]。各行は最初の行のインデントぶんだけ左へ詰める。
+/// { で終わる最初の行 (波括弧は除去) か、; / = で終わる宣言まで。各行は最初の行の
+/// インデントぶん左へ詰める。
 fn extract_signature(lines: &[&str], def_idx: usize) -> Vec<String> {
     let indent = lines[def_idx].len() - lines[def_idx].trim_start().len();
     let mut out = Vec::new();
@@ -282,10 +277,7 @@ fn bracket_delta(line: &str) -> i32 {
     })
 }
 
-/// def_idx (0 始まり) の直上にあるコメントブロックを集める。属性・デコレータの行
-/// (#[...], @...) は読み飛ばす。///, //!, // (Rust/Go) と
-/// /** ... */ (TS/JS) の形式に対応し、記号は除去する。上限は [MAX_DOC_LINES]
-/// (概要を持つ先頭側を残す)。
+/// 属性・デコレータの行は読み飛ばす。上限を超えたら概要を持つ先頭側を残す。
 fn extract_doc_comment(lines: &[&str], def_idx: usize) -> Vec<String> {
     let mut collected: Vec<String> = Vec::new();
     let mut i = def_idx;

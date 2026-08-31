@@ -85,10 +85,8 @@ fn tag_inner<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     })
 }
 
-/// タグの属性テキスト（タグ名とその閉じ > の間の部分文字列）から
-/// attr="..." の値を取り出す。単純な文字列検索であり、汎用の属性パーサ
-/// ではない。上の tag_inner も意図的に完全な XML/HTML パーサにしていないのと
-/// 同じ方針。
+/// 単純な文字列検索で、汎用の属性パーサではない。tag_inner を完全な XML/HTML パーサに
+/// していないのと同じ方針。
 fn attr_value<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!("{name}=\"");
     let start = attrs.find(&needle)? + needle.len();
@@ -97,14 +95,8 @@ fn attr_value<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..end])
 }
 
-/// lead の先頭にある <teammate-message teammate_id="...">…</teammate-message>
-/// ラッパー（Claude Code CLI の形式ではなく、Conductor 独自のマルチエージェント
-/// 構造）をパースして (id, body) にする。ラッパーの summary 属性は存在しても
-/// 常に無視し、展開時に表示される body だけがメッセージ本体を持つ。終了タグが
-/// 無い場合は文字列の末尾まで取り込む点は tag_inner の規約と同じ。lead が
-/// このタグで始まっていない場合、またはタグが壊れている場合（開始タグに
-/// 閉じの > が無い、または teammate_id 属性が無い）は None を返し、
-/// 呼び出し元はテキストを通常の文章として扱う経路にフォールバックする。
+/// summary 属性は常に無視し、展開時に見える body だけが本体を持つ。lead がこのタグで
+/// 始まっていない、または壊れていれば None を返して通常の文章として扱わせる。
 fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     const OPEN_PREFIX: &str = "<teammate-message";
     const CLOSE: &str = "</teammate-message>";
