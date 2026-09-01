@@ -1,7 +1,9 @@
 //! マウス。クリックの行解決はカーソルに任せ、外へ頼むことは [Intent] で返す。
 
+use crate::app::OpenAs;
 use crate::diff_state::DiffListEntry;
 use crate::review_state::CommentListRow;
+use crate::widget::click::ClickTracker;
 
 use super::ctx::Ctx;
 use super::intent::{Intent, SectionOp};
@@ -42,12 +44,20 @@ fn tree_click(ex: &mut Explorer, y: u16, panes: &Panes) -> Option<Intent> {
     }
 
     let path = entry.path.clone();
-    // 1 クリックは preview タブ。永続タブが開いたまま溜まるのを防ぐ。
-    Some(if ex.tree_clicks.is_double(at) {
-        Intent::OpenFile { path }
-    } else {
-        Intent::PreviewFile { path }
+    Some(Intent::OpenFile {
+        path,
+        how: open_as(&mut ex.tree_clicks, at),
     })
+}
+
+/// 1 クリックは preview タブ、続けてもう一度で固定する。ツリーと変更ファイル一覧で
+/// 揃える。永続タブが開いたまま溜まるのを防ぐため。
+fn open_as(clicks: &mut ClickTracker, at: usize) -> OpenAs {
+    if clicks.is_double(at) {
+        OpenAs::Persistent
+    } else {
+        OpenAs::Preview
+    }
 }
 
 fn changes_click(ex: &mut Explorer, y: u16, ctx: &Ctx, panes: &Panes) -> Option<Intent> {
@@ -55,14 +65,14 @@ fn changes_click(ex: &mut Explorer, y: u16, ctx: &Ctx, panes: &Panes) -> Option<
     let at = ex.changes_cursor.index_at(y, len, panes.bottom)?;
     ex.changes_cursor.select(at, len, panes.bottom);
 
-    // 変更ファイル一覧はダブルクリックを見ない。常に 1 クリックで開き、常に
-    // Viewer へフォーカスが移る (ツリーと非対称)。
     Some(match ctx.diff.display_list.get(at)? {
         DiffListEntry::Summary {} => Intent::OpenSummary,
         DiffListEntry::Directory { .. } => Intent::Section {
             op: SectionOp::Toggle,
         },
-        DiffListEntry::File { .. } => Intent::OpenSelectedChange,
+        DiffListEntry::File { .. } => Intent::OpenSelectedChange {
+            how: open_as(&mut ex.changes_clicks, at),
+        },
     })
 }
 
@@ -106,5 +116,59 @@ pub fn scroll(ex: &mut Explorer, lines: isize, y: u16, ctx: &Ctx, panes: &Panes)
             ex.comments_cursor
                 .pan(lines, ctx.review.comment_list_rows.len(), panes.bottom)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff_state::{DiffState, DiffViewMode};
+    use crate::review_state::ReviewState;
+
+    /// 1 クリックは preview、続けてもう一度で固定。ツリーと変更ファイル一覧で
+    /// 揃っていることを、両方の経路について押さえる。
+    #[test]
+    fn 変更ファイル一覧のクリックはツリーと同じ意味を持つ() {
+        let theme = crate::theme::Theme::default();
+        let config = crate::config::Config::default();
+        let keymap = crate::keymap::KeyMap::new(&toml::Table::new());
+        let review = ReviewState::new();
+        let mut diff = DiffState::new("main", DiffViewMode::Unified);
+        diff.display_list = vec![crate::diff_state::DiffListEntry::File {
+            file_index: 0,
+            depth: 0,
+        }];
+        let ctx = Ctx {
+            theme: &theme,
+            config: &config,
+            keymap: &keymap,
+            focused: true,
+            diff: &diff,
+            review: &review,
+            revidere: crate::revidere::ArtifactState::None,
+        };
+
+        let panes = Panes::split(
+            ratatui::layout::Rect::new(0, 0, 40, 20),
+            50,
+            BottomView::Changes,
+            false,
+        );
+        let mut ex = Explorer::default();
+        ex.show(BottomView::Changes);
+        let y = panes.bottom.top;
+
+        assert!(matches!(
+            click(&mut ex, 0, y, &ctx, &panes),
+            Some(Intent::OpenSelectedChange {
+                how: OpenAs::Preview
+            })
+        ));
+        assert!(matches!(
+            click(&mut ex, 0, y, &ctx, &panes),
+            Some(Intent::OpenSelectedChange {
+                how: OpenAs::Persistent
+            })
+        ));
     }
 }

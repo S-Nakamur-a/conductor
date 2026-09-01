@@ -12,14 +12,14 @@ use super::intent::{Intent, SectionOp};
 impl App {
     pub fn apply_explorer_intent(&mut self, intent: Intent) {
         match intent {
-            Intent::OpenFile { path } => {
-                self.show_file(&path, OpenAs::Persistent);
-                self.set_focus(Focus::Viewer);
+            Intent::OpenFile { path, how } => {
+                self.show_file(&path, how);
+                self.viewer.leave_diff_view();
+                self.focus_viewer_if_persistent(how);
             }
-            Intent::PreviewFile { path } => self.show_file(&path, OpenAs::Preview),
-            Intent::OpenSelectedChange => {
-                self.open_diff_file_at_selected();
-                self.set_focus(Focus::Viewer);
+            Intent::OpenSelectedChange { how } => {
+                self.open_diff_file_at_selected(how);
+                self.focus_viewer_if_persistent(how);
             }
             Intent::OpenSummary => {
                 self.viewer.enter_summary_view();
@@ -62,6 +62,12 @@ impl App {
 }
 
 impl App {
+    fn focus_viewer_if_persistent(&mut self, how: OpenAs) {
+        if how == OpenAs::Persistent {
+            self.set_focus(Focus::Viewer);
+        }
+    }
+
     /// コメントのファイルと行へ Viewer を寄せ、その行を選択状態にする。
     fn reveal_comment(&mut self, comment: usize, focus_viewer: bool) {
         let Some(c) = self.review_state.comments.get(comment) else {
