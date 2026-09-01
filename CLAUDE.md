@@ -167,16 +167,19 @@ first.
   read, the ones with artifacts on disk, and the ones `needs_survey` names —
   because keying all 109 costs 0.6s. `needs_survey` returning the roots *by name*
   is load-bearing: a keyless root the survey did not pick would keep asking to be
-  surveyed, every frame.
+  surveyed, every frame. A root with no artifact is in neither set, so opening a
+  file in one answers `NotIndexed`; `note_open` asks for one more survey there,
+  which is the only way that root's first index ever starts.
 - **What is already on disk is not rebuilt, and staleness heals itself.**
-  `note_open` asks `has_generation` for the current key and `tick_regeneration`
-  re-checks it before starting the producer, so an edit that lands the tree back
-  on already-indexed content writes `result=reused took=0.0s` and starts nothing.
-  Reading content with no index yet answers `Reading::Building` and starts one —
-  safe to do automatically only because generations are keyed, so bouncing
-  between two worktrees pays the ~14s / 2.36GB once per content and reuses it
-  after. `Reading::Stale` is the narrow case regenerating will not fix: the index
-  describes this exact content yet does not cover the open file.
+  `tick_regeneration` re-checks `has_generation` before starting the producer, so
+  an edit that lands the tree back on already-indexed content writes
+  `result=reused took=0.0s` and starts nothing. `note_open` asks a narrower
+  question: it starts a producer only when what is loaded cannot explain the file
+  being read. A moved tree key alone is not a reason — per-file provenance keeps
+  the untouched files answering `Exact` out of the previous generation, and
+  keying off the tree instead would spend ~14s / 2.36GB every time git moves the
+  worktree. `Reading::Stale` is the narrow case regenerating will not fix: the
+  index describes this exact content yet does not cover the open file.
   **Repo ▸ Rebuild Code Index** skips the 3s quiescence, since the person who
   pressed it is waiting. A root whose key is stale (`note_change` clears it) does
   not generate until the survey refreshes it, or the index would be written under
