@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::layout::Rect;
 
-use super::{
-    ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, UNFOCUSED_TERMINAL_REFRESH,
-};
+use super::{ACTIVITY_TIMEOUT, PULSE_TICK_INTERVAL, UNFOCUSED_TERMINAL_REFRESH};
 use crate::app::{App, Focus};
 use crate::timer;
 
@@ -124,7 +122,6 @@ impl LoopState {
         timers.register("pty_cleanup", Duration::from_secs(10));
         timers.register("cc_waiting", Duration::from_secs(5));
         timers.register("stats_refresh", Duration::from_secs(30));
-        timers.register("decoration", DECORATION_TICK_INTERVAL);
         timers.register("unfocused_terminal", UNFOCUSED_TERMINAL_REFRESH);
         timers.register("pulse", PULSE_TICK_INTERVAL);
 

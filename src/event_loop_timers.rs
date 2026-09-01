@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::app::App;
 
 /// この周回で発火時刻に達した周期タイマーをすべて実行する。git と worktree の
-/// ポーリング、装飾・鼓動の再描画周期、PTY の後始末、Claude Code の
+/// ポーリング、鼓動の再描画周期、PTY の後始末、Claude Code の
 /// 待機状態、統計の更新、ccusage、アップデート確認。
 pub(crate) fn run_due_timers(
     app: &mut App,
@@ -18,21 +18,8 @@ pub(crate) fn run_due_timers(
 ) {
     for name in timers.check_due() {
         match name {
-            // 静かなモード: 装飾を進めるのは worktree パネルにフォーカスがあるときだけ。
-            // レビューや端末作業の最中に視界の端で動き続けることがないようにする。
-            // それ以外のときはその場で止まり、フォーカスが戻ったら再開する。
-            "decoration" if app.focus.current() == crate::app::Focus::Worktree => {
-                let left_w = app.layout.cache.columns[0].width;
-                let panel_h = app.layout.cache.main_area.height;
-                let list_h = (app.worktrees.len() as u16 + 2).max(5);
-                let detail_h = (1 + app.worktree_mgr.local_branches.len() as u16 + 2).min(8);
-                let deco_h = panel_h.saturating_sub(list_h + detail_h);
-                if app.tick_decoration(left_w.saturating_sub(2), deco_h) {
-                    app.request_redraw();
-                }
-            }
-            // どこかのセッションが待機している限り、フォーカスや装飾のアニメーション
-            // 有無にかかわらず通知バーの明滅を動かす。
+            // どこかのセッションが待機している限り、フォーカスにかかわらず
+            // 通知バーの明滅を動かす。
             "pulse" if !app.terminal.cc_waiting_worktrees.is_empty() => {
                 app.request_redraw();
             }

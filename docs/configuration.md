@@ -13,8 +13,6 @@ main_branch = "main"                    # main/trunk branch name (default: "main
 # repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
 # worktree_dir = "~/worktrees"          # custom worktree base directory
                                         #   (default: <repo-parent>/<repo-name>-worktrees/)
-decoration = "aquarium"                 # worktree panel decoration
-                                        #   aquarium | space | garden | city | none
 # auto_resume = true                    # automatically resume Claude Code sessions on startup
 # auto_resume_main = false              # also resume the session on the main worktree
                                         #   (grabbed sessions are always resumed regardless)

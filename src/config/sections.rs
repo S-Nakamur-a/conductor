@@ -25,9 +25,6 @@ pub struct GeneralConfig {
     /// worktree 用のカスタムベースディレクトリ。
     /// None の場合は <repo-parent>/<repo-name>-worktrees/ がデフォルトになる。
     pub worktree_dir: Option<PathBuf>,
-    /// worktree パネルの装飾モード:
-    /// "aquarium"(デフォルト)、"space"、"garden"、"city"、"none"。
-    pub decoration: String,
     /// 起動時に前回実行の Claude Code セッションを自動的に再開する。
     pub auto_resume: bool,
     /// main worktree でもセッションを自動再開する(auto_resume が true の
@@ -46,7 +43,6 @@ impl Default for GeneralConfig {
             shell: default_shell(),
             repos: Vec::new(),
             worktree_dir: None,
-            decoration: String::from("aquarium"),
             auto_resume: true,
             auto_resume_main: false,
         }

@@ -152,7 +152,6 @@ impl App {
             },
             update: UpdateFlow::from_current_process(),
             clipboard: copypasta::ClipboardContext::new().ok(),
-            decoration_states: Default::default(),
             branch_details: Default::default(),
             gh_available: Self::check_gh_available(),
             view_restore: Default::default(),
