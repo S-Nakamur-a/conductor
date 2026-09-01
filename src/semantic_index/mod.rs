@@ -44,7 +44,7 @@ pub enum Reading {
     /// 今の内容の索引はあるのに、このファイルが載っていない。
     ///
     /// producer がそのファイルを索引しなかったか、生成中に動いて出自から落ちたか、
-    /// producer を起動できないかのいずれか。内容が動いただけなら `Building`。
+    /// producer を起動できないかのいずれか。作り直しても同じものが出るので作りに行かない。
     Stale,
     /// このルートを索引しているところ。
     Building,
@@ -184,6 +184,8 @@ pub struct SemanticIndex {
     tree: PathBuf,
     /// いま読んでいるファイル。同じものを繰り返し告げられたときに何もしないため。
     reading: Option<PathBuf>,
+    /// 読んでいるファイルの索引ルートが、まだ調査に載っていない。
+    unsurveyed_reading: bool,
     /// main worktree の `.conductor/` と、それを引いた元のリポジトリ。内側の `None` は
     /// 「git リポジトリでない」。
     ///
@@ -219,6 +221,10 @@ impl SemanticIndex {
             answer
         };
         let Some(index) = self.owning_root(rel) else {
+            // 調査が鍵を出すのは成果物の置いてあるルートだけなので、一度も索引
+            // されていないルートはここに来る。頼まないと鍵を持てないまま生成も
+            // 始まらず、そのルートは永久に構文層のままになる。
+            self.unsurveyed_reading = roots::Language::of_file(rel).is_some();
             return settle(self, Reading::NotIndexed);
         };
         let Some(dir) = self.conductor_dir(repo_root).map(Path::to_path_buf) else {
@@ -228,28 +234,29 @@ impl SemanticIndex {
         let Some(key) = self.roots[index].key.clone() else {
             return Reading::Loading;
         };
-        // 既にあるものを作り直さない。開くたびに走らせると producer が止まらなくなる。
-        if !self.roots[index].at.has_generation(&dir, &key) {
-            self.roots[index].request(Trigger::Open, Some(rel.to_path_buf()));
-            return settle(self, Reading::Building);
+        let indexed = self.roots[index].at.has_generation(&dir, &key);
+        // 読み込みは別スレッドなので、worktree を切り替えた直後は間に合っていない。
+        // ここで確定させると、古いと言うべき唯一の場面で必ず黙る。読むものが
+        // 置いてすら無いときは待つ相手がいないので、そのまま作りに行く。
+        let covered = match self.slot.get(tree_root) {
+            Some(store) => store.is_current(rel),
+            None if indexed => return Reading::Loading,
+            None => false,
+        };
+        // 出自はファイル単位なので、ほかのファイルが動いて鍵がずれても、読んでいる
+        // ファイルは前の世代のまま Exact に答える。鍵だけを見て走らせると、git が
+        // ツリーを動かすたびに producer (実測 14 秒 / 2.3GiB) を起こすことになる。
+        if covered {
+            return settle(self, Reading::Indexed);
         }
         if self.roots[index].is_working() {
             return settle(self, Reading::Building);
         }
-        // 索引の読み込みは別スレッドなので、worktree を切り替えた直後は間に合って
-        // いない。ここで「説明できている」と答えて答えを確定させると、古いことを
-        // 言うべき唯一の場面 (別のツリーへ移った直後) で必ず黙ることになる。
-        let Some(store) = self.slot.get(tree_root) else {
-            return Reading::Loading;
-        };
-        // 索引はあるが、このファイルの今の内容は説明できていない。黙って構文層に
-        // 落ちるので、言わないと「ジャンプが甘い」としか見えない。
-        let answer = if store.is_current(rel) {
-            Reading::Indexed
-        } else {
-            Reading::Stale
-        };
-        settle(self, answer)
+        if indexed {
+            return settle(self, Reading::Stale);
+        }
+        self.roots[index].request(Trigger::Open, Some(rel.to_path_buf()));
+        settle(self, Reading::Building)
     }
 
     /// いま読んでいるファイルの索引ルートを作り直す (画面からの頼み)。どの索引ルートにも
@@ -344,7 +351,7 @@ impl SemanticIndex {
     /// ではやらない。名指しで返すのは [`survey`] が鍵を出す相手を自分で選ぶためで、選から
     /// 漏れたルートはいつまでも「調査が要る」と言い続けることになる。
     pub fn needs_survey(&self, tree_root: &Path) -> Option<Vec<IndexRoot>> {
-        if self.tree != tree_root {
+        if self.tree != tree_root || self.unsurveyed_reading {
             return Some(Vec::new());
         }
         let keyless: Vec<IndexRoot> = self
@@ -369,18 +376,26 @@ impl SemanticIndex {
             // Drop がプロセスグループごと止める。
             self.roots.clear();
         }
+        // 載らなかったなら、そのファイルはどの索引ルートにも属さない。立てたままだと
+        // 調査が毎フレーム走る。
+        self.unsurveyed_reading = false;
         for (at, key) in survey.roots {
             match self.roots.iter_mut().find(|r| r.at == at) {
                 // 走っている生成はそのまま続ける。鍵だけ差し替えると、置かれる索引の
                 // 名前と中身が食い違うので、走っていない間にだけ入れる。
                 Some(root) if !root.regenerator.is_running() => root.key = Some(key),
                 Some(_) => {}
-                None => self.roots.push(Root {
-                    regenerator: Regenerator::new(at.lang.producer()),
-                    at,
-                    key: Some(key),
-                    run: Run::default(),
-                }),
+                None => {
+                    // 「対象外」と答えたファイルがこのルートのものかもしれない。
+                    // 読み直させないと、答えが確定したまま生成が始まらない。
+                    self.reading = None;
+                    self.roots.push(Root {
+                        regenerator: Regenerator::new(at.lang.producer()),
+                        at,
+                        key: Some(key),
+                        run: Run::default(),
+                    });
+                }
             }
         }
     }
@@ -1140,6 +1155,73 @@ mod tests {
         assert!(
             semantic.roots.iter().any(|r| r.is_working()),
             "いまの内容の索引が無いのに作りに行っていない"
+        );
+    }
+
+    #[test]
+    fn 読んでいるファイルが説明できているなら内容が動いても作りに行かない() {
+        // 起動のたびに producer を起こさないための門。出自はファイル単位なので、
+        // ほかのファイルが動いて鍵がずれても、読んでいるファイルは前の世代のまま
+        // Exact に答えられる。ここで鍵だけを見て作りに行くと、git がツリーを
+        // 動かすたびに 14 秒を払うことになる。
+        let (dir, _commit) = init_repo_with_commit(&[
+            CARGO_TOML,
+            ("src/lib.rs", SOURCE),
+            ("src/other.rs", "pub fn other() {}\n"),
+        ]);
+        place_index(dir.path());
+        let mut semantic = loaded(dir.path());
+        std::fs::write(dir.path().join("src/other.rs"), "pub fn moved() {}\n").unwrap();
+        semantic.install(
+            survey(
+                dir.path(),
+                Some(&dir.path().join(".conductor")),
+                Some(Path::new("src/lib.rs")),
+                &[],
+            ),
+            dir.path(),
+        );
+
+        assert_eq!(
+            semantic.note_open(Path::new("src/lib.rs"), dir.path(), dir.path()),
+            Reading::Indexed
+        );
+        assert!(
+            !semantic.roots.iter().any(|r| r.is_working()),
+            "読めているファイルのために producer を起こしている"
+        );
+    }
+
+    #[test]
+    fn 調査に載っていないルートのファイルを読んだら調査をやり直す() {
+        // 調査が鍵を出すのは成果物の置いてあるルートだけなので、まだ一度も索引
+        // されていないルートは列挙に載らない。やり直させないと、そのルートは鍵を
+        // 持てないまま生成も始まらず、ホバーが永久に構文層に落ちる。
+        let dir = nested_go_tree();
+        let mut semantic = surveyed(dir.path(), None);
+        let rel = Path::new("services/api/api.go");
+
+        assert_eq!(
+            semantic.note_open(rel, dir.path(), dir.path()),
+            Reading::NotIndexed
+        );
+        assert!(
+            semantic.needs_survey(dir.path()).is_some(),
+            "索引ルートの分からないファイルを読んだまま調査を頼んでいない"
+        );
+
+        semantic.install(
+            survey(
+                dir.path(),
+                Some(&dir.path().join(".conductor")),
+                Some(rel),
+                &[],
+            ),
+            dir.path(),
+        );
+        assert_eq!(
+            semantic.note_open(rel, dir.path(), dir.path()),
+            Reading::Building
         );
     }
 
