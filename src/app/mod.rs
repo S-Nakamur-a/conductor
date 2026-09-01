@@ -102,8 +102,6 @@ pub struct App {
 
     pub clipboard: Option<copypasta::ClipboardContext>,
 
-    pub decoration_states: crate::worktree::decoration::DecorationStates,
-
     /// 選択中 worktree のブランチ系譜と PR 情報。
     pub branch_details: git_engine::BranchDetails,
     pub gh_available: bool,

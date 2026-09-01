@@ -8,7 +8,6 @@
 //! を扱う。
 
 pub mod bar;
-pub mod decoration;
 pub mod input;
 pub mod mouse;
 pub mod ops;

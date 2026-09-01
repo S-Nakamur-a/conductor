@@ -11,7 +11,6 @@ fn 既定のconfigはtomlを往復する() {
     let cfg2: Config = toml::from_str(&toml_str).expect("deserialize");
 
     assert_eq!(cfg2.general.main_branch, "main");
-    assert_eq!(cfg2.general.decoration, "aquarium");
     assert_eq!(cfg2.terminal.inactive_scrollback, 1000);
     assert_eq!(cfg2.terminal.active_scrollback, 10000);
     assert_eq!(cfg2.viewer.theme, "catppuccin-mocha");

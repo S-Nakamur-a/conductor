@@ -23,7 +23,6 @@ pub struct AppearanceSnapshot {
     // 起こすべきではない。描画処理を組み込んだらここに追加すること。
     pub diff_word_diff: bool,
     pub diff_default_view: DiffView,
-    pub general_decoration: String,
     pub layout_explorer_width_pct: u16,
     pub layout_viewer_width_pct: u16,
     pub layout_terminal_split_pct: u16,
@@ -41,7 +40,6 @@ impl Config {
             viewer_tab_width: self.viewer.tab_width,
             diff_word_diff: self.diff.word_diff,
             diff_default_view: self.diff.default_view,
-            general_decoration: self.general.decoration.clone(),
             layout_explorer_width_pct: self.layout.explorer_width_pct,
             layout_viewer_width_pct: self.layout.viewer_width_pct,
             layout_terminal_split_pct: self.layout.terminal_split_pct,
@@ -68,7 +66,6 @@ impl Config {
         self.viewer.word_wrap = new.viewer.word_wrap;
         self.diff.word_diff = new.diff.word_diff;
         self.diff.default_view = new.diff.default_view;
-        self.general.decoration = new.general.decoration.clone();
         self.layout = new.layout.clone();
     }
 }

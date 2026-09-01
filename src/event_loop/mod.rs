@@ -26,10 +26,8 @@ const TICK_RATE_ACTIVE: Duration = Duration::from_millis(16);
 const TICK_RATE_IDLE: Duration = Duration::from_millis(500);
 /// 最後の入力イベントのあと、active の tick 間隔を使い続ける時間。
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
-/// 装飾アニメーション更新の固定間隔 (~10fps)。メインの tick 間隔とは独立している。
-const DECORATION_TICK_INTERVAL: Duration = Duration::from_millis(100);
 /// 「Claude が待機中」通知の呼吸パルスの間隔 (~12fps)。セッションが待機している
-/// 間、装飾や PTY のアクティビティとは独立に再描画を駆動する。これにより
+/// 間、PTY のアクティビティとは独立に再描画を駆動する。これにより
 /// ユーザが他の場所にフォーカスしていてもパルスが呼吸し続ける。
 const PULSE_TICK_INTERVAL: Duration = Duration::from_millis(80);
 /// フォーカスしていない terminal パネルを更新する間隔 (~2fps)。バックグラウンドの

@@ -301,7 +301,7 @@ rows carry a `CommandId` and go through `App::execute_palette_command`, so
 | **Panels** | Each owns `src/<panel>/` — state at the root, `render*`, `input*`, `mouse.rs` |
 | `explorer/` | File tree (`tree.rs`) over the diff list / comment list (`ExplorerBottomView`) |
 | `viewer/` | Open-file tabs (`tabs.rs`), content buffer (`file_view.rs`), code navigation (`code_nav.rs`) |
-| `worktree/` | The full-width strip (`bar.rs`), the list (`render/`), idle-space `decoration/` |
+| `worktree/` | The full-width strip (`bar.rs`), the list and detail zones (`render/`) |
 | `terminal/` | Claude Code / Shell / editor PTY panes — `state.rs`, `render/pty.rs`, `resize.rs` |
 | `menu/` | Menu taxonomy (`model.rs`), interaction state (`state.rs`), greyed-out predicates (`enabled.rs`) |
 | `reflow/` | The Claude transcript view — `log/` (jsonl), `render/`, width-following reflow |

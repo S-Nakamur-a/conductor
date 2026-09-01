@@ -30,7 +30,7 @@ pub fn generate_default_config() -> String {
     String::from(
         r#"# Conductor configuration file
 # All fields are optional with sensible defaults.
-# Appearance settings (theme, viewer, diff, decoration, layout) take effect
+# Appearance settings (theme, viewer, diff, layout) take effect
 # immediately on file save — no restart required. All other settings need a restart.
 
 [general]
@@ -40,8 +40,6 @@ pub fn generate_default_config() -> String {
 # repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
 # worktree_dir = "~/worktrees"          # custom worktree base directory
 #                                       #   (default: <repo-parent>/<repo-name>-worktrees/)
-# decoration = "aquarium"               # worktree panel decoration
-#                                       #   aquarium | space | garden | city | none
 # auto_resume = true                    # automatically resume Claude Code sessions on startup
 # auto_resume_main = false              # also resume on the main worktree (grabbed sessions
 #                                       #   are always resumed regardless of this setting)

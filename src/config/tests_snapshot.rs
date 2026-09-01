@@ -32,7 +32,6 @@ fn adopt_appearanceは往復して一致する() {
     new.viewer.word_wrap = true; // デフォルトは false
     new.diff.word_diff = false; // デフォルトは true
     new.diff.default_view = DiffView::SideBySide; // デフォルトは Unified
-    new.general.decoration = String::from("space");
     new.layout.explorer_width_pct = 30;
     new.layout.viewer_width_pct = 42;
     new.layout.terminal_split_pct = 70;
@@ -105,14 +104,6 @@ fn liveフィールドの変更を1つずつ検出する() {
     );
 
     let mut c = base.clone();
-    c.general.decoration = String::from("space");
-    assert_ne!(
-        c.appearance_snapshot(),
-        base.appearance_snapshot(),
-        "general.decoration"
-    );
-
-    let mut c = base.clone();
     c.layout.explorer_width_pct = 30;
     assert_ne!(
         c.appearance_snapshot(),
@@ -145,7 +136,6 @@ fn liveだけの差ならhas_restart_changesはfalse() {
     new.viewer.theme = String::from("nord");
     new.viewer.tab_width = 4; // デフォルトは2
     new.diff.word_diff = false; // デフォルトは true
-    new.general.decoration = String::from("space");
     new.layout.explorer_width_pct = 30;
     assert!(!has_restart_changes(&old, &new));
 }
@@ -230,14 +220,6 @@ fn 全フィールドがliveかrestartのどちらかに属する() {
         assert!(
             c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
             "general.worktree_dir"
-        );
-    }
-    {
-        let mut c = base.clone();
-        c.general.decoration = String::from("space");
-        assert!(
-            c.appearance_snapshot() != base.appearance_snapshot() || has_restart_changes(&base, &c),
-            "general.decoration"
         );
     }
     {

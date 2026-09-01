@@ -15,8 +15,7 @@ use ratatui::backend::CrosstermBackend;
 
 use super::state::LoopState;
 use super::{
-    ACTIVITY_TIMEOUT, DECORATION_TICK_INTERVAL, PULSE_TICK_INTERVAL, TICK_RATE_ACTIVE,
-    TICK_RATE_IDLE, TICK_RATE_TERMINAL,
+    ACTIVITY_TIMEOUT, PULSE_TICK_INTERVAL, TICK_RATE_ACTIVE, TICK_RATE_IDLE, TICK_RATE_TERMINAL,
 };
 use crate::app::App;
 use crate::event::{handle_key_event, handle_mouse_event, handle_paste_event};
@@ -34,11 +33,9 @@ const STATUS_FADE_TICKS: u64 = 180;
 
 /// 「いま画面が動いている理由」— tick 速度と再描画の要否を決める材料。
 ///
-/// 1 周の頭で 1 度だけ求めて、フェーズ間で使い回す (decoration の設定文字列の
-/// パースや PTY の通知フラグの取得は、1 周に 1 回しかやってはいけない)。
+/// 1 周の頭で 1 度だけ求めて、フェーズ間で使い回す (PTY の通知フラグの取得は、
+/// 1 周に 1 回しかやってはいけない)。
 pub(super) struct FrameSignals {
-    /// 装飾アニメーションが動いているか。
-    pub decoration_active: bool,
     /// PTY から新しい出力が届いたか。
     pub pty_dirty: bool,
 }
@@ -46,9 +43,6 @@ pub(super) struct FrameSignals {
 impl FrameSignals {
     /// 1 周の頭で状態を採取し、PTY 出力があれば再描画を要求する。
     pub fn take(app: &mut App) -> Self {
-        let decoration_active =
-            crate::worktree::decoration::DecorationMode::from_str(&app.config.general.decoration)
-                .has_animation();
         let pty_dirty = app.terminal.pty_manager.take_output_notify();
 
         if pty_dirty {
@@ -60,10 +54,7 @@ impl FrameSignals {
             app.request_redraw();
         }
 
-        Self {
-            decoration_active,
-            pty_dirty,
-        }
+        Self { pty_dirty }
     }
 }
 
@@ -71,7 +62,7 @@ impl FrameSignals {
 ///
 /// 描くものがあるなら待たない。無いときは「いちばん速い理由」を上から選ぶ:
 /// ターミナル系のフォーカス > 進行中の操作 > 直前の入力 > フォーカス遷移 >
-/// 待機パルス > 装飾 > アイドル。
+/// 待機パルス > アイドル。
 pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignals) -> Duration {
     if app.needs_redraw || signals.pty_dirty {
         return Duration::ZERO;
@@ -88,7 +79,6 @@ pub(super) fn next_tick(app: &App, loop_state: &LoopState, signals: &FrameSignal
         // 解析中はストリップのスピナーが回る。数分続くものなので、worktree の
         // 作成 (数秒) と同じ 60fps では回さない。
         _ if !app.revidere.runs.is_empty() => PULSE_TICK_INTERVAL,
-        _ if signals.decoration_active => DECORATION_TICK_INTERVAL,
         _ => TICK_RATE_IDLE,
     }
 }
@@ -245,7 +235,7 @@ pub(super) fn run_background_work(app: &mut App, loop_state: &mut LoopState) {
         app.perform_auto_resume();
     }
 
-    // 定期タイマー (git のポーリング、装飾、ターミナルの再描画など)。
+    // 定期タイマー (git のポーリング、ターミナルの再描画など)。
     // ユーザーが操作中 (スクロール中など) は重い I/O タイマーを遅らせて、
     // スクロールの途中で固まらないようにする。
     let input_active = loop_state.input_active();
