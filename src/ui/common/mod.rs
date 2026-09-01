@@ -6,6 +6,7 @@
 //! にある。
 
 pub(crate) mod color;
+pub mod entrance;
 mod panel_chrome;
 pub mod strip;
 pub mod text;

@@ -15,8 +15,8 @@ mod review_history;
 mod review_publish;
 mod state;
 pub use state::{
-    Appearance, ChangeWatch, PanelLayout, PanelNumberOverlay, PublishState, RepoState,
-    RevidereState, SessionStats, Ticks, UpdateFlow, ViewRestore, WtbarState,
+    Appearance, ChangeWatch, EntranceState, PanelLayout, PanelNumberOverlay, PublishState,
+    RepoState, RevidereState, SessionStats, Ticks, UpdateFlow, ViewRestore, WtbarState,
 };
 mod types;
 mod update;
@@ -126,6 +126,8 @@ pub struct App {
 
     /// Alt+/ で出す各パネルの番号バッジ。2 秒で消える。
     pub panel_number_overlay: PanelNumberOverlay,
+    /// 起動と索引の演出の進行状態。
+    pub entrance: EntranceState,
 
     pub reflow: ReflowView,
 }

@@ -215,6 +215,8 @@ fn tick_semantic_regeneration(app: &mut App) {
         // 索引がこのファイルを説明できないと、黙って構文層に落ちる。言わないと
         // 「ジャンプが甘い」としか見えないので、そのファイルを開いたときに 1 度だけ出す。
         // 内容が動いただけなら作りに行っている (Building) ので、ここには来ない。
+        app.entrance
+            .note_index_building(reading == crate::semantic_index::Reading::Building);
         if reading == crate::semantic_index::Reading::Stale {
             app.set_status(
                 "Code index does not cover this file — Repo ▸ Rebuild Code Index".to_string(),
