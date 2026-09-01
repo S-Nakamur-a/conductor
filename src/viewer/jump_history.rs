@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn going_back_walks_the_stack_then_stops_at_the_oldest_jump() {
+    fn 戻るは積みを辿り最古で止まる() {
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn going_forward_returns_to_where_going_back_came_from() {
+    fn 進むは戻ってきた元へ帰る() {
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
         h.push(loc("b.rs", 20));
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_jump_discards_the_forward_stack() {
+    fn 新しいジャンプは進む側の積みを捨てる() {
         // go_back した直後は forward に積まれていて、進める。
         let mut h = JumpHistory::new();
         h.push(loc("a.rs", 10));
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn the_back_stack_stops_growing_at_two_hundred_entries() {
+    fn 戻る側の積みは200件で頭打ちになる() {
         let mut h = JumpHistory::new();
         for i in 0..250 {
             h.push(loc("file.rs", i));

@@ -144,13 +144,13 @@ mod tests {
     use crate::store::fixture::span;
 
     #[test]
-    fn range_equal_to_the_word_is_contained() {
+    fn 語とちょうど同じ範囲は含まれる() {
         assert!(contained_in(&[10, 4, 8], span(10, 4, 10, 8)));
         assert!(contained_in(&[10, 5, 7], span(10, 4, 10, 8)));
     }
 
     #[test]
-    fn range_wider_than_the_word_is_not_contained() {
+    fn 語より広い範囲は含まれない() {
         assert!(!contained_in(&[10, 3, 8], span(10, 4, 10, 8)));
         assert!(!contained_in(&[10, 4, 9], span(10, 4, 10, 8)));
         // ファイル全体を覆う範囲
@@ -158,13 +158,13 @@ mod tests {
     }
 
     #[test]
-    fn range_on_another_line_is_not_contained() {
+    fn 別の行の範囲は含まれない() {
         assert!(!contained_in(&[11, 4, 8], span(10, 4, 10, 8)));
         assert!(!contained_in(&[10, 4, 11, 8], span(10, 4, 10, 8)));
     }
 
     #[test]
-    fn malformed_range_is_contained_in_nothing() {
+    fn 壊れた範囲はどこにも含まれない() {
         assert!(!contained_in(&[], span(0, 0, 0, 1)));
         assert!(!contained_in(&[1, 2], span(1, 0, 1, 9)));
         // 終端が始端より前

@@ -21,10 +21,8 @@ pub struct TreeReload {
     pub root_changed: bool,
     /// 開いていたファイルの、新しいツリーでの相対パス。読み直すこと。
     pub reopen: Option<String>,
-    /// 可視エントリの集合が変わった。`root_changed` とは別物 — 同じ根への
-    /// 再走査でもファイルの増減があれば真になる。`refresh_viewer` がそのまま
-    /// 返し、3秒ポーリング (`event_loop_timers.rs`) はこれを見て、変化が無ければ
-    /// 再描画をスキップする。分割前の `load_file_tree` の唯一の戻り値がこれだった。
+    /// 可視エントリの集合が変わった。`root_changed` とは別物で、同じ根への再走査でも
+    /// ファイルの増減があれば真になる。3 秒ポーリングはこれを見て再描画をスキップする。
     pub entries_changed: bool,
 }
 
@@ -39,8 +37,7 @@ impl FileTreeState {
         }
     }
 
-    /// インデックス idx のディレクトリを展開する（既に展開済み、もしくはファイル
-    /// エントリなら何もしない）。
+    /// インデックス idx のディレクトリを展開する。ファイルエントリなら何もしない。
     pub fn expand_dir(&mut self, idx: usize) {
         if let Some(entry) = self.file_tree.get_mut(idx)
             && entry.is_dir
@@ -51,8 +48,7 @@ impl FileTreeState {
         }
     }
 
-    /// インデックス idx のディレクトリを折りたたむ（既に折りたたみ済み、もしくは
-    /// ファイルエントリなら何もしない）。
+    /// インデックス idx のディレクトリを折りたたむ。ファイルエントリなら何もしない。
     pub fn collapse_dir(&mut self, idx: usize) {
         if let Some(entry) = self.file_tree.get_mut(idx)
             && entry.is_dir
@@ -69,14 +65,11 @@ impl FileTreeState {
         *self.cached_visible_indices.borrow_mut() = None;
     }
 
-    /// 折りたたまれたディレクトリを考慮した上で、現在可視な file_tree の
-    /// インデックス一覧を返す。結果は Rc としてキャッシュされ、
-    /// invalidate_visible_cache() が呼ばれるまで保持されるので、同一フレーム内での
-    /// 繰り返し呼び出しは実質コストゼロになる。
+    /// 現在可視な file_tree のインデックス一覧。invalidate_visible_cache() まで Rc で
+    /// キャッシュするので、同一フレーム内の繰り返し呼び出しは実質コストゼロ。
     ///
-    /// 純粋なメモ化なので内部可変にしてある。`&mut` を要求すると描画が共有借用
-    /// しか持てないぶん「描く前に温めておく」という契約が呼び出し側に生まれ、
-    /// 忘れると静かに空の一覧が描かれる。
+    /// 純粋なメモ化なので内部可変にしてある。`&mut` を要求すると描画が共有借用しか持てず、
+    /// 「描く前に温めておく」契約が呼び出し側に生まれ、忘れると静かに空の一覧が描かれる。
     pub fn visible_indices(&self) -> Rc<Vec<usize>> {
         if let Some(cached) = self.cached_visible_indices.borrow().as_ref() {
             return Rc::clone(cached);
@@ -106,8 +99,8 @@ impl FileTreeState {
         rc
     }
 
-    /// file_tree のインデックス idx にあるディレクトリの直接の子要素を遅延読み込みする。
-    /// エントリがディレクトリでない、または既に子要素が読み込み済みの場合は何もしない。
+    /// ディレクトリの直接の子要素を遅延読み込みする。ディレクトリでない、または読み込み
+    /// 済みなら何もしない。
     pub fn ensure_children_loaded(&mut self, idx: usize) {
         let (rel_path, child_depth) = match self.file_tree.get(idx) {
             Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
@@ -131,8 +124,6 @@ impl FileTreeState {
             return;
         }
 
-        // 子は自分より後ろに入るので、可視インデックスで数えているカーソルは
-        // 動かない。ファイル添字で数えていた頃はここで押し出す必要があった。
         let insert_pos = idx + 1;
         self.file_tree.splice(insert_pos..insert_pos, children);
         self.invalidate_visible_cache();
@@ -154,17 +145,11 @@ impl Explorer {
         self.tree.root = root;
     }
 
-    /// 裏で歩き終えたツリーを丸ごと差し替える。
+    /// 裏で歩き終えたツリーを丸ごと差し替える。根が変わったかどうかを返す。
     ///
-    /// 根・エントリ・git status は同じ 1 回の走査から出たものなので 3 つ揃って
-    /// 入れ替える。別々に書けるようにしておくと「根は新しいのにエントリは古い」
-    /// 状態が作れてしまい、その瞬間のクリックは別ブランチの同名ファイルを静かに
-    /// 開く (worktree 切り替えは走査を裏に回すので、この隙間は実在する)。
-    ///
-    /// 根が変わったかどうかを返す。呼び出し側 (App) はこれを見て、新しい根に
-    /// 無いファイルのタブを閉じる ([ViewerState::prune_tabs_to_root]) かどうかを
-    /// 決める — 同じ根への再走査では触ってはならない (一時的に消えたファイルの
-    /// タブまで勝手に閉じてしまう)。
+    /// 根・エントリ・git status は同じ 1 回の走査から出たものなので 3 つ揃って入れ替える。
+    /// 別々に書けると「根は新しいのにエントリは古い」状態が作れ、その瞬間のクリックが
+    /// 別ブランチの同名ファイルを静かに開く (worktree 切り替えは走査を裏に回すので実在する)。
     pub fn replace_tree(
         &mut self,
         root: PathBuf,
@@ -179,28 +164,19 @@ impl Explorer {
         root_changed
     }
 
-    /// worktree_path 以下のファイルシステムを歩いてファイルツリーを構築する。
+    /// worktree_path 以下を歩いてファイルツリーを構築する。`.git` はスキップ。各階層で
+    /// ディレクトリがファイルより前、各グループ内はアルファベット順。
     ///
-    /// .git という名前のディレクトリはスキップする。ツリーは各階層でディレクトリが
-    /// ファイルより前に来るようソートされ、各グループ内はアルファベット順になる。
+    /// 開いているファイル・スクロール位置・展開状態を保持するので、ウォッチャーによる
+    /// 再構築が見ている画面を崩さない。
     ///
-    /// 現在開いているファイル・スクロール位置・ディレクトリの展開状態を保持するので、
-    /// ファイルウォッチャーによる再構築がユーザーの見ている画面を崩さない。
-    /// 以前開いていたファイルが削除されていた場合は、自然に「ファイル未選択」に戻る。
-    ///
-    /// 根を受け取る唯一の入口。ここで [Explorer::root] を確定させ、以降
-    /// ファイルを開く・子を読む・検索候補を集めるのはすべてこの根に対して行う。
-    ///
-    /// 現在開いているファイルのパス (`prev_file`) は、読んでいた位置と表示モードを
-    /// 保ったまま読み直す対象を決めるために必要だが、それ自体は Viewer 側の状態
-    /// なので引数で受け取る。Explorer が Viewer をフィールドとして持つことはしない。
-    /// 戻り値の [TreeReload] が、その読み直しを含め Viewer 側でやるべきことを表す
-    /// — 実行するのは呼び出し側 (App の配線層)。
+    /// 根を受け取る唯一の入口。以降ファイルを開く・子を読む・検索候補を集めるのはすべて
+    /// この根に対して行う。`prev_file` は Viewer 側の状態なので引数で受け取り、Viewer 側で
+    /// やるべきことは [TreeReload] で返す (実行するのは呼び出し側)。
     pub fn load_file_tree(&mut self, worktree_path: &Path, prev_file: Option<&str>) -> TreeReload {
         let root_changed = self.tree.root != worktree_path;
         self.tree.root = worktree_path.to_path_buf();
 
-        // クリアする前に状態を退避しておく。
         let expanded_dirs: Vec<String> = self
             .tree
             .file_tree
@@ -208,9 +184,8 @@ impl Explorer {
             .filter(|e| e.is_dir && e.is_expanded)
             .map(|e| e.path.clone())
             .collect();
-        // カーソルが指すエントリと全パス集合を覚えておく。カーソル位置を復元し、
-        // 再構築後のツリーが実際に変化したかを検出するために使う。
-        // カーソルは可視インデックスで数えるので、ファイル添字へ直してから引く。
+        // カーソル位置の復元と、再構築後のツリーが実際に変化したかの検出に使う。カーソルは
+        // 可視インデックスで数えるので、ファイル添字へ直してから引く。
         let prev_selected_path = self
             .tree
             .visible_indices()
@@ -219,16 +194,11 @@ impl Explorer {
             .map(|e| e.path.clone());
         let prev_paths: Vec<String> = self.tree.file_tree.iter().map(|e| e.path.clone()).collect();
 
-        // git status のスナップショットは再構築ごとに1回だけ取得する（エントリごとではない）。
-        // 取得に失敗しても、減光表示の細部のためにツリー再構築全体を失敗させるのではなく
-        // 空のマップにフォールバックする。ただしログには残す。空のマップは無害な
-        // フォールバックではない — エントリが無いと、ツリー上は全て Tracked、
-        // Changed files 上は全て Committed（緑）に見えてしまい、UI が
-        // 「未ステージの変更がある」の正反対を黙って主張してしまう。
-        // git 管理外のディレクトリを開いた場合はこの経路を正当に通る（発見すべき
-        // リポジトリが無いのだから）。一方、実在するリポジトリ内での一時的な失敗
-        // （並行して走る git コマンドが index.lock を握っている、など）は画面上
-        // 見分けがつかないので、ログだけが両者を区別する手段になる。
+        // git status のスナップショットは再構築ごとに 1 回だけ取得する。失敗しても空のマップに
+        // 落とすが、これは無害なフォールバックではない — エントリが無いとツリー上は全て
+        // Tracked に見え、UI が「未ステージの変更がある」の正反対を黙って主張する。git 管理外の
+        // ディレクトリでは正当にこの経路を通るので、実在するリポジトリでの一時的な失敗
+        // (index.lock の競合など) と見分けるにはログしかない。
         self.tree.git_status = match GitStatusMap::load(worktree_path) {
             Ok(map) => map,
             Err(e) => {
@@ -240,7 +210,6 @@ impl Explorer {
             }
         };
 
-        // ディスクからツリーを再構築する。
         self.tree.file_tree.clear();
         self.invalidate_visible_cache();
         Self::walk_dir(
@@ -251,8 +220,7 @@ impl Explorer {
             &self.tree.git_status,
         );
 
-        // ディレクトリの展開状態を復元する。遅延読み込みのディレクトリについては
-        // 子要素も読み込み、リフレッシュ前と同じ見た目のツリーにする。
+        // 遅延読み込みのディレクトリは子要素も読み込み、リフレッシュ前と同じ見た目にする。
         let mut idx = 0;
         while idx < self.tree.file_tree.len() {
             if self.tree.file_tree[idx].is_dir
@@ -266,11 +234,8 @@ impl Explorer {
             idx += 1;
         }
 
-        // 以前開いていたファイルがまだ存在するなら reopen 対象にする。読んでいた
-        // 位置と表示モード（unified diff / SUMMARY / markdown）を保ったまま
-        // 読み直すのは呼び出し側の仕事 — ウォッチャーや3秒ポーリングが読者を
-        // 追い出さないようにするのが要点。ファイルが削除されていた場合は、
-        // 自然に「ファイル未選択」のまま留まる (reopen は None のまま)。
+        // 以前開いていたファイルがまだ存在するなら reopen 対象にする。読み直すのは呼び出し側の
+        // 仕事で、ウォッチャーや 3 秒ポーリングが読者を追い出さないようにするのが要点。
         let reopen = prev_file.and_then(|rel_path| {
             if !worktree_path.join(rel_path).is_file() {
                 return None;
@@ -278,12 +243,8 @@ impl Explorer {
             Some(rel_path.to_string())
         });
 
-        // 再構築をまたいでツリーのカーソルを固定する。ファイルが開いている場合は
-        // 上のブロックで既にカーソルをそこに合わせている。そうでなければ以前選択していた
-        // エントリを復元し、ウォッチャーや定期リフレッシュでカーソルが先頭に
-        // 巻き戻されないようにする。
-        // 開いているファイルがあればそこ、無ければ以前選んでいたパスへ戻す。
-        // ウォッチャーや定期リフレッシュでカーソルが先頭へ巻き戻らないようにする。
+        // 再構築をまたいでツリーのカーソルを固定する。開いているファイルがあればそこ、無ければ
+        // 以前選んでいたパスへ戻す。ウォッチャーや定期リフレッシュで先頭に巻き戻されないため。
         let anchor = reopen.as_deref().or(prev_selected_path.as_deref());
         if let Some(path) = anchor {
             let visible = self.tree.visible_indices();

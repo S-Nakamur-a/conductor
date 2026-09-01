@@ -1,7 +1,4 @@
 //! mpsc チャネルを使うバックグラウンド処理の汎用ラッパー。
-//!
-//! コードベース各所にあった場当たり的な Option<mpsc::Receiver<T>> を、
-//! 統一された BackgroundOp<T> に置き換える。
 
 use std::sync::mpsc;
 
@@ -96,7 +93,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn poll_yields_the_value_the_worker_sent() {
+    fn pollはワーカーが送った値を返す() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         assert!(!op.is_running());
         assert!(op.poll().is_none());
@@ -112,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn poll_all_drains_every_value_at_once() {
+    fn poll_allは溜まった値を一度に吐く() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         op.start(|tx| {
             for i in 0..5 {
@@ -125,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_forgets_a_running_operation() {
+    fn clearは走っている処理を忘れる() {
         let mut op: BackgroundOp<i32> = BackgroundOp::default();
         op.start(|tx| {
             tx.send(1).unwrap();
@@ -136,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn join_or_abandon_gives_up_on_a_wedged_thread() {
+    fn 固まったスレッドは諦めて抜ける() {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let wedged = std::thread::spawn(move || {
             let _ = rx.recv();
@@ -151,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn join_or_abandon_waits_for_a_thread_that_finishes() {
+    fn 終わるスレッドは待って回収する() {
         let t = std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_millis(20));
         });

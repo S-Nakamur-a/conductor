@@ -14,17 +14,14 @@ impl App {
         if index >= self.repo.known.len() {
             return;
         }
-        // ストアを差し替える前に、離脱するリポジトリのビューを永続化する。
         self.persist_view_state();
-        // 走っている意味索引の生成は離脱するリポジトリのもの。repo.path を
-        // 差し替える前に止める。あとで止めると、そのリポジトリの成果物を
-        // 切り替え先の .conductor へ置きに行く。
+        // 走っている意味索引の生成は離脱するリポジトリのもの。あとで止めると、そのリポジトリの
+        // 成果物を切り替え先の .conductor へ置きに行く。
         let leaving = self.repo.path.clone();
         self.code_nav.semantic.abort_regeneration(&leaving);
         self.repo.known_index = index;
         self.repo.path = self.repo.known[index].clone();
 
-        // 新しいリポジトリパス用にレビューストアを開き直す。
         let db = review_store::db_path(&self.repo.path);
         self.review_store = match ReviewStore::open(&db) {
             Ok(store) => Some(store),
@@ -34,7 +31,6 @@ impl App {
             }
         };
 
-        // 新しいリポジトリ用にmainリポジトリ名を更新する。
         self.repo.main_name = git_engine::GitEngine::open(&self.repo.path)
             .and_then(|engine| engine.main_worktree_path())
             .ok()
@@ -47,33 +43,24 @@ impl App {
                     .unwrap_or_else(|| self.repo.path.display().to_string())
             });
 
-        // worktreeとレビューを即座にリフレッシュする。viewer/diffは遅延読み込みする。
         self.worktrees.select(0);
         self.refresh_worktrees();
         self.explorer = Explorer::default();
         self.viewer = ViewerState::default();
-        // ツリーの走査は遅延させる (上のコメントのとおり) が、根だけは今ここで
-        // 入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索が
-        // カレントディレクトリを歩いてしまう。
+        // 根だけは今入れておく。空のままだと、ツリーを歩く前に開いたファイル名検索がカレント
+        // ディレクトリを歩いてしまう。
         self.explorer.set_root(self.selected_worktree_path());
         self.diff_state = crate::diff_state::DiffState::new(
             &self.config.general.main_branch,
             self.diff_state.view_mode,
         );
-        // 新しいリポジトリの最後に選択していたworktree + 開いていたファイル/
-        // スクロールを復元する。
         self.restore_selected_worktree_and_view();
-        // worktreeの選択が新しいリポジトリに落ち着いたので、シンボル索引を
-        // 再照準する。これをしないと、索引はいま離れたリポジトリからの回答を
-        // 返し続ける: src/app/mod.rs のようなパスは両方に存在するので、ジャンプは
-        // 新しいリポジトリのファイルなのに古いリポジトリの行番号に着地してしまい、
-        // ホバーポップアップはそのテキストを完全に古いツリーから読んでしまう。
-        // worktree切り替えは on_worktree_changed を経由するが、リポジトリの
-        // 切り替えは決してそこを通らない。
+        // シンボル索引を再照準する。src/app/mod.rs のようなパスは両方のリポジトリに存在するので、
+        // しないとジャンプは新しいファイルなのに古いツリーの行番号に着地する。worktree 切替は
+        // on_worktree_changed を通るが、リポジトリの切替はそこを通らない。
         self.start_symbol_index_build();
-        // 意味索引も同じ理由で照準し直す。worktree 切替は on_worktree_changed を
-        // 通るが、リポジトリの切替はそこを通らない。読み直さないと、離れた
-        // リポジトリのストアを抱えたまま構文層に落ち続ける。
+        // 意味索引も同じ理由で照準し直す。読み直さないと、離れたリポジトリのストアを抱えたまま
+        // 構文層に落ち続ける。
         self.start_semantic_index_load();
         self.refresh_reviews();
         self.terminal.claude.active_session = None;
@@ -87,7 +74,6 @@ impl App {
 
     /// 任意のファイルシステムパスからリポジトリを開く。
     pub fn open_repo_from_path(&mut self, path: &str) {
-        // ~ をホームディレクトリに展開する。
         let expanded = if let Some(stripped) = path.strip_prefix('~') {
             if let Some(home) = dirs::home_dir() {
                 home.join(stripped.strip_prefix('/').unwrap_or(stripped))
@@ -98,7 +84,6 @@ impl App {
             std::path::PathBuf::from(path)
         };
 
-        // 可能なら正規化し、できなければそのまま使う。
         let canonical = expanded.canonicalize().unwrap_or(expanded);
 
         if !canonical.is_dir() {
@@ -109,13 +94,10 @@ impl App {
             return;
         }
 
-        // このパスにgitリポジトリがあるか調べる。
         match git_engine::GitEngine::open(&canonical) {
             Ok(_engine) => {
-                // 有効なgitリポジトリ — それに切り替える。
                 self.repo.path = canonical.clone();
 
-                // 新しいリポジトリパス用にレビューストアを開き直す。
                 let db = review_store::db_path(&self.repo.path);
                 self.review_store = match ReviewStore::open(&db) {
                     Ok(store) => Some(store),
@@ -129,11 +111,8 @@ impl App {
                 self.refresh_worktrees();
                 self.explorer = Explorer::default();
                 self.viewer = ViewerState::default();
-                // 同上。ツリーは遅延させるが根は今決まっている。
                 self.explorer.set_root(self.selected_worktree_path());
-                // このリポジトリにはビュー復元が無いので、*前の*リポジトリ用にまだ
-                // 有効な復元があれば破棄する — そうしないと、ここで発火して新しく
-                // 開いたツリー内の同名パスを開いてしまう可能性がある。
+                // *前の* リポジトリ用の復元が残っていると、新しく開いたツリー内の同名パスを開いてしまう。
                 self.view_restore.pending = None;
                 self.diff_state = crate::diff_state::DiffState::new(
                     &self.config.general.main_branch,
@@ -143,11 +122,9 @@ impl App {
                 self.terminal.claude.active_session = None;
                 self.terminal.shell.active_session = None;
 
-                // まだ無ければrepo_listに追加する。
                 if !self.repo.known.contains(&canonical) {
                     self.repo.known.push(canonical.clone());
                 }
-                // repo_list_indexがこのリポジトリを指すように更新する。
                 self.repo.known_index = self
                     .repo
                     .known
@@ -356,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn reselect_pins_to_branch_when_order_shifts() {
+    fn 並びが変わってもブランチ名で選び直す() {
         // 選択は "feat-b"（インデックス2）を指している。より前に新しいworktreeが
         // 挿入されるとインデックスがずれる。選択は "feat-b" に追従しなければ
         // ならず、インデックス2（今は別のブランチを保持している）に留まっては
@@ -366,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn reselect_falls_back_when_branch_removed() {
+    fn ブランチが消えたら選び直しは落ちる先を持つ() {
         // "feat-a"（インデックス1）が削除され、"main" だけが残っている。古い
         // インデックス1は範囲外なので、最後の有効なインデックス（main）に
         // クランプしなければならない。
@@ -375,18 +352,18 @@ mod tests {
     }
 
     #[test]
-    fn reselect_keeps_index_when_branch_unchanged() {
+    fn ブランチが変わらなければ添字を保つ() {
         let after = [wt("main"), wt("feat-a")];
         assert_eq!(reselect_worktree_index(&after, "feat-a", 1), Some(1));
     }
 
     #[test]
-    fn reselect_returns_none_for_empty_list() {
+    fn 空の一覧では選び直しがnoneを返す() {
         assert_eq!(reselect_worktree_index(&[], "main", 0), None);
     }
 
     #[test]
-    fn reselect_clamps_when_prev_branch_empty() {
+    fn 前のブランチ名が空なら添字をクランプする() {
         // 以前選択していたブランチが無い場合（例: 初回読み込み時）: インデックスを
         // 範囲内に保つだけ。
         let after = [wt("main"), wt("feat-a")];

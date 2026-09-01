@@ -23,7 +23,7 @@ fn geom(left_end: u16, explorer_end: u16, viewer_end: u16) -> ClickGeometry {
 }
 
 #[test]
-fn gutter_and_badge_clicks_always_start_a_comment() {
+fn ガターとバッジのクリックは必ずコメントを始める() {
     // 重なりの修正の核心部分: 既存のコメント範囲に含まれる行（has_comment = true）
     // であっても、行番号ガターと「+」バッジ列からは常に新しいコメントを開始
     // しなければならず、スレッドのフォーカスに飲み込まれてはならない。
@@ -48,7 +48,7 @@ fn gutter_and_badge_clicks_always_start_a_comment() {
 }
 
 #[test]
-fn marker_click_focuses_existing_thread() {
+fn マーカーのクリックは既存スレッドへ寄せる() {
     // 一番左の💬/│マーカー列だけがスレッドのフォーカスを持つ唯一の場所。
     assert_eq!(
         classify_margin_click(MarginZone::Marker, true, false, false),
@@ -68,7 +68,7 @@ fn marker_click_focuses_existing_thread() {
 }
 
 #[test]
-fn badge_click_on_test_line_runs_the_test() {
+fn テスト行のバッジを押すとテストが走る() {
     assert_eq!(
         classify_margin_click(MarginZone::Badge, false, true, false),
         MarginClickAction::RunTest
@@ -83,7 +83,7 @@ fn badge_click_on_test_line_runs_the_test() {
 }
 
 #[test]
-fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
+fn 範囲の途中は最も近い終了行へ振り替える() {
     use crate::review_store::{Author, CommentKind, CommentStatus, ReviewComment};
     let range = |id: &str, start: u32, end: u32| ReviewComment {
         id: id.to_string(),
@@ -111,7 +111,7 @@ fn thread_anchor_redirects_mid_range_lines_to_nearest_end_line() {
 }
 
 #[test]
-fn divider_at_hits_both_cells_of_a_vertical_boundary() {
+fn 縦の境界は2セルとも当たる() {
     use crate::app::Divider;
     // main_areaはyが[1, 41)の範囲。縦の境界は{edge-1, edge}の2セル分のゾーン。
     let g = geom(0, 24, 62);
@@ -125,7 +125,7 @@ fn divider_at_hits_both_cells_of_a_vertical_boundary() {
 }
 
 #[test]
-fn divider_at_hits_horizontal_splits_within_their_column() {
+fn 横の分割はその列の中で当たる() {
     use crate::app::Divider;
     let g = geom(0, 24, 62); // explorer_mid_y=20, terminal_split_y=33
     // Explorerの分割線: Explorer列 [0, 24) の内側でのみ。
@@ -141,7 +141,7 @@ fn divider_at_hits_horizontal_splits_within_their_column() {
 }
 
 #[test]
-fn divider_at_vertical_boundary_wins_at_a_corner() {
+fn 角では縦の境界が勝つ() {
     use crate::app::Divider;
     // (explorer_end-1, explorer_mid_y) は縦の境界セルであると同時にExplorerの
     // 分割線の行でもある — 縦の境界が優先されなければならない。
@@ -150,14 +150,14 @@ fn divider_at_vertical_boundary_wins_at_a_corner() {
 }
 
 #[test]
-fn divider_at_misses_open_panel_area() {
+fn パネルの内側では境界に当たらない() {
     let g = geom(0, 24, 62);
     assert_eq!(g.divider_at(10, 10), None);
     assert_eq!(g.divider_at(70, 10), None);
 }
 
 #[test]
-fn column_at_maps_columns_by_boundary() {
+fn 桁は境界で列に振り分けられる() {
     let g = geom(20, 50, 90);
     assert_eq!(g.column_at(0), Column::Worktree);
     assert_eq!(g.column_at(19), Column::Worktree);
@@ -172,7 +172,7 @@ fn column_at_maps_columns_by_boundary() {
 /// ホイールでタブを送れるのは、ターミナル列の 2 本のタブ帯の行だけ。
 /// 本文の行まで拾うと、スクロールバックを遡れなくなる。
 #[test]
-fn terminal_tab_rows_are_only_the_two_strip_rows() {
+fn terminalのタブ行は帯の2行だけ() {
     let g = geom(20, 50, 90);
     assert_eq!(terminal_tab_row_at(95, g.terminal_claude_y, &g), Some(true));
     assert_eq!(terminal_tab_row_at(95, g.terminal_split_y, &g), Some(false));
@@ -182,7 +182,7 @@ fn terminal_tab_rows_are_only_the_two_strip_rows() {
 }
 
 #[test]
-fn expand_button_hits_last_cols_of_each_column() {
+fn 展開ボタンは各列の末尾の桁に当たる() {
     use crate::app::Focus;
     // main_area.x == 0 なので、worktreeボタンは [left_w-6, left_w-1) にまたがる。
     let g = geom(20, 50, 90);
@@ -200,7 +200,7 @@ fn expand_button_hits_last_cols_of_each_column() {
 }
 
 #[test]
-fn expand_button_absent_for_narrow_columns() {
+fn 狭い列には展開ボタンが出ない() {
     // 幅7未満のカラムには展開ボタンがない。
     let g = geom(5, 50, 90);
     assert_eq!(g.expand_button_at(0), None);
@@ -250,7 +250,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_a_title_opens_that_menu() {
+    fn タイトルを押すとそのメニューが開く() {
         let s = state(false);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),
@@ -263,7 +263,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_the_open_title_again_closes_it() {
+    fn 開いているタイトルをもう一度押すと閉じる() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 8, BAR_ROW),
@@ -273,7 +273,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_a_different_title_switches_menus() {
+    fn 別のタイトルを押すとメニューが切り替わる() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 2, BAR_ROW),
@@ -282,7 +282,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_blank_bar_space_closes() {
+    fn バーの空白を押すと閉じる() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 40, BAR_ROW),
@@ -291,7 +291,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_an_enabled_row_activates_it() {
+    fn 有効な行を押すと実行される() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 10, 3),
@@ -300,7 +300,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_a_disabled_row_does_nothing_but_keeps_the_menu_open() {
+    fn 無効な行を押しても何も起きずメニューは開いたまま() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 10, 4),
@@ -309,7 +309,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_the_dropdown_border_is_inert() {
+    fn ドロップダウンの枠を押しても何も起きない() {
         // 行2と5はポップアップ自身の枠の行: 矩形の内側だが、項目のヒットは
         // 持たない。
         let s = state(true);
@@ -324,7 +324,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicking_outside_an_open_menu_closes_and_swallows_the_click() {
+    fn メニューの外を押すと閉じてクリックを飲む() {
         let s = state(true);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 60, 30),
@@ -334,7 +334,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn clicks_elsewhere_pass_through_when_no_menu_is_open() {
+    fn メニューが閉じていればクリックは素通しする() {
         let s = state(false);
         assert_eq!(
             classify_menu_click(&s, Some(BAR_ROW), 60, 30),
@@ -343,7 +343,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn a_stale_dropdown_rect_cannot_swallow_clicks_after_closing() {
+    fn 閉じたあとの古い矩形はクリックを飲まない() {
         // リグレッション防止: close()は記録された領域をクリアするので、
         // 最後の描画時の矩形がクリックを飲み込み続けることはない。
         let mut s = state(true);
@@ -355,7 +355,7 @@ mod menu_clicks {
     }
 
     #[test]
-    fn the_bar_row_is_claimed_even_with_no_menu_open() {
+    fn バーの行はメニューが閉じていても取る() {
         // そうしないと、クリックはhandle_title_bar_clickまで素通りしてしまい、
         // そちらはmain area より上のすべての行を消費してしまう。
         let s = state(false);
@@ -370,7 +370,7 @@ mod menu_clicks {
 /// 右のガターをまとめて受ける — ただし行番号（コメント作成）とガターの外
 /// （バッジの「+」）までは広げない。
 #[test]
-fn the_fold_marker_claims_the_gutter_right_of_the_line_number() {
+fn 畳みマーカーは行番号の右のガターを取る() {
     // ガターは [10, 20)。隙間が 15、マーカーが 16、隙間が 17、区切り線が 18、
     // 空白が 19。
     let gutter_end = 20;

@@ -18,7 +18,7 @@ fn menu_command_ids() -> Vec<CommandId> {
 }
 
 #[test]
-fn every_command_is_reachable() {
+fn 全コマンドがメニューから辿れる() {
     let listed = menu_command_ids();
     let excused: Vec<CommandId> = INTENTIONALLY_UNLISTED.iter().map(|(id, _)| *id).collect();
 
@@ -36,7 +36,7 @@ fn every_command_is_reachable() {
 }
 
 #[test]
-fn unlisted_commands_are_actually_unlisted() {
+fn 載せない決めのコマンドは実際に載っていない() {
     let listed = menu_command_ids();
     for (id, reason) in INTENTIONALLY_UNLISTED {
         assert!(
@@ -47,7 +47,7 @@ fn unlisted_commands_are_actually_unlisted() {
 }
 
 #[test]
-fn no_command_appears_on_two_menus() {
+fn 同じコマンドが2つのメニューに出ない() {
     let listed = menu_command_ids();
     for (i, id) in listed.iter().enumerate() {
         assert!(
@@ -59,7 +59,7 @@ fn no_command_appears_on_two_menus() {
 }
 
 #[test]
-fn every_menu_command_exists_in_the_palette_table() {
+fn メニューのコマンドは全部パレットの表にある() {
     // メニューは execute_palette_command 経由でコマンドを実行するため、
     // COMMANDS に存在しない id のメニュー項目は、ショートカットのヒントも
     // パレット側の対応項目も持たない行になってしまう。それは2つのテーブルが
@@ -73,7 +73,7 @@ fn every_menu_command_exists_in_the_palette_table() {
 }
 
 #[test]
-fn menus_are_non_empty_and_have_selectable_rows() {
+fn どのメニューも空でなく選べる行を持つ() {
     for menu in MENUS {
         assert!(!menu.items.is_empty(), "menu {:?} is empty", menu.title);
         assert!(
@@ -85,7 +85,7 @@ fn menus_are_non_empty_and_have_selectable_rows() {
 }
 
 #[test]
-fn menus_have_no_leading_trailing_or_doubled_separators() {
+fn 区切りが先頭末尾や連続で入らない() {
     for menu in MENUS {
         let sel: Vec<bool> = menu.items.iter().map(MenuItem::is_selectable).collect();
         assert!(
@@ -127,7 +127,7 @@ fn sample() -> Vec<MenuItem> {
 }
 
 #[test]
-fn step_selection_skips_separators() {
+fn 選択の移動は区切りを飛ばす() {
     let items = sample();
     // 0 → (1にある区切りをスキップ) → 2
     assert_eq!(step_selection(&items, 0, 1), 2);
@@ -136,7 +136,7 @@ fn step_selection_skips_separators() {
 }
 
 #[test]
-fn step_selection_wraps_at_both_ends() {
+fn 選択の移動は両端で回り込む() {
     let items = sample();
     assert_eq!(
         step_selection(&items, 3, 1),
@@ -151,26 +151,19 @@ fn step_selection_wraps_at_both_ends() {
 }
 
 #[test]
-fn step_selection_is_a_no_op_without_selectable_rows() {
-    let items = vec![MenuItem::Separator, MenuItem::Separator];
-    assert_eq!(step_selection(&items, 0, 1), 0);
-    assert_eq!(step_selection(&items, 1, -1), 1);
-}
-
-#[test]
-fn step_selection_handles_an_empty_menu() {
+fn 退化した入力では選択が動かない() {
+    // 選択できる行が無い / 空 / 古いインデックス (選択中にメニューテーブルが変わった)。
+    let separators = vec![MenuItem::Separator, MenuItem::Separator];
+    assert_eq!(step_selection(&separators, 0, 1), 0);
+    assert_eq!(step_selection(&separators, 1, -1), 1);
     assert_eq!(step_selection(&[], 0, 1), 0);
-}
 
-#[test]
-fn step_selection_clamps_an_out_of_range_start() {
-    // 古いインデックス(選択中にメニューテーブルが変わった場合)でも panic しないこと。
     let items = sample();
     assert!(step_selection(&items, 99, 1) < items.len());
 }
 
 #[test]
-fn first_and_last_selectable_find_the_edges() {
+fn 最初と最後の選べる行を見つける() {
     let items = sample();
     assert_eq!(first_selectable(&items), 0);
     assert_eq!(last_selectable(&items), 3);
@@ -187,7 +180,7 @@ fn first_and_last_selectable_find_the_edges() {
 }
 
 #[test]
-fn find_by_initial_matches_case_insensitively_and_wraps() {
+fn 頭文字検索は大小を無視して回り込む() {
     let items = sample();
     // "Alpha"(0)から見ると次の 'a' は "Alto"(3) — 自分自身ではない。
     assert_eq!(find_by_initial(&items, 0, 'a'), Some(3));
@@ -198,7 +191,7 @@ fn find_by_initial_matches_case_insensitively_and_wraps() {
 }
 
 #[test]
-fn find_by_initial_never_lands_on_a_separator() {
+fn 頭文字検索は区切りに着地しない() {
     let items = sample();
     for ch in ['a', 'b', 'z'] {
         if let Some(idx) = find_by_initial(&items, 0, ch) {
@@ -208,7 +201,7 @@ fn find_by_initial_never_lands_on_a_separator() {
 }
 
 #[test]
-fn step_menu_wraps_both_ways() {
+fn メニューの移動は両方向に回り込む() {
     assert_eq!(step_menu(3, 2, 1), 0);
     assert_eq!(step_menu(3, 0, -1), 2);
     assert_eq!(step_menu(0, 0, 1), 0, "no menus must not divide by zero");

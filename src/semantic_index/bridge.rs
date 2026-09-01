@@ -159,7 +159,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_code_position_returns_word_with_exact_span() {
+    fn コード位置のtoken_atは正しい範囲の語を返す() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -181,7 +181,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_comment_word_is_not_word() {
+    fn コメント内の語は語として返さない() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -195,7 +195,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_string_literal_word_is_not_word() {
+    fn 文字列リテラル内の語は語として返さない() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -251,7 +251,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_different_file_is_unknown() {
+    fn 別のファイルを聞かれたら不明を返す() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -266,7 +266,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_lifetime_includes_apostrophe_in_span() {
+    fn ライフタイムの範囲はアポストロフィを含む() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -288,7 +288,7 @@ fn caller() {
     }
 
     #[test]
-    fn token_at_char_literal_does_not_falsely_widen() {
+    fn 文字リテラルで範囲を誤って広げない() {
         // char_literal は CodeMask::compute で丸ごと NonCode としてマスクされる
         // ため、'x' の x は NotWord になる。もしマスクがコードだと判定していれば
         // 誤って範囲を広げるだけで、誤答(間違った定義へのジャンプ)にはならない。
@@ -306,7 +306,7 @@ fn caller() {
     }
 
     #[test]
-    fn definition_at_converts_one_based_symbol_line_to_zero_based_location() {
+    fn シンボル行の1始まりを0始まりの位置に直す() {
         let (dir, index, mask) = build_fixture();
         let path = dir.path().join("lib.rs");
         let bridge = Bridge {
@@ -344,7 +344,7 @@ fn caller() {
     #[test]
     #[ignore = "リポジトリ本体の実インデックスに依存するため、作業ツリーがそのファイルについて \
                 クリーンな状態でのみ通る"]
-    fn real_index_resolves_its_own_definition_to_itself() {
+    fn 実索引は自分の定義を自分に解決する() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let store = crate::semantic_index::load(repo_root, repo_root)
             .expect(".conductor/index.scip と index.hashes がリポジトリに無い");

@@ -42,8 +42,6 @@ impl App {
         }
     }
 
-    // ワークツリー作成・削除のヘルパー
-
     /// [worktree_grab] と [worktree_pr] で共有する。
     fn select_worktree_by_path(&mut self, path: &std::path::Path) {
         if let Some(idx) = self.worktrees.iter().position(|w| w.path == path) {
@@ -71,8 +69,7 @@ impl App {
         self.on_worktree_changed();
     }
 
-    /// 選択を前のワークツリーへ切り替える（先頭で末尾に戻る）。
-    /// [Self::select_next_worktree] を参照。
+    /// 選択を前のワークツリーへ切り替える (先頭で末尾に戻る)。[Self::select_next_worktree] を参照。
     pub fn select_prev_worktree(&mut self) {
         let n = self.worktrees.len();
         if n <= 1 {
@@ -84,26 +81,21 @@ impl App {
     }
 
     pub fn on_worktree_changed(&mut self) {
-        // reflow トランスクリプトは前のワークツリーのセッションに属するものなので、
-        // ワークツリーを切り替えるときは新しいセッション状態を読み込む前にリセットする
-        // 必要がある。
+        // reflow トランスクリプトは前のワークツリーのセッションに属するので、新しいセッション
+        // 状態を読み込む前にリセットする。
         if self.reflow.active {
             self.close_reflow();
         }
 
-        // 埋め込みエディタはそれを開いたワークツリーに属している。そのワークツリーを
-        // 離れると誤ったツリーを編集し続けたまま取り残されるので、先に閉じる。
-        // 以降のビュー再読み込みが新しいワークツリーをカバーする。
+        // 埋め込みエディタは開いたワークツリーに属しているので、離れる前に閉じる。誤ったツリーを
+        // 編集し続けたまま取り残される。
         self.discard_editor_on_worktree_change();
 
-        // 次の描画で、新たに選択したワークツリーのチップをバーに表示する（幅に依存した
-        // パンニングはそこで行う。エリアのサイズがそこで分かるため）。これはユーザ操作
-        // による選択変更のときだけ安全に立ててよいフラグである。ユーザがストリップを
-        // 自由にスクロールして他を覗いている最中に、バックグラウンドのイベントが選択を
-        // 動かした場合にこれを立てると、バーが強制的に引き戻されてしまう。
+        // 次の描画で新たに選択したチップをバーに表示する。ユーザ操作による選択変更のときだけ
+        // 立ててよい — ストリップを自由にスクロールして覗いている最中にバックグラウンドの
+        // イベントが選択を動かすと、バーが強制的に引き戻される。
         self.wtbar.reveal_selected = true;
 
-        // 消去する前に、離れるワークツリーのビューを保存しておく。
         if let Some(outgoing) = self.view_restore.current_branch.clone() {
             self.save_view_for(&outgoing);
         }
@@ -111,18 +103,13 @@ impl App {
         self.explorer = Explorer::default();
         self.viewer = ViewerState::default();
 
-        // 今ユーザが見ているツリーに対してシンボルインデックスを再構築する。ワークツリーは
-        // リポジトリルートの兄弟ディレクトリなので、あるワークツリー上で構築したインデックス
-        // は他のワークツリーを見ることができない。これをしないとナビゲーションは常に前の
-        // ワークツリーを基準に答え続け、ファイル自体は正しくても行番号が別ブランチのものに
-        // なってしまう。ブランチの乖離が大きいほどそのズレも大きくなり、ちょうど diff を
-        // 読む価値が最も高い箇所でエラーが起きることになる。
+        // 今見ているツリーに対してシンボルインデックスを再構築する。ワークツリーはリポジトリ
+        // ルートの兄弟なので、別のワークツリー上で構築した索引はここを見られない。しないと
+        // ファイルは正しくても行番号が別ブランチのものになる。
         //
-        // あえて selected_worktree への代入ではなく、このメソッドにぶら下げている。
-        // selected_worktree への代入の中にはワークツリーの切り替えとは言えないものが
-        // いくつかある（セッション起動中の一時的な退避、削除プロンプトを開くためのハイライト
-        // 移動）し、さらに2箇所は3秒ごとのポーリングとマウスホイールのすべてのティックで
-        // 走るため、そこで再構築すると積み上がってしまう。
+        // selected_worktree への代入ではなくこのメソッドにぶら下げている。代入の中には切り替えと
+        // 言えないもの (一時的な退避、ハイライト移動) があり、2 箇所は 3 秒ポーリングとホイールの
+        // 全ティックで走るので、そこで再構築すると積み上がる。
         self.start_symbol_index_build();
         // 走っている生成は前のツリーを索引している。止めないと、その結果が
         // 新しいツリーの索引として置かれる。
@@ -130,14 +117,11 @@ impl App {
         self.code_nav.semantic.abort_regeneration(&repo_root);
         self.start_semantic_index_load();
 
-        // ファイル一覧はバックグラウンドの diff が届くまで意図的に残す（空のペインに
-        // 差し替えるとちらつくため）。しかしエラーは残してはいけない。それはついさっき
-        // 離れたワークツリーのものであり、赤いバナーを出したままにすると離れた側の失敗を
-        // これから入るワークツリーのものと誤認させてしまう。
+        // ファイル一覧は diff が届くまで意図的に残す (差し替えるとちらつく)。エラーは残さない —
+        // 離れた側の失敗を、これから入るワークツリーのものと誤認させる。
         self.diff_state.error = None;
 
-        // 現在ロード中のワークツリーを記録し、保存済みのファイル・スクロール位置を
-        // 種として持たせておく。ファイルツリーが届き次第、それを再度開くために使う。
+        // ファイルツリーが届き次第、保存済みのファイル・スクロール位置を再度開くために持たせる。
         let new_branch = self.selected_worktree_branch();
         self.view_restore.pending = None;
         self.view_restore.current_branch = if new_branch.is_empty() {
@@ -157,7 +141,6 @@ impl App {
             }
         }
 
-        // 今選択したワークツリーの「new」バッジをクリアする。
         if let Some(wt) = self.worktrees.selected() {
             self.new_worktree_paths.remove(&wt.path);
         }
@@ -171,7 +154,6 @@ impl App {
             self.change_watch.status = Some((wt.added, wt.modified, wt.deleted, wt.staged));
         }
 
-        // アクティブなセッションを新しいワークツリーに合わせて更新する。
         let wt_name = self.selected_worktree_branch();
         for focus in [Focus::TerminalClaude, Focus::TerminalShell] {
             let Some(kind) = self.terminal.pane(focus).map(|p| p.kind) else {
@@ -191,20 +173,15 @@ impl App {
             }
         }
 
-        // 重い処理をバックグラウンドスレッドへディスパッチする。
         if let Some(wt) = self.worktrees.selected() {
             let wt_path = wt.path.clone();
             let wt_branch = wt.branch.clone();
 
-            // バックグラウンドでのファイルツリー走査。
             {
                 let path = wt_path.clone();
                 self.bg.file_tree.start(move |tx| {
-                    // ツリー走査と同時に（メインスレッドではなく）計算することで、ワークツリー
-                    // 切り替えのたびに git status 取得だけの別の停止が追加で入るのを避けている。
-                    // Explorer::load_file_tree の同期パスと同じフォールバック＋ログの方針:
-                    // 空のマップだと UI はすべてが追跡・コミット済みだと主張してしまうので、
-                    // ここでの失敗を黙って見逃してはいけない。
+                    // ツリー走査と同時に計算し、git status 取得だけの別の停止が入るのを避ける。空のマップだと
+                    // UI はすべてが追跡・コミット済みだと主張するので、失敗を黙って見逃さずログに残す。
                     let git_status = GitStatusMap::load(&path).unwrap_or_else(|e| {
                         log::warn!(
                             "git status unavailable for {} during worktree switch — tree and Changed files will render as if everything is tracked and committed: {e}",
@@ -218,12 +195,10 @@ impl App {
                 });
             }
 
-            // バックグラウンドでの diff 計算。
             {
                 let path = wt_path.clone();
-                // refresh_diff と同じベースを使う。ここで別のベースを使うと、切り替えた
-                // 直後にユーザの目の前でファイル一覧が変わってしまう。diff_base_for が
-                // この判断を行う唯一の場所である。
+                // refresh_diff と同じベースを使う。別のベースだと切り替え直後に目の前でファイル一覧が
+                // 変わる。diff_base_for がこの判断を行う唯一の場所。
                 let base_branch = self.diff_base_for(&wt_branch);
                 let word_diff = self.config.diff.word_diff;
                 let tab_width = self.config.viewer.tab_width;
@@ -232,7 +207,6 @@ impl App {
                 });
             }
 
-            // バックグラウンドでのブランチ詳細計算。
             self.start_bg_branch_details();
         }
 
@@ -314,30 +288,25 @@ impl App {
 
     /// バックグラウンドで進むワークツリー切り替え処理（ファイルツリー、diff、ブランチ詳細）をポーリングする。
     pub fn poll_worktree_switch_ops(&mut self) {
-        // ファイルツリーの結果。
         if let Some((root, entries, git_status)) = self.bg.file_tree.poll() {
-            // 3 つまとめて差し替える。根だけ先に新しくなると、まだ古いエントリ
-            // を指しているクリックが別ブランチの同名ファイルを黙って開く。
+            // 3 つまとめて差し替える。根だけ先に新しくなると、古いエントリを指しているクリックが
+            // 別ブランチの同名ファイルを黙って開く。
             let root_changed = self.explorer.replace_tree(root, entries, git_status);
-            // 相対パスの指す先が変わるので、新しい根に無いファイルのタブは閉じる。
-            // 同じ根への再走査では触らない — 一時的に消えたファイルのタブまで
-            // 勝手に閉じてしまう。
+            // 相対パスの指す先が変わるので、新しい根に無いファイルのタブは閉じる。同じ根への再走査では
+            // 触らない — 一時的に消えたファイルのタブまで閉じてしまう。
             if root_changed {
                 self.viewer
                     .prune_tabs_to_root(self.explorer.root(), self.config.viewer.tab_width);
             }
-            // このワークツリーのファイルツリーが揃ったので、以前見ていたファイルと
-            // スクロール位置を復元する（一度だけ）。
+            // ファイルツリーが揃ったので、以前見ていたファイルとスクロール位置を復元する (一度だけ)。
             self.consume_pending_view_restore();
             self.rehighlight_viewer();
         }
 
-        // diff の結果。
         if let Some(result) = self.bg.diff.poll() {
             apply_bg_diff_result(&mut self.diff_state, result);
         }
 
-        // ブランチ詳細の結果。
         if let Some(details) = self.bg.branch_details.poll() {
             // すでに実行中の PR 取得から pr_url と pr_loading を保持する。
             let pr_url = self.branch_details.pr_url.take();
@@ -347,8 +316,6 @@ impl App {
             self.branch_details.pr_loading = pr_loading;
         }
     }
-
-    // ブランチ詳細（ワークツリー詳細パネル）
 
     /// このシステムで gh CLI が利用可能かどうかを確認する。
     ///
@@ -451,10 +418,10 @@ mod tests {
         }
     }
 
-    /// 報告されたバグ: 解決できないベース ref を指定すると、以前は手元の変更まで
-    /// 消えてしまい、17個の変更ファイルが (0) と表示されていた。
+    /// 解決できないベース ref を指定しても手元の変更は消えないこと (17 個の変更ファイルが
+    /// (0) と表示される不具合の回帰防止)。
     #[test]
-    fn bg_diff_result_with_error_keeps_the_files() {
+    fn エラー付きの結果でもファイル一覧は残す() {
         let mut ds = DiffState::new("origin/main", DiffViewMode::Unified);
         apply_bg_diff_result(
             &mut ds,
@@ -470,11 +437,9 @@ mod tests {
         );
         assert!(ds.error.is_some(), "the failure must stay visible");
 
-        // 単に空でないことを確認するのではなく、display list を通してすべての File
-        // エントリを解決する。diff_list.rs はエントリの file_index で files を
-        // 参照するため、ファイルのベクタを差し替えたあとに display list を再構築し
-        // 忘れていると、次の描画で out-of-bounds パニックが起きる。これは「何かが
-        // リストされた」ではなく「常に再構築する」という不変条件を確かめるためのもの。
+        // display list を通してすべての File エントリを解決する。diff_list.rs は file_index で
+        // files を参照するので、files を差し替えたあとに display list を再構築し忘れると次の
+        // 描画で out-of-bounds パニックになる。「常に再構築する」という不変条件の検査。
         let listed: Vec<&str> = (0..ds.display_list.len())
             .filter_map(|idx| ds.resolve_file(idx))
             .map(|f| f.path.as_str())
@@ -506,11 +471,10 @@ mod tests {
         dir
     }
 
-    /// 修正のうち bg ワーカー側の半分を検証する。apply_bg_diff_result は
-    /// 「反映」側しか証明しないので、こちらはベースを解決できなくてもワーカーが
-    /// HEAD 基準の diff を返し続けることを証明する。
+    /// ベースを解決できなくてもワーカーが HEAD 基準の diff を返し続けること
+    /// (apply_bg_diff_result は「反映」側しか証明しない)。
     #[test]
-    fn compute_bg_diff_keeps_the_files_when_base_is_unresolvable() {
+    fn ベースが解決できなくても背景のdiffはファイルを返す() {
         let dir = repo_with_uncommitted_change();
 
         let result = compute_bg_diff(dir.path(), "no-such-base", false, 4);
@@ -532,7 +496,7 @@ mod tests {
 
     /// 解決可能なベースならエラーは残らず、パネルにバナーは表示されない。
     #[test]
-    fn compute_bg_diff_reports_no_error_for_a_resolvable_base() {
+    fn 解決できるベースならエラーは出ない() {
         let dir = repo_with_uncommitted_change();
 
         let result = compute_bg_diff(dir.path(), "main", false, 4);
@@ -551,7 +515,7 @@ mod tests {
     /// あとから来た成功結果は、古いエラーをクリアしなければならない。そうしないと
     /// パネルにエラーマーカーが残り続けてしまう。
     #[test]
-    fn bg_diff_result_without_error_clears_a_stale_one() {
+    fn エラー無しの結果は古いエラーを消す() {
         let mut ds = DiffState::new("main", DiffViewMode::Unified);
         ds.error = Some("previous failure".to_string());
         apply_bg_diff_result(

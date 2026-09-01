@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_claude_session_resets_scroll_and_cache() {
+    fn claudeのセッション切替はスクロールとキャッシュを戻す() {
         let mut term = TerminalState::new(1000, 100, false);
         term.claude.scroll = 42;
         term.claude.cache = stale_cache();
@@ -182,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_shell_session_resets_scroll_and_cache() {
+    fn shellのセッション切替はスクロールとキャッシュを戻す() {
         let mut term = TerminalState::new(1000, 100, false);
         term.shell.scroll = 42;
         term.shell.cache = stale_cache();
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_claude_session_leaves_shell_panel_untouched() {
+    fn claudeの切替はshellのパネルに触らない() {
         let mut term = TerminalState::new(1000, 100, false);
         term.shell.scroll = 5;
         term.shell.cache = stale_cache();

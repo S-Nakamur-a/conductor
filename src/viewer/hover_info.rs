@@ -1,11 +1,8 @@
 //! シンボルのホバー情報。Viewer のカーソル下にあるシンボルのシグネチャ、
 //! doc コメント、参照数。
 //!
-//! 既存の tree-sitter 製 [SymbolIndex](crate::symbol_index::SymbolIndex) の上に
-//! 作ってある (language server は使わない)。インデックスが定義位置を特定し、
-//! そのファイルを範囲を限って読んで宣言のシグネチャと直上の doc コメント
-//! ブロックを取り出す。何も見つからなければ None を返し、呼び出し側は
-//! 黙っていられる。
+//! 既存の tree-sitter 製 [SymbolIndex](crate::symbol_index::SymbolIndex) の上に作ってある
+//! (language server は使わない)。何も見つからなければ None を返し、呼び出し側は黙っていられる。
 
 use crate::symbol_index::SymbolIndex;
 
@@ -117,13 +114,11 @@ pub fn resolve_def_site(
     })
 }
 
-/// 定義位置からホバー情報を組み立てる。ファイルが読めない、行がファイルの外、
-/// のいずれかなら (黙って) None を返す。
+/// 定義位置からホバー情報を組み立てる。ファイルが読めない/行が範囲外なら黙って `None`。
 ///
-/// 索引が説明を持っていればそちらを使う。索引の宣言は producer が型を解決した
-/// もので、定義行を読み直して作る写しより中身が濃い (`let source: String` に対して
-/// 字面は `let source = std::fs::read_to_string(..)?`)。doc だけは索引が持たない
-/// ことが多い (doc コメントのある項目に限られる) ので、無ければソースから拾う。
+/// 索引の宣言は producer が型を解決したもので、定義行を読み直して作る写しより中身が
+/// 濃い (`let source: String` に対して字面は `let source = read_to_string(..)?`)。doc は
+/// 索引が持たないことが多いので、無ければソースから拾う。
 pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Option<HoverInfo> {
     let root = index.root();
     let source = std::fs::read_to_string(root.join(&def.file_path)).ok()?;
@@ -158,10 +153,8 @@ pub fn build_hover_info(index: &SymbolIndex, symbol: &str, def: DefSite) -> Opti
         },
     };
 
-    // 正確な数ではなく上限付き。これはポインタがシンボル上で止まるたびに UI
-    // スレッドで走るが、ありふれた名前の正確な数を出すにはその名前が現れる全ファイルを
-    // パースすることになる (ここでの new は約 157ms = 10 フレーム落ち)。
-    // 上限を超えたぶんはポップアップに「50+」と出す。
+    // 正確な数ではなく上限付き。UI スレッドで走るのに、ありふれた名前の正確な数を出すには
+    // その名前が現れる全ファイルをパースすることになる (new で約 157ms = 10 フレーム落ち)。
     let (ref_count, ref_count_capped) = index.count_references_upto(symbol, &root, REF_COUNT_CAP);
 
     Some(HoverInfo {
@@ -443,13 +436,13 @@ mod tests {
     }
 
     #[test]
-    fn signature_single_line_fn() {
+    fn 単一行の関数の宣言() {
         let src = "pub fn foo(a: usize) -> bool {\n    true\n}\n";
         assert_eq!(sig(src, 1), vec!["pub fn foo(a: usize) -> bool"]);
     }
 
     #[test]
-    fn signature_multi_line_fn() {
+    fn 複数行の関数の宣言() {
         let src = "fn foo(\n    a: usize,\n    b: &str,\n) -> bool {\n    true\n}\n";
         assert_eq!(
             sig(src, 1),
@@ -458,52 +451,50 @@ mod tests {
     }
 
     #[test]
-    fn signature_dedents_indented_method() {
+    fn 字下げされたメソッドの宣言は左へ詰める() {
         let src = "impl Foo {\n    pub fn bar(&self) -> usize {\n        1\n    }\n}\n";
         assert_eq!(sig(src, 2), vec!["pub fn bar(&self) -> usize"]);
     }
 
     #[test]
-    fn signature_stops_at_semicolon() {
+    fn 宣言はセミコロンで止まる() {
         let src = "type Alias = Vec<String>;\nfn next() {}\n";
         assert_eq!(sig(src, 1), vec!["type Alias = Vec<String>;"]);
     }
 
     #[test]
-    fn doc_rust_triple_slash_with_attribute() {
+    fn 属性を挟んだrustのdocコメント() {
         let src = "/// Does the thing.\n/// Second line.\n#[derive(Debug)]\npub struct Foo;\n";
         assert_eq!(doc(src, 4), vec!["Does the thing.", "Second line."]);
     }
 
     #[test]
-    fn doc_go_double_slash() {
+    fn goのdocコメント() {
         let src = "// Foo does the thing.\nfunc Foo() {}\n";
         assert_eq!(doc(src, 2), vec!["Foo does the thing."]);
     }
 
     #[test]
-    fn doc_ts_block_comment() {
+    fn typescriptのブロックコメント() {
         let src = "/**\n * Does the thing.\n * @param a input\n */\nfunction foo(a) {}\n";
         assert_eq!(doc(src, 5), vec!["Does the thing.", "@param a input"]);
     }
 
     #[test]
-    fn doc_none_when_code_above() {
+    fn 上がコードならdocは無し() {
         let src = "let x = 1;\nfn foo() {}\n";
         assert!(doc(src, 2).is_empty());
     }
 
     #[test]
-    fn doc_single_line_block_comment() {
+    fn 単一行のブロックコメント() {
         let src = "/** Does the thing. */\nfunction foo() {}\n";
         assert_eq!(doc(src, 2), vec!["Does the thing."]);
     }
 
     #[test]
     fn 構造体のフィールドは次のアイテムまで飲み込まない() {
-        // 索引がフィールドに答えるようになるまで、ホバーがこの位置に来ることは
-        // なかった。, を区切りにしていなかったので、上限の 8 行ぶん次のアイテムを
-        // そのまま読み込んでいた。
+        // , を区切りにしないと、上限の 8 行ぶん次のアイテムをそのまま読み込む。
         let src = "\
 pub struct A {
     pub session_name: Option<String>,
@@ -577,9 +568,7 @@ fn caller() {
     }
 
     #[test]
-    fn end_to_end_over_real_index() {
-        // 一時リポジトリに対して本物の tree-sitter インデックスを作り、
-        // 経路全体 (find_definitions → 読み取り → 抽出) を通してホバー情報を解決する。
+    fn 実索引を通した一続きの確認() {
         let dir = std::env::temp_dir().join(format!("hover_e2e_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

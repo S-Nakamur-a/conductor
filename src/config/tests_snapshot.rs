@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use super::*;
 
 #[test]
-fn appearance_snapshot_includes_layout() {
+fn 見た目のスナップショットはlayoutを含む() {
     let mut cfg = Config::default();
     cfg.layout.explorer_width_pct = 30;
     let snap = cfg.appearance_snapshot();
@@ -18,11 +18,10 @@ fn appearance_snapshot_includes_layout() {
 
 // adopt_appearance / appearance_snapshot の不変条件 / has_restart_changes
 
-/// 往復不変条件: adopt_appearance 後に snapshot が new と一致すること。
-/// AppearanceSnapshot にフィールドを足したのに adopt_appearance のコピーに
-/// 足し忘れた場合を検出する。
+/// AppearanceSnapshot にフィールドを足したのに adopt_appearance のコピーに足し忘れた
+/// 場合を検出する。
 #[test]
-fn adopt_appearance_round_trip_invariant() {
+fn adopt_appearanceは往復して一致する() {
     let mut cur = Config::default();
     let mut new = Config::default();
     // すべての live フィールドをデフォルトでない値に変更する。
@@ -47,16 +46,14 @@ fn adopt_appearance_round_trip_invariant() {
     );
 }
 
-/// snapshot 等価: 同一 config は等価。
 #[test]
-fn appearance_snapshot_equal_for_identical_configs() {
+fn 同じconfigのスナップショットは等しい() {
     let cfg = Config::default();
     assert_eq!(cfg.appearance_snapshot(), cfg.appearance_snapshot());
 }
 
-/// snapshot 不等価: 各 live フィールドを 1 つ変えると != になること。
 #[test]
-fn appearance_snapshot_detects_each_live_field_change() {
+fn liveフィールドの変更を1つずつ検出する() {
     let base = Config::default();
 
     let mut c = base.clone();
@@ -140,9 +137,8 @@ fn appearance_snapshot_detects_each_live_field_change() {
     );
 }
 
-/// has_restart_changes: live フィールドのみ変えたら false。
 #[test]
-fn has_restart_changes_false_for_live_only_diff() {
+fn liveだけの差ならhas_restart_changesはfalse() {
     let old = Config::default();
     let mut new = Config::default();
     new.ui.theme = Some(String::from("dracula"));
@@ -154,9 +150,8 @@ fn has_restart_changes_false_for_live_only_diff() {
     assert!(!has_restart_changes(&old, &new));
 }
 
-/// has_restart_changes: 各 restart フィールドを 1 つ変えたら true。
 #[test]
-fn has_restart_changes_true_for_each_restart_field() {
+fn restartフィールド1つでhas_restart_changesはtrue() {
     let base = Config::default();
 
     let mut c = base.clone();
@@ -192,13 +187,11 @@ fn has_restart_changes_true_for_each_restart_field() {
     assert!(has_restart_changes(&base, &c), "ccusage.enabled");
 }
 
-/// 分割テスト: すべてのフィールドが live か restart のどちらかに必ず属する。
 /// フィールドを 1 つ変えた new で snapshot != か has_restart_changes が必ず true になること。
 #[test]
-fn every_field_is_either_live_or_restart() {
+fn 全フィールドがliveかrestartのどちらかに属する() {
     let base = Config::default();
 
-    // general
     {
         let mut c = base.clone();
         c.general.repo = Some(PathBuf::from("/p"));
@@ -263,7 +256,6 @@ fn every_field_is_either_live_or_restart() {
             "general.auto_resume_main"
         );
     }
-    // terminal
     {
         let mut c = base.clone();
         c.terminal.active_scrollback = 9999;
@@ -298,7 +290,6 @@ fn every_field_is_either_live_or_restart() {
             "diff.word_diff"
         );
     }
-    // api
     {
         let mut c = base.clone();
         c.api.provider = String::from("claude"); // デフォルトは "gemini"
@@ -307,7 +298,6 @@ fn every_field_is_either_live_or_restart() {
             "api.provider"
         );
     }
-    // ccusage
     {
         let mut c = base.clone();
         c.ccusage.enabled = true;

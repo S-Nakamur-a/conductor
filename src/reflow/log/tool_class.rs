@@ -179,7 +179,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_is_counted_bucket_read() {
+    fn readは集計バケットのreadになる() {
         let input = json!({"file_path": "/a.txt"});
         assert_eq!(
             classify("Read", &input),
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn grep_and_glob_are_counted_bucket_search() {
+    fn grepとglobは集計バケットのsearchになる() {
         let input = json!({"pattern": "foo"});
         assert_eq!(
             classify("Grep", &input),
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn bash_ls_is_counted_bucket_list() {
+    fn bashのlsは集計バケットのlistになる() {
         let input = json!({"command": "ls -la /tmp"});
         assert_eq!(
             classify("Bash", &input),
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn bash_cat_merges_into_counted_bucket_read() {
+    fn bashのcatは集計バケットのreadに合流する() {
         // 元のテーブルでは cat のシェル呼び出しは Read ツール自身の bucket
         // に合流する — どちらも1つの "Read N files" 行にカウントされる。
         let input = json!({"command": "cat foo.txt"});
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn bash_other_command_is_inline() {
+    fn bashのそれ以外のコマンドはインラインになる() {
         let input = json!({"command": "cargo build"});
         assert_eq!(
             classify("Bash", &input),
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn bash_leading_whitespace_still_dispatches_on_first_word() {
+    fn 先頭に空白があっても最初の語で振り分ける() {
         let input = json!({"command": "   ls /tmp"});
         assert_eq!(
             classify("Bash", &input),
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn write_is_inline_with_file_path_arg() {
+    fn writeはfile_pathを引数にしたインラインになる() {
         let input = json!({"file_path": "/tmp/out.txt", "content": "..."});
         assert_eq!(
             classify("Write", &input),
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_displays_as_update() {
+    fn editはupdateとして表示する() {
         let input = json!({"file_path": "/tmp/out.txt"});
         assert_eq!(
             classify("Edit", &input),
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn task_displays_as_agent_with_description_arg() {
+    fn taskはdescriptionを引数にしたagentとして表示する() {
         let input = json!({"description": "investigate bug", "prompt": "..."});
         assert_eq!(
             classify("Task", &input),
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn webfetch_displays_as_fetch_with_url_arg() {
+    fn webfetchはurlを引数にしたfetchとして表示する() {
         let input = json!({"url": "https://example.com"});
         assert_eq!(
             classify("WebFetch", &input),
@@ -290,13 +290,13 @@ mod tests {
     }
 
     #[test]
-    fn todowrite_is_hidden() {
+    fn todowriteは隠す() {
         let input = json!({"todos": []});
         assert_eq!(classify("TodoWrite", &input), ToolCategory::Hidden);
     }
 
     #[test]
-    fn unknown_tool_falls_back_to_generic_arg_key_search() {
+    fn 知らないツールは汎用の引数キー探索に落ちる() {
         let input = json!({"query": "some search term"});
         assert_eq!(
             classify("WebSearch", &input),
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_arg_absent_key_becomes_none() {
+    fn キーが無ければ引数はnoneになる() {
         let input = json!({"content": "..."}); // file_path キーが全く無い
         assert_eq!(
             classify("Write", &input),
@@ -320,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn inline_arg_empty_string_becomes_none() {
+    fn 空文字の引数はnoneになる() {
         let input = json!({"file_path": ""});
         assert_eq!(
             classify("Write", &input),
@@ -332,14 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_tool_arg_tries_keys_in_priority_order() {
+    fn 知らないツールの引数は優先順にキーを試す() {
         // UNKNOWN_ARG_KEYS では command の方が file_path より優先度が高い。
         let input = json!({"file_path": "/a", "command": "run me"});
         assert_eq!(unknown_tool_arg(&input), Some("run me".to_string()));
     }
 
     #[test]
-    fn unknown_tool_arg_none_when_no_known_key_present() {
+    fn 既知のキーが1つも無ければnoneになる() {
         let input = json!({"unrelated": "x"});
         assert_eq!(unknown_tool_arg(&input), None);
     }

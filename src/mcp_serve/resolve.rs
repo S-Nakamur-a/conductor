@@ -11,19 +11,15 @@ use anyhow::{Context, Result, bail};
 
 /// コマンドラインから --db <path> があれば取り出す。
 ///
-/// [resolve_db_path] から分離してあるのは、優先順位のルールをプロセスの
-/// 環境変数に触れずにテストできるようにするため。空の値はそのまま渡さず
-/// 捨てる。Connection::open("") は *プライベートな一時* データベースを開いて
-/// しまうので、--db= を許すとすべてのツールが、成功したように見えて終了時に
-/// 消えてしまうスクラッチデータベースを持つことになる — このサブコマンドが
-/// 排除しようとしている「動いたように見える失敗」そのものである。
+/// [resolve_db_path] から分離してあるのは、優先順位のルールをプロセスの環境変数に触れずに
+/// テストできるようにするため。空の値は捨てる — Connection::open("") は *プライベートな
+/// 一時* データベースを開いてしまい、すべてのツールが成功したように見えて終了時に消える。
 pub(super) fn parse_db_arg(args: impl IntoIterator<Item = String>) -> Option<PathBuf> {
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         if arg == "--db" {
             return it.next().filter(|v| !v.is_empty()).map(PathBuf::from);
         }
-        // --db=<path> の形。通常の CLI の慣習との対称性のため。
         if let Some(rest) = arg.strip_prefix("--db=") {
             return (!rest.is_empty()).then(|| PathBuf::from(rest));
         }
@@ -31,25 +27,16 @@ pub(super) fn parse_db_arg(args: impl IntoIterator<Item = String>) -> Option<Pat
     None
 }
 
-/// レビューデータベースを、Node サーバが使っていたのと同じ順序で探す。
-/// conductor が起動したケースのために --db を先頭に追加してある。
+/// レビューデータベースを探す。
 ///
 /// 1. --db <path> — spawn_generation が渡すもの
-/// 2. CONDUCTOR_DB_PATH — pty_manager::spawn が対話的セッションに注入する
-///    もので、マーケットプレイスプラグインが持つ唯一の経路でもある
-///    （.mcp.json は引数を一切渡さない）
+/// 2. CONDUCTOR_DB_PATH — pty_manager::spawn が対話的セッションに注入するもので、
+///    マーケットプレイスプラグインが持つ唯一の経路 (.mcp.json は引数を渡さない)
 /// 3. cwd の git ルート、次に 4. *main* worktree のルート
-///    （リンクされた worktree で動いているセッションの場合）
 ///
-/// 3 と 4 のステップはファイルがすでに存在していることを要求する。これは
-/// 意図的である。Connection::open は放っておくと空のデータベースを作って
-/// マイグレーションまで済ませてしまい、TUI には何も表示されていないのに
-/// 全てのツールが成功を報告することになる — これはこの変更全体が取り除こう
-/// としている、まさに同じ形の静かな失敗である。明示的な --db や
-/// CONDUCTOR_DB_PATH はそのまま額面通りに受け取る（呼び出し側はどこに
-/// 書き込みたいか分かっているし、新しいリポジトリのデータベースを正当に
-/// 作ろうとしている場合もあり得るため）。
-/// 対話的セッションがデータベースを取得する際に使う環境変数。
+/// 3 と 4 はファイルが既に存在していることを要求する。Connection::open は放っておくと
+/// 空のデータベースを作ってマイグレーションまで済ませ、TUI には何も出ていないのに全ての
+/// ツールが成功を報告する。明示的な --db や CONDUCTOR_DB_PATH は額面通りに受け取る。
 pub(super) const DB_PATH_ENV: &str = "CONDUCTOR_DB_PATH";
 
 pub(super) fn resolve_db_path(db_arg: Option<PathBuf>) -> Result<PathBuf> {
@@ -86,7 +73,6 @@ pub(super) fn resolve_db_path_with(
         )
     })?;
 
-    // 起動された worktree そのもの。
     if let Some(workdir) = repo.workdir() {
         let candidate = conductor_db(workdir);
         if candidate.is_file() {
@@ -94,9 +80,8 @@ pub(super) fn resolve_db_path_with(
         }
     }
 
-    // リンクされた worktree は自分の .conductor/ を持たない。データベースは
-    // main worktree にある。commondir() は <main>/.git を返すので、その
-    // 親が main のルートになる。
+    // リンクされた worktree は自分の .conductor/ を持たない。commondir() は <main>/.git を
+    // 返すので、その親が main のルートになる。
     if let Some(main_root) = repo.commondir().parent() {
         let candidate = conductor_db(main_root);
         if candidate.is_file() {
@@ -116,13 +101,10 @@ fn conductor_db(root: &Path) -> PathBuf {
     root.join(".conductor").join("conductor.db")
 }
 
-/// サーバの cwd がチェックアウトしているブランチ。使えるものが無ければ
-/// None。
+/// サーバの cwd がチェックアウトしているブランチ。使えるものが無ければ `None`。
 ///
-/// None は「まだ HEAD が無い」と「detached HEAD」の両方をカバーする。
-/// どちらもコメントやウォークスルーのキーにはできず、ブランチを必要とする
-/// ツールはこれを、Node サーバが返していたのと同じ「detached HEAD?」という
-/// メッセージに変換する。
+/// `None` は「まだ HEAD が無い」と「detached HEAD」の両方をカバーする。どちらもコメントの
+/// キーにはできず、ブランチを必要とするツールはこれを「detached HEAD?」に変換する。
 pub(super) fn current_branch(repo: &git2::Repository) -> Option<String> {
     if repo.head_detached().unwrap_or(true) {
         return None;
@@ -158,44 +140,30 @@ mod tests {
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
-
+    /// 空の値を拒むのが要点。Connection::open("") はプライベートな一時データベースを
+    /// 開いてしまい、すべてのツールが成功して自分の書き込みも読み戻せるのに、終了時に
+    /// 全部消える。
     #[test]
-    fn parse_db_arg_reads_separate_value() {
-        assert_eq!(
-            parse_db_arg(args(&["mcp-serve", "--db", "/tmp/a.db"])),
-            Some(PathBuf::from("/tmp/a.db"))
-        );
+    fn parse_db_argは両方の書き方を読み値の無い指定を拒む() {
+        let cases: [(&[&str], Option<&str>); 6] = [
+            (&["mcp-serve", "--db", "/tmp/a.db"], Some("/tmp/a.db")),
+            (&["mcp-serve", "--db=/tmp/b.db"], Some("/tmp/b.db")),
+            (&["mcp-serve"], None),
+            (&["mcp-serve", "--db"], None),
+            (&["mcp-serve", "--db="], None),
+            (&["mcp-serve", "--db", ""], None),
+        ];
+        for (argv, want) in cases {
+            assert_eq!(
+                parse_db_arg(args(argv)),
+                want.map(PathBuf::from),
+                "{argv:?}"
+            );
+        }
     }
 
     #[test]
-    fn parse_db_arg_reads_equals_form() {
-        assert_eq!(
-            parse_db_arg(args(&["mcp-serve", "--db=/tmp/b.db"])),
-            Some(PathBuf::from("/tmp/b.db"))
-        );
-    }
-
-    #[test]
-    fn parse_db_arg_is_none_when_absent() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve"])), None);
-    }
-
-    #[test]
-    fn parse_db_arg_is_none_when_flag_has_no_value() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db"])), None);
-    }
-
-    /// Connection::open("") はプライベートな一時データベースを開いてしまう。
-    /// すべてのツールが成功し、自分の書き込みを読み戻せてしまうが、終了時に
-    /// 全部消えてしまう。
-    #[test]
-    fn parse_db_arg_rejects_an_empty_value() {
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db="])), None);
-        assert_eq!(parse_db_arg(args(&["mcp-serve", "--db", ""])), None);
-    }
-
-    #[test]
-    fn resolve_db_path_rejects_an_empty_explicit_path() {
+    fn 明示された空パスは拒む() {
         assert!(resolve_db_path_with(Some(PathBuf::new()), None).is_err());
         assert!(resolve_db_path_with(None, Some(PathBuf::new())).is_err());
     }
@@ -206,7 +174,7 @@ mod tests {
     ///
     /// 両方の値が与えられているので、どちらの分岐を消してもこのテストは失敗する。
     #[test]
-    fn explicit_db_arg_beats_env() {
+    fn 明示の_db引数は環境変数に勝つ() {
         let resolved = resolve_db_path_with(
             Some(PathBuf::from("/explicit/a.db")),
             Some(PathBuf::from("/from-env/b.db")),
@@ -219,7 +187,7 @@ mod tests {
     /// マーケットプレイスプラグインの .mcp.json は引数を一切渡さないので、
     /// この分岐を失うと TUI 内の全セッションが壊れる。
     #[test]
-    fn env_is_used_when_no_db_arg() {
+    fn db引数が無ければ環境変数を使う() {
         let resolved = resolve_db_path_with(None, Some(PathBuf::from("/from-env/b.db"))).unwrap();
         assert_eq!(resolved, PathBuf::from("/from-env/b.db"));
     }
@@ -229,7 +197,7 @@ mod tests {
     /// フォールスルーしてしまうと、マイグレーションは問題なく通り、TUI には
     /// 何も表示されないのに全てのツールが成功を報告することになる。
     #[test]
-    fn discovery_failure_is_an_error_not_a_fresh_database() {
+    fn 見つからないときは新規作成ではなくエラー() {
         let dir = tempfile::tempdir().unwrap();
         let probe = dir.path().join(".conductor").join("conductor.db");
         // 健全性チェック: 作られていたはずのパスがまだ存在しないことを確認する。
@@ -250,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_pipe_sits_beside_the_database() {
+    fn リフレッシュ用パイプはデータベースの隣に置く() {
         assert_eq!(
             refresh_pipe_path(Path::new("/r/.conductor/conductor.db")),
             Some(PathBuf::from("/r/.conductor/refresh.pipe"))
@@ -274,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_on_a_normal_checkout() {
+    fn 普通のチェックアウトでのブランチ名() {
         let dir = tempfile::tempdir().unwrap();
         let repo = init_repo_with_commit(dir.path());
         // git2::Repository::init は、環境が init.defaultBranch を上書きしない
@@ -285,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_is_none_when_head_is_detached() {
+    fn detached_headならブランチはnoneになる() {
         let dir = tempfile::tempdir().unwrap();
         let repo = init_repo_with_commit(dir.path());
         let oid = repo.head().unwrap().target().unwrap();
@@ -295,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_is_none_before_the_first_commit() {
+    fn 最初のコミット前はブランチがnoneになる() {
         let dir = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(dir.path()).unwrap();
         // HEAD が指しているのは unborn branch である — detached ではないが、

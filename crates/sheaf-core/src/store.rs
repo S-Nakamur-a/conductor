@@ -561,11 +561,8 @@ impl Store {
         Some(found)
     }
 
-    /// その語の定義を索引から引く。
-    ///
-    /// 依拠したファイルが1つでも変わっていれば、行番号はもう索引の言うとおりではないので None。
-    /// 変わっていない分だけを返すと、消えた候補があることを呼び出し側が知れないまま
-    /// 「索引が答えた」と読まれる。
+    /// その語の定義を索引から引く。依拠したファイルが 1 つでも変わっていれば `None`
+    /// ([`Freshness`] を参照)。
     pub(crate) fn definitions_in(&self, rel: &Path, span: Span) -> Option<Resolved> {
         if !self.is_current(rel) {
             return None;
@@ -641,8 +638,8 @@ impl Store {
         (!enclosing.is_empty()).then_some(Resolved::Enclosing(enclosing))
     }
 
-    /// その語への参照を索引から引く。definitions_in と対称だが、依拠集合に飛び先
-    /// （定義）は入らない。参照先のファイルはどれも同じ扱いで依拠集合に入る。
+    /// その語への参照を索引から引く。definitions_in と対称だが、依拠集合に飛び先 (定義) は
+    /// 入らない。参照先のファイルはどれも同じ扱いで依拠集合に入る。
     pub(crate) fn references_in(&self, rel: &Path, span: Span) -> Option<Found> {
         if !self.is_current(rel) {
             return None;
@@ -725,8 +722,6 @@ impl Store {
             .unwrap_or(&[])
     }
 
-    /// そのファイルが索引生成時の内容のままか。読めなければ「そのままではない」とする。
-    /// 出自を申告されていないファイルもここで落ちる。
     /// そのファイルが、索引を作った時点の内容のままか。
     ///
     /// `false` はそのファイルについて `Exact` が一切返らないことを意味する。
@@ -771,10 +766,8 @@ impl Store {
 
     /// 非ローカルな符号への参照。転置索引から引くので Document の文脈が要らない。
     ///
-    /// **答えが依拠したのは、転置索引が指した Document そのものである。** 出てきた位置だけを
-    /// 検査すると、位置が 1 件も出なかった Document が検査を素通りし、そのぶん欠けた答えが
-    /// Exact として通る。行が消えていれば occurrence は 1 件残らず落ちるので、これは
-    /// ファイルを編集しただけで起きる。
+    /// **答えが依拠したのは、転置索引が指した Document そのものである。** 位置だけを検査すると、
+    /// 位置が 1 件も出なかった Document が素通りして、そのぶん欠けた答えが Exact として通る。
     fn references_of_symbol(
         &self,
         symbol: &str,
@@ -797,12 +790,10 @@ impl Store {
         Some(out)
     }
 
-    /// 転置索引が指す Document を1つデコードして、そのシンボルへの参照を集める。
+    /// 転置索引が指す Document を 1 つデコードして、そのシンボルへの参照を集める。
     ///
-    /// 数えられなければ None。列の数え方を宣言しない索引では、参照を数えるのに元のソースが
-    /// 要る。読めないときに 0 件として返すと、0 件の Document は鮮度の検査に載らないので
-    /// （検査は返ってきた位置ごとに回る）、その Document の参照だけが黙って欠けた答えが
-    /// Exact として通り抜ける。
+    /// 数えられなければ `None`。0 件として返すと、0 件の Document は鮮度の検査に載らないので
+    /// (検査は返ってきた位置ごとに回る)、欠けた答えが Exact として通り抜ける。
     fn references_in_document(&self, symbol: &str, path: &Path) -> Option<Vec<Location>> {
         let entry = self.docs.get(path)?;
         let doc = parse_document(&self.bytes[entry.index][entry.span.clone()]).ok()?;

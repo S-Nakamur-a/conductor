@@ -11,33 +11,31 @@ use super::glyphs::{
 };
 use super::helpers::{pad_glyph_to, with_marker};
 
-// pad_glyph_to
-
 #[test]
-fn pad_glyph_ascii_pads_to_target() {
+fn asciiのグリフは目標幅まで詰める() {
     // ">" は幅1カラム。2までパディングすると "> " になるはず。
     assert_eq!(pad_glyph_to(">", 2), "> ");
 }
 
 #[test]
-fn pad_glyph_already_at_target_unchanged() {
+fn 既に目標幅なら変えない() {
     assert_eq!(pad_glyph_to("=>", 2), "=>");
 }
 
 #[test]
-fn pad_glyph_wider_than_target_unchanged() {
+fn 目標幅より広ければ変えない() {
     assert_eq!(pad_glyph_to("abc", 2), "abc");
 }
 
 #[test]
-fn pad_glyph_assistant_marker_produces_two_cols() {
+fn assistantのマーカーは2カラムになる() {
     // ⏺ (U+23FA) の unicode_width は1。2までパディングするとスペースが1個付くはず。
     let padded = pad_glyph_to(ASSISTANT_MARKER, MARKER_COLS);
     assert_eq!(UnicodeWidthStr::width(padded.as_str()), MARKER_COLS);
 }
 
 #[test]
-fn gutter_markers_are_exactly_one_column() {
+fn ガターのマーカーはちょうど1カラム() {
     // ガターのマーカーは必ず1カラムとして計測されなければならない。すべての行の本文
     // 予算が width - MARKER_COLS として計算されるため。ここでマーカーが1より
     // 大きく計測されると、各トランスクリプト行が1カラム分足りなくなり、最後の文字が
@@ -64,10 +62,8 @@ fn gutter_markers_are_exactly_one_column() {
     }
 }
 
-// with_marker
-
 #[test]
-fn with_marker_prepends_glyph_to_first_line() {
+fn マーカーは先頭行の前に付く() {
     let style = Style::default().fg(Color::Green);
     let lines = vec![Line::from("hello"), Line::from("world")];
     let result = with_marker(lines, ">", style);
@@ -79,14 +75,14 @@ fn with_marker_prepends_glyph_to_first_line() {
 }
 
 #[test]
-fn with_marker_empty_input_returns_empty() {
+fn 空の入力にマーカーを付けても空のまま() {
     let style = Style::default();
     let result = with_marker(vec![], ">", style);
     assert!(result.is_empty());
 }
 
 #[test]
-fn with_marker_single_line_no_continuation() {
+fn 本文が1行だけなら継続行は出ない() {
     let style = Style::default();
     let result = with_marker(vec![Line::from("only")], ">", style);
     assert_eq!(result.len(), 1);

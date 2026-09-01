@@ -30,33 +30,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // トランスクリプトでも必ずクリアする（ライブ PTY の描画と同じ、scrollback のにじみ対策）。
     frame.render_widget(ratatui::widgets::Clear, area);
 
-    // このパネルを覆っていたオーバーレイは、意図的に未書き込みのままにしているセルの上を
-    // 塗りつぶしてしまう。オーバーレイが閉じた後は、強制的な再描画でしかそれをクリアできない
-    // （ratatui の diff は自身が持つバッファ同士を比較するので、双方とも汚れた状態で一致してしまう）。
+    // オーバーレイは意図的に未書き込みのままのセルを塗りつぶすので、閉じた後は強制再描画で
+    // しかクリアできない (ratatui の diff は自身のバッファ同士を比べるので双方汚れて一致する)。
     let overlay_active = app.is_any_overlay_active();
     if app.reflow.last_overlay_active && !overlay_active {
         app.terminal.needs_clear = true;
     }
     app.reflow.last_overlay_active = overlay_active;
 
-    // パネル幅をフルに使う。以前はこのビューも、端末が unicode-width の計測より広く描画する
-    // グリフが行末の文字をパネル端の外に押し出すという想定のもと、安全ガターとして1カラム
-    // 狭く構築していた。しかしそれは稀な事故への保険のために、毎行で Claude Code 本来の
-    // 折り返し位置と恒久的に1カラムずれるという代償を払っていた。にじみの本当の原因だった
-    // ガターのグリフは今では絶対位置指定で配置するようになり
-    // （super::build::width_risk_hole を参照）、本文中の紛れ込んだ幅広文字による被害は
-    // 各行が個別に再アンカーされるため自分の行を越えて伝播しない。加えて行折り返しは
-    // 無効化されており（main.rs の DisableLineWrap）、ここは最も右のカラムなので
-    // （ui::layout::cache）、最悪でもこのパネル自身の右境界の1セルが上書きされるだけである。
+    // パネル幅をフルに使う。安全ガターとして 1 カラム狭く構築すると、毎行で Claude Code 本来の
+    // 折り返し位置と恒久的にずれる。にじみの原因だったガターのグリフは絶対位置指定になり
+    // (super::build::width_risk_hole)、紛れ込んだ幅広文字の被害は各行が再アンカーされるので
+    // 伝播しない。行折り返しも無効 (main.rs の DisableLineWrap) で、ここは最も右のカラム。
     let render_area = area;
     let inner_width = render_area.width as usize;
     let inner_height = render_area.height as usize;
 
-    // ローディング中のプレースホルダ
-    // セッションログはバックグラウンドスレッドでパースされる（open_reflow を参照）。
-    // エントリが届くまでは、空のトランスクリプトではなく中央にプレースホルダを表示する。
-    // その間もエントリのスイープ演出はアニメーションを続けるので、境界線の遷移が
-    // そのままローディングインジケータを兼ねる。
+    // セッションログはバックグラウンドスレッドでパースされる。エントリが届くまでは、空の
+    // トランスクリプトではなく中央にプレースホルダを出す。スイープ演出は続くので、境界線の
+    // 遷移がそのままローディングインジケータを兼ねる。
     if app.reflow.loading {
         let msg = "Loading transcript\u{2026}";
         let y = area.y + area.height / 2;
@@ -75,8 +67,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
     // スクロール決定処理まで運ぶ。何も再構築しなかったフレームでは None のままになる。
     let mut anchored: Option<usize> = None;
     if app.reflow.last_width != render_area.width || app.reflow.needs_rebuild {
-        // app への共有借用が、下の cached_lines / total_lines / last_width への代入より
-        // 前に解放されるようブロックスコープにしている。
         let built = {
             let ctx = BuildCtx {
                 entries: &app.reflow.entries,
@@ -88,10 +78,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
             };
             build_lines(&ctx, inner_width)
         };
-        // 再構築前にビューポート先頭に何があったかを記憶しておく。scroll は生の行
-        // インデックスであり、幅の変更（あるいは行数を丸ごと変える展開トグル）が起きると
-        // そのインデックスの意味がまったく別物になってしまい、ビューが飛んでしまう。
-        // 同じ論理位置を再度探し出すことで、読み手を元の位置に留める。
+        // 再構築前にビューポート先頭に何があったかを記憶する。scroll は生の行インデックスで、幅や
+        // 展開状態が変わるとその意味が別物になり、ビューが飛ぶ。
         let anchor = app.reflow.line_meta.get(app.reflow.scroll).copied();
         let total = built.lines.len();
 
@@ -109,13 +97,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut App) {
 
     app.reflow.last_inner_height = area.height;
 
-    // ビューポートの位置決め
-    // 読み手の足元でジオメトリが動きうるすべてのケース（幅の変更は上で再構築済み、
-    // 高さの変更、展開トグル）を1つの決定にまとめている。追従中なら常に最新行に
-    // 再固定し、履歴を読んでいる人は末尾へ引きずられることなく anchor が解決した行に
-    // 戻される。結果はクランプされるので、上限は total - 1 ではなく
-    // total - inner_height になる。これにより論理的な末尾では最後のコンテンツ行が
-    // 最後の表示行に収まり、パネルより短いログは空白行なしで 0 に収束する。
+    // ジオメトリが動きうるすべてのケース (幅・高さの変更、展開トグル) を 1 つの決定にまとめる。
+    // 追従中なら最新行に再固定し、履歴を読んでいる人は anchor が解決した行に戻る。上限は
+    // total - inner_height なので、論理的な末尾では最後のコンテンツ行が最後の表示行に収まる。
     app.reflow.scroll = crate::reflow::input::scroll_after_reflow(
         app.reflow.follow,
         anchored,

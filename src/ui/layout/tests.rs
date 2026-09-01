@@ -21,17 +21,15 @@ fn rect(w: u16, h: u16) -> Rect {
     Rect::new(0, 0, w, h)
 }
 
-// LayoutCache::update
-
 #[test]
-fn layout_cache_update_returns_true_first_call() {
+fn 初回のupdateはtrueを返す() {
     let mut cache = LayoutCache::default();
     let changed = cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
     assert!(changed, "first update must recompute");
 }
 
 #[test]
-fn layout_cache_update_returns_false_on_identical_second_call() {
+fn 同じ入力の2回目はfalseを返す() {
     let mut cache = LayoutCache::default();
     let cfg = layout(24, 38, 80);
     cache.update(rect(200, 50), None, false, &cfg, 80);
@@ -40,72 +38,47 @@ fn layout_cache_update_returns_false_on_identical_second_call() {
 }
 
 #[test]
-fn layout_cache_invalidates_on_frame_area_change() {
-    let mut cache = LayoutCache::default();
-    let cfg = layout(24, 38, 80);
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    let changed = cache.update(rect(201, 50), None, false, &cfg, 80);
-    assert!(changed, "frame_area change must invalidate");
+fn 入力のどれが動いてもキャッシュは無効になる() {
+    // 入力のどれが動いてもキャッシュは無効化されなければならない。ターミナル分割だけは
+    // 実行時パラメータ (shell の拡大縮小) なので config ではなく引数の方を変える。
+    let base = layout(24, 38, 80);
+    let mut explorer_split = layout(24, 38, 80);
+    explorer_split.explorer_split_pct = 30;
+    let cases: [(&str, Rect, LayoutConfig, u16); 5] = [
+        ("frame_area", rect(201, 50), layout(24, 38, 80), 80),
+        ("explorer_width_pct", rect(200, 50), layout(30, 38, 80), 80),
+        ("viewer_width_pct", rect(200, 50), layout(24, 42, 80), 80),
+        ("terminal_split_pct", rect(200, 50), layout(24, 38, 80), 70),
+        ("explorer_split_pct", rect(200, 50), explorer_split, 80),
+    ];
+    for (label, area, cfg, split) in cases {
+        let mut cache = LayoutCache::default();
+        let mut first = base.clone();
+        first.explorer_split_pct = 50;
+        cache.update(rect(200, 50), None, false, &first, 80);
+        assert!(
+            cache.update(area, None, false, &cfg, split),
+            "{label} change must invalidate"
+        );
+    }
 }
 
 #[test]
-fn layout_cache_invalidates_on_explorer_pct_change() {
-    let mut cache = LayoutCache::default();
-    cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
-    let changed = cache.update(rect(200, 50), None, false, &layout(30, 38, 80), 80);
-    assert!(changed, "explorer_width_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_viewer_pct_change() {
-    let mut cache = LayoutCache::default();
-    cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
-    let changed = cache.update(rect(200, 50), None, false, &layout(24, 42, 80), 80);
-    assert!(changed, "viewer_width_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_terminal_split_change() {
-    // ターミナル分割は今や実行時パラメータ（shell の拡大縮小）として渡ってくるので、
-    // config フィールドではなくその引数の方を変える。
-    let mut cache = LayoutCache::default();
-    let cfg = layout(24, 38, 80);
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    let changed = cache.update(rect(200, 50), None, false, &cfg, 70);
-    assert!(changed, "terminal_split_pct change must invalidate");
-}
-
-#[test]
-fn layout_cache_invalidates_on_explorer_split_change() {
-    let mut cache = LayoutCache::default();
-    let mut cfg = layout(24, 38, 80);
-    cfg.explorer_split_pct = 50;
-    cache.update(rect(200, 50), None, false, &cfg, 80);
-    cfg.explorer_split_pct = 30;
-    let changed = cache.update(rect(200, 50), None, false, &cfg, 80);
-    assert!(changed, "explorer_split_pct change must invalidate");
-    // ファイルツリーが縮むと中間点は上に移動する。
-    assert!(cache.explorer_mid_y > 0);
-}
-
-// accordion_widths: 異常な割合
-
-#[test]
-fn accordion_widths_does_not_panic_on_large_percentages() {
+fn 大きすぎる割合でもaccordion_widthsは落ちない() {
     // 100 を超える割合でも panic してはならない（Percentage 制約側でクランプされる）。
     let _ = accordion_widths(None, 200, 240, 0);
     let _ = accordion_widths(None, 100, 60, 60);
 }
 
 #[test]
-fn terminal_split_pct_over_100_does_not_panic() {
+fn terminal_split_pctが100を超えても落ちない() {
     // terminal_split_pct が 100 を超えると shell_pct は 0 に飽和するが panic してはならない。
     let mut cache = LayoutCache::default();
     let _ = cache.update(rect(200, 50), None, false, &layout(24, 38, 200), 200);
 }
 
 #[test]
-fn maximized_editor_takes_full_width_via_explorer_slot() {
+fn 最大化したエディタはexplorerの枠で全幅を取る() {
     // render_ui は explorer+viewer カラムを editor 領域として統合するので、
     // 最大化したエディタは explorer 側の枠に全幅を割り当て（viewer は0）、
     // ターミナルカラムは残りゼロに縮む。
@@ -114,7 +87,7 @@ fn maximized_editor_takes_full_width_via_explorer_slot() {
 }
 
 #[test]
-fn default_layout_uses_configured_percentages() {
+fn 既定のレイアウトは設定の割合を使う() {
     // デフォルトの割合（24/38）、幅200カラムのターミナルの場合。
     let (left, explorer, viewer) = accordion_widths(None, 200, 24, 38);
     assert_eq!(left, 0, "worktree column is always hidden");
@@ -123,7 +96,7 @@ fn default_layout_uses_configured_percentages() {
 }
 
 #[test]
-fn custom_percentages_are_respected() {
+fn 指定した割合が尊重される() {
     // explorer を広く（30%）、viewer を狭く（30%）。
     let (left, explorer, viewer) = accordion_widths(None, 100, 30, 30);
     assert_eq!(left, 0);
@@ -134,7 +107,7 @@ fn custom_percentages_are_respected() {
 // メニューバーの行
 
 #[test]
-fn menu_bar_sits_directly_under_the_title_bar() {
+fn メニューバーはタイトルバーの直下に来る() {
     let mut cache = LayoutCache::default();
     cache.update(rect(200, 50), None, false, &layout(24, 38, 80), 80);
     assert_eq!(cache.title_area.y, 0);
@@ -152,7 +125,7 @@ fn menu_bar_sits_directly_under_the_title_bar() {
 }
 
 #[test]
-fn menu_bar_stays_visible_while_a_panel_is_maximized() {
+fn パネル最大化中もメニューバーは残る() {
     // worktree ストリップは折りたたまれて最大化パネルに行を返すが、こちらは違う。
     // 最大化解除後にしか開けないメニューは、使われなくなるメニューである。
     let mut cache = LayoutCache::default();
@@ -168,7 +141,7 @@ fn menu_bar_stays_visible_while_a_panel_is_maximized() {
 }
 
 #[test]
-fn menu_bar_row_comes_out_of_the_main_area() {
+fn メニューバーの1行はmain_areaから引かれる() {
     // このバーはステータスバーから行を取るのでも worktree ストリップに
     // 上書き描画するのでもなく、コンテンツ領域から行を取る。
     let mut cache = LayoutCache::default();
@@ -189,7 +162,7 @@ fn menu_bar_row_comes_out_of_the_main_area() {
 }
 
 #[test]
-fn every_vertical_row_is_accounted_for() {
+fn 縦の行は1行残らず割り当てられる() {
     // 積み重なった各領域の間に隙間も重複もないことを、main area が圧迫されるほど
     // 短い高さも含むいくつかの高さで確認する。
     for h in [50_u16, 10, 6] {

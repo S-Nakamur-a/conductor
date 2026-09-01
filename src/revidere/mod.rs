@@ -198,7 +198,7 @@ mod tests {
     /// 成果物が無いのは正常。ここを Broken に畳むと、revidere を走らせて
     /// いないだけの worktree でエラーが出続けることになる。
     #[test]
-    fn a_missing_artifact_is_not_an_error() {
+    fn 成果物が無いのはエラーではない() {
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(
             load(dir.path(), Scope::Base),
@@ -209,7 +209,7 @@ mod tests {
     /// 読めたテキストが成果物として通らないのは異常で、黙って Missing に
     /// してはいけない。「走らせたのに何も出ない」の原因が見えなくなる。
     #[test]
-    fn a_broken_artifact_reports_why() {
+    fn 壊れた成果物は理由を返す() {
         let dir = tempfile::tempdir().unwrap();
         let path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -237,7 +237,7 @@ mod tests {
     /// 前の回の成果物が残っていても、それを今の回として出さない。起点が違えば
     /// 区間が違うので、直しを読んでいるつもりで 1 つ前のラウンドを読むことになる。
     #[test]
-    fn a_since_previous_artifact_from_an_earlier_round_counts_as_missing() {
+    fn 前の回の差分の成果物は無いものとして扱う() {
         let dir = tempfile::tempdir().unwrap();
         let base_path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(base_path.parent().unwrap()).unwrap();
@@ -258,7 +258,7 @@ mod tests {
     /// 起点が今の前回と一致していれば、それは今の回のもの。Missing に
     /// 畳んでしまうと、解析済みでも毎回作り直させることになる。
     #[test]
-    fn a_since_previous_artifact_for_this_round_is_kept() {
+    fn この回の差分の成果物は残す() {
         let dir = tempfile::tempdir().unwrap();
         let base_path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(base_path.parent().unwrap()).unwrap();
@@ -280,7 +280,7 @@ mod tests {
     /// 確認ダイアログは「作り直しか、初めてか」をこれで見分ける。無いのに
     /// 何かを返すと、押していないのに作り直しの文言が出る。
     #[test]
-    fn artifact_head_reads_the_commit_the_review_was_made_for() {
+    fn 成果物からレビュー対象のコミットを読む() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(artifact_head(dir.path(), Scope::Base), None);
 
@@ -292,7 +292,7 @@ mod tests {
 
     /// 成果物を書いてから積んだコミットは、成果物を古くすること。
     #[test]
-    fn a_commit_made_after_the_artifact_makes_it_stale() {
+    fn 成果物より後のコミットで古くなる() {
         let dir = tempfile::tempdir().unwrap();
         let path = revidere::review::artifact_path(dir.path(), Scope::Base);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -319,7 +319,7 @@ mod tests {
     /// 走らせていない worktree は None。ストリップに印が付かないことは
     /// [crate::worktree::bar] 側で担保している。
     #[test]
-    fn no_artifact_is_none() {
+    fn 成果物が無ければnone() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
             artifact_state(dir.path(), Some(0), false),

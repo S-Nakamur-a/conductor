@@ -48,14 +48,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_paths_are_left_alone() {
+    fn 素のパスはそのまま() {
         assert_eq!(normalize("src/foo.rs"), "src/foo.rs");
         assert_eq!(normalize("Cargo.toml"), "Cargo.toml");
         assert_eq!(normalize("docs/設計 メモ.md"), "docs/設計 メモ.md");
     }
 
     #[test]
-    fn dot_slash_doubled_slash_and_trailing_slash_are_dropped() {
+    fn 余分な区切りと末尾のスラッシュは落とす() {
         assert_eq!(normalize("./src/foo.rs"), "src/foo.rs");
         assert_eq!(normalize("././src//foo.rs"), "src/foo.rs");
         assert_eq!(normalize("src/foo.rs/"), "src/foo.rs");
@@ -67,7 +67,7 @@ mod tests {
     /// 対して走るので、ここで解決してしまうと脱出するパスを通ってしまう形に
     /// 洗浄することになる。
     #[test]
-    fn parent_dir_segments_survive() {
+    fn 親ディレクトリの区切りは残す() {
         assert_eq!(normalize("../secret"), "../secret");
         assert_eq!(normalize("a/../../b"), "a/../../b");
         assert_eq!(normalize("./../secret"), "../secret");
@@ -76,7 +76,7 @@ mod tests {
     /// 同様に絶対パスは絶対パスのままにして、絶対パスを拒否する呼び出し側が
     /// ちゃんと拒否できるようにする。
     #[test]
-    fn absolute_paths_stay_absolute() {
+    fn 絶対パスは絶対のまま() {
         assert_eq!(normalize("/etc/passwd"), "/etc/passwd");
         assert_eq!(normalize("/etc//passwd/"), "/etc/passwd");
     }

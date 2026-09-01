@@ -299,7 +299,7 @@ diff --git a/src/a.rs b/src/a.rs
 
     /// このモジュールの存在理由。成果物が何であれ、変更行はちょうど 1 回出る。
     #[test]
-    fn order_covers_every_changed_line_exactly_once() {
+    fn 読む順は変更行をちょうど1回ずつ出す() {
         for review in [
             &review(),
             // 項目がゼロ
@@ -338,9 +338,8 @@ diff --git a/src/a.rs b/src/a.rs
         }
     }
 
-    /// 成果物が全滅しても、素の diff に退化するだけで行は消えない。
     #[test]
-    fn a_useless_artifact_degrades_to_a_plain_diff() {
+    fn 役に立たない成果物でも素のdiffには退化する() {
         let empty = revidere_fixtures::review("[]");
         let (d, _, o) = built(&empty);
         assert_eq!(o.positions().len(), d.positions().len());
@@ -349,7 +348,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn sections_come_in_importance_order() {
+    fn 項目は重要度順に並ぶ() {
         // 成果物の並びは 追従 → 中核 だが、読む順では中核が先に来る。
         let (_, _, o) = built(&review());
         let order: Vec<Option<Importance>> = o.sections.iter().map(|s| s.importance).collect();
@@ -360,7 +359,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn the_unowned_section_goes_last() {
+    fn 持ち主の無い束は末尾に来る() {
         // 追従が指していた old:9 を実在しない行へずらすと、その行は
         // 持ち主を失う。持ち主なしの項目は末尾。
         let review = review().replace(
@@ -377,7 +376,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn borrowed_lines_are_not_counted_as_owned() {
+    fn 借りた行は持ち物として数えない() {
         let (_, _, o) = built(&review());
         // 中核の項目には追従の行（-gone）が借り物として写り込むが、
         // 持ち物としては数えない。
@@ -393,7 +392,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn a_context_pointing_nowhere_survives_as_an_empty_section() {
+    fn どこも指していない項目も空のまま残る() {
         let review = review().replace(
             r#"{"path":"src/a.rs","side":"old","start":9,"end":9}"#,
             r#"{"path":"src/nowhere.rs","side":"new","start":1,"end":1}"#,
@@ -410,7 +409,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn a_file_without_lines_becomes_one_block() {
+    fn 行を持たないファイルは1つの束になる() {
         let d = diff::parse(
             "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n",
         );
@@ -471,7 +470,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn runs_within_the_gap_merge_into_one_block() {
+    fn 間隔の内側の連なりは1つの束にまとまる() {
         // 間が 4 行の文脈行（index 差 5）までは同じ束にする。
         let lines = lines_up_to(6);
         let ann = Annotations::from_json(&single_owner_review(6)).unwrap();
@@ -480,7 +479,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn runs_farther_than_the_gap_split_into_separate_blocks() {
+    fn 間隔より離れた連なりは別の束に分かれる() {
         // 間が 5 行の文脈行（index 差 6）になると別の束にする。
         let lines = lines_up_to(7);
         let ann = Annotations::from_json(&single_owner_review(7)).unwrap();
@@ -489,7 +488,7 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn a_block_pads_two_context_lines_on_each_side() {
+    fn 束は前後に文脈行を2行ずつ添える() {
         // 前後に十分な文脈行があれば、束は PAD=2 行ずつ両側に伸びる。
         let lines: Vec<DiffLine> = (0..10)
             .map(|n| if n == 5 { changed(n) } else { context(n) })

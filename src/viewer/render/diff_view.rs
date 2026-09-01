@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn hunk_separator_with_header_includes_header() {
+    fn ハンクの区切りは見出しがあれば載せる() {
         let theme = Theme::default();
         let line = render_hunk_separator(&Some("fn foo()".to_string()), 40, &theme);
         let text = line_text(&line);
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn hunk_separator_without_header_is_single_fill() {
+    fn 見出しが無ければ区切りは一色で埋める() {
         let theme = Theme::default();
         let line = render_hunk_separator(&None, 20, &theme);
         let text = line_text(&line);
@@ -352,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn expandable_context_reports_hidden_count() {
+    fn 畳んだ文脈は隠している行数を出す() {
         let theme = Theme::default();
         let line = render_expandable_context(7, &None, 50, &theme);
         let text = line_text(&line);
@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn expandable_context_with_header_includes_header() {
+    fn 畳んだ文脈は見出しがあれば載せる() {
         let theme = Theme::default();
         let line = render_expandable_context(3, &Some("impl Bar".to_string()), 60, &theme);
         let text = line_text(&line);

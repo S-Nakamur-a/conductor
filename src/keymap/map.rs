@@ -9,8 +9,6 @@ use super::action::Action;
 use super::context::{KeyContext, PANEL_CONTEXTS};
 use super::warning::KeybindWarning;
 
-// KeyMap
-
 /// 埋め込みのデフォルトバインディング（keymap-suite の key→action TOML）。
 /// スキーマはそのファイルを参照。[keybinds] 配下でユーザが書ける内容の基準になる。
 pub(crate) const DEFAULT_KEYBINDS: &str = include_str!("../default_keybinds.toml");

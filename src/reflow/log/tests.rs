@@ -28,7 +28,7 @@ fn parse_msg_content(json: &str) -> Vec<DisplayBlock> {
 // 隠しコンテキストの正規化 (isMeta / ラッパー)
 
 #[test]
-fn meta_records_are_skipped() {
+fn メタのレコードは飛ばす() {
     // skill 呼び出しは SKILL.md 全体を isMeta な user ターンとしてダンプする。
     // Claude Code はこれを一切表示しないので、トランスクリプトも表示しては
     // いけない。
@@ -42,7 +42,7 @@ fn meta_records_are_skipped() {
 }
 
 #[test]
-fn command_wrapper_renders_as_slash_invocation() {
+fn コマンドの包みはスラッシュ呼び出しとして描く() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<command-name>/merge-pr</command-name>\n<command-message>merge-pr</command-message>\n<command-args>--admin</command-args>"}}"#,
     );
@@ -51,7 +51,7 @@ fn command_wrapper_renders_as_slash_invocation() {
 }
 
 #[test]
-fn command_wrapper_without_args_shows_bare_command() {
+fn 引数の無い包みは素のコマンド名を出す() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"}}"#,
     );
@@ -59,7 +59,7 @@ fn command_wrapper_without_args_shows_bare_command() {
 }
 
 #[test]
-fn local_command_stdout_is_unwrapped_and_sanitized() {
+fn ローカルコマンドのstdoutは包みを外して整える() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout>\u001b[2mCompacted\u001b[22m</local-command-stdout>"}}"#,
     );
@@ -70,7 +70,7 @@ fn local_command_stdout_is_unwrapped_and_sanitized() {
 }
 
 #[test]
-fn task_notification_collapses_to_its_summary() {
+fn タスクの通知は要約に畳まれる() {
     // 実測: ラッパー全体が、<summary> のテキストだけを持つ ⏺ 行に置き換わる。
     // タスク id、出力パス、ステータスは一切表示されない。
     let blocks = parse_msg_content(
@@ -88,7 +88,7 @@ fn task_notification_collapses_to_its_summary() {
 }
 
 #[test]
-fn task_notification_without_a_summary_draws_nothing() {
+fn 要約の無いタスクの通知は何も描かない() {
     // 周りの文章も含めて実測済み: 使える summary が無い場合、生の XML を
     // ダンプする方にフォールバックせず、メッセージ全体が消える。
     for content in [
@@ -103,7 +103,7 @@ fn task_notification_without_a_summary_draws_nothing() {
 }
 
 #[test]
-fn a_task_notification_collapses_wherever_it_sits() {
+fn タスクの通知はどこにあっても畳まれる() {
     // 実測: タグはメッセージのどこにあってもマッチし、畳み込むと周りに
     // 打たれた文章は捨てられる。これにより、手動で貼り付けた画面ダンプが
     // CLI 自身の通知と全く同じように描画される — Claude Code はタグの位置も
@@ -121,7 +121,7 @@ fn a_task_notification_collapses_wherever_it_sits() {
 }
 
 #[test]
-fn only_the_first_summary_survives_a_doubled_notification() {
+fn 通知が二重でも要約は最初の1つだけ残る() {
     // 実測: 1メッセージ内に2つの通知があっても、⏺ 行は1つだけ描画される。
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<summary>FIRST done</summary>\n</task-notification>\n<task-notification>\n<summary>SECOND done</summary>\n</task-notification>"}}"#,
@@ -131,7 +131,7 @@ fn only_the_first_summary_survives_a_doubled_notification() {
 }
 
 #[test]
-fn empty_local_command_stdout_is_dropped() {
+fn ローカルコマンドのstdoutが空なら落とす() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<local-command-stdout></local-command-stdout>"}}"#,
     );
@@ -139,7 +139,7 @@ fn empty_local_command_stdout_is_dropped() {
 }
 
 #[test]
-fn teammate_message_wrapper_becomes_a_teammate_message_block() {
+fn teammateの包みはteammateのブロックになる() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<teammate-message teammate_id=\"alice\">please review PR 42</teammate-message>"}}"#,
     );
@@ -153,7 +153,7 @@ fn teammate_message_wrapper_becomes_a_teammate_message_block() {
 }
 
 #[test]
-fn teammate_message_summary_attribute_is_ignored() {
+fn teammateのsummary属性は無視する() {
     // summary は常に無視される — 属性の順序によらず、読むのは teammate_id
     // と本文のテキストだけ。
     let blocks = parse_msg_content(
@@ -169,7 +169,7 @@ fn teammate_message_summary_attribute_is_ignored() {
 }
 
 #[test]
-fn unterminated_teammate_message_body_captures_to_end() {
+fn 閉じていないteammateの本文は末尾まで取る() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":"<teammate-message teammate_id=\"carol\">truncated body"}}"#,
     );
@@ -183,7 +183,7 @@ fn unterminated_teammate_message_body_captures_to_end() {
 }
 
 #[test]
-fn teammate_message_without_teammate_id_falls_back_to_prose() {
+fn teammate_idが無ければ地の文として扱う() {
     // 壊れたラッパー（このパーサが読む唯一の属性が無い）— 黙って捨てるのでは
     // なく、通常のテキストとして残す。
     let raw = "<teammate-message>no id attribute</teammate-message>";
@@ -194,7 +194,7 @@ fn teammate_message_without_teammate_id_falls_back_to_prose() {
 }
 
 #[test]
-fn mid_prompt_mention_of_teammate_message_tag_is_not_rewritten() {
+fn 本文の途中のteammateタグへの言及は書き換えない() {
     // ラッパーが認識されるのはメッセージの先頭だけ。ユーザがタグに
     // ついて *言及している* だけなら、プロンプト全文に手を加えない。
     let blocks = parse_msg_content(
@@ -207,7 +207,7 @@ fn mid_prompt_mention_of_teammate_message_tag_is_not_rewritten() {
 }
 
 #[test]
-fn system_reminder_spans_are_kept_in_user_text() {
+fn system_reminderの範囲はユーザの本文に残す() {
     // 実測: Claude Code はリマインダーを、ターン自身のテキストにインラインで
     // 入っている位置のまま、そのまま描画する。読み手が決して目にしない
     // リマインダーは、1つ上の階層でレコードの isMeta フラグによって隠される。
@@ -219,7 +219,7 @@ fn system_reminder_spans_are_kept_in_user_text() {
 }
 
 #[test]
-fn reminder_only_user_block_is_drawn_as_its_own_turn() {
+fn reminderだけのユーザブロックも1ターンとして描く() {
     // 実測: それ単体のブロックとして届いても隠されない — タグをそのまま
     // 保持した ❯ ターンになる。
     let raw = "<system-reminder>only hidden</system-reminder>";
@@ -230,7 +230,7 @@ fn reminder_only_user_block_is_drawn_as_its_own_turn() {
 }
 
 #[test]
-fn unterminated_command_tag_at_start_is_left_as_prose() {
+fn 先頭の閉じていないコマンドタグは地の文のまま() {
     // 実際のコマンドレコードは必ず終了タグを伴う。単にそのタグの文字列で
     // *始まる* だけのプロンプトは、手を加えずそのまま残る必要がある。
     let raw = "<command-name> is a wrapper the CLI writes";
@@ -241,7 +241,7 @@ fn unterminated_command_tag_at_start_is_left_as_prose() {
 }
 
 #[test]
-fn mid_prompt_mention_of_command_tag_is_not_rewritten() {
+fn 本文の途中のコマンドタグへの言及は書き換えない() {
     // ラッパーが認識されるのはメッセージの先頭だけ。ユーザがタグについて
     // *言及している* だけならプロンプト全文を保持する。（<task-notification>
     // だけはこの方式に従わない — a_task_notification_collapses_wherever_it_sits
@@ -254,7 +254,7 @@ fn mid_prompt_mention_of_command_tag_is_not_rewritten() {
 }
 
 #[test]
-fn assistant_text_quoting_wrapper_tags_is_untouched() {
+fn 包みのタグを引用したassistantの本文には触らない() {
     // assistant はこれらのタグについて正当に議論することがある。ラッパーの
     // 正規化を受けるのは user ターンだけ。
     let raw = "use <system-reminder> and <command-name>/x</command-name> in docs";
@@ -265,7 +265,7 @@ fn assistant_text_quoting_wrapper_tags_is_untouched() {
 }
 
 #[test]
-fn string_content_becomes_single_text_block() {
+fn 文字列のcontentは1つの本文ブロックになる() {
     let blocks =
         parse_msg_content(r#"{"type":"user","message":{"role":"user","content":"hello world"}}"#);
     assert_eq!(blocks.len(), 1);
@@ -273,7 +273,7 @@ fn string_content_becomes_single_text_block() {
 }
 
 #[test]
-fn array_content_multiple_block_types() {
+fn 配列のcontentは複数種類のブロックになる() {
     let blocks = parse_msg_content(
         r#"{
             "type": "assistant",
@@ -304,7 +304,7 @@ fn array_content_multiple_block_types() {
 }
 
 #[test]
-fn sidechain_flag_is_parsed() {
+fn サイドチェーンの印を読む() {
     let r: LogRecord = serde_json::from_str(
         r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"secret"}}"#,
     )
@@ -317,13 +317,13 @@ fn sidechain_flag_is_parsed() {
 // ToolUse が要約済み文字列ではなく生の input を持つようになったため。
 
 #[test]
-fn tool_result_string_counts_lines() {
+fn 文字列の結果は行数を数える() {
     let content = ToolResultContent::Text("a\nb\nc".to_string());
     assert_eq!(result_lines(&content).len(), 3);
 }
 
 #[test]
-fn preview_lines_are_sanitized_for_rendering() {
+fn プレビューの行は描画用に整える() {
     // タブは空白に、ANSI カラーエスケープは除去、制御コードは削除する。これにより
     // 描画されるプレビュー行に幅がずれる文字が残らない。
     let content = ToolResultContent::Text(
@@ -344,7 +344,7 @@ fn preview_lines_are_sanitized_for_rendering() {
 }
 
 #[test]
-fn tool_result_block_array_counts_lines() {
+fn 配列の結果も行数を数える() {
     let content = ToolResultContent::Blocks(vec![
         TextOnly {
             text: "a\nb\nc".to_string(),
@@ -357,7 +357,7 @@ fn tool_result_block_array_counts_lines() {
 }
 
 #[test]
-fn tool_result_keeps_all_lines_no_cap() {
+fn 結果の行は上限なく全部残す() {
     // lines は出力行を全て保持する（以前あったプレビュー上限と total_lines の
     // 分離は廃止済み）。展開表示には出力全体が必要になる。
     let body: String = (0..10)
@@ -382,7 +382,7 @@ fn tool_result_keeps_all_lines_no_cap() {
 }
 
 #[test]
-fn tool_result_id_resolves_across_records_in_one_session() {
+fn 結果のidは同じセッションのレコードをまたいで解決する() {
     // ペアリングマップは load_session のスキャン全体を通して引き継がれる。
     // 1メッセージ内だけではなく、assistant レコードの tool_use が直後の
     // (user) レコードの tool_result から見つけられる必要がある。
@@ -405,7 +405,7 @@ fn tool_result_id_resolves_across_records_in_one_session() {
 }
 
 #[test]
-fn tool_result_with_unknown_tool_use_id_is_hidden() {
+fn 知らない呼び出しidの結果は隠す() {
     // tool_use_id が一度も見えていない tool_result（ログが途中で切れている、
     // または tool_use レコードが壊れている/欠落している場合）は Hidden に
     // 解決される。カテゴリを推測して迷子のブロックを出すよりは、何も描画しない。
@@ -424,7 +424,7 @@ fn tool_result_with_unknown_tool_use_id_is_hidden() {
 }
 
 #[test]
-fn tool_result_error_flag_is_captured() {
+fn 結果のエラー印を拾う() {
     let blocks = parse_msg_content(
         r#"{"type":"user","message":{"role":"user","content":[
             {"type":"tool_result","tool_use_id":"t","is_error":true,"content":"boom"}
@@ -437,7 +437,7 @@ fn tool_result_error_flag_is_captured() {
 }
 
 #[test]
-fn tool_use_errored_flag_resolves_from_later_paired_result() {
+fn 呼び出しの失敗印は後から来る対の結果で決まる() {
     // tool_use 自身のレコードを構築する時点で errored フラグが分かっている
     // 必要がある。エラーになった tool_result はログ上ではそれより後の
     // レコードなので、これを実現しているのが session.rs の事前スキャンである。
@@ -454,7 +454,7 @@ fn tool_use_errored_flag_resolves_from_later_paired_result() {
 }
 
 #[test]
-fn tool_use_errored_flag_false_when_result_did_not_error() {
+fn 結果が失敗でなければ印は立たない() {
     let f = write_jsonl(&[
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"true"}}]}}"#,
         r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"ok"}]}}"#,
@@ -467,7 +467,7 @@ fn tool_use_errored_flag_false_when_result_did_not_error() {
 }
 
 #[test]
-fn tool_use_errored_flag_false_when_no_matching_result() {
+fn 対の結果が無ければ印は立たない() {
     // ログが途中で切れている場合（または tool_result が壊れている/欠落している
     // 場合）に panic したり推測したりしてはいけない。単に未エラーとして解決される。
     let blocks = parse_msg_content(
@@ -482,7 +482,7 @@ fn tool_use_errored_flag_false_when_no_matching_result() {
 }
 
 #[test]
-fn thinking_text_is_captured() {
+fn thinkingの本文を拾う() {
     let blocks = parse_msg_content(
         r#"{"type":"assistant","message":{"role":"assistant","content":[
             {"type":"thinking","thinking":"let me reason","signature":"x"}
@@ -495,7 +495,7 @@ fn thinking_text_is_captured() {
 }
 
 #[test]
-fn thinking_duration_secs_is_passed_through_from_the_caller() {
+fn thinkingの秒数は呼び出し側の値をそのまま通す() {
     let r: LogRecord = serde_json::from_str(
         r#"{"type":"assistant","message":{"role":"assistant","content":[
             {"type":"thinking","thinking":"let me reason","signature":"x"}
@@ -512,7 +512,7 @@ fn thinking_duration_secs_is_passed_through_from_the_caller() {
 }
 
 #[test]
-fn empty_text_block_excluded() {
+fn 空の本文ブロックは除く() {
     let blocks = parse_msg_content(
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
     );
@@ -520,7 +520,7 @@ fn empty_text_block_excluded() {
 }
 
 #[test]
-fn unknown_block_type_is_skipped() {
+fn 知らない種類のブロックは飛ばす() {
     let blocks = parse_msg_content(
         r#"{"type":"assistant","message":{"role":"assistant","content":[
             {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}},
@@ -543,54 +543,38 @@ fn write_jsonl(lines: &[&str]) -> tempfile::NamedTempFile {
 }
 
 #[test]
-fn load_session_skips_non_user_assistant_types() {
-    let f = write_jsonl(&[
-        r#"{"type":"system","message":{"role":"system","content":"sys prompt"}}"#,
-        r#"{"type":"summary","message":{"role":"assistant","content":"summary"}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"hello"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
+fn 描くターンの無いレコードは落とす() {
+    let cases = [
+        (
+            "user でも assistant でもない type",
+            r#"{"type":"system","message":{"role":"system","content":"sys prompt"}}"#,
+        ),
+        (
+            "サイドチェーン",
+            r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"hidden"}}"#,
+        ),
+        (
+            "type と role の食い違い",
+            r#"{"type":"user","message":{"role":"system","content":"not a user turn"}}"#,
+        ),
+        (
+            "表示ブロックを 1 つも生まない content",
+            r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
+        ),
+    ];
+    for (label, dropped) in cases {
+        let f = write_jsonl(&[
+            dropped,
+            r#"{"type":"user","message":{"role":"user","content":"real user"}}"#,
+        ]);
+        let entries = load_session(f.path());
+        assert_eq!(entries.len(), 1, "{label}");
+        assert_eq!(entries[0].role, Role::User, "{label}");
+    }
 }
 
 #[test]
-fn load_session_skips_sidechain_records() {
-    let f = write_jsonl(&[
-        r#"{"type":"user","isSidechain":true,"message":{"role":"user","content":"hidden"}}"#,
-        r#"{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":"visible"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::Assistant);
-}
-
-#[test]
-fn load_session_skips_role_mismatch() {
-    // type=user だが role=system のレコードは黙って除外されるべき。
-    let f = write_jsonl(&[
-        r#"{"type":"user","message":{"role":"system","content":"not a user turn"}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"real user"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
-}
-
-#[test]
-fn load_session_skips_empty_blocks() {
-    // content が表示ブロックを1つも生成しないメッセージは出力されない。
-    let f = write_jsonl(&[
-        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":""}]}}"#,
-        r#"{"type":"user","message":{"role":"user","content":"valid"}}"#,
-    ]);
-    let entries = load_session(f.path());
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].role, Role::User);
-}
-
-#[test]
-fn load_session_mixed_records_correct_count() {
+fn 混在したレコードでも件数が合う() {
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"user","content":"q1"}}"#,
         r#"{"type":"assistant","message":{"role":"assistant","content":"a1"}}"#,
@@ -608,7 +592,7 @@ fn load_session_mixed_records_correct_count() {
 }
 
 #[test]
-fn load_session_draws_nothing_for_queue_operations() {
+fn キュー操作のレコードは何も描かない() {
     // 実測: Claude Code は入力キューのジャーナルを完全に無視する。ビジー中に
     // 入力されたプロンプトは受理されると通常の user レコードとして再度出力
     // されるので、enqueue も描画すると同じターンが二重に出てしまう。また、
@@ -629,7 +613,7 @@ fn load_session_draws_nothing_for_queue_operations() {
 }
 
 #[test]
-fn load_session_skips_the_session_metadata_journals() {
+fn セッションのメタ記録は飛ばす() {
     // 会話ではないその他のレコード種別。いずれも Claude Code は描画しない。
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"user","content":"first"}}"#,
@@ -651,13 +635,13 @@ fn load_session_skips_the_session_metadata_journals() {
 }
 
 #[test]
-fn load_session_missing_file_returns_empty() {
+fn ファイルが無ければ空を返す() {
     let entries = load_session(std::path::Path::new("/nonexistent/path.jsonl"));
     assert!(entries.is_empty());
 }
 
 #[test]
-fn load_session_computes_thinking_duration_from_timestamps() {
+fn thinkingの長さは時刻から計算する() {
     let f = write_jsonl(&[
         r#"{"type":"user","timestamp":"2026-07-31T00:00:00Z","message":{"role":"user","content":"hi"}}"#,
         r#"{"type":"assistant","timestamp":"2026-07-31T00:00:05Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"x"}]}}"#,
@@ -670,7 +654,7 @@ fn load_session_computes_thinking_duration_from_timestamps() {
 }
 
 #[test]
-fn load_session_thinking_duration_falls_back_to_one_when_timestamp_missing() {
+fn 時刻が無ければthinkingの長さは1秒に落ちる() {
     let f = write_jsonl(&[
         r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"reasoning","signature":"x"}]}}"#,
@@ -683,7 +667,7 @@ fn load_session_thinking_duration_falls_back_to_one_when_timestamp_missing() {
 }
 
 #[test]
-fn load_session_thinking_duration_ignores_skipped_meta_record_as_previous() {
+fn 飛ばしたメタのレコードは直前として数えない() {
     // 表示される2ターンの間に、スキップされる isMeta レコードが1つ挟まっている。
     // このレコードのタイムスタンプをそのまま「直前レコード」として差分を取ると
     // 負になってしまう。duration は隠れたこのレコードではなく、直前の
@@ -731,7 +715,7 @@ const COMPACT_SEQUENCE: &[&str] = &[
 ];
 
 #[test]
-fn compact_summary_body_is_never_displayed() {
+fn compactの要約本文は表示しない() {
     let f = write_jsonl(COMPACT_SEQUENCE);
     let entries = load_session(f.path());
     let all: String = format!("{:?}", entries);
@@ -742,7 +726,7 @@ fn compact_summary_body_is_never_displayed() {
 }
 
 #[test]
-fn compact_sequence_produces_the_measured_blocks() {
+fn compactの並びは実測どおりのブロックになる() {
     let f = write_jsonl(COMPACT_SEQUENCE);
     let entries = load_session(f.path());
     let blocks: Vec<&DisplayBlock> = entries.iter().flat_map(|e| &e.blocks).collect();
@@ -758,7 +742,7 @@ fn compact_sequence_produces_the_measured_blocks() {
 }
 
 #[test]
-fn file_attachment_without_a_line_count_drops_the_clause() {
+fn 行数の無い添付は件数の節を落とす() {
     let f = write_jsonl(&[
         r#"{"type":"attachment","attachment":{"type":"file","displayPath":"solo.rs"}}"#,
     ]);
@@ -770,7 +754,7 @@ fn file_attachment_without_a_line_count_drops_the_clause() {
 }
 
 #[test]
-fn single_line_file_attachment_is_not_pluralised() {
+fn 添付が1行なら複数形にしない() {
     let f = write_jsonl(&[
         r#"{"type":"attachment","attachment":{"type":"file","displayPath":"one.rs","content":{"type":"text","file":{"numLines":1}}}}"#,
     ]);
@@ -782,7 +766,7 @@ fn single_line_file_attachment_is_not_pluralised() {
 }
 
 #[test]
-fn attachment_falls_back_to_filename_when_display_path_is_absent() {
+fn 表示パスが無ければファイル名に落ちる() {
     let f = write_jsonl(&[
         r#"{"type":"attachment","attachment":{"type":"compact_file_reference","filename":"/abs/path.yml"}}"#,
     ]);
@@ -794,7 +778,7 @@ fn attachment_falls_back_to_filename_when_display_path_is_absent() {
 }
 
 #[test]
-fn undisplayed_attachment_kinds_draw_nothing() {
+fn 表示しない種類の添付は何も描かない() {
     // 実データには他に27種類あり、hook_success だけでも約4.7万件ある。
     // どれも描画される様子が観測されなかったので、レンダラは許可リスト方式で動く。
     let f = write_jsonl(&[
@@ -806,7 +790,7 @@ fn undisplayed_attachment_kinds_draw_nothing() {
 }
 
 #[test]
-fn non_compact_system_records_draw_nothing() {
+fn compact以外のsystemレコードは何も描かない() {
     let f = write_jsonl(&[
         r#"{"type":"system","subtype":"something_else","content":"noise"}"#,
         r#"{"type":"last-prompt","lastPrompt":"/compact"}"#,

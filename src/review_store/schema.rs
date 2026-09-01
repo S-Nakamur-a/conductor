@@ -34,7 +34,6 @@ impl ReviewStore {
             log::warn!("failed to switch database to WAL journal mode: {e}");
         }
 
-        // 一度も変更されていないテーブルを作成する。
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS sessions (
@@ -82,11 +81,9 @@ impl ReviewStore {
         )
         .context("failed to run CREATE TABLE migrations")?;
 
-        // reviews テーブルに対するバージョンベースのマイグレーション。
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
         if version < 1 {
-            // reviews テーブルが既に存在するか（旧スキーマかどうか）を確認する。
             let table_exists: bool = conn.query_row(
                 "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='reviews'",
                 [],
@@ -130,7 +127,6 @@ impl ReviewStore {
                 .context("failed to create reviews table")?;
             }
 
-            // review_replies テーブルを作成する。
             conn.execute_batch(
                 "
                 CREATE TABLE IF NOT EXISTS review_replies (
@@ -192,17 +188,13 @@ impl ReviewStore {
         }
 
         if version < 4 {
-            // これまで各書き込み側（Rust の TUI と、隣接する Node の MCP サーバ）が
-            // それぞれ重複して持っていた2つの事実をスキーマ自体に移し、どちらか
-            // 一方がもう一方をミラーする必要をなくす。
-            //   * commit_ref のデフォルトは 'HEAD' になる。書き込み側は省略可能になる。
-            //   * worktree = branch は CHECK で強制する。これにより、暗黙の共有前提
-            //     だったものが保証付きの契約になる。branch カラムが存在する前に
-            //     作られた旧レコードは branch IS NULL であり、CHECK は意図的にそれを許可する。
-            // SQLite は既存カラムへの DEFAULT 追加も、テーブルレベルの CHECK の
-            // その場での追加もできないため、テーブルを作り直す。入れ替え中は
-            // 外部キー制約を無効化する（review_replies は reviews を名前で参照し
-            // id は保持されるため整合性は保たれる）。
+            // 2 つの事実をスキーマ自体に持たせ、書き込み側が重複して持たなくて済むようにする。
+            //   * commit_ref のデフォルトは 'HEAD'。書き込み側は省略できる。
+            //   * worktree = branch は CHECK で強制する。branch カラムが存在する前に作られた
+            //     旧レコードは branch IS NULL で、CHECK は意図的にそれを許可する。
+            // SQLite は既存カラムへの DEFAULT 追加もテーブルレベル CHECK の追加もできないので、
+            // テーブルを作り直す。入れ替え中は外部キー制約を無効化する (review_replies は名前で
+            // 参照し id は保持されるので整合性は保たれる)。
             conn.execute_batch("PRAGMA foreign_keys = OFF;")
                 .context("failed to disable foreign keys for v4 migration")?;
             conn.execute_batch(
@@ -367,7 +359,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn open_sets_wal_journal_mode() {
+    fn openはwalジャーナルモードにする() {
         // WAL はファイルバックのデータベースでのみ有効になる。test_store() が
         // 使う :memory: では切り替わらないため、この PRAGMA を検証するには
         // 実際の tempdir 上の DB が必要になる。
@@ -389,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_commit_ref_defaults_to_head() {
+    fn v4のcommit_refは既定でheadになる() {
         let store = test_store();
         // commit_ref を省略して挿入する。v4 スキーマのデフォルトが埋めるはずで、
         // これにより Node 側の MCP 書き込み元は 'HEAD' をミラーする必要がなくなる。
@@ -413,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_check_rejects_worktree_branch_mismatch() {
+    fn v4のcheckはworktreeとbranchの食い違いを拒む() {
         let store = test_store();
         // worktree != branch（両方 non-null）は CHECK に違反しなければならない。
         // これにより、ずれた書き込み元は到達不能な行を挿入するのではなく
@@ -430,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn v4_check_allows_null_branch() {
+    fn v4のcheckはnullのbranchを許す() {
         let store = test_store();
         // branch カラムが存在する前に作られた旧レコードは branch IS NULL であり、
         // CHECK はそれを許可し続けなければならない。
@@ -448,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_an_existing_v5_db_all_the_way_forward() {
+    fn 既存のv5から最後まで移行できる() {
         // ディスク上にある v6 より前のデータベースをシミュレートする。まず新規
         // ストアを開き（最新バージョンまで一気にマイグレーションされる）、それを
         // 手作業で v5 データベースの姿まで巻き戻し、ReviewStore::open が実際に

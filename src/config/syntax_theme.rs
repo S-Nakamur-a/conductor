@@ -38,9 +38,9 @@ fn embedded_theme_for(theme: &str) -> EmbeddedThemeName {
 /// (失敗時は組み込みテーマにフォールバック)。未設定なら有効な UI テーマ名
 /// (ui.theme、無ければ後方互換で viewer.theme) に対応する組み込みテーマを返す。
 ///
-/// 参照するテーマ名を Config::theme_name() に一本化しているのが要点。以前は
-/// viewer.theme だけを見ていたので、テーマピッカーが書き込む ui.theme とずれ、
-/// UI の配色だけが変わってコードの配色が取り残されていた。
+/// 参照するテーマ名を Config::theme_name() に一本化しているのが要点。viewer.theme だけを
+/// 見ると、テーマピッカーが書き込む ui.theme とずれて、UI の配色だけが変わってコードの
+/// 配色が取り残される。
 pub fn syntect_theme_for(
     cfg: &Config,
     themes: &EmbeddedLazyThemeSet,

@@ -163,7 +163,7 @@ mod tests {
     }"#;
 
     #[test]
-    fn parses_a_minimal_answer() {
+    fn 最小の答えを読める() {
         let r = review(MINIMAL, "main", "HEAD").unwrap();
         assert_eq!(r.schema, crate::review::SCHEMA_VERSION);
         assert_eq!(r.sections.len(), 1);
@@ -173,13 +173,13 @@ mod tests {
     }
 
     #[test]
-    fn extracts_json_from_a_fenced_and_chatty_answer() {
+    fn フェンスと地の文に埋もれたjsonを取り出す() {
         let raw = format!("わかりました。\n```json\n{MINIMAL}\n```\n以上です。");
         assert!(review(&raw, "main", "HEAD").is_ok());
     }
 
     #[test]
-    fn braces_inside_strings_do_not_end_the_object() {
+    fn 文字列の中の波括弧でオブジェクトは終わらない() {
         let raw = r#"{"overview":{"problem":"format!(\"{}\", x) を使う","change":"c",
           "mechanism":"m","placement":"p","scope":"s"},
           "sections":[{"title":"t","body":"b","importance":"core","reason":"r","ranges":[]}],
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn reason_is_required_at_every_importance() {
+    fn 理由はどの重要度でも必須() {
         for imp in ["core", "ripple", "follow", "minor"] {
             let raw = MINIMAL
                 .replace("\"core\"", &format!("\"{imp}\""))
@@ -201,7 +201,7 @@ mod tests {
     }
 
     #[test]
-    fn follow_with_reason_is_accepted() {
+    fn 理由付きのfollowは受け入れる() {
         let raw = MINIMAL.replace("\"core\"", "\"follow\"");
         assert!(review(&raw, "main", "HEAD").is_ok());
     }
@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_overview_field_is_rejected() {
+    fn 概要の欄が空なら拒む() {
         for (field, filled) in [
             ("problem", r#""problem":"p""#),
             ("change", r#""change":"c""#),
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_sections_is_rejected() {
+    fn 項目が空なら拒む() {
         let raw = r#"{"overview":{"problem":"p","change":"c","mechanism":"m","placement":"p","scope":"s"},
           "sections":[],"impacts":[]}"#;
         let err = review(raw, "a", "b").unwrap_err();
@@ -244,14 +244,14 @@ mod tests {
     }
 
     #[test]
-    fn an_impact_without_a_feature_name_is_rejected() {
+    fn 機能名の無い影響は拒む() {
         let raw = MINIMAL.replace("\"feature\":\"f\"", "\"feature\":\"  \"");
         let err = review(&raw, "main", "HEAD").unwrap_err();
         assert!(err.0.contains("feature"), "{}", err.0);
     }
 
     #[test]
-    fn a_fact_impact_without_a_change_is_rejected() {
+    fn 確定の影響で変化が空なら拒む() {
         // guess のときは change を空のままでよいが、fact（確定）は必須。
         let raw = MINIMAL
             .replace("\"confidence\":\"guess\"", "\"confidence\":\"fact\"")
@@ -261,13 +261,13 @@ mod tests {
     }
 
     #[test]
-    fn a_guess_impact_may_leave_change_empty() {
+    fn 予想の影響なら変化が空でもよい() {
         let raw = MINIMAL.replace("\"change\":\"ch\"", "\"change\":\"\"");
         assert!(review(&raw, "main", "HEAD").is_ok());
     }
 
     #[test]
-    fn reversed_range_is_rejected_at_parse_time() {
+    fn 逆向きの範囲は読む時点で拒む() {
         // 展開すると空になって unclassified に化けるので、ここで名指しで落とす。
         let raw = MINIMAL.replace("\"start\":1,\"end\":2", "\"start\":9,\"end\":2");
         let err = review(&raw, "main", "HEAD").unwrap_err();
@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn file_side_range_without_line_numbers_is_accepted() {
+    fn ファイル側の範囲は行番号が無くてよい() {
         let raw = MINIMAL.replace(
             "{\"path\":\"a.rs\",\"side\":\"new\",\"start\":1,\"end\":2}",
             "{\"path\":\"logo.png\",\"side\":\"file\"}",
@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn contexts_come_back_sorted_by_importance() {
+    fn 項目は重要度順に並んで返る() {
         let raw = r#"{"overview":{"problem":"p","change":"c","mechanism":"m","placement":"p","scope":"s"},
           "sections":[
             {"title":"minor","body":"b","importance":"minor","reason":"r","ranges":[]},
@@ -297,13 +297,13 @@ mod tests {
     }
 
     #[test]
-    fn answer_without_json_is_an_error_not_a_panic() {
+    fn jsonの無い答えは落ちずにエラーになる() {
         let err = review("すみません、できませんでした。", "a", "b").unwrap_err();
         assert!(err.0.contains("JSON"), "{}", err.0);
     }
 
     #[test]
-    fn unknown_importance_value_is_rejected() {
+    fn 知らない重要度の値は拒む() {
         let raw = MINIMAL.replace("\"core\"", "\"important\"");
         assert!(review(&raw, "a", "b").is_err());
     }

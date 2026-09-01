@@ -9,8 +9,6 @@ use anyhow::{Context, Result};
 use super::GitEngine;
 
 impl GitEngine {
-    // fetch
-
     /// git CLI をシェルアウトして git fetch --prune origin を実行する。
     ///
     /// 注意: これはネットワーク I/O を行い、数秒ブロックする可能性がある。

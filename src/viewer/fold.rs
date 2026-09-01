@@ -125,8 +125,6 @@ impl FoldState {
         self.range_starting_at(line_1).map(|r| r.end - r.start)
     }
 
-    // ホバー中の範囲
-
     /// マーカーにマウスが乗っている見出し行を覚える。見出し行でなければ忘れる。
     pub fn set_hover(&mut self, line_1: Option<usize>) {
         self.hover = line_1.filter(|l| self.is_foldable(*l));
@@ -145,8 +143,6 @@ impl FoldState {
             None
         }
     }
-
-    // 開閉
 
     /// line_1 のブロックを開閉する。line_1 が見出し行でなければ、それを含む
     /// 最も内側のブロックを対象にする（vim の za と同じ）。
@@ -258,8 +254,6 @@ impl FoldState {
         changed
     }
 
-    // 可視行のマッピング
-
     /// start_1 から total までの、画面に出る行番号（1始まり）。
     pub fn visible_from(&self, start_1: usize, total: usize) -> impl Iterator<Item = usize> + '_ {
         (start_1.max(1)..=total).filter(move |l| !self.is_hidden(*l))
@@ -339,8 +333,6 @@ impl FoldState {
         self.collapsed_from_depth.map(|_| self.depth_level(max))
     }
 
-    // 内部
-
     fn starts_at_depth(&self, depth: usize) -> Vec<usize> {
         self.ranges
             .iter()
@@ -387,8 +379,6 @@ impl FoldState {
         }
     }
 }
-
-// 範囲の算出
 
 /// source の折りたたみ範囲。tree-sitter で1つも取れなければインデントで求める。
 fn compute_ranges(source: &str, path: &str) -> Vec<FoldRange> {
@@ -550,8 +540,6 @@ fn normalize(mut ranges: Vec<FoldRange>) -> Vec<FoldRange> {
     ranges
 }
 
-// ViewerState 側の入口
-
 use super::state::ViewerState;
 
 impl ViewerState {
@@ -596,13 +584,11 @@ impl ViewerState {
 
     /// カーソル行が隠れているなら、隠しているブロックを開く。
     ///
-    /// 描画の直前に一度だけ呼ぶ。file_scroll を書く経路は検索・定義ジャンプ・
-    /// grep・履歴復元と多く、そのすべてに「開いてから飛ぶ」を書いて回ると
-    /// 必ずどれかが漏れる。可視性の判断を描画の一歩手前に集めておけば、
-    /// 行き先が隠れていたときの扱いは1か所で決まる。
+    /// 描画の直前に一度だけ呼ぶ。file_scroll を書く経路は検索・定義ジャンプ・grep・履歴復元と
+    /// 多く、そのすべてに「開いてから飛ぶ」を書いて回ると必ずどれかが漏れる。
     ///
-    /// j/k やホイールは可視行を歩くので、ここには決して到達しない — つまり
-    /// これが開くのは常に「畳んだ場所の外から飛んできた」ときだけ。
+    /// j/k やホイールは可視行を歩くのでここには到達しない — 開くのは常に「畳んだ場所の外から
+    /// 飛んできた」とき。
     pub fn reveal_cursor_line(&mut self) {
         let line = self.cursor_line();
         self.content.folds.reveal(line);
@@ -692,7 +678,7 @@ mod tests {
     /// マーカーにマウスが乗ると、その範囲の見出し・途中・最終行が区別できる。
     /// 描画側はこの3つだけを見て罫線の字形を決める。
     #[test]
-    fn hovering_a_marker_marks_its_whole_range() {
+    fn マーカーへのhoverは範囲全体に印を付ける() {
         let mut folds = FoldState::default();
         folds.rebuild(
             "fn outer() {\n    if cond {\n        inner();\n    }\n}\n",
@@ -710,7 +696,7 @@ mod tests {
     /// 見出し行でないところを指しても範囲は出ない。ホバーは「マーカーを
     /// 狙っている」ことの印なので、za のように内側のブロックへ寄せない。
     #[test]
-    fn hovering_a_non_header_line_shows_nothing() {
+    fn 見出し以外の行へのhoverは何も出さない() {
         let mut folds = FoldState::default();
         folds.rebuild("fn outer() {\n    body();\n}\n", "a.rs");
         folds.set_hover(Some(2));
@@ -720,7 +706,7 @@ mod tests {
 
     /// ファイルを読み直したらホバーは消える（マウスはもうそこに無い）。
     #[test]
-    fn reload_forgets_the_hover() {
+    fn 読み直すとhoverは消える() {
         let mut folds = FoldState::default();
         folds.rebuild("fn outer() {\n    body();\n}\n", "a.rs");
         folds.set_hover(Some(1));
@@ -731,7 +717,7 @@ mod tests {
     /// ネストしたブロックはそれぞれ独立した範囲になる。外側を畳んでも内側の
     /// 範囲は残り、外側を開けば内側の状態がそのまま見える。
     #[test]
-    fn rust_nesting_yields_one_range_per_block() {
+    fn rustの入れ子はブロックごとに範囲を作る() {
         let src = "\
 fn outer() {
     if cond {
@@ -746,7 +732,7 @@ fn outer() {
     /// 1行に収まったブロックは畳んでも隠れる行が無いので、範囲にしない
     /// （マーカーだけ出て押しても何も起きない、を避ける）。
     #[test]
-    fn single_line_blocks_are_not_foldable() {
+    fn 単一行のブロックは畳めない() {
         let src = "fn empty() {}\nfn other() { call(); }\n";
         let ranges = compute_ranges(src, "a.rs");
         assert!(ranges.is_empty(), "{ranges:?}");
@@ -754,7 +740,7 @@ fn outer() {
 
     /// ファイル末尾で閉じ括弧のあとに改行が無くても、範囲は最終行まで届く。
     #[test]
-    fn a_block_reaching_the_end_of_file_is_complete() {
+    fn ファイル末尾まで届くブロックも成立する() {
         let src = "fn last() {\n    body();\n}";
         let ranges = compute_ranges(src, "a.rs");
         assert_eq!(starts(&ranges), vec![(1, 3)]);
@@ -763,7 +749,7 @@ fn outer() {
     /// 構造体リテラルの本体も畳める。let 束縛の右辺に長いリテラルが来るのは
     /// よくある形で、ここが畳めないと本文の大半が畳めないファイルが出る。
     #[test]
-    fn rust_struct_literal_bodies_fold() {
+    fn rustの構造体リテラルの本体も畳める() {
         let src = "fn f() {\n    let c = C {\n        a: 1,\n    };\n}\n";
         let ranges = compute_ranges(src, "a.rs");
         assert!(starts(&ranges).contains(&(2, 4)), "{:?}", starts(&ranges));
@@ -771,7 +757,7 @@ fn outer() {
 
     /// struct / impl / match も畳める（関数の block だけではない）。
     #[test]
-    fn rust_type_and_match_bodies_fold() {
+    fn rustの型定義とmatchの本体も畳める() {
         let src = "\
 struct S {
     a: u32,
@@ -796,7 +782,7 @@ impl S {
     /// 文法を持たない言語はインデントで範囲を出す。ここが空になると、
     /// 対応言語以外では機能そのものが消える。
     #[test]
-    fn unsupported_language_falls_back_to_indentation() {
+    fn 対応しない言語はインデントに落ちる() {
         let src = "\
 def outer():
     if cond:
@@ -815,7 +801,7 @@ after()
     /// パースできない中身でも（拡張子は対応言語でも）折りたたみは出る。
     /// tree-sitter がブロックを1つも取れなかったときにインデントへ落ちる。
     #[test]
-    fn unparsable_source_still_folds_by_indentation() {
+    fn パースできない中身もインデントで畳める() {
         let src = "\
 outer:
     child one
@@ -826,10 +812,9 @@ tail
         assert_eq!(starts(&ranges), vec![(1, 3)]);
     }
 
-    /// インデントのフォールバックでは、ブロックのあとの空行を範囲に含めない。
     /// 含めると畳んだ跡に空行だけが残って、詰まったように見えない。
     #[test]
-    fn indentation_ranges_exclude_trailing_blank_lines() {
+    fn インデントの範囲は末尾の空行を含まない() {
         let src = "outer:\n    child\n\n\nafter\n";
         let ranges = compute_ranges(src, "a.txt");
         assert_eq!(starts(&ranges), vec![(1, 2)]);
@@ -837,7 +822,7 @@ tail
 
     /// 空行はブロックを切らない（段落で分けて書かれた本文が細切れにならない）。
     #[test]
-    fn indentation_ranges_span_interior_blank_lines() {
+    fn インデントの範囲は途中の空行をまたぐ() {
         let src = "outer:\n    a\n\n    b\nafter\n";
         let ranges = compute_ranges(src, "a.txt");
         assert_eq!(starts(&ranges), vec![(1, 4)]);
@@ -859,7 +844,7 @@ fn outer() {
 
     /// 畳んだ範囲は見出し行を残して隠れる。
     #[test]
-    fn collapsing_hides_the_body_but_keeps_the_header() {
+    fn 畳むと本体は隠れ見出しは残る() {
         let mut fs = state(NEST, "a.rs");
         assert!(fs.toggle(1));
         assert!(!fs.is_hidden(1));
@@ -869,9 +854,9 @@ fn outer() {
         assert_eq!(fs.hidden_count(1), Some(4));
     }
 
-    /// 外側を開いても、内側の畳みは畳まれたまま（vim と同じ）。
+    /// vim と同じ挙動。
     #[test]
-    fn opening_an_outer_fold_preserves_the_inner_one() {
+    fn 外側を開いても内側の畳みは残る() {
         let mut fs = state(NEST, "a.rs");
         fs.close(2);
         fs.close(1);
@@ -881,9 +866,8 @@ fn outer() {
         assert!(!fs.is_hidden(5));
     }
 
-    /// 見出し行でない行を対象にすると、それを含む最も内側のブロックが動く。
     #[test]
-    fn operating_inside_a_block_targets_the_innermost_one() {
+    fn ブロックの中での操作は最も内側を対象にする() {
         let mut fs = state(NEST, "a.rs");
         assert!(fs.close(3));
         assert!(fs.is_collapsed(2), "innermost block closed");
@@ -892,7 +876,7 @@ fn outer() {
 
     /// 可視行の列挙・歩幅・番号はすべて同じ隠れ方を見る。
     #[test]
-    fn visible_mapping_skips_folded_lines() {
+    fn 可視行の対応は畳まれた行を飛ばす() {
         let mut fs = state(NEST, "a.rs");
         fs.close(2);
 
@@ -909,7 +893,7 @@ fn outer() {
 
     /// 畳んだ中へ飛んできたときは、それを隠している範囲だけを開く。
     #[test]
-    fn revealing_opens_only_the_folds_that_hide_the_line() {
+    fn revealはその行を隠す畳みだけを開く() {
         let mut fs = state(NEST, "a.rs");
         fs.close_all();
         assert!(fs.is_hidden(3));
@@ -920,9 +904,8 @@ fn outer() {
         assert!(!fs.reveal(1));
     }
 
-    /// zM のあとカーソルが隠れたら、それを隠している見出し行へ寄せる。
     #[test]
-    fn the_anchor_of_a_hidden_line_is_its_header() {
+    fn 隠れた行の寄せ先はその見出し() {
         let mut fs = state(NEST, "a.rs");
         fs.close_all();
         assert_eq!(fs.visible_anchor(4), 1);
@@ -932,7 +915,7 @@ fn outer() {
     /// 同じファイルの再読み込みでは開閉を保つ。読んでいた場所が、ウォッチャーが
     /// 走るたびに勝手に開き直さないため。
     #[test]
-    fn reloading_the_same_file_keeps_the_folds() {
+    fn 同じファイルの読み直しは畳みを保つ() {
         let mut fs = state(NEST, "a.rs");
         fs.close(1);
         fs.rebuild(NEST, "a.rs");
@@ -942,7 +925,7 @@ fn outer() {
     /// 編集でブロックでなくなった行の畳みは落とす。残すと、開く手段の無い
     /// 隠れた行ができる。
     #[test]
-    fn reloading_drops_folds_that_no_longer_exist() {
+    fn 読み直しで無くなった畳みは落とす() {
         let mut fs = state(NEST, "a.rs");
         fs.close(2);
         fs.rebuild("fn outer() {\n    done();\n}\n", "a.rs");
@@ -950,18 +933,17 @@ fn outer() {
         assert!(!fs.is_hidden(2));
     }
 
-    /// 別のファイルへ移ったら開閉は捨てる。行番号は移った先で別の意味を持つ。
+    /// 行番号は移った先で別の意味を持つ。
     #[test]
-    fn switching_files_discards_the_folds() {
+    fn ファイルを移ると畳みは捨てる() {
         let mut fs = state(NEST, "a.rs");
         fs.close(1);
         fs.rebuild(NEST, "b.rs");
         assert!(!fs.is_collapsed(1));
     }
 
-    /// 折りたたみが無いファイルでは、すべての行がそのまま可視行になる。
     #[test]
-    fn a_file_without_folds_is_entirely_visible() {
+    fn 畳みの無いファイルは全行が見える() {
         let fs = FoldState::default();
         assert_eq!(fs.visible_from(1, 3).collect::<Vec<_>>(), vec![1, 2, 3]);
         assert_eq!(fs.visible_count(3), 3);
@@ -973,7 +955,7 @@ fn outer() {
     /// 深さ単位の畳み込みは行ではなく段を対象にするので、同じ深さのブロックが
     /// 何か所にあっても1回で全部畳まれる。
     #[test]
-    fn collapsing_a_depth_folds_every_block_at_it() {
+    fn 深さ単位の畳みはその段の全ブロックに効く() {
         let src = "\
 fn a() {
     if x {
@@ -996,7 +978,7 @@ fn b() {
     /// 深さは両端で止まる。最も浅い段まで畳んだら zm はそれ以上進まず、
     /// 全部開き切ったら zr は何も動かさない。
     #[test]
-    fn the_depth_stops_at_both_ends() {
+    fn 深さは両端で止まる() {
         let mut fs = state(NEST, "a.rs");
         assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(1));
         assert_eq!(fs.collapse_deepest().map(|d| d.level), Some(2));
@@ -1009,9 +991,8 @@ fn b() {
         assert!(!fs.is_collapsed(1) && !fs.is_collapsed(2));
     }
 
-    /// 畳める範囲が1つも無いファイルでは深さ操作そのものが成立しない。
     #[test]
-    fn a_file_without_folds_has_no_depth() {
+    fn 畳みの無いファイルには深さが無い() {
         let mut fs = FoldState::default();
         assert_eq!(fs.collapse_deepest(), None);
         assert_eq!(fs.expand_shallowest(), None);
@@ -1019,7 +1000,7 @@ fn b() {
 
     /// 個別に開閉したら深さの位置は失われ、次の zm は最も深い段からやり直す。
     #[test]
-    fn folding_one_block_by_hand_forgets_the_depth() {
+    fn 手で1つ畳むと深さの位置は失われる() {
         let mut fs = state(NEST, "a.rs");
         fs.collapse_deepest();
         fs.collapse_deepest();
@@ -1030,7 +1011,7 @@ fn b() {
     /// タイトル行の段数表示は深さ単位で畳んでいる間だけ出す。個別に畳んだだけの
     /// ファイルに段数を出すと、そこから zr で開けるように見えてしまう。
     #[test]
-    fn the_depth_shows_only_while_folding_by_depth() {
+    fn 段数は深さ単位で畳んでいる間だけ出る() {
         let mut fs = state(NEST, "a.rs");
         assert_eq!(fs.depth(), None);
         fs.close(1);
@@ -1043,7 +1024,7 @@ fn b() {
 
     /// zM は最も浅い段まで畳んだのと同じなので、そこから zr で1段ずつ開ける。
     #[test]
-    fn closing_all_leaves_the_depth_at_its_deepest_level() {
+    fn 全部畳むと深さは最も浅い段に来る() {
         let mut fs = state(NEST, "a.rs");
         fs.close_all();
         assert_eq!(fs.expand_shallowest().map(|d| d.level), Some(1));

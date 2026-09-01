@@ -104,17 +104,14 @@ impl App {
         let selected_worktree = self.worktrees.selected();
 
         match id {
-            // App
             // Action::UpdateAndRestart はリリースが見つかっている場合以外は
             // 何もしない(event/global.rs、if self.update.info.is_some())。
             crate::command_palette::CommandId::UpdateAndRestart => self.update.info.is_some(),
 
-            // Repository
             // リポジトリ選択は切替先が複数あるときのみ開く
             // (event/global.rs、if self.repo.known.len() > 1)。
             crate::command_palette::CommandId::SwitchRepo => self.repo.known.len() > 1,
 
-            // Worktree
             // ストリップの削除ボタンは main worktree と削除処理中の worktree を
             // 拒否する(event/mouse/bars.rs)。
             crate::command_palette::CommandId::DeleteWorktree => selected_worktree
@@ -143,7 +140,6 @@ impl App {
             // 任せる。
             crate::command_palette::CommandId::OpenPullRequest => selected_worktree.is_some(),
 
-            // Viewer
             // "Raw/Rendered applies to a markdown file in the Viewer"
             // (app/view_state.rs) — コマンドが参照するのと同じヘルパー。
             crate::command_palette::CommandId::ToggleMarkdownRender => {
@@ -156,7 +152,6 @@ impl App {
             | crate::command_palette::CommandId::FoldAll
             | crate::command_palette::CommandId::UnfoldAll => self.viewer.folds_available(),
 
-            // Review
             // レビュー DB と worktree が必要(app/review_publish.rs)。ブランチに
             // 紐づく PR があるかは get_pr_review_meta クエリが必要なので、
             // そこはコマンド側に任せる。

@@ -8,15 +8,8 @@ use anyhow::{Context, Result, anyhow};
 use super::GitEngine;
 
 impl GitEngine {
-    // worktree の作成/削除
-
-    /// ベース ref から分岐する新しい worktree を作成する(wt new に相当)。
-    ///
-    /// branch_name は新しいローカルブランチ名。
-    /// base_ref は起点(例: "origin/main")。
-    /// worktree_dir_override は worktree 用のカスタムベースディレクトリ
-    /// (config の general.worktree_dir から)を任意で指定する。
-    /// worktree は <base_dir>/<dir_name> に配置される。
+    /// ベース ref から分岐する新しい worktree を作成する (wt new に相当)。worktree は
+    /// `<worktree_dir_override か既定のベース>/<dir_name>` に配置される。
     pub fn create_worktree_from_base(
         &self,
         branch_name: &str,
@@ -42,12 +35,9 @@ impl GitEngine {
         // この名前の既存 worktree エントリがあれば強制的に整理する。
         self.force_prune_worktree_entry(dir_name);
 
-        // git worktree add の CLI を使う — libgit2 の worktree API より信頼できる。
-        // output() ではなく spawn()+wait() を使うのは、バックグラウンドプロセスを
-        // 立ち上げる post-checkout hook(例: npm ci &)でブロックしないため。
-        // output() はパイプが EOF になるまで読み続けるので、バックグラウンド
-        // プロセスがパイプの FD を継承しているとブロックしてしまう。wait() は
-        // 子プロセスの終了だけを待つ。
+        // git worktree add の CLI を使う (libgit2 の worktree API より信頼できる)。output() では
+        // なく spawn()+wait() を使うのは、バックグラウンドプロセスを立ち上げる post-checkout
+        // hook でブロックしないため — output() はパイプが EOF になるまで読み続ける。
         let main_dir = self.main_worktree_path()?;
         let mut child = std::process::Command::new("git")
             .args([
@@ -80,13 +70,9 @@ impl GitEngine {
         Ok(wt_path)
     }
 
-    /// ローカルにすでに存在するブランチをチェックアウトする worktree を
-    /// 作成する(PR intake に相当 — ブランチは事前の fetch_refspec で
-    /// 作成済みなので、create_worktree_from_base/create_worktree_from_remote
-    /// と違い、これは -b なしの単純な git worktree add <path> <branch> になる)。
-    ///
-    /// wt_dir は作成する worktree ディレクトリのフルパス(名前/配置場所は
-    /// 呼び出し側が worktrees_base_dir などを使って決める)。
+    /// ローカルにすでに存在するブランチをチェックアウトする worktree を作成する (PR intake)。
+    /// ブランチは事前の fetch_refspec で作成済みなので `-b` なしの単純な
+    /// `git worktree add <path> <branch>` になる。wt_dir は作成するディレクトリのフルパス。
     pub fn create_worktree_for_existing_branch(
         &self,
         branch: &str,

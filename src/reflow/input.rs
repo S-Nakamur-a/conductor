@@ -14,11 +14,8 @@ pub fn clamp_scroll(scroll: usize, total: usize, inner: usize) -> usize {
     scroll.min(total.saturating_sub(inner))
 }
 
-/// scroll がコンテンツの論理的な最下部に達しているか、それを超えていたら
-/// true を返す。
-///
-/// inner は可視領域の高さ。scroll が total - inner の位置にあるとき、最終行の
-/// 内容が最後の表示行にある — これが「最下部にいる」状態。
+/// scroll がコンテンツの論理的な最下部に達しているか。inner は可視領域の高さで、
+/// scroll が total - inner の位置にあるとき最終行が最後の表示行にある。
 pub fn at_bottom(scroll: usize, total: usize, inner: usize) -> bool {
     scroll >= total.saturating_sub(inner)
 }
@@ -31,23 +28,16 @@ pub fn bottom_scroll(total: usize, inner: usize) -> usize {
 
 /// 下地のジオメトリが変わったあと、ビューポートがどこに位置すべきか。
 ///
-/// 毎フレーム呼ばれるが、anchored がセットされるのは行リストが直前に
-/// 再構築されたとき (幅変更や expand トグル) だけ。2つの分岐で
-/// 「読んでいた位置を保つ」というルール全体を表現している。
+/// 毎フレーム呼ばれるが、anchored がセットされるのは行リストが直前に再構築されたとき
+/// (幅変更や expand トグル) だけ。
 ///
-/// * following — 読者は最新のターンに乗っているので、最下部へ再固定する。
-///   これがないと、リサイズで最新の出力がビューポートの下に取り残されて
-///   しまう: パネルが狭くなると同じテキストがより多くの行に折り返される
-///   ため、古いオフセット (正しく再アンカーされたものであっても) はもはや
-///   末尾に届かない。
-/// * それ以外 — 読者は履歴のどこかに留まっているので、anchored (再構築後の
-///   同じ論理行 = エントリ/ブロック/オフセットのインデックス) を尊重する。
-///   再構築が起きず anchored が意味を持たないフレームは previous にフォール
-///   バックする。
+/// * following — 最下部へ再固定する。パネルが狭くなると同じテキストがより多くの行に
+///   折り返されるので、正しく再アンカーした古いオフセットでも末尾に届かない。
+/// * それ以外 — anchored (再構築後の同じ論理行) を尊重する。再構築が起きなかった
+///   フレームは previous に落ちる。
 ///
-/// 再構築をまたいで生のオフセットを引き継ぐことは決してしない: 行の
-/// インデックスは幅ごとに意味が変わるので、それこそが以前の reflow が
-/// 読者を無関係な場所へ飛ばしていた原因。
+/// 再構築をまたいで生のオフセットを引き継ぐことは決してしない。行のインデックスは幅ごとに
+/// 意味が変わる。
 pub fn scroll_after_reflow(
     following: bool,
     anchored: Option<usize>,
@@ -63,13 +53,8 @@ pub fn scroll_after_reflow(
     clamp_scroll(target, total, inner)
 }
 
-// トランジションアニメーション
-
-/// 入場/退場トランジションアニメーションの総時間 (ミリ秒)。
-///
-/// 500ms なら、境界線の色相が accent から補色へ (退場時はその逆へ) 単一の
-/// 滑らかなグラデーションで移り変わる — 以前の急なちらつきに比べて落ち着いた
-/// 印象になる — それでいて read モードを抜ける操作がもたつかない程度に短い。
+/// 入場/退場トランジションアニメーションの総時間 (ミリ秒)。500ms なら境界線の色相が単一の
+/// 滑らかなグラデーションで移り変わりつつ、read モードを抜ける操作がもたつかない。
 pub const TRANSITION_DURATION_MS: u64 = 500;
 
 /// トランジションアニメーションがどこまで進んだかを [0.0, 1.0] にクランプ
@@ -102,74 +87,68 @@ pub fn transition_eased(progress: f64) -> f64 {
 mod tests {
     use super::*;
 
-    // clamp_scroll
-
     #[test]
-    fn clamp_allows_zero() {
+    fn クランプは0を許す() {
         assert_eq!(clamp_scroll(0, 100, 20), 0);
     }
 
     #[test]
-    fn clamp_pins_to_max() {
+    fn クランプは上限で止める() {
         // max = 100 - 20 = 80。
         assert_eq!(clamp_scroll(200, 100, 20), 80);
     }
 
     #[test]
-    fn clamp_at_exact_max() {
+    fn ちょうど上限のときのクランプ() {
         assert_eq!(clamp_scroll(80, 100, 20), 80);
     }
 
     #[test]
-    fn clamp_within_range_unchanged() {
+    fn 範囲内ならクランプは変えない() {
         assert_eq!(clamp_scroll(40, 100, 20), 40);
     }
 
     #[test]
-    fn clamp_when_log_shorter_than_panel_returns_zero() {
+    fn ログがパネルより短ければ0になる() {
         // total(10) < inner(20): ログ全体が収まる → max_scroll = 0
         assert_eq!(clamp_scroll(5, 10, 20), 0);
         assert_eq!(clamp_scroll(0, 10, 20), 0);
     }
 
     #[test]
-    fn clamp_when_total_equals_inner_returns_zero() {
+    fn 総行数が内寸と同じなら0になる() {
         assert_eq!(clamp_scroll(0, 20, 20), 0);
         assert_eq!(clamp_scroll(1, 20, 20), 0);
     }
 
     #[test]
-    fn clamp_total_zero_returns_zero() {
+    fn 総行数が0なら0になる() {
         assert_eq!(clamp_scroll(0, 0, 20), 0);
     }
 
-    // at_bottom
-
     #[test]
-    fn at_bottom_when_scroll_equals_max() {
+    fn スクロールが上限なら最下部() {
         assert!(at_bottom(80, 100, 20));
     }
 
     #[test]
-    fn at_bottom_when_scroll_exceeds_max() {
+    fn スクロールが上限を超えても最下部() {
         assert!(at_bottom(90, 100, 20));
     }
 
     #[test]
-    fn not_at_bottom_when_scroll_below_max() {
+    fn 上限より手前なら最下部ではない() {
         assert!(!at_bottom(79, 100, 20));
     }
 
     #[test]
-    fn at_bottom_when_log_fits_in_panel() {
+    fn ログがパネルに収まれば最下部() {
         // total(10) <= inner(20): max_scroll = 0 なので scroll >= 0 なら常に最下部
         assert!(at_bottom(0, 10, 20));
     }
 
-    // scroll_after_reflow
-
     #[test]
-    fn follower_repins_to_bottom_when_a_narrower_width_adds_lines() {
+    fn 幅が狭まって行が増えても追従は最下部へ戻る() {
         // このフラグ全体が存在する理由となったリグレッション: 読者は
         // 100行/20行のパネル (scroll 80) で最新ターンに乗っていた。パネルが
         // 狭くなり、同じテキストが140行に折り返される。anchor をそのまま
@@ -180,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn follower_repins_to_bottom_when_the_panel_gets_shorter() {
+    fn パネルが低くなっても追従は最下部へ戻る() {
         // 高さだけの変更: 再構築は起きないので anchored は None。クランプ
         // だけでは scroll が80のままになり、最後の10行が下にはみ出て
         // 切れてしまう。
@@ -188,19 +167,19 @@ mod tests {
     }
 
     #[test]
-    fn detached_reader_lands_on_the_anchored_line() {
+    fn 離れて読む人は固定した行に着地する() {
         // 履歴の途中に留まっている: anchor が古い生オフセットにも最下部にも
         // 優先する。
         assert_eq!(scroll_after_reflow(false, Some(57), 40, 200, 20), 57);
     }
 
     #[test]
-    fn detached_reader_keeps_its_offset_when_nothing_was_rebuilt() {
+    fn 作り直しが無ければ位置はそのまま() {
         assert_eq!(scroll_after_reflow(false, None, 40, 200, 20), 40);
     }
 
     #[test]
-    fn detached_reader_never_gets_dragged_to_the_bottom() {
+    fn 離れて読む人は最下部へ引きずられない() {
         // 個々の数値より重要な性質: following していない読者に対しては、
         // anchor が本当に最下部を指している場合を除き、anchor とジオメトリの
         // どんな組み合わせも最下部に解決してはならない。
@@ -217,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn anchored_index_past_the_end_is_clamped_not_wrapped() {
+    fn 末尾を越えた固定位置は回り込まずクランプする() {
         // 縮んだブロックは最後の有効オフセットを超えて解決することがある。
         // その場合は後段で範囲外インデックスになるのではなく、最下部に
         // クランプされなければならない。
@@ -225,39 +204,35 @@ mod tests {
     }
 
     #[test]
-    fn short_log_collapses_to_top_for_follower_and_reader_alike() {
+    fn 短いログは追従でも読書でも先頭に収束する() {
         assert_eq!(scroll_after_reflow(true, None, 0, 10, 40), 0);
         assert_eq!(scroll_after_reflow(false, Some(5), 3, 10, 40), 0);
     }
 
     #[test]
-    fn following_result_always_reports_at_bottom() {
+    fn 追従中の結果は必ず最下部と答える() {
         for (total, inner) in [(100usize, 20usize), (10, 40), (0, 5), (41, 7)] {
             let s = scroll_after_reflow(true, None, 0, total, inner);
             assert!(at_bottom(s, total, inner), "total={total} inner={inner}");
         }
     }
 
-    // sweep_progress
-
     #[test]
-    fn sweep_progress_zero_duration_returns_complete() {
+    fn 長さ0のスイープは即完了() {
         let t = std::time::Instant::now();
         assert_eq!(sweep_progress(&t, 0), 1.0);
     }
 
     #[test]
-    fn sweep_progress_fresh_instant_is_near_zero() {
+    fn 始めたばかりのスイープはほぼ0() {
         let t = std::time::Instant::now();
         let p = sweep_progress(&t, TRANSITION_DURATION_MS);
         // 始まったばかりのアニメーションは10%を大きく下回っていなければならない。
         assert!(p < 0.1, "expected near 0.0, got {p}");
     }
 
-    // transition_eased
-
     #[test]
-    fn transition_eased_endpoints_are_exact() {
+    fn 遷移の両端は厳密な値になる() {
         // smoothstep は開始を0、終了を1に固定するので、境界線は accent から
         // 始まりぴったり補色に落ち着く。
         assert_eq!(transition_eased(0.0), 0.0);
@@ -265,13 +240,13 @@ mod tests {
     }
 
     #[test]
-    fn transition_eased_midpoint_is_half() {
+    fn 遷移の中点は半分になる() {
         // 3(0.5)² − 2(0.5)³ = 0.5 — 対称な曲線は中心を通る。
         assert!((transition_eased(0.5) - 0.5).abs() < 1e-10);
     }
 
     #[test]
-    fn transition_eased_is_monotonic_within_unit_range() {
+    fn 遷移は単調で単位区間に収まる() {
         // 単一の滑らかなランプ: 減少することはなく、常に [0, 1] の範囲内。
         let mut prev = 0.0;
         for i in 0..=100 {
@@ -290,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn transition_eased_clamps_out_of_range_input() {
+    fn 範囲外の入力はクランプされる() {
         assert_eq!(transition_eased(-0.5), 0.0);
         assert_eq!(transition_eased(1.5), 1.0);
     }
@@ -298,7 +273,7 @@ mod tests {
     // 統合: pending_bottom の固定
 
     #[test]
-    fn pending_bottom_pin_matches_clamp_max() {
+    fn 最下部への固定はクランプの上限と一致する() {
         let total = 150usize;
         let inner = 30usize;
         let pinned = total.saturating_sub(inner); // 120

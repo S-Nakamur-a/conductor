@@ -27,21 +27,14 @@ mod spawn;
 #[cfg(test)]
 mod tests;
 
-/// リフロー時の巻き戻し再生のためセッションごとに保持する、PTY の生出力
-/// バイト数の上限。端末幅が変わると vt100 は既存の内容をリフローできない
-/// ため、このバイト履歴を新しい幅で再生してパーサを作り直す。
+/// リフロー時の巻き戻し再生のためセッションごとに保持する、PTY の生出力バイト数の上限。
+/// 端末幅が変わると vt100 は既存の内容をリフローできないので、このバイト履歴を新しい幅で
+/// 再生してパーサを作り直す。
 ///
-/// この再生は resize_session 内でメインスレッド上で同期的に実行されるため、
-/// そのコストは幅が変わるたびに(パネル最大化、共有右カラムをリサイズする
-/// フォーカス切り替え、Tab、tmux式リサイズなど)UIのストールとして
-/// 発生する。そのため上限は控えめに設定している: 512 KiBあれば、典型的な
-/// シェルの行長でのデフォルトのアクティブスクロールバック(10000行)を
-/// 十分にカバーしつつ、最悪でも再生コストを数十msではなく1フレーム分の
-/// ストールに抑えられる。上限を超えたバイトは行境界で切り捨てる —
-/// リフローで失われるのは、すでに画面外に出ている古い履歴だけである。
+/// 再生は resize_session 内でメインスレッド上を同期で走るため、幅が変わるたびに UI の
+/// ストールになる。512 KiB あればデフォルトのアクティブスクロールバックを十分カバー
+/// しつつ、最悪でも 1 フレーム分のストールに抑えられる。超えたぶんは行境界で切り捨てる。
 const MAX_RAW_HISTORY_BYTES: usize = 512 * 1024;
-
-// SessionKind
 
 /// PTY セッション内で動いているプロセスの種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,8 +47,6 @@ pub enum SessionKind {
     Editor,
 }
 
-// PtySession
-
 /// 対応する reader/writer ハンドルを持つ単一の PTY セッション。
 pub struct PtySession {
     /// UUID v4。
@@ -65,13 +56,9 @@ pub struct PtySession {
     pub kind: SessionKind,
     pub worktree: String,
     pub working_dir: PathBuf,
-    /// このパネルを支える Claude Code セッション id (プロジェクトディレクトリ配下の
-    /// <id>.jsonl)。判明している場合のみ設定する。ClaudeCode セッションでは、
-    /// 新規起動時は --session-id で生成した id を強制し、resume 起動時は
-    /// resume した id を記録する。Shell/Editor セッション、および id を特定
-    /// できなかった Claude セッションでは None。これにより reflow トランスクリプト
-    /// ビューが worktree の最新セッションではなく *このパネル自身* のログを開ける —
-    /// 1つの worktree に複数の Claude パネル (CC:1, CC:2, …) がある場合に必須。
+    /// このパネルを支える Claude Code セッション id (`<id>.jsonl`)。判明している場合のみ。
+    /// これにより reflow ビューが worktree の最新セッションではなく *このパネル自身* の
+    /// ログを開ける — 1 つの worktree に複数の Claude パネルがある場合に必須。
     pub claude_session_id: Option<String>,
     /// 子プロセスを起動した時刻。
     ///
@@ -94,20 +81,13 @@ pub struct PtySession {
 
     // vt100 のターミナルエミュレータ
     screen: Arc<Mutex<vt100::Parser>>,
-    /// 追記のみ(有界)の PTY 生出力バイト履歴。reader スレッドと共有する。
-    /// vt100 自体は既存内容をリフローしないため、リサイズ時にこの履歴を
-    /// 新しい幅で再生して vt100 パーサを作り直すのに使う。追記は常に
-    /// screen のロックを保持したまま行い、parser.process とアトミックに
-    /// 保ち、resize_session の再構築とも整合させている。
+    /// 追記のみ (有界) の PTY 生出力バイト履歴。リサイズ時にこれを新しい幅で再生して vt100
+    /// パーサを作り直す。追記は常に screen のロックを保持したまま行い、parser.process と
+    /// アトミックに保つ。
     ///
-    /// 再生ベースのリフローが恩恵をもたらさないセッションでは None。
-    /// 再生が再ラップするのは、端末の自動折り返し(ソフトラップ)に頼っていた
-    /// 内容 — 通常のシェル出力など — だけである。Claude Code のような
-    /// その場描画型のアプリは、絶対カーソル列エスケープと現在の幅で
-    /// 焼き込まれたハード改行で全行をレイアウトするため、新しい幅で
-    /// バイトを再生しても旧幅と同一のレイアウトが再現されるだけで、
-    /// リフローにはならず、メモリと CPU の無駄になる。そうしたセッションは
-    /// 記録自体を丸ごとスキップする。
+    /// 再生ベースのリフローが恩恵をもたらさないセッションでは None。Claude Code のような
+    /// その場描画型のアプリは絶対カーソル列と焼き込まれたハード改行で全行をレイアウトするので、
+    /// 新しい幅で再生しても旧幅と同一になり、メモリと CPU の無駄にしかならない。
     raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
 
     // 入力待ちの検出
@@ -125,8 +105,6 @@ pub struct PtySession {
     /// スロットリング用。
     last_nudge_time: Option<Instant>,
 }
-
-// PtyManager
 
 /// 1つ以上の PTY セッションを管理する。
 pub struct PtyManager {
@@ -175,16 +153,12 @@ impl PtyManager {
         }
     }
 
-    /// セッション数を返す。
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
-    /// idx のセッションが id 判明済みの Claude パネルである場合、その
-    /// Claude セッション id・作業ディレクトリ・起動時刻を返す。reflow
-    /// トランスクリプトビューが、worktree の最新セッションではなく
-    /// *特定の* パネルのログを開くために使う。範囲外のインデックス、
-    /// Claude 以外のセッション、id 不明の Claude セッションでは None。
+    /// id 判明済みの Claude パネルなら、その Claude セッション id・作業ディレクトリ・起動時刻。
+    /// reflow ビューが worktree の最新ではなく *特定の* パネルのログを開くために使う。
     pub fn claude_session_ref(&self, idx: usize) -> Option<(PathBuf, String, SystemTime)> {
         let session = self.sessions.get(idx)?;
         let id = session.claude_session_id.as_ref()?;
@@ -193,12 +167,9 @@ impl PtyManager {
 
     /// panel_id のパネルが書き込んでいる Claude セッションの id を差し替える。
     ///
-    /// 呼ぶのは SessionStart フック経由の通知 ([crate::cc_hook]) だけ。
-    /// フックはそのパネル自身の Claude プロセスの中で走るので、これは推測では
-    /// なく事実。/clear や /resume でログがローテーションしても、以降の
-    /// トランスクリプト解決が正しいファイルを指す。
-    ///
-    /// 該当パネルが無い (すでに閉じた等) 場合や、値が変わらない場合は false。
+    /// 呼ぶのは SessionStart フック経由の通知 ([crate::cc_hook]) だけ。フックはそのパネル
+    /// 自身の Claude プロセスの中で走るので、これは推測ではなく事実。該当パネルが無い、
+    /// または値が変わらない場合は false。
     pub fn set_claude_session_id(&mut self, panel_id: &str, session_id: String) -> bool {
         let Some(session) = self
             .sessions

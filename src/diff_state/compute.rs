@@ -69,15 +69,12 @@ impl DiffState {
     /// 正規表現パターンを返す。対応していない拡張子には None を返す。
     fn func_pattern_for_ext(ext: &str) -> Option<Regex> {
         let pattern = match ext {
-            // Rust
             "rs" => r"^\s*(pub\s+)?(async\s+)?(fn|impl|struct|enum|trait|mod|macro_rules!)\b",
             // TypeScript / JavaScript
             "ts" | "tsx" | "js" | "jsx" | "mjs" | "mts" | "cjs" | "cts" => {
                 r"^\s*(export\s+)?(default\s+)?(async\s+)?(function\*?|class)\b|^\s*(export\s+)?(const|let|var)\s+\w+\s*="
             }
-            // Python
             "py" => r"^\s*(async\s+)?(def|class)\b",
-            // Go
             "go" => r"^(func|type)\b",
             // Java / C# / Kotlin
             "java" | "cs" | "kt" | "kts" => {
@@ -87,11 +84,8 @@ impl DiffState {
             "c" | "h" | "cpp" | "cc" | "cxx" | "hpp" | "hxx" => {
                 r"^[a-zA-Z_][\w:*&<> ]*\s+\*?\w+\s*\(|^\s*(class|struct|enum|namespace|template)\b"
             }
-            // Ruby
             "rb" => r"^\s*(def|class|module)\b",
-            // PHP
             "php" => r"^\s*(public|private|protected|static)?\s*(function|class|interface|trait)\b",
-            // Shell
             "sh" | "bash" | "zsh" => r"^\s*(\w+\s*\(\)|function\s+\w+)",
             _ => return None,
         };

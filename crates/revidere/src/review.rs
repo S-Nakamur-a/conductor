@@ -31,9 +31,8 @@ pub enum Scope {
 
 /// 成果物の置き場。`<repo>/.conductor/review.json` とその前回差分版。
 ///
-/// 書く側と読む側が別々にこのパスを組み立てると、片方だけ変えたときに
-/// 「書いたのに読まれない」が黙って起きる。形を決めているのはこのクレートなので、
-/// 置き場もここが持つ。
+/// 書く側と読む側が別々にパスを組み立てると、片方だけ変えたときに「書いたのに
+/// 読まれない」が黙って起きる。
 pub fn artifact_path(repo_root: &std::path::Path, scope: Scope) -> std::path::PathBuf {
     let name = match scope {
         Scope::Base => "review.json",
@@ -256,10 +255,9 @@ impl Coverage {
 
 /// 前回の成果物からの進み。作り直すたびに引き直す。
 ///
-/// レビューそのものは毎回ゼロベースで作る（前回の分類を持ち越すと、履歴が
-/// 書き換わったときに何が根拠だったのか誰にも分からなくなる）。そのうえで
-/// 「前回見たときから何が動いたか」だけを別に持たせて、2 度目以降の読者が
-/// 全部を読み直さずに済むようにする。
+/// レビュー自体は毎回ゼロベースで作る (前回の分類を持ち越すと、履歴が書き換わった
+/// ときに何が根拠だったのか分からなくなる)。「前回見たときから何が動いたか」だけを
+/// 別に持たせて、2 度目以降の読者が全部を読み直さずに済むようにする。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SincePrevious {
     /// 比べる起点。今の HEAD と違う HEAD で作られた、直近の成果物が見ていた
@@ -269,14 +267,11 @@ pub struct SincePrevious {
     pub head: String,
     /// 前回の HEAD から今の作業ツリーまでで変わったファイル。引けなければ None。
     ///
-    /// 起点は前回の解析時の HEAD なので、コミット済みの分は正確に引ける。
-    /// ただし前回の成果物も作業ツリーまで見ていて、そのときの未コミット変更は
-    /// コミット ID では名指せない。前回のレビュー後にコミットせずに解析し直すと、
-    /// 前回も読んでいたはずの変更がここに並ぶ。
+    /// 前回の成果物も作業ツリーまで見ていて、そのときの未コミット変更はコミット ID では
+    /// 名指せない。コミットせずに解析し直すと、前回も読んでいた変更がここに並ぶ。
     ///
-    /// 空の Vec と None を畳まない。前回のコミットがもう残っていなくて引けな
-    /// かっただけなのに「変わったファイルは無い」と言うと、山ほど動いていても
-    /// 無いと言い切ることになる。
+    /// 空の Vec と None を畳まない。前回のコミットが残っていなくて引けなかっただけなのに
+    /// 「変わったファイルは無い」と言うと、山ほど動いていても無いと言い切ることになる。
     pub files: Option<Vec<String>>,
     /// 前回の HEAD が今の履歴から辿れない（rebase / amend / force push、
     /// あるいは古いコミットへの巻き戻し）。
@@ -323,7 +318,7 @@ mod tests {
     /// 成果物の置き場は、書く側と読む側が同じ 1 つの関数から得る。
     /// ここが割れると「書いたのに読まれない」が黙って起きる。
     #[test]
-    fn the_artifact_lives_under_the_host_directory() {
+    fn 成果物はホストのディレクトリの下に置く() {
         let p = artifact_path(std::path::Path::new("/repo"), Scope::Base);
         assert_eq!(p, std::path::Path::new("/repo/.conductor/review.json"));
         assert!(p.starts_with(std::path::Path::new("/repo").join(DIR)));
@@ -332,7 +327,7 @@ mod tests {
     /// 2 つの区間が同じファイルを取り合うと、片方を見ている間にもう片方が
     /// 消える。別々の置き場であることを固定する。
     #[test]
-    fn the_two_scopes_do_not_share_a_file() {
+    fn 区間が違えばファイルを共有しない() {
         let repo = std::path::Path::new("/repo");
         assert_ne!(
             artifact_path(repo, Scope::Base),
@@ -350,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_expands_to_every_line_between_both_ends_inclusive() {
+    fn 範囲は両端を含む全ての行に展開される() {
         let got: Vec<u32> = range(Side::New, Some(10), Some(12))
             .positions()
             .iter()
@@ -360,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn a_range_with_only_a_start_yields_a_single_position() {
+    fn 始点だけの範囲は位置1つになる() {
         assert_eq!(
             range(Side::Old, Some(4), None).positions(),
             vec![Position::new("src/x.rs", Side::Old, 4)]
@@ -368,14 +363,14 @@ mod tests {
     }
 
     #[test]
-    fn a_reversed_range_yields_nothing_rather_than_panicking() {
+    fn 逆向きの範囲は落ちずに何も返さない() {
         // start > end はモデルの誤りなので、ここで黙って直さず空にする。
         // 結果として当該位置が unclassified に落ち、検査で表に出る。
         assert!(range(Side::New, Some(9), Some(2)).positions().is_empty());
     }
 
     #[test]
-    fn a_file_side_range_ignores_any_line_numbers() {
+    fn ファイル側の範囲は行番号を無視する() {
         let r = Range {
             path: "logo.png".into(),
             side: Side::File,
@@ -388,7 +383,7 @@ mod tests {
     /// 重要度の 4 値が JSON との間で往復する。serde の名前が JSON とずれると、
     /// 成果物を読んだ側で重要度だけが黙って落ちる。
     #[test]
-    fn every_importance_round_trips_through_its_json_name() {
+    fn 重要度はjsonの名前を往復する() {
         for (imp, name) in [
             (Importance::Core, "core"),
             (Importance::Ripple, "ripple"),
@@ -402,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn side_serializes_to_a_lowercase_json_string() {
+    fn sideは小文字のjson文字列になる() {
         let p = Position::new("src/x.rs", Side::Old, 7);
         let s = serde_json::to_string(&p).unwrap();
         assert!(s.contains("\"side\":\"old\""), "{s}");

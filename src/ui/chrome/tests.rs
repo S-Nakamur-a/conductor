@@ -10,7 +10,7 @@ fn keymap() -> KeyMap {
 }
 
 #[test]
-fn representative_chord_prefers_short_ascii_over_unicode() {
+fn 代表キーはunicodeより短いasciiを選ぶ() {
     let km = keymap();
     // cycle_focus_backward は alt+h と macOS 特有のグリフ '˙' の両方に割り当てられているが、
     // グリフの方は絶対に表示してはならない。
@@ -23,7 +23,7 @@ fn representative_chord_prefers_short_ascii_over_unicode() {
 }
 
 #[test]
-fn worktree_footer_is_truthful_and_has_no_unicode() {
+fn worktreeのフッタは実際のキーだけを出しunicodeを使わない() {
     let hint = status_bar_hint(Focus::Worktree, &keymap());
     assert!(hint.contains("j/k: nav"), "{hint}");
     assert!(hint.contains("tab: panel"), "{hint}");
@@ -34,7 +34,7 @@ fn worktree_footer_is_truthful_and_has_no_unicode() {
 }
 
 #[test]
-fn terminal_footer_notes_passthrough_and_leave_key() {
+fn terminalのフッタは素通しと抜けるキーを書く() {
     let hint = status_bar_hint(Focus::TerminalClaude, &keymap());
     assert!(hint.contains("keys → terminal"), "{hint}");
     // leave_terminal は ctrl+esc であり、単なる Esc ではない。

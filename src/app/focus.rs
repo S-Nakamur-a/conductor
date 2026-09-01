@@ -65,21 +65,15 @@ impl FocusState {
 impl App {
     /// パネルにフォーカスをセットする。必要になった時点でデータを遅延読み込みする。
     pub fn set_focus(&mut self, mut focus: Focus) {
-        // 埋め込みエディタがマージされたExplorer+Viewer領域を占有している間、
-        // その2つのパネルは隠れる — それらへのフォーカス要求はすべて代わりに
-        // エディタへ着地する。このリダイレクトをここに集約することで、
-        // フォーカスに至るあらゆる経路（Tab循環、alt+数字、クリック、
-        // パレット）が、それぞれエディタの存在を知らなくてもこの不変条件を
-        // 守れる。
+        // 埋め込みエディタが Explorer+Viewer 領域を占有している間、その 2 つへのフォーカス要求は
+        // エディタへ着地する。ここに集約することで、フォーカスに至るあらゆる経路がエディタの
+        // 存在を知らなくてもこの不変条件を守れる。
         if self.editor.is_some() && matches!(focus, Focus::Explorer | Focus::Viewer) {
             focus = Focus::Editor;
         }
 
-        // worktree列はモニタストリップ＋切り替えモーダルになったので、
-        // 「worktreeへフォーカス」は今ではそのモーダルを開き、フォーカスは
-        // 元の場所に残す。これはworktreeへのあらゆるトリガーが通る唯一の
-        // 関所である（Tabはもうworktreeへは到達せず、super+1/w/パレット/
-        // クリックはすべてset_focus(Worktree)を呼ぶ）。
+        // 「worktree へフォーカス」は切り替えモーダルを開き、フォーカスは元の場所に残す。
+        // worktree へのあらゆるトリガーが通る唯一の関所。
         if focus == Focus::Worktree {
             self.overlays.active = crate::overlay::ActiveOverlay::WorktreeSwitcher;
             return;
@@ -97,16 +91,10 @@ impl App {
                 self.layout.expanded = None;
             }
         }
-        // 注意: 単なるフォーカス変更では、あえてここでreflowトランスクリプトを
-        // 閉じない。キーハンドラ（event）もレンダラ（terminal::render::claude）も
-        // reflowをfocus == TerminalClaudeでゲートしているので、他のパネルに
-        // フォーカスがある間はトランスクリプトはキーを捕まえず描画もされない
-        // （Claudeパネルは生のPTYにフォールバックする）。ここで解体すると
-        // スクロール位置もリセットされてしまい、ユーザーが他のパネルを
-        // ちらっと見ただけでライブの末尾に戻されてしまう。reflowは、
-        // トランスクリプトが古くなる遷移 — セッション切り替え
-        // (switch_claude_session) とworktree変更 (on_worktree_changed) —
-        // と、reflowキーハンドラでのEsc/F4では引き続き閉じられる。
+        // 単なるフォーカス変更では reflow トランスクリプトを閉じない。キーハンドラもレンダラも
+        // focus == TerminalClaude でゲートしているので捕まらず描かれない。ここで解体すると
+        // スクロール位置もリセットされ、他のパネルをちらっと見ただけでライブの末尾に戻される。
+        // トランスクリプトが古くなる遷移 (セッション切り替え・worktree 変更) と Esc/F4 では閉じる。
 
         match focus {
             Focus::Explorer | Focus::Viewer => {
@@ -118,19 +106,15 @@ impl App {
                 }
             }
             Focus::TerminalClaude => {
-                // ユーザーがターミナルパネルにフォーカスしたらCC待機シグナルを
-                // クリアする。実際に入力したときだけでなく。
+                // 実際に入力したときだけでなく、ターミナルパネルにフォーカスした時点で CC 待機シグナルを消す。
                 if let Some(idx) = self.terminal.claude.active_session {
                     self.clear_cc_waiting_signal(idx);
                 }
             }
             _ => {}
         }
-        // パネルの一時的な検索プロンプトはそのパネルにモーダルなので、
-        // フォーカスが離れたらキー捕捉を解放しなければならない。そうしないと
-        // フォーカス移動後も検索ボックスがキー入力を食い続ける（例: viewer内で
-        // /を押してからTabでClaudeへ — 入力はClaudeへ行くべき）。クエリと
-        // マッチ結果は保持されるので、戻ってきたときにn/Nはまだ機能する。
+        // パネルの検索プロンプトはそのパネルにモーダルなので、フォーカスが離れたらキー捕捉を
+        // 解放する。しないと、移動後も検索ボックスがキー入力を食い続ける。
         if focus != Focus::Viewer {
             self.viewer.search.search_active = false;
         }
@@ -250,7 +234,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn focus_is_pty_only_for_pty_panels() {
+    fn is_ptyになるのはptyのパネルだけ() {
         assert!(Focus::TerminalClaude.is_pty());
         assert!(Focus::TerminalShell.is_pty());
         assert!(Focus::Editor.is_pty());
@@ -260,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_focus_uses_editor_keymap_context() {
+    fn editorのフォーカスはeditorのkeymap文脈を使う() {
         assert_eq!(
             Focus::Editor.key_context(),
             crate::keymap::KeyContext::Editor

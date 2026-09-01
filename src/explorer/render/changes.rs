@@ -143,13 +143,10 @@ pub(super) fn render(
         );
     }
 
-    // 以前は base 解決の失敗が完全に無音だった: 一覧が単に空で返ってきて
-    // 「変更なし」に見えてしまっていた。メッセージを先頭行に固定して両者を
-    // 混同しないようにする。このバナーは display_list の一部ではないため
-    // 選択もできず、ナビゲーションキーが扱うインデックスもずらさない —
-    // コストはリストの高さ1行分だけ。改行はスペースに潰す。複数行の
-    // ListItem はここで確保した1行より多くの行を静かに消費してしまい、
-    // List ウィジェットはパネル端で溢れた分を切り捨てるだけだから。
+    // base 解決の失敗を「変更なし」と混同させないため、メッセージを先頭行に固定する。この
+    // バナーは display_list の一部ではないので選択もできず、ナビゲーションキーのインデックスも
+    // ずらさない。改行はスペースに潰す — 複数行の ListItem はここで確保した 1 行より多くを
+    // 静かに消費し、List ウィジェットは溢れた分を切り捨てるだけだから。
     let error_banner: Option<ListItem> = ctx.diff.error.as_deref().map(|msg| {
         ListItem::new(Span::styled(
             format!("  \u{26a0} {}", msg.replace('\n', " ")),
@@ -183,12 +180,9 @@ pub(super) fn render(
                 Some(ListItem::new(line))
             }
             DiffListEntry::File { file_index, depth } => {
-                // インデックスアクセスではなく .get を使う: display_list と
-                // ファイル vector は異なるティックで再構築されるため、片方が
-                // 古いままレンダリングされるフレームがありうる。行をスキップ
-                // すればチラつきで済むが、インデックスアクセスだと描画処理の
-                // 内側からアプリ全体を落としかねない。上のファイルツリーも
-                // 同様の対応をしている。
+                // インデックスアクセスではなく .get を使う。display_list とファイル vector は異なる
+                // ティックで再構築されるので、片方が古いままのフレームがありうる。行をスキップすれば
+                // チラつきで済むが、インデックスアクセスだと描画の内側からアプリを落とす。
                 let file_diff = ctx.diff.files.get(*file_index)?;
                 let filename = file_diff.path.rsplit('/').next().unwrap_or(&file_diff.path);
                 let indent = "  ".repeat(*depth);
@@ -196,10 +190,8 @@ pub(super) fn render(
                 let prefix = format!("  {indent}");
                 let glyph = format!("{} ", icon.glyph(icon_set));
 
-                // ファイル名の色はファイルの git ステージ状態
-                // （untracked / unstaged / staged / committed）を表す。
-                // 行数はベースからの合計なので、その内訳がコミット済みか
-                // 手元の編集かはこの色でしか分からない。
+                // ファイル名の色は git ステージ状態を表す。行数はベースからの合計なので、その内訳が
+                // コミット済みか手元の編集かはこの色でしか分からない。
                 let stage_state = file_stage_state(ex.tree.git_status.status(&file_diff.path));
                 let base_fg = status_color(theme, stage_state);
 
@@ -308,7 +300,7 @@ mod tests {
     /// エラーサフィックスの存在意義そのもの: base 解決の失敗と、本当に
     /// クリーンなツリーが同じタイトルにレンダリングされてはならない。
     #[test]
-    fn error_title_differs_from_a_genuine_zero() {
+    fn エラー時の見出しは本当の0件と区別できる() {
         assert_ne!(
             changes_title(0, true, crate::icons::IconSet::Unicode),
             changes_title(0, false, crate::icons::IconSet::Unicode)
@@ -323,7 +315,7 @@ mod tests {
     /// base 解決が失敗しても HEAD 基準の一覧は生き残るので、件数は 0 以外に
     /// なり、かつエラーマーカーも表示される — 両方が出ていること。
     #[test]
-    fn error_title_keeps_the_count() {
+    fn エラー時の見出しも件数を残す() {
         let title = changes_title(17, true, crate::icons::IconSet::Unicode);
         assert!(title.contains("(17)"), "{title}");
         assert!(title.contains("error"), "{title}");
@@ -333,13 +325,13 @@ mod tests {
     /// いずれもバナーの行コストをここから導出する。1行でもずれると
     /// クリックで別のファイルが開いてしまうので、契約として固定する。
     #[test]
-    fn banner_costs_exactly_one_row_and_only_when_erroring() {
+    fn バナーはエラー時にだけちょうど1行使う() {
         assert_eq!(changes_banner_rows(false), 0);
         assert_eq!(changes_banner_rows(true), 1);
     }
 
     #[test]
-    fn each_git_status_resolves_to_its_own_colour() {
+    fn gitの各状態は自分の色に解決する() {
         let theme = Theme::default();
         for (status, want) in [
             (Some(git2::Status::WT_NEW), theme.hint),
@@ -365,7 +357,7 @@ mod tests {
     /// 状態が変わっても幅が変わらないこと。当たり判定は幅を定数から導いて
     /// いるので、ここがずれると「見えている場所と押せる場所」が食い違う。
     #[test]
-    fn every_state_renders_the_same_width() {
+    fn どの状態も同じ幅で描かれる() {
         for state in [
             ArtifactState::None,
             ArtifactState::Running,
@@ -385,7 +377,7 @@ mod tests {
     /// この 2 つは別々に計算されているので、ratatui の右寄せの寸法が変われば
     /// クリックだけ 1 セルずれる、という壊れ方をする。
     #[test]
-    fn the_hit_box_is_where_ratatui_puts_the_badge() {
+    fn 当たり判定はratatuiが実際にバッジを置く場所と一致する() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use ratatui::widgets::{Block, Borders};
@@ -422,7 +414,7 @@ mod tests {
     /// 狭いパネルではチップを出さない。出さないものは押せないことが同じ
     /// 判定から導かれるので、見えないボタンは生まれない。
     #[test]
-    fn a_narrow_panel_hides_the_badge() {
+    fn 狭いパネルではバッジを出さない() {
         let title_w = changes_title(0, false, crate::icons::IconSet::Unicode)
             .chars()
             .count() as u16;

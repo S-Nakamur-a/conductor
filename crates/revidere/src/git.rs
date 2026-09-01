@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn the_range_starts_at_the_merge_base_so_the_bases_own_progress_stays_out() {
+    fn 区間はmerge_baseから始まりベース側の進みは入らない() {
         let r = Repo::new();
         r.write("a.txt", "1\n2\n3\n");
         r.commit_all("base");
@@ -262,7 +262,7 @@ mod tests {
     /// ベースからの全差分になっていること。ここが「最後のコミット以降」だけに
     /// なると、レビューは PR 全体ではなく直近の一手しか映さなくなる。
     #[test]
-    fn the_range_covers_every_commit_since_the_base_not_only_the_latest_one() {
+    fn 区間はベース以降の全コミットを含み直近だけではない() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("base");
@@ -289,7 +289,7 @@ mod tests {
     /// 履歴が書き換わった (rebase / amend / force push) ときも、起点は
     /// 今の HEAD とベースから引き直される。
     #[test]
-    fn the_range_is_rebuilt_from_the_current_head_after_the_history_is_rewritten() {
+    fn 履歴が書き換わっても今のheadから区間を組み直す() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("base");
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_files_lists_both_new_commits_and_untracked_files() {
+    fn 変わったファイルは新しいコミットも未追跡も並べる() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("base");
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_keeps_the_default_three_lines_of_context() {
+    fn diffは既定の3行の文脈を保つ() {
         let r = Repo::new();
         let base: String = (1..=10).map(|n| format!("{n}\n")).collect();
         r.write("a.txt", &base);
@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn find_renames_reports_a_pure_rename_instead_of_delete_and_add() {
+    fn 純粋なリネームは削除と追加ではなくリネームとして出す() {
         let r = Repo::new();
         let content: String = (1..=20).map(|n| format!("line{n}\n")).collect();
         r.write("a.rs", &content);
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn the_diff_stitches_untracked_files_into_the_committed_diff() {
+    fn 未追跡ファイルもコミット済みのdiffに繋ぎ込む() {
         let r = Repo::new();
         r.write("a.txt", "1\n2\n3\n");
         r.commit_all("base");
@@ -393,7 +393,7 @@ mod tests {
     /// core.quotepath の既定のままだと "a/\343\201\202.txt" というエスケープ付きの
     /// 別名で出て、変更一覧のパスが実在しない文字列になる。
     #[test]
-    fn a_non_ascii_path_is_not_octal_escaped_in_the_diff() {
+    fn 非asciiのパスは8進エスケープされずに出る() {
         let r = Repo::new();
         r.write("あ.txt", "1\n");
         r.commit_all("base");
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn guess_base_prefers_main_when_no_origin_head_is_set() {
+    fn origin_headが無ければmainを選ぶ() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("init");
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn guess_base_falls_back_to_master_when_main_is_absent() {
+    fn mainが無ければmasterへ落ちる() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("init");
@@ -424,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn guess_base_errors_rather_than_guessing_when_nothing_matches() {
+    fn どれも無ければ推測せずエラーにする() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("init");
@@ -433,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn guess_base_follows_origin_head_over_main_and_master() {
+    fn origin_headはmainやmasterより優先する() {
         let r = Repo::new();
         r.write("a.txt", "1\n");
         r.commit_all("init");
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn root_resolves_from_a_subdirectory() {
+    fn サブディレクトリからでもルートを引ける() {
         let r = Repo::new();
         r.write("sub/dir/a.txt", "x\n");
         r.commit_all("init");

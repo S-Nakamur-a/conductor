@@ -477,10 +477,8 @@ impl ReviewState {
         None
     }
 
-    /// 表示上の選択位置にある項目の削除を開始する — 返信の行が選択されて
-    /// いれば返信そのものを、そうでなければコメント全体を対象にする。
-    /// 実際の削除は [Self::confirm_delete] が行う。確認プロンプトを返す。
-    /// (以前は返信の行を選んでも親コメントが削除されるデータロスのバグがあった。)
+    /// 表示上の選択位置にある項目の削除を開始する — 返信の行が選択されていれば返信そのものを、
+    /// そうでなければコメント全体を対象にする。実際の削除は [Self::confirm_delete] が行う。
     pub fn request_delete_at(&mut self, visual: usize) -> Option<Notice> {
         let target = if let Some((c_idx, r_idx)) = self.selected_reply_at(visual) {
             self.reply_id_at(c_idx, r_idx)
@@ -581,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn build_file_comment_cache_keeps_resolved_for_badges() {
+    fn バッジのために解決済みのコメントも残す() {
         let mut state = ReviewState::new();
         state.comments = vec![
             comment("c1", 10, CommentStatus::Pending),
@@ -597,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn build_file_comment_cache_supports_overlapping_ranges() {
+    fn 重なった範囲も扱える() {
         // 範囲が入れ子になる 2 つのコメント (L10-L20 と L11-L19) は共存できなければ
         // ならない。共有する行は両方を持ち、それぞれが自分の終端行 (💬 バッジと
         // インラインスレッドが置かれる行) を別々に保つ。

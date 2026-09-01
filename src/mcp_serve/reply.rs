@@ -13,16 +13,8 @@ pub(super) fn ok_text(text: impl Into<String>) -> Result<CallToolResult, ErrorDa
     Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
 }
 
-/// ツールレベルの失敗。isError を持つ *成功* した呼び出しとして報告する。
-/// Node サーバがそうしていたやり方であり、モデルがメッセージを読んで自分で
-/// 訂正できるようにするための形でもある。
-///
-/// これは単純な「入力が悪い vs サーバが壊れている」の区別ではない。*書き込み*
-/// でのデータベース失敗も意図的にこの形で返す — create_comment が
-/// 失敗したときは、バリデーションエラーと同様にモデルが
-/// 理由を見て再試行する必要がある。一方 *読み込み* でのデータベース失敗は
-/// 代わりに ErrorData として送出される（tools.rs の db_error 経由）。
-/// モデル側に訂正すべき誤りは無く、違うやり方で再試行しても意味が無いため。
+/// ツールレベルの失敗。isError を持つ *成功* した呼び出しとして報告する。モデルが
+/// メッセージを読んで自分で訂正できるようにするため。
 pub(super) fn err_text(text: impl Into<String>) -> Result<CallToolResult, ErrorData> {
     Ok(CallToolResult::error(vec![ContentBlock::text(text)]))
 }
@@ -43,11 +35,8 @@ pub(super) fn short_id(id: &str) -> &str {
     &id[..end]
 }
 
-/// 必須の文字列が空だったら拒否する。
-///
-/// スキーマは「string」としか言えない。これが置き換えた Node サーバはこれら
-/// すべてに最小長を強制していたし、空のコメント本文やステップタイトルは、
-/// 分かりやすい誤りとしてではなく TUI 上の見えない行として現れてしまう。
+/// 必須の文字列が空だったら拒否する。スキーマは「string」としか言えず、空のコメント本文や
+/// ステップタイトルは分かりやすい誤りとしてではなく TUI 上の見えない行として現れる。
 pub(super) fn ensure_not_blank(value: &str, what: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{what} must not be empty."));
@@ -149,13 +138,13 @@ mod tests {
     use crate::review_store::{Author, CommentKind, CommentStatus};
 
     #[test]
-    fn line_range_renders_single_and_range() {
+    fn 行範囲は単一行と範囲を描き分ける() {
         assert_eq!(line_range("src/a.rs", 3, None), "src/a.rs:3");
         assert_eq!(line_range("src/a.rs", 3, Some(9)), "src/a.rs:3-9");
     }
 
     #[test]
-    fn short_id_truncates_to_eight_chars() {
+    fn short_idは8文字に切り詰める() {
         assert_eq!(short_id("0123456789abcdef"), "01234567");
         assert_eq!(short_id("abc"), "abc");
     }
@@ -164,7 +153,7 @@ mod tests {
     /// /etc/passwd として通ってしまい、Path::join が worktree の外へたどって
     /// しまっていた。剥がすのは先にやらないといけない。
     #[test]
-    fn normalize_repo_relative_rejects_paths_that_strip_into_absolute() {
+    fn 正規化して絶対パスになるものは拒む() {
         assert!(normalize_repo_relative(".//etc/passwd", "file_path").is_err());
         assert!(normalize_repo_relative("././../../etc/shadow", "file_path").is_err());
         assert!(normalize_repo_relative("/etc/passwd", "file_path").is_err());
@@ -175,7 +164,7 @@ mod tests {
     /// 上の対策を入れても通常のケースは生き残らないといけない: 素の相対
     /// パスはそのまま、先頭の ./ 1つだけは剥がされる。
     #[test]
-    fn normalize_repo_relative_keeps_ordinary_paths() {
+    fn 普通の相対パスはそのまま通す() {
         assert_eq!(
             normalize_repo_relative("src/foo.rs", "file_path"),
             Ok("src/foo.rs".to_string())
@@ -191,7 +180,7 @@ mod tests {
     /// 照合するので、./src/foo.rs のまま保存されたステップは決してジャンプ
     /// できない。
     #[test]
-    fn normalize_repo_relative_canonicalises_every_spelling() {
+    fn どの綴りでも同じ形に正規化する() {
         for spelling in [
             "src/foo.rs",
             "./src/foo.rs",
@@ -211,23 +200,20 @@ mod tests {
     /// 正規化すると何も残らなくなるパスは、何にも紐付かないアンカーとして
     /// 保存されるのではなく拒否される。
     #[test]
-    fn normalize_repo_relative_rejects_a_path_that_normalises_to_empty() {
+    fn 正規化して空になるパスは拒む() {
         assert!(normalize_repo_relative("./", "file_path").is_err());
         assert!(normalize_repo_relative(".", "file_path").is_err());
     }
 
-    /// Node サーバは絶対パスだけを拒否していたが、.. も同じ join してから
-    /// 読み込むという経路に到達するので、ここでも拒否する。
+    /// .. も絶対パスと同じく join してから読み込むという経路に到達するので、どちらも拒否する。
     #[test]
-    fn ensure_repo_relative_catches_absolute_and_parent_dir() {
+    fn 絶対パスと親ディレクトリ参照を捕まえる() {
         assert!(ensure_repo_relative("/etc/passwd", "file_path").is_err());
         assert!(ensure_repo_relative("../../secret", "file_path").is_err());
         assert!(ensure_repo_relative("a/../../b", "file_path").is_err());
         assert!(ensure_repo_relative("src/foo.rs", "file_path").is_ok());
         assert!(ensure_repo_relative("./src/foo.rs", "file_path").is_ok());
     }
-
-    // render_thread
 
     fn sample_comment(branch: Option<&str>) -> ReviewComment {
         ReviewComment {
@@ -256,7 +242,7 @@ mod tests {
 
     /// 組み合わせによらず常に出る骨組み。
     #[test]
-    fn render_thread_always_shows_the_header_and_metadata() {
+    fn スレッドの描画は見出しとメタ情報を必ず出す() {
         let text = render_thread(&sample_comment(Some("feature-x")), &[sample_reply()]);
 
         assert!(text.starts_with("## SUGGEST — src/foo.rs:10-12\n"));
@@ -268,7 +254,7 @@ mod tests {
     /// branch と replies は独立したオプションセクション。片方の有無が
     /// もう片方の出方を変えてはいけない。
     #[test]
-    fn render_thread_shows_each_optional_section_only_when_it_has_one() {
+    fn 任意の節は中身があるときだけ出す() {
         for branch in [Some("feature-x"), None] {
             for replies in [vec![sample_reply()], vec![]] {
                 let case = format!("branch={branch:?} replies={}", replies.len());

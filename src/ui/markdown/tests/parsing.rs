@@ -6,7 +6,7 @@ use super::*;
 // パース
 
 #[test]
-fn plain_text_is_paragraphs_unchanged() {
+fn 素のテキストは段落のまま() {
     let blocks = parse_blocks("Just a normal sentence.\nSecond line.");
     assert_eq!(
         blocks,
@@ -18,7 +18,7 @@ fn plain_text_is_paragraphs_unchanged() {
 }
 
 #[test]
-fn hash_without_space_is_not_a_heading() {
+fn 空白の無いハッシュは見出しにしない() {
     // issue 参照 / C# / #nofilter は段落のままでなければならない。
     assert_eq!(
         parse_blocks("fix issue #242 now"),
@@ -35,7 +35,7 @@ fn hash_without_space_is_not_a_heading() {
 }
 
 #[test]
-fn headings_parse_with_level() {
+fn 見出しは階層つきで読む() {
     assert_eq!(
         parse_blocks("# Title\n### Sub"),
         vec![
@@ -52,7 +52,7 @@ fn headings_parse_with_level() {
 }
 
 #[test]
-fn list_items_bullet_and_ordered() {
+fn 箇条書きと番号付きの項目() {
     assert_eq!(
         parse_blocks("- a\n* b\n1. c\n2) d"),
         vec![
@@ -90,7 +90,7 @@ fn list_items_bullet_and_ordered() {
 }
 
 #[test]
-fn unclosed_fence_consumes_to_eof() {
+fn 閉じていないフェンスは末尾まで飲む() {
     let blocks = parse_blocks("```rust\nlet x = 1;\nfn y() {}");
     assert_eq!(
         blocks,
@@ -102,7 +102,7 @@ fn unclosed_fence_consumes_to_eof() {
 }
 
 #[test]
-fn fence_without_lang_and_crlf() {
+fn 言語指定の無いフェンスとcrlf() {
     let blocks = parse_blocks("```\r\ncode\r\n```\r\n");
     assert_eq!(
         blocks,
@@ -117,7 +117,7 @@ fn fence_without_lang_and_crlf() {
 }
 
 #[test]
-fn fence_does_not_interpret_inner_markdown() {
+fn フェンスの中のmarkdownは解釈しない() {
     let blocks = parse_blocks("```\n# not a heading\n- not a list\n```");
     assert_eq!(
         blocks,
@@ -129,7 +129,7 @@ fn fence_does_not_interpret_inner_markdown() {
 }
 
 #[test]
-fn horizontal_rule_vs_text() {
+fn 水平線と本文の見分け() {
     assert_eq!(parse_blocks("---"), vec![MdBlock::Rule]);
     assert_eq!(parse_blocks("***"), vec![MdBlock::Rule]);
     assert_eq!(
@@ -141,7 +141,7 @@ fn horizontal_rule_vs_text() {
 // インライン
 
 #[test]
-fn snake_case_and_bare_star_stay_literal() {
+fn snake_caseと素のアスタリスクはそのまま() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     // アンダースコアは強調にならない。
@@ -160,7 +160,7 @@ fn snake_case_and_bare_star_stay_literal() {
 }
 
 #[test]
-fn bold_italic_code_are_styled() {
+fn 太字と斜体とコードに装飾が付く() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
@@ -193,7 +193,7 @@ fn bold_italic_code_are_styled() {
 }
 
 #[test]
-fn unclosed_inline_delimiters_stay_literal() {
+fn 閉じていないインラインの記号はそのまま() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     for input in [
@@ -215,7 +215,7 @@ fn unclosed_inline_delimiters_stay_literal() {
 }
 
 #[test]
-fn strikethrough_is_styled_and_muted() {
+fn 打ち消し線は装飾と減光が付く() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     let spans = inline_spans("keep ~~drop~~ this", base, &theme, MarkdownFlavor::Rich);
@@ -226,7 +226,7 @@ fn strikethrough_is_styled_and_muted() {
 }
 
 #[test]
-fn strikethrough_does_not_nest_inner_markup() {
+fn 打ち消し線の中の記法は入れ子にしない() {
     // 太字/斜体と同様、取り消し線もその内容をそのまま出力する（ネストしない）
     // — ただし取り消し線の外側にあるインラインマークアップは引き続き機能する。
     let (theme, _, _) = fixtures();
@@ -253,7 +253,7 @@ fn strikethrough_does_not_nest_inner_markup() {
 }
 
 #[test]
-fn bare_tilde_run_is_fence_not_strikethrough() {
+fn 素のチルダの連なりはフェンスであって打ち消し線ではない() {
     // 行頭の ~~~ はコードフェンスであり、インラインの取り消し線より先に解析される。
     assert!(matches!(
         parse_blocks("~~~\ncode\n~~~").as_slice(),
@@ -264,7 +264,7 @@ fn bare_tilde_run_is_fence_not_strikethrough() {
 // タスクチェックボックス
 
 #[test]
-fn task_checkboxes_parse() {
+fn タスクのチェックボックスを読む() {
     assert_eq!(
         parse_blocks("- [ ] todo\n- [x] done\n- [X] also\n1. [ ] num"),
         vec![
@@ -297,7 +297,7 @@ fn task_checkboxes_parse() {
 }
 
 #[test]
-fn non_checkboxes_stay_plain_items() {
+fn チェックボックスでないものは素の項目のまま() {
     // 不正な形式のマーカーはチェックボックスになってはいけない。テキストは
     // そのまま保持される。
     for (input, want_text) in [
@@ -320,7 +320,7 @@ fn non_checkboxes_stay_plain_items() {
 }
 
 #[test]
-fn empty_task_checkbox_parses() {
+fn 空のチェックボックスも読める() {
     assert_eq!(
         parse_blocks("- [ ]"),
         vec![MdBlock::ListItem {
@@ -333,7 +333,7 @@ fn empty_task_checkbox_parses() {
 }
 
 #[test]
-fn checkbox_renders_within_width() {
+fn チェックボックスは幅の中に収まる() {
     // [x]  マーカーより十分に大きい幅では、行が範囲内に収まる。
     // （他のすべてのリスト項目と同様、マーカーより狭い幅は守れない — その
     // 極端なケースは never_panics でカバーする。）
@@ -347,7 +347,7 @@ fn checkbox_renders_within_width() {
 // テーブル
 
 #[test]
-fn table_parses_headers_aligns_rows() {
+fn 表は見出しと揃えと行を読む() {
     assert_eq!(
         parse_blocks("| h1 | h2 |\n| --- | :--: |\n| a | b |\n| c | d |"),
         vec![MdBlock::Table {
@@ -362,7 +362,7 @@ fn table_parses_headers_aligns_rows() {
 }
 
 #[test]
-fn pipe_paragraph_is_not_a_table() {
+fn 縦棒を含む段落は表にしない() {
     // デリミタ行がない → テーブルではない。ソース行は1行も消費されない。
     assert_eq!(
         parse_blocks("a | b\nc | d"),
@@ -385,7 +385,7 @@ fn pipe_paragraph_is_not_a_table() {
 }
 
 #[test]
-fn table_cell_splitting_normalizes_outer_pipes() {
+fn セルの分割は外側の縦棒を正規化する() {
     assert_eq!(split_table_row("| a | b |"), vec!["a", "b"]);
     assert_eq!(split_table_row("a | b"), vec!["a", "b"]);
     assert_eq!(split_table_row("| a | b"), vec!["a", "b"]);
@@ -393,7 +393,7 @@ fn table_cell_splitting_normalizes_outer_pipes() {
 }
 
 #[test]
-fn table_renders_within_width_and_truncates() {
+fn 表は幅に収め必要なら切り詰める() {
     // ヘッダー + 区切り線 + 本体2行 = 4行、すべて width に収まる。
     let table = "| name | id |\n| --- | --: |\n| alice | 1 |\n| bob | 22 |";
     for width in [0usize, 1, 2, 3, 8, 20, 80] {
@@ -411,7 +411,7 @@ fn table_renders_within_width_and_truncates() {
 /// どの単語も、その列を保持できるだけの幅さえあれば、描画されたテーブルの
 /// どこかに必ず現れなければならない。
 #[test]
-fn wide_table_cells_wrap_instead_of_losing_content() {
+fn 幅の広いセルは失わずに折り返す() {
     let table = "| feature | notes |\n| --- | --- |\n\
         | toggle | switches a markdown file between raw source and rendered prose |\n\
         | scroll | independent of the raw view |";
@@ -446,7 +446,7 @@ fn wide_table_cells_wrap_instead_of_losing_content() {
 /// 折り返しによって行は高くなるが、列はグリッドのままでなければならない:
 /// 行内のどの行も同じ表示幅でなければ、2列目がガタガタになってしまう。
 #[test]
-fn wrapped_table_rows_keep_their_columns_aligned() {
+fn 折り返しても列は揃ったまま() {
     let table = "| a | b |\n| --- | --- |\n\
         | one two three four five | six |\n\
         | x | seven eight nine ten eleven |";
@@ -468,7 +468,7 @@ fn wrapped_table_rows_keep_their_columns_aligned() {
 /// 列より幅の広い、分割不能な1つのトークンでも全文が現れなければならない
 /// — 途中で切るのではなく、複数行にハード分割する。
 #[test]
-fn overlong_unbreakable_cell_is_split_not_cut() {
+fn 分割不能な長いセルは切らずに割る() {
     let url = "https://example.com/a/very/long/path/that/never/breaks";
     let table = format!("| link |\n| --- |\n| {url} |");
     let text: String = render(&table, 24)
@@ -482,7 +482,7 @@ fn overlong_unbreakable_cell_is_split_not_cut() {
 }
 
 #[test]
-fn table_cell_truncation_never_splits_multibyte() {
+fn セルの切り詰めはマルチバイトを割らない() {
     // CJK / アクセント付き文字のセルを、その内容幅より狭い幅に押し込める
     // — panic せず、幅の上限を守らなければならない。
     let table = "| name |\n| ---- |\n| café |\n| 日本語テスト |\n| 🧑‍🤝‍🧑x |";
@@ -494,7 +494,7 @@ fn table_cell_truncation_never_splits_multibyte() {
 }
 
 #[test]
-fn table_alignment_does_not_change_cell_width() {
+fn 揃え方を変えてもセルの幅は変わらない() {
     // どのアライメントでも同じ内容なら同じ列幅になる。
     let mk = |delim: &str| render(&format!("| h |\n| {delim} |\n| ab |"), 20);
     let widths: Vec<usize> = ["---", ":--", "--:", ":-:"]
@@ -519,7 +519,7 @@ fn table_alignment_does_not_change_cell_width() {
 }
 
 #[test]
-fn table_ragged_rows_are_normalized() {
+fn 列数の揃わない行は正規化する() {
     // 短い行も長い行も panic せずに描画され、ヘッダーに合わせてパディング/
     // 切り詰めされる。
     let table = "| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |";
@@ -529,7 +529,7 @@ fn table_ragged_rows_are_normalized() {
 }
 
 #[test]
-fn links_render_text_and_url() {
+fn リンクは本文とurlの両方を出す() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
@@ -564,7 +564,7 @@ fn links_render_text_and_url() {
 }
 
 #[test]
-fn self_titled_and_empty_links_show_url_once() {
+fn 本文がurlと同じか空ならurlは一度だけ() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
 
@@ -590,7 +590,7 @@ fn self_titled_and_empty_links_show_url_once() {
 }
 
 #[test]
-fn malformed_links_stay_literal() {
+fn 壊れたリンクはそのまま() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     for input in ["[text]", "[text](", "[text(url)", "a [b] c", "["] {
@@ -600,7 +600,7 @@ fn malformed_links_stay_literal() {
 }
 
 #[test]
-fn link_preserves_trailing_text() {
+fn リンクの後ろの本文は残る() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     let spans = inline_spans("[a](b)c", base, &theme, MarkdownFlavor::Rich);

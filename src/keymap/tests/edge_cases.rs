@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use keymap_suite::ActionName;
 
 #[test]
-fn keys_for_action_lists_canonical_strings() {
+fn keys_for_actionは正規の綴りを並べる() {
     let km = default_keymap();
     let keys = km.keys_for_action(KeyContext::Worktree, Action::NavigateDown);
     assert!(keys.contains(&"j".to_string()), "{keys:?}");
@@ -15,7 +15,7 @@ fn keys_for_action_lists_canonical_strings() {
 }
 
 #[test]
-fn action_name_roundtrips_for_every_variant() {
+fn アクション名は全バリアントで往復する() {
     // マクロが生成する ActionName の実装は ALL 全体で全単射でなければならない —
     // 手で選んだサンプルではなく全バリアントを網羅する。名前とマッチアームが
     // 同じ宣言から生成されるようになったため。
@@ -25,7 +25,7 @@ fn action_name_roundtrips_for_every_variant() {
 }
 
 #[test]
-fn lowercase_char_with_shift_is_not_recased() {
+fn shift付きの小文字は大文字に直されない() {
     // 旧来の手書きノーマライザからの挙動の差分で、これは意図した固定挙動:
     // keymap-core はグリフをそのまま信頼し、冗長な単独 SHIFT だけを落とす。
     // そのため 'g'+SHIFT は Char('g') のままで、素の 'g' バインディング
@@ -41,7 +41,7 @@ fn lowercase_char_with_shift_is_not_recased() {
 }
 
 #[test]
-fn macos_unicode_fallback_chords_resolve() {
+fn macosのunicodeフォールバックのキーが解決する() {
     // これらのグリフは TOML 上では見た目では検出できない。file→keymap-config→
     // keymap-core→crossterm という経路が、plain-Option と Shift-Option の
     // どちらの系統でも複数バイト文字を通せることをこのテストで確認する。
@@ -64,7 +64,7 @@ fn macos_unicode_fallback_chords_resolve() {
 }
 
 #[test]
-fn alt_shift_digit_does_not_fold_into_alt_digit() {
+fn alt_shift付きの数字はalt付き数字に潰れない() {
     // 「他の修飾キーが押されている間は SHIFT を保持する」というルール:
     // alt+1 はワークツリーにフォーカスするが、alt+shift+1 は SHIFT を落として
     // それに畳み込まれてはならない。alt+shift+digit は今は未バインド
@@ -81,7 +81,7 @@ fn alt_shift_digit_does_not_fold_into_alt_digit() {
 }
 
 #[test]
-fn enter_and_shift_enter_distinct_in_diff_mode() {
+fn diffモードではenterとshift_enterが別物() {
     // 1つのレイヤー内での、名前付きキーに対する SHIFT の判別。
     let km = default_keymap();
     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::empty());
@@ -97,7 +97,7 @@ fn enter_and_shift_enter_distinct_in_diff_mode() {
 }
 
 #[test]
-fn keys_for_action_uses_lowercase_canonical_form() {
+fn keys_for_actionは小文字の正規形を使う() {
     // ヘルプ画面はこれをそのままレンダリングする。旧来の "Ctrl+d" から
     // keymap-core の正規形 "ctrl+d" に変わった大文字小文字を固定する。
     let km = default_keymap();
@@ -106,7 +106,7 @@ fn keys_for_action_uses_lowercase_canonical_form() {
 }
 
 #[test]
-fn unmappable_key_event_passes_through() {
+fn 割り当ての無いキーは素通しする() {
     // 中立な表現を持たないキー（CapsLock）は KeyInput::try_from に失敗し、
     // パニックせず None（「そのまま通す」）に解決されなければならない。
     let km = default_keymap();
@@ -115,7 +115,7 @@ fn unmappable_key_event_passes_through() {
 }
 
 #[test]
-fn removed_lsp_actions_no_longer_parse() {
+fn 削除したlspのアクションはもう解釈されない() {
     // 配線されていないアクションは語彙から取り除かれたので、それをバインド
     // しようとすると黙って何もしないのではなく警告（UnknownAction）になる。
     assert_eq!(Action::from_name("go_to_definition"), None);
@@ -124,7 +124,7 @@ fn removed_lsp_actions_no_longer_parse() {
 }
 
 #[test]
-fn f_keys_are_unbound_after_cleanup() {
+fn fキーは割り当てが外れている() {
     let km = default_keymap();
     for n in 2..=7 {
         let key = KeyEvent::new(KeyCode::F(n), KeyModifiers::empty());

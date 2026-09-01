@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_handles_tabbed_lines() {
+    fn タブを含む行も統合できる() {
         // 生のタブを含む2つのシンタックストークンとしてハイライトされた
         // "\tlet x" という行。word-diff のセグメントはタブを展開するので、
         // シンタックストークン側も同じ方法で展開しなければ、マージは黙って
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_bails_on_text_mismatch() {
+    fn 本文が食い違えば統合をやめる() {
         // タブだけでなく本当にテキストが異なる場合も、呼び出し側がプレーン描画に
         // フォールバックできるよう諦めなければならない。
         let segments = vec![seg("foo", false)];

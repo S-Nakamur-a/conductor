@@ -144,7 +144,7 @@ mod tests {
     // ゲーミフィケーション: 日次統計
 
     #[test]
-    fn daily_stats_increment_and_streak() {
+    fn 日次の集計と連続日数() {
         let store = test_store();
         store.increment_daily_stat("reviews_created").unwrap();
         store.increment_daily_stat("reviews_created").unwrap();
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn daily_stats_invalid_field_rejected() {
+    fn 日次の集計は知らない項目名を拒む() {
         let store = test_store();
         assert!(store.increment_daily_stat("invalid_field").is_err());
         assert!(store.increment_daily_stat("").is_err());
@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn daily_stats_all_fields_increment_independently() {
+    fn 日次の集計は項目ごとに独立して増える() {
         let store = test_store();
         store.increment_daily_stat("reviews_created").unwrap();
         store.increment_daily_stat("branches_created").unwrap();
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn get_today_stats_returns_zeros_when_empty() {
+    fn 記録が無ければ今日の集計は全部0() {
         let store = test_store();
         let stats = store.get_today_stats().unwrap();
         assert_eq!(stats.reviews_created, 0);
@@ -197,14 +197,14 @@ mod tests {
     // ゲーミフィケーション: streak の計算
 
     #[test]
-    fn streak_zero_when_no_activity() {
+    fn 活動が無ければ連続日数は0() {
         let store = test_store();
         let streak = store.calculate_streak().unwrap();
         assert_eq!(streak.consecutive_days, 0);
     }
 
     #[test]
-    fn streak_counts_consecutive_past_days() {
+    fn 連続日数は続いた過去の日を数える() {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn streak_breaks_on_gap() {
+    fn 間が空くと連続日数は切れる() {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn streak_starts_from_yesterday_if_no_today() {
+    fn 今日の記録が無ければ昨日から数える() {
         let store = test_store();
         let today = chrono::Local::now().date_naive();
 
@@ -278,7 +278,7 @@ mod tests {
     // ゲーミフィケーション: セッション統計
 
     #[test]
-    fn session_stats_lifecycle() {
+    fn セッション集計の一生() {
         let store = test_store();
         let sid = store.start_stats_session().unwrap();
         store
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn session_stats_invalid_field_rejected() {
+    fn セッション集計は知らない項目名を拒む() {
         let store = test_store();
         let sid = store.start_stats_session().unwrap();
         // "sessions_used" は daily stats では有効だが、session stats では無効。
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn session_stats_end_with_zero_counts() {
+    fn 数が0のままでもセッションは閉じられる() {
         let store = test_store();
         let sid = store.start_stats_session().unwrap();
         let snap = store.end_stats_session(&sid).unwrap();
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_sessions_are_independent() {
+    fn 複数のセッションは互いに独立() {
         let store = test_store();
         let s1 = store.start_stats_session().unwrap();
         let s2 = store.start_stats_session().unwrap();

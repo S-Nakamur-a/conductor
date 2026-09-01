@@ -5,16 +5,10 @@
 //! App::markdown_cache 経由）で生成しているので、見出し・リスト・テーブル・
 //! フェンス付きコードブロックはどちらの場所でも同じ見た目になる。
 //!
-//! **このモードには行番号がなく、したがって行単位の機能も一切ない。**
-//! Markdown の描画は行の折り返し・詰め直し・省略・挿入を行うので、画面上の1行が
-//! もはやソースの1行に対応しない: ガター、行選択、ホバーハイライト、コメント
-//! 作成、インラインコメントスレッド、行に紐づいたジャンプはすべてここでは
-//! 無意味であり、それぞれの発生源で無効化されている — 参照先は
-//! [crate::viewer::ViewerState::is_showing_rendered_markdown] で、上記すべてが
-//! これをゲートにしている。特筆すべきは、このレンダラーが
-//! content.screen_row_map を一切書き込まないことで（[super::render] が入口で
-//! これをクリアする）、その空のマップこそがマウスの行検索をすべて「行なし」に
-//! 解決させている。
+//! **このモードには行番号がなく、したがって行単位の機能も一切ない。** 折り返し・詰め直し・
+//! 省略・挿入で画面上の1行がソースの1行に対応しないため。ゲートは
+//! [crate::viewer::ViewerState::is_showing_rendered_markdown]。このレンダラーが
+//! content.screen_row_map を書かないので、空のマップがマウスの行検索を「行なし」に解決する。
 
 use std::ops::Range;
 
@@ -56,26 +50,18 @@ pub(crate) struct ToggleSegments {
     pub rendered: Range<u16>,
 }
 
-/// ヘッダーのトグルが位置する場所。Viewer の列が狭すぎて描画できない場合は
-/// None。
+/// ヘッダーのトグルが位置する場所。Viewer の列が狭すぎて描画できないなら `None`。
 ///
-/// レンダラー（[toggle_spans]。これが Some を返すことをゲートにしている）と
-/// event/mouse 側のクリック判定は、どちらもこの1つの関数からレイアウトを
-/// 導出しているので、描画されないトグルが誤ってクリック可能になることは
-/// なく、描画されたトグルは常にその見た目どおりの位置でクリックできる。
-///
-/// タイトル行は右寄せで、ブロックの右枠の内側1セルで終わる。レイアウトは
+/// レンダラーとクリック判定がどちらもこの 1 つの関数からレイアウトを導出するので、
+/// 描画されないトグルがクリック可能になることはない。タイトル行は右寄せで、
 /// [Raw|Rendered] [<=>] の並び。
 pub(crate) fn toggle_segments(viewer_x: u16, viewer_w: u16) -> Option<ToggleSegments> {
     if viewer_w < MIN_VIEWER_W {
         return None;
     }
-    // 右寄せタイトル行の最後の描画可能セルから始めて、展開ボタンと区切りの
-    // スペース分だけ左に進み、チップ自身の右端に着地する。
     let line_end = viewer_x + viewer_w - 1; // 排他的
     let chip_end = line_end - EXPAND_BTN_W - 1; // 排他的
     let chip_start = chip_end - CHIP_W;
-    // | の位置で分割する: "[Raw" は raw を選び、"|Rendered]" は rendered を選ぶ。
     let split = chip_start + 1 + RAW_LABEL.len() as u16;
     Some(ToggleSegments {
         raw: chip_start..split,
@@ -83,10 +69,8 @@ pub(crate) fn toggle_segments(viewer_x: u16, viewer_w: u16) -> Option<ToggleSegm
     })
 }
 
-/// トグルチップの span 群。アクティブなモードをハイライトした状態で、
-/// Viewer の右寄せタイトル行にそのまま追加できる形になっている。呼び出し側は
-/// 現在の幅で [toggle_segments] が Some であることを事前に確認していなければ
-/// ならない。
+/// トグルチップの span 群。呼び出し側は現在の幅で [toggle_segments] が Some である
+/// ことを事前に確認していなければならない。
 pub(crate) fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> {
     let chrome = Style::default().fg(theme.muted);
     let active = Style::default()
@@ -102,10 +86,8 @@ pub(crate) fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> 
     ]
 }
 
-/// 開いている markdown ファイルをパネル全体に文章として描画する。
-///
-/// block は Viewer 自身のブロック（タイトル＋トグルはすでに乗っている）なので、
-/// このモードでも生ビューと同じフレームを保ち、変わるのは中身だけになる。
+/// 開いている markdown ファイルをパネル全体に文章として描画する。block は Viewer 自身の
+/// ブロックなので、このモードでも生ビューと同じフレームを保ち、変わるのは中身だけ。
 pub(super) fn render_markdown_view(
     frame: &mut Frame,
     area: Rect,
@@ -121,8 +103,7 @@ pub(super) fn render_markdown_view(
             app.viewer.content.current_file.as_deref().unwrap_or("")
         );
         let body = app.viewer.content.file_content.join("\n");
-        // 折り返された文章がスクロールバーのトラックと決して衝突しないよう
-        // 右側に1列確保する（summary view のインセットに合わせている）。
+        // スクロールバーのトラックと衝突しないよう右側に 1 列確保する (summary view に合わせる)。
         app.appearance.markdown_cache.render_window(
             &key,
             &body,
@@ -161,12 +142,10 @@ pub(super) fn render_markdown_view(
 mod tests {
     use super::*;
 
-    /// チップは [<=>] 展開ボタンのすぐ左に来なければならない。展開ボタンの
-    /// クリック判定（expand_button_at）は、その列の右端の2つ手前で終わる
-    /// 5セルを占有する。重なると、片方のボタンがもう片方のクリックを
-    /// 奪ってしまう。
+    /// チップは [<=>] 展開ボタンのすぐ左に来なければならない。重なると片方のボタンが
+    /// もう片方のクリックを奪う。
     #[test]
-    fn toggle_sits_just_left_of_the_expand_button() {
+    fn トグルは展開ボタンのすぐ左に来る() {
         let (x, w) = (40u16, 60u16);
         let seg = toggle_segments(x, w).expect("60 cols is plenty");
         let expand_start = x + w - 6;
@@ -179,13 +158,12 @@ mod tests {
     }
 
     #[test]
-    fn toggle_halves_are_adjacent_and_correctly_sized() {
+    fn トグルの左右は隣り合い幅も正しい() {
         let seg = toggle_segments(0, 80).unwrap();
         assert_eq!(
             seg.raw.end, seg.rendered.start,
             "no dead gap between halves"
         );
-        // "[Raw" と "|Rendered]"。
         assert_eq!(seg.raw.end - seg.raw.start, 1 + RAW_LABEL.len() as u16);
         assert_eq!(
             seg.rendered.end - seg.rendered.start,
@@ -197,15 +175,14 @@ mod tests {
     /// 描画されないトグルはクリックもできてはならない: レンダラーとクリック
     /// 判定はどちらも同じこの関数に尋ねているので、None は両方を同時に無効化する。
     #[test]
-    fn narrow_columns_get_no_toggle() {
+    fn 狭い列にはトグルを出さない() {
         assert!(toggle_segments(0, MIN_VIEWER_W - 1).is_none());
         assert!(toggle_segments(0, 0).is_none());
         assert!(toggle_segments(0, MIN_VIEWER_W).is_some());
     }
 
-    /// 列のオフセットが何であれ、チップはパネルの内側に収まる。
     #[test]
-    fn toggle_stays_within_the_column() {
+    fn トグルは列の内側に収まる() {
         for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 100, 300] {
             let seg = toggle_segments(7, w).unwrap();
             assert!(seg.raw.start > 7, "must not overlap the left border");
@@ -216,15 +193,11 @@ mod tests {
         }
     }
 
-    /// 決定的なチェック: file_view と全く同じ形でヘッダーを描画し、
-    /// toggle_segments が主張する各セルが実際にそのチップの部分を保持している
-    /// ことを確認する。両者の算術上の一致だけでは不十分である — 右寄せタイトルが
-    /// 実際にどこに着地するかは ratatui が決めており、そこにズレがあれば
-    /// クリックは誤った半分（あるいは [<=>] ボタン）に送られてしまうが、
-    /// 単体の計算だけではそれを検出できない。タイトルには幅広グリフのケースも
-    /// 含める。CJK のファイル名は1文字あたり2カラムを消費するため。
+    /// file_view と全く同じ形でヘッダーを描画し、toggle_segments が主張する各セルが実際に
+    /// そのチップを保持していることを確認する。右寄せタイトルの着地位置は ratatui が決める
+    /// ので、単体の計算だけではズレを検出できない。CJK は 1 文字 2 カラムなので幅広も含める。
     #[test]
-    fn drawn_columns_match_the_hit_test() {
+    fn 描いた列と当たり判定が一致する() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         use ratatui::layout::Alignment;
@@ -238,13 +211,11 @@ mod tests {
             " 設計メモ.md ",
             " a/very/deeply/nested/path/notes.md ",
         ] {
-            // 折りたたみの段数はトグルの左に積まれる。右寄せの行なので、これが
-            // 出てもトグルと [<=>] の列は動いてはならない。
+            // 折りたたみの段数が出てもトグルと [<=>] の列は動いてはならない。
             for fold_depth in ["", "\u{203a} 2/5 "] {
                 for w in [MIN_VIEWER_W, MIN_VIEWER_W + 1, 40, 60, 120] {
                     let mut term = Terminal::new(TestBackend::new(w, 5)).unwrap();
-                    // レンダラーがタイトルに割り当てるのと同じ予算: 枠線 + 段数 +
-                    // トグル + [<=>] + 隙間1列。
+                    // レンダラーと同じ予算: 枠線 + 段数 + トグル + [<=>] + 隙間 1 列。
                     let budget = (w as usize)
                         .saturating_sub(2 + fold_depth.chars().count() + TOGGLE_W as usize + 5 + 1);
                     let fitted = crate::viewer::render::file_view::fit_title(title, budget);
@@ -278,7 +249,6 @@ mod tests {
                         "]",
                         "{ctx}: rendered half ends at ']'"
                     );
-                    // そして展開ボタンも、自身のクリック判定が言う位置に本当に存在する。
                     assert_eq!(cell(w - 6), "[", "{ctx}: [<=>] start");
                     assert_eq!(cell(w - 2), "]", "{ctx}: [<=>] end");
                 }
@@ -287,11 +257,10 @@ mod tests {
     }
 
     #[test]
-    fn spans_highlight_the_active_mode() {
+    fn いま有効なモードが強調される() {
         let theme = Theme::default();
         let raw_mode = toggle_spans(false, &theme);
         let rendered_mode = toggle_spans(true, &theme);
-        // インデックス1が "Raw"、インデックス3が "Rendered"。
         assert!(raw_mode[1].style.add_modifier.contains(Modifier::BOLD));
         assert!(!raw_mode[3].style.add_modifier.contains(Modifier::BOLD));
         assert!(!rendered_mode[1].style.add_modifier.contains(Modifier::BOLD));

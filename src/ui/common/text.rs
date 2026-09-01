@@ -34,14 +34,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_string_that_fits_is_returned_unchanged() {
+    fn 収まる文字列はそのまま返る() {
         assert_eq!(truncate_to_width("hello", 10), "hello");
         assert_eq!(truncate_to_width("日本語", 10), "日本語");
         assert_eq!(truncate_to_width("", 10), "");
     }
 
     #[test]
-    fn a_truncated_string_stays_within_the_budget_including_the_ellipsis() {
+    fn 切り詰めた文字列は省略記号込みで予算に収まる() {
         for (s, max) in [("hello world", 6), ("日本語テスト", 6), ("a日b本c", 4)] {
             let out = truncate_to_width(s, max);
             assert!(out.ends_with('\u{2026}'), "{out:?}");
@@ -50,19 +50,19 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_budget_returns_empty() {
+    fn 予算0なら空が返る() {
         assert_eq!(truncate_to_width("anything", 0), "");
     }
 
     /// 省略記号のカラムを無条件に確保していた頃は "hell…" を返していた。
     #[test]
-    fn a_string_that_fits_exactly_is_not_cut() {
+    fn ちょうど収まる文字列は切らない() {
         assert_eq!(truncate_to_width("hello", 5), "hello");
     }
 
     /// ⚠ とその U+FE0F セレクタの間で切ると、宙に浮いた結合文字が残る。
     #[test]
-    fn a_grapheme_cluster_is_never_split() {
+    fn 書記素クラスタは分割しない() {
         let s = "\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}\u{26a0}\u{fe0f}";
         let out = truncate_to_width(s, 5);
         assert!(UnicodeWidthStr::width(out.as_str()) <= 5, "{out:?}");

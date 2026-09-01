@@ -5,7 +5,6 @@ use crate::keymap::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
-    // Navigation
     FocusWorktree,
     FocusExplorer,
     FocusViewer,
@@ -19,7 +18,6 @@ pub enum CommandId {
     ResizePaneUp,
     ResizePaneDown,
 
-    // Worktree
     CreateWorktree,
     DeleteWorktree,
     SwitchBranch,
@@ -31,15 +29,12 @@ pub enum CommandId {
     CherryPick,
     PullWorktree,
 
-    // Terminal
     NewClaudeCode,
     NewShell,
     ResumeClaudeSession,
 
-    // Git
     RefreshDiff,
 
-    // View
     SearchInFile,
     ToggleHelp,
     ToggleMarkdownRender,
@@ -48,7 +43,6 @@ pub enum CommandId {
     FoldAll,
     UnfoldAll,
 
-    // Review
     ShowReviewComments,
     ShowReviewTemplates,
     SessionHistory,
@@ -57,14 +51,12 @@ pub enum CommandId {
     ForceAnalyzeRevidere,
     PublishReview,
 
-    // Repository
     OpenRepo,
     SwitchRepo,
 
     // Worktree (追加分)
     UngrabBranch,
 
-    // Explorer
     ShowDiffList,
     ShowCommentList,
     ShowRevidere,
@@ -79,22 +71,18 @@ pub enum CommandId {
     EditComment,
     ReplyToComment,
 
-    // Session
     SaveSessionHistory,
 
-    // Search
     SearchFullText,
 
     // GitHub / PR
     OpenPullRequest,
 
-    // App
     UpdateAndRestart,
     CheckForUpdate,
     RebuildCodeIndex,
     Quit,
 
-    // UI
     SwitchTheme,
     ToggleHighContrast,
 }

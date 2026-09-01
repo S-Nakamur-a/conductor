@@ -184,7 +184,7 @@ mod tests {
     // auto_theme_for_background の純粋関数としてのテスト。
 
     #[test]
-    fn auto_theme_configured_always_returns_none() {
+    fn 設定済みなら自動テーマはnoneを返す() {
         // ユーザーがテーマを固定している。自動検出がそれを上書きしてはいけない。
         assert!(super::auto_theme_for_background(0.9, Some("dracula")).is_none());
         assert!(super::auto_theme_for_background(0.9, Some("catppuccin-mocha")).is_none());
@@ -192,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_theme_light_background_selects_latte() {
+    fn 明るい背景ではlatteを選ぶ() {
         // 明るい背景 (輝度 > 0.5) かつテーマ未設定。
         let t = super::auto_theme_for_background(0.9, None);
         assert_eq!(t, Some("catppuccin-latte"));
@@ -204,79 +204,39 @@ mod tests {
     }
 
     #[test]
-    fn auto_theme_dark_background_returns_none() {
+    fn 暗い背景ではnoneを返す() {
         assert!(super::auto_theme_for_background(0.1, None).is_none());
         assert!(super::auto_theme_for_background(0.0, None).is_none());
         assert!(super::auto_theme_for_background(0.499, None).is_none());
     }
 
-    // OSC11 のパーサのテスト (端末との I/O は不要)。
-
+    /// OSC11 の応答から背景輝度を読む。終端が BEL の端末と、8bit (2 桁) チャネルで
+    /// 応答する端末があるので、どちらも同じ輝度になること。
     #[test]
-    fn parse_osc11_black_background() {
-        // 黒い背景: 全チャネル 0x00。
-        let lum = super::parse_osc11_luminance("\x1b]11;rgb:0000/0000/0000\x1b\\");
-        assert!(lum.is_some());
-        assert!((lum.unwrap() - 0.0).abs() < 0.01);
-    }
+    fn osc11の応答はどの綴りでも輝度を読める() {
+        let cases = [
+            ("\x1b]11;rgb:0000/0000/0000\x1b\\", Some(0.0)),
+            ("\x1b]11;rgb:ffff/ffff/ffff\x1b\\", Some(1.0)),
+            ("\x1b]11;rgb:ffff/ffff/ffff\x07", Some(1.0)),
+            ("\x1b]11;rgb:ff/ff/ff\x1b\\", Some(1.0)),
+            ("garbage", None),
+            ("\x1b]11;rgb:ZZ/GG/HH\x1b\\", None),
+            ("\x1b]11;rgb:ffff/ffff\x1b\\", None),
+        ];
+        for (response, want) in cases {
+            match (super::parse_osc11_luminance(response), want) {
+                (Some(got), Some(w)) => assert!((got - w).abs() < 0.01, "{response:?} -> {got}"),
+                (got, w) => assert_eq!(got.is_none(), w.is_none(), "{response:?}"),
+            }
+        }
 
-    #[test]
-    fn parse_osc11_white_background() {
-        // 白い背景: 全チャネル 0xFF。
-        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
-        assert!(lum.is_some());
-        assert!((lum.unwrap() - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn parse_osc11_catppuccin_mocha_bg() {
-        // Catppuccin Mocha の base: #1e1e2e → 0x1e1e ≈ 30, 0x1e1e ≈ 30, 0x2e2e ≈ 46
-        let lum = super::parse_osc11_luminance("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\");
-        assert!(lum.is_some());
-        let v = lum.unwrap();
-        // 暗い背景を期待する。輝度は 0.5 を大きく下回るはず。
+        // Catppuccin Mocha の base (#1e1e2e) は暗い背景として読めること。
+        let v = super::parse_osc11_luminance("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\").unwrap();
         assert!(v < 0.2, "expected dark bg, got {v}");
     }
 
     #[test]
-    fn parse_osc11_malformed_returns_none() {
-        assert!(super::parse_osc11_luminance("garbage").is_none());
-        assert!(super::parse_osc11_luminance("\x1b]11;rgb:ZZ/GG/HH\x1b\\").is_none());
-        assert!(super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff\x1b\\").is_none());
-    }
-
-    // パーサの追加カバレッジ。
-
-    #[test]
-    fn parse_osc11_bel_terminator() {
-        // 一部の端末 (古い xterm など) は OSC の終端に BEL (0x07) を使う。
-        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ffff/ffff/ffff\x07");
-        assert!(lum.is_some());
-        assert!(
-            (lum.unwrap() - 1.0).abs() < 0.01,
-            "white bg via BEL terminator"
-        );
-    }
-
-    #[test]
-    fn parse_osc11_8bit_channels() {
-        // 一部の端末は 8bit (2 桁) のチャネル値 rgb:RR/GG/BB で応答する。
-        // パーサは先頭 2 桁を読むので、これは自然に扱える。
-        let lum = super::parse_osc11_luminance("\x1b]11;rgb:ff/ff/ff\x1b\\");
-        assert!(lum.is_some());
-        assert!(
-            (lum.unwrap() - 1.0).abs() < 0.01,
-            "white bg via 8-bit channels"
-        );
-
-        let dark = super::parse_osc11_luminance("\x1b]11;rgb:1e/1e/2e\x1b\\");
-        assert!(dark.is_some());
-        assert!(dark.unwrap() < 0.2, "dark bg via 8-bit channels");
-    }
-
-    /// Nerd Font のシンボルを同梱している端末だけを Nerd と判定すること。
-    #[test]
-    fn icon_set_only_for_terminals_bundling_the_symbols() {
+    fn シンボルを同梱する端末だけnerdと判定する() {
         use crate::icons::IconSet;
         for name in ["ghostty", "Ghostty", "WezTerm", "wezterm"] {
             assert_eq!(
@@ -290,7 +250,7 @@ mod tests {
     /// フォントを同梱しない端末と、tmux 越しで内側が見えない場合は判定しないこと。
     /// ここで推測すると、Nerd Font を入れていないユーザの画面が tofu で埋まる。
     #[test]
-    fn icon_set_declines_to_guess() {
+    fn 判らない端末では推測しない() {
         for name in [
             "kitty",
             "Alacritty",

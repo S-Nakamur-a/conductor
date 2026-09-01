@@ -10,7 +10,7 @@ fn keymap() -> KeyMap {
 }
 
 #[test]
-fn every_command_action_is_valid() {
+fn 全コマンドのアクションが妥当() {
     use keymap_suite::ActionName;
     // Some(action) はアクション語彙を往復できなければならない。こうしておくことで
     // パレットの項目が古い名前や改名済みのアクションを指したままになることがない。
@@ -27,7 +27,7 @@ fn every_command_action_is_valid() {
 }
 
 #[test]
-fn comprehensive_worktree_commands_present() {
+fn worktree関連のコマンドが揃っている() {
     // 重要な worktree コマンドがサイレントに抜け落ちるのを防ぐ回帰テスト。
     // 以前 pull_worktree がまるごと欠けていたことがある。
     let must_have = [
@@ -51,7 +51,7 @@ fn comprehensive_worktree_commands_present() {
 }
 
 #[test]
-fn comprehensive_review_commands_present() {
+fn レビュー関連のコマンドが揃っている() {
     // PR 取り込みとレビューの入口を守る回帰テスト。キーバインドを覚えて
     // いないユーザでもたどり着けるよう、それぞれにパレットコマンドが要る。
     let must_have = [Action::ReviewPullRequest, Action::PublishReview];
@@ -64,7 +64,7 @@ fn comprehensive_review_commands_present() {
 }
 
 #[test]
-fn scope_splits_global_from_current_layer() {
+fn 絞り込みはグローバルと今の層を分ける() {
     let km = keymap();
     // worktree パネルにフォーカスした状態: create-worktree は worktree レイヤーの
     // アクションなので Current、quit はグローバルなので Global になる。
@@ -85,7 +85,7 @@ fn scope_splits_global_from_current_layer() {
 }
 
 #[test]
-fn results_are_grouped_current_then_global_then_other() {
+fn 結果は今の層グローバルその他の順にまとまる() {
     let km = keymap();
     let scoped = filter_commands("", &km, KeyContext::Worktree);
     let ranks: Vec<u8> = scoped.iter().map(|s| scope_rank(s.scope)).collect();

@@ -1,9 +1,8 @@
 //! 8個のツールが受け取る、ワイヤレベルの引数。tools/call リクエストから直接
 //! デシリアライズされる。
 //!
-//! これらのフィールドの doc コメントはそのまま JSON Schema の description に
-//! なりモデルが読むので、その読み手に向けて書いてあり、Node サーバの
-//! .describe(...) 呼び出しの文面を逐語的に受け継いでいる。
+//! これらのフィールドの doc コメントはそのまま JSON Schema の description になりモデルが
+//! 読むので、その読み手に向けて書いてある。
 
 use schemars::JsonSchema;
 use serde::Deserialize;

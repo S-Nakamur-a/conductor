@@ -17,7 +17,7 @@ fn reload(explorer: &mut Explorer, vs: &mut ViewerState, root: &Path, tab_width:
 /// 一覧しなければならない。.gitignore で無視されている（つまり git 管理外の）
 /// ディレクトリと、その中に入っているファイルも到達可能でなければならない。
 #[test]
-fn walk_includes_gitignored_directories_and_recurses() {
+fn 走査はgitignoreされたディレクトリも含めて潜る() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
 
@@ -67,7 +67,7 @@ fn walk_includes_gitignored_directories_and_recurses() {
 /// 重いビルド/依存関係ディレクトリは相変わらずスキップされる — このガードは
 /// パフォーマンス上の都合であり、git 管理とは無関係。
 #[test]
-fn walk_still_skips_heavy_dirs() {
+fn 走査は重いディレクトリは飛ばす() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
@@ -92,7 +92,7 @@ fn walk_still_skips_heavy_dirs() {
 /// クリックが A の相対パスを B の根に繋いで、別ブランチの同名ファイルを黙って
 /// 開いていた。
 #[test]
-fn tree_root_and_entries_switch_together() {
+fn ツリーの根とエントリは一緒に入れ替わる() {
     let a = tempfile::tempdir().unwrap();
     let b = tempfile::tempdir().unwrap();
     std::fs::write(a.path().join("shared.txt"), "FROM_A\n").unwrap();
@@ -133,7 +133,7 @@ fn tree_root_and_entries_switch_together() {
 /// Changed files 一覧で SUMMARY を選んでも数秒で最後に開いたファイルに黙って
 /// 戻ってしまう。
 #[test]
-fn tree_refresh_preserves_summary_view() {
+fn ツリーの再読み込みはsummary表示を保つ() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     std::fs::write(root.join("a.txt"), "hello\nworld\n").unwrap();
@@ -157,7 +157,7 @@ fn tree_refresh_preserves_summary_view() {
 /// unified diff 表示についても同様の保証があり、summary の修正がこれを退行
 /// させてはならない: リフレッシュしても diff モードはオンのまま維持される。
 #[test]
-fn tree_refresh_preserves_diff_mode() {
+fn ツリーの再読み込みはdiff表示を保つ() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     std::fs::write(root.join("a.txt"), "hello\n").unwrap();
@@ -182,7 +182,7 @@ fn tree_refresh_preserves_diff_mode() {
 /// 現在のファイルを再度開く。保存/復元が無ければ、長いレンダリング済み README を
 /// 読んでいても数秒ごとに先頭へ巻き戻されてしまう。
 #[test]
-fn tree_refresh_preserves_rendered_markdown_scroll() {
+fn ツリーの再読み込みはmarkdownのスクロールを保つ() {
     let root = tempfile::tempdir().unwrap();
     let root = root.path();
     std::fs::write(root.join("README.md"), "# t\n\nbody\n".repeat(50)).unwrap();

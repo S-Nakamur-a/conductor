@@ -222,7 +222,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn editor_target_resolves_relative_against_worktree() {
+    fn エディタの対象はworktree基準で相対を解決する() {
         let root = std::path::Path::new("/repo/wt");
         assert_eq!(
             editor_target(Some("src/main.rs"), root),
@@ -231,62 +231,44 @@ mod tests {
     }
 
     #[test]
-    fn editor_target_is_none_when_no_file_open() {
+    fn ファイルが開いていなければ対象は無い() {
         // 決め手となる分岐: 開いているファイルが無ければ → エディタは起動しない。
         assert_eq!(editor_target(None, std::path::Path::new("/repo/wt")), None);
     }
 
     #[test]
-    fn editor_target_is_none_for_empty_path() {
+    fn 空のパスなら対象は無い() {
         assert_eq!(
             editor_target(Some(""), std::path::Path::new("/repo/wt")),
             None
         );
     }
-
+    /// VISUAL > EDITOR > fallback の順。空白のみの値は空のコマンドを生まないよう飛ばす。
+    /// 分割は素朴で、シェル風のクォート解釈は行わない (意図的な制限)。
     #[test]
-    fn resolve_editor_falls_back_when_unset() {
-        assert_eq!(resolve_editor_command(None, None, "vi"), vec!["vi"]);
-    }
-
-    #[test]
-    fn resolve_editor_visual_takes_precedence() {
-        assert_eq!(
-            resolve_editor_command(Some("vim"), Some("nano"), "vi"),
-            vec!["vim"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_uses_editor_when_visual_unset() {
-        assert_eq!(
-            resolve_editor_command(None, Some("nano"), "vi"),
-            vec!["nano"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_splits_args() {
-        assert_eq!(
-            resolve_editor_command(Some("code -w"), None, "vi"),
-            vec!["code", "-w"]
-        );
-        assert_eq!(
-            resolve_editor_command(Some("code\t-w  -n"), None, "vi"),
-            vec!["code", "-w", "-n"]
-        );
-    }
-
-    #[test]
-    fn resolve_editor_ignores_blank_values() {
-        // 空白のみのVISUALはスキップされる。空のコマンドを生むのではなく、
-        // EDITOR（またはfallback）が優先されるようにするため。
-        assert_eq!(resolve_editor_command(Some(""), None, "vi"), vec!["vi"]);
-        assert_eq!(resolve_editor_command(Some("   "), None, "vi"), vec!["vi"]);
-        assert_eq!(
-            resolve_editor_command(Some(""), Some("nano"), "vi"),
-            vec!["nano"]
-        );
+    fn エディタのコマンドは優先順で選び素朴に分割する() {
+        let cases: [(Option<&str>, Option<&str>, Vec<&str>); 9] = [
+            (None, None, vec!["vi"]),
+            (Some("vim"), Some("nano"), vec!["vim"]),
+            (None, Some("nano"), vec!["nano"]),
+            (Some("code -w"), None, vec!["code", "-w"]),
+            (Some("code\t-w  -n"), None, vec!["code", "-w", "-n"]),
+            (Some(""), None, vec!["vi"]),
+            (Some("   "), None, vec!["vi"]),
+            (Some(""), Some("nano"), vec!["nano"]),
+            (
+                Some("vim -c 'set ft=rust'"),
+                None,
+                vec!["vim", "-c", "'set", "ft=rust'"],
+            ),
+        ];
+        for (visual, editor, want) in cases {
+            assert_eq!(
+                resolve_editor_command(visual, editor, "vi"),
+                want,
+                "visual={visual:?} editor={editor:?}"
+            );
+        }
         assert_eq!(
             resolve_editor_command(Some("  vim  "), None, "vi"),
             vec!["vim"]
@@ -294,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_content_size_subtracts_borders() {
+    fn エディタの中身の大きさは枠を引く() {
         // 非最大化: タイトル行＋下境界（2行）と左右境界（2列）。
         assert_eq!(editor_content_size(80, 40, false), (38, 78));
         // 最大化: タイトル行のみで境界線は無い。
@@ -302,13 +284,13 @@ mod tests {
     }
 
     #[test]
-    fn editor_content_size_defaults_on_zero_region() {
+    fn 領域が0なら既定の大きさになる() {
         assert_eq!(editor_content_size(0, 40, false), (24, 80));
         assert_eq!(editor_content_size(80, 0, false), (24, 80));
     }
 
     #[test]
-    fn editor_content_size_never_returns_zero() {
+    fn 中身の大きさが0になることはない() {
         // 極小のリージョンはアンダーフローせず1×1にクランプされる（vt100は≥1が必要）。
         for w in 1..=3u16 {
             for h in 1..=3u16 {
@@ -316,15 +298,5 @@ mod tests {
                 assert!(rows >= 1 && c >= 1, "w={w} h={h} → ({rows},{c})");
             }
         }
-    }
-
-    #[test]
-    fn resolve_editor_naive_split_does_not_honor_quotes() {
-        // 既知の制限: シェル風のクォート解釈は行わない。クォートされた引数も
-        // 内部の空白で分割される。これは意図的な挙動を固定するテスト。
-        assert_eq!(
-            resolve_editor_command(Some("vim -c 'set ft=rust'"), None, "vi"),
-            vec!["vim", "-c", "'set", "ft=rust'"]
-        );
     }
 }

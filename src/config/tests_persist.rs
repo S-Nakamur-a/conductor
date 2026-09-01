@@ -5,7 +5,7 @@ use super::persist::{is_section_header, upsert_section_kv, upsert_ui_theme};
 use super::*;
 
 #[test]
-fn upsert_high_contrast_inserts_into_ui_section() {
+fn high_contrastはuiセクションに挿入される() {
     let contents = "[ui]\ntheme = \"nord\"\n";
     let result = upsert_section_kv(contents, "ui", "high_contrast", "true");
     assert!(result.contains("high_contrast = true"));
@@ -15,7 +15,7 @@ fn upsert_high_contrast_inserts_into_ui_section() {
 }
 
 #[test]
-fn upsert_ui_theme_appends_when_no_ui_section() {
+fn uiセクションが無ければ末尾に足す() {
     let contents = "[general]\nmain_branch = \"main\"\n";
     let result = upsert_ui_theme(contents, "nord");
     assert!(result.contains("[ui]"));
@@ -25,7 +25,7 @@ fn upsert_ui_theme_appends_when_no_ui_section() {
 }
 
 #[test]
-fn upsert_section_kv_inserts_layout_value_over_commented_default() {
+fn コメントアウトされた既定の上に実値を挿入する() {
     // 生成される config は layout のキーをコメントアウトした状態で出荷される。
     // リサイズ時はヘッダの後にコメントを残したまま実値を挿入しなければならない。
     let contents = "[layout]\n# explorer_width_pct = 24    # default\n";
@@ -35,7 +35,7 @@ fn upsert_section_kv_inserts_layout_value_over_commented_default() {
 }
 
 #[test]
-fn upsert_section_kv_replaces_existing_layout_value() {
+fn 既にある値は置き換える() {
     let contents = "[layout]\nexplorer_width_pct = 24\nviewer_width_pct = 38\n";
     let result = upsert_section_kv(contents, "layout", "viewer_width_pct", "42");
     assert_eq!(
@@ -45,7 +45,7 @@ fn upsert_section_kv_replaces_existing_layout_value() {
 }
 
 #[test]
-fn upsert_section_kv_chains_for_all_three_layout_keys() {
+fn layoutの3つの鍵を続けて書ける() {
     // persist_layout_proportions を模している: 3回連続の upsert が互いを
     // 壊さずに同じ [layout] テーブルへ収まること。
     let contents = "[layout]\n# explorer_width_pct = 24\n# viewer_width_pct = 38\n# terminal_split_pct = 80\n\n[ui]\ntheme = \"nord\"\n";
@@ -66,7 +66,7 @@ fn upsert_section_kv_chains_for_all_three_layout_keys() {
 }
 
 #[test]
-fn upsert_ui_theme_replaces_existing_theme_line() {
+fn 既にあるtheme行を置き換える() {
     let contents = "[ui]\ntheme = \"dracula\"\n";
     let result = upsert_ui_theme(contents, "github-light");
     assert_eq!(
@@ -76,7 +76,7 @@ fn upsert_ui_theme_replaces_existing_theme_line() {
 }
 
 #[test]
-fn upsert_ui_theme_inserts_after_ui_header_when_only_comments() {
+fn コメントだけならuiヘッダの直後に挿入する() {
     let contents = "[ui]\n# theme = \"catppuccin-mocha\"\n";
     let result = upsert_ui_theme(contents, "catppuccin-latte");
     // 新しい行は [ui] の後、コメントの前に挿入されるはず。
@@ -86,7 +86,7 @@ fn upsert_ui_theme_inserts_after_ui_header_when_only_comments() {
 }
 
 #[test]
-fn upsert_ui_theme_preserves_other_sections_after_ui() {
+fn uiの後ろの他セクションを壊さない() {
     let contents = "[viewer]\ntheme = \"dracula\"\n\n[ui]\n# theme placeholder\n\n[general]\n";
     let result = upsert_ui_theme(contents, "nord");
     assert!(result.contains("theme = \"nord\""));
@@ -95,7 +95,7 @@ fn upsert_ui_theme_preserves_other_sections_after_ui() {
 }
 
 #[test]
-fn upsert_ui_theme_trailing_newline_preserved() {
+fn 末尾の改行は保たれる() {
     let with_newline = "[ui]\ntheme = \"dracula\"\n";
     let without_newline = "[ui]\ntheme = \"dracula\"";
     assert!(upsert_ui_theme(with_newline, "nord").ends_with('\n'));
@@ -105,7 +105,7 @@ fn upsert_ui_theme_trailing_newline_preserved() {
 // [ui] ヘッダのインラインコメント検出。
 
 #[test]
-fn upsert_ui_theme_handles_inline_comment_on_ui_header() {
+fn uiヘッダ行の行末コメントを扱える() {
     // [ui]  # color settings も [ui] セクションとして認識されなければならない。
     let contents = "[general]\n\n[ui]  # color settings\ntheme = \"dracula\"\n";
     let result = upsert_ui_theme(contents, "nord");
@@ -118,7 +118,7 @@ fn upsert_ui_theme_handles_inline_comment_on_ui_header() {
 }
 
 #[test]
-fn upsert_ui_theme_does_not_match_ui_subsection() {
+fn uiのサブセクションには当たらない() {
     // [ui.colors] は [ui] セクションではない。新しい [ui] ブロックが追記されるはず。
     let contents = "[ui.colors]\nfoo = \"bar\"\n";
     let result = upsert_ui_theme(contents, "nord");
@@ -131,7 +131,7 @@ fn upsert_ui_theme_does_not_match_ui_subsection() {
 }
 
 #[test]
-fn is_section_header_cases() {
+fn セクションヘッダの判定() {
     assert!(is_section_header("[ui]", "ui"));
     assert!(is_section_header("[ui]  ", "ui"));
     assert!(is_section_header("[ui]  # comment", "ui"));

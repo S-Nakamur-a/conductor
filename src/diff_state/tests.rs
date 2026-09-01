@@ -73,7 +73,7 @@ fn base_error(dir: &std::path::Path, base: &str) -> Option<String> {
 }
 
 #[test]
-fn a_replaced_line_carries_inline_segments() {
+fn 置き換えられた行は行内の差分を持つ() {
     let old = "hello world\n";
     let new = "hello rust\n";
     let diff = TextDiff::from_lines(old, new);
@@ -95,7 +95,7 @@ fn a_replaced_line_carries_inline_segments() {
 /// これらは同じファイルを指すので、blob の内容が同一なら compute_diff_range
 /// はこれらを除外すべきである。
 #[test]
-fn a_case_only_rename_is_not_shown_as_a_change() {
+fn 大小だけのリネームは変更として出さない() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -150,7 +150,7 @@ fn a_case_only_rename_is_not_shown_as_a_change() {
 
 /// 内容変更を伴う大文字小文字リネームはフィルタで除外されないことを検証する。
 #[test]
-fn a_case_rename_with_edits_is_still_shown() {
+fn 大小のリネームでも編集があれば出す() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -201,12 +201,11 @@ fn a_case_rename_with_edits_is_still_shown() {
     );
 }
 
-/// リグレッション: 既に折りたたまれているディレクトリを折りたたむ(または既に
-/// 展開されているものを展開する)操作は no-op であるべきで panic してはならない。
-/// clippy --fix の collapsible_match 自動修正がかつて内側の if を match ガードに
-/// 変えてしまい、これらのケースが unreachable!() アームまで落ちてしまっていた。
+/// リグレッション: 既に折りたたまれているディレクトリを折りたたむ (または既に展開されて
+/// いるものを展開する) 操作は no-op であるべきで panic してはならない。内側の if を match
+/// ガードに変えると、これらのケースが unreachable!() アームまで落ちる。
 #[test]
-fn collapse_already_collapsed_dir_does_not_panic() {
+fn 畳み済みのディレクトリを畳んでも落ちない() {
     use super::*;
     let mut ds = DiffState::new("main", DiffViewMode::Unified);
     ds.display_list = vec![DiffListEntry::Directory {
@@ -219,7 +218,7 @@ fn collapse_already_collapsed_dir_does_not_panic() {
 }
 
 #[test]
-fn expand_already_expanded_dir_does_not_panic() {
+fn 展開済みのディレクトリを開いても落ちない() {
     use super::*;
     let mut ds = DiffState::new("main", DiffViewMode::Unified);
     ds.display_list = vec![DiffListEntry::Directory {
@@ -235,7 +234,7 @@ fn expand_already_expanded_dir_does_not_panic() {
 /// インデックスではなくパス(節が指す位置へのジャンプなど)で開かれた
 /// 際に diff リストのカーソルを再同期するために使う。
 #[test]
-fn display_index_for_path_finds_files() {
+fn パスから表示行の位置を引ける() {
     use super::*;
     let file = |path: &str| FileDiff {
         path: path.to_string(),
@@ -284,7 +283,7 @@ fn diff_state_with(paths: &[&str]) -> super::DiffState {
 /// プレフィックス付き、または連続スラッシュ)として保存されたステップは、diff に
 /// 実際に含まれるファイルを指しており、diff 自身の表記に解決されなければならない。
 #[test]
-fn resolve_changed_path_accepts_alternate_spellings() {
+fn 変更パスの解決は別の綴りも受ける() {
     let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs", "top.txt"]);
 
     for spelling in [
@@ -316,11 +315,10 @@ fn resolve_changed_path_accepts_alternate_spellings() {
     );
 }
 
-/// 本当に diff に含まれないファイルは未解決のままでなければならない。
 /// 上記の寛容さが「この diff にはない」を別のファイルへのジャンプに
 /// 変えてしまってはならない。
 #[test]
-fn resolve_changed_path_refuses_files_outside_the_diff() {
+fn diffの外のファイルは解決しない() {
     let ds = diff_state_with(&["src/a.rs", "src/deep/c.rs"]);
     assert_eq!(ds.resolve_changed_path("src/untouched.rs"), None);
     assert_eq!(ds.resolve_changed_path(""), None);
@@ -331,7 +329,7 @@ fn resolve_changed_path_refuses_files_outside_the_diff() {
 /// あれば、どちらが意図されたか分からず、どちらかを選ぶとレビュアーを黙って
 /// 誤ったファイルに着地させてしまう。
 #[test]
-fn resolve_changed_path_refuses_an_ambiguous_suffix() {
+fn あいまいな末尾一致は解決しない() {
     let ds = diff_state_with(&["src/app/mod.rs", "src/ui/mod.rs"]);
     assert_eq!(ds.resolve_changed_path("mod.rs"), None);
     // 曖昧さを解消するのに十分なコンテキストがあれば問題なく解決する。
@@ -344,7 +342,7 @@ fn resolve_changed_path_refuses_an_ambiguous_suffix() {
 /// リポジトリに実在するトップレベルの b/ は、b/ を diff プレフィックスとして
 /// 読む解釈より優先される。完全一致が先に試されるからである。
 #[test]
-fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
+fn 完全一致を接頭辞落としより優先する() {
     let ds = diff_state_with(&["b/src/a.rs", "src/a.rs"]);
     assert_eq!(
         ds.resolve_changed_path("b/src/a.rs").as_deref(),
@@ -360,7 +358,7 @@ fn resolve_changed_path_prefers_an_exact_match_over_prefix_stripping() {
 /// そこへジャンプする際は、途中まで展開すべきであり「この diff にはない」と
 /// 読み違えてはならない。
 #[test]
-fn reveal_path_expands_collapsed_ancestors() {
+fn revealは畳まれた親を開く() {
     let mut ds = diff_state_with(&["src/deep/nested/c.rs"]);
     assert!(ds.display_index_for_path("src/deep/nested/c.rs").is_some());
 
@@ -387,7 +385,7 @@ fn reveal_path_expands_collapsed_ancestors() {
 /// Conductor の通常のケース)は、ローカルの main ブランチが存在しなくても
 /// 解決できなければならない。
 #[test]
-fn base_ref_resolves_remote_tracking_ref() {
+fn ベースrefはリモート追跡refを解決する() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -411,7 +409,7 @@ fn base_ref_resolves_remote_tracking_ref() {
 /// からも動作しなければならない。リモート追跡 ref は worktree ごとではなく、
 /// 共有の commondir に存在するからである。
 #[test]
-fn base_ref_resolves_from_linked_worktree() {
+fn リンクされたworktreeからもベースrefを解決する() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -455,7 +453,7 @@ fn base_ref_resolves_from_linked_worktree() {
 /// 軽量タグ、注釈付きタグ、完全な OID、短縮 OID のいずれも同じベースコミットに
 /// 解決しなければならない。
 #[test]
-fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
+fn ベースrefは軽量タグと注釈タグとoidを解決する() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -491,7 +489,7 @@ fn base_ref_resolves_tag_lightweight_annotated_and_oid() {
 /// develop のように、リモート追跡 ref としてのみ存在する(ローカルブランチが
 /// ない)設定済みベースは、origin/ フォールバック経由で解決しなければならない。
 #[test]
-fn base_ref_falls_back_to_origin_prefix() {
+fn ベースrefはorigin付きへ落ちる() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -515,7 +513,7 @@ fn base_ref_falls_back_to_origin_prefix() {
 /// 直接にも origin/ 経由にも解決しないベースは、呼び出し側が実際に指定した
 /// ベース名を含むエラーを報告しなければならない。
 #[test]
-fn base_ref_unresolvable_reports_error() {
+fn 解決できないベースrefはエラーを返す() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -534,7 +532,7 @@ fn base_ref_unresolvable_reports_error() {
 /// このテストはまさにそのトラップとなる ref を作り、ガードの欠落が
 /// エラーメッセージの文言だけでなく予期しない Ok として現れるようにする。
 #[test]
-fn base_ref_error_does_not_double_the_origin_prefix() {
+fn エラー文でorigin接頭辞を二重にしない() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -562,7 +560,7 @@ fn base_ref_error_does_not_double_the_origin_prefix() {
 /// 加えると、TUI とシェルが同じリポジトリで異なるベースを選ぶことになり、
 /// 2つの選択肢のうちより紛らわしい方になってしまう。
 #[test]
-fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
+fn gitと同じくタグをブランチより優先する() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -598,7 +596,7 @@ fn base_ref_prefers_tag_over_branch_like_git_rev_parse() {
 /// 解決不能なベースは HEAD 基準へのフォールバックで扱う。手元の変更が
 /// ベース設定のミスで丸ごと見えなくなってはならない。
 #[test]
-fn unresolvable_base_falls_back_to_head() {
+fn 解決できないベースはheadへ落ちる() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -615,7 +613,7 @@ fn unresolvable_base_falls_back_to_head() {
 /// 解決不能なベースを与えた load_diff は、一覧をクリアするのではなく、
 /// 手元の変更とエラーの両方をきちんと表に出さなければならない。
 #[test]
-fn load_diff_keeps_files_when_base_unresolvable() {
+fn ベースが解決できなくてもファイル一覧は残る() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -643,7 +641,7 @@ fn load_diff_keeps_files_when_base_unresolvable() {
 /// HEAD が設定されたベースとの merge-base に等しい場合(0コミット先行)、
 /// エラーは出ず、未コミットの変更だけが表示されるべきである。
 #[test]
-fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
+fn headがmerge_baseと同じなら未コミット分だけ出る() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -674,7 +672,7 @@ fn load_diff_head_equals_merge_base_shows_uncommitted_only() {
 /// いた ─ 変更済み/未追跡ファイルが実際には全て存在するにもかかわらず
 /// "Changed files (0)" と報告されていた。
 #[test]
-fn load_diff_reproduces_the_silent_zero_files_report() {
+fn 無音で0件になる不具合を再現する() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -742,7 +740,7 @@ fn load_diff_reproduces_the_silent_zero_files_report() {
 /// 無関係な2つのルートコミット)場合、repo.merge_base() は失敗する。
 /// このときも一覧は HEAD 基準で残り、理由が見える形になっていること。
 #[test]
-fn load_diff_keeps_files_when_merge_base_is_unrelated() {
+fn merge_baseが無関係でもファイル一覧は残る() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -781,7 +779,7 @@ fn load_diff_keeps_files_when_merge_base_is_unrelated() {
 /// 比較対象となるツリーを必要とし、それが存在しない。説明のつかない
 /// "Changed files (0)" ではなく、理由が error に載る。
 #[test]
-fn load_diff_on_unborn_head_reports_error_without_panicking() {
+fn コミット前のheadでも落ちずにエラーを返す() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -804,7 +802,7 @@ fn load_diff_on_unborn_head_reports_error_without_panicking() {
 /// しまわないようにするのは書き込み側の責務(GitEngine::resolve_base_ref /
 /// worktree_crud.rs)であり、この関数が特別扱いすべきことではない。
 #[test]
-fn base_ref_head_yields_only_the_working_tree_changes() {
+fn ベースがheadなら作業ツリーの変更だけ出る() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -819,7 +817,7 @@ fn base_ref_head_yields_only_the_working_tree_changes() {
 /// 指す軽量タグ)は、黙ってフォールバックするのではなく理由を報告しな
 /// ければならない — 一覧だけを見ている呼び出し側からは両者が同じに見える。
 #[test]
-fn base_ref_pointing_at_a_blob_reports_error() {
+fn blobを指すベースrefはエラーを返す() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -842,7 +840,7 @@ fn base_ref_pointing_at_a_blob_reports_error() {
 /// base_ref_head_yields_only_the_working_tree_changes と同じ "HEAD" の罠に
 /// 黙って変わってしまわないようにする。
 #[test]
-fn base_ref_empty_string_reports_error() {
+fn 空文字のベースrefはエラーを返す() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -861,7 +859,7 @@ fn base_ref_empty_string_reports_error() {
 /// コミットしたファイルを再編集すると同じファイルが2行に分かれて出ていた。
 /// 1本の diff にまとめた今は、行数もベースからの合計になっていること。
 #[test]
-fn a_file_edited_after_commit_stays_one_entry() {
+fn コミット後に編集したファイルも1エントリのまま() {
     use super::*;
 
     let dir = tempfile::tempdir().unwrap();
@@ -900,14 +898,11 @@ fn a_file_edited_after_commit_stays_one_entry() {
     assert_eq!(listed, vec!["a.txt"]);
 }
 
-// 新内容が空で返ってきたときに全行削除へ化ける件
-
-/// リグレッション: 未ステージ変更の新内容は workdir から読むが、読めなかった
-/// ときに空文字列へフォールバックしていた。旧内容だけが残るので、1行直した
-/// だけのファイルが Changed files に +0 -<全行数> と出て git diff と食い違う。
-/// 読めなかったことは削除された証拠ではない。
+/// リグレッション: 未ステージ変更の新内容は workdir から読む。読めなかったときに空文字列へ
+/// 落とすと旧内容だけが残り、1 行直しただけのファイルが +0 -<全行数> と出て git diff と
+/// 食い違う。読めなかったことは削除された証拠ではない。
 #[test]
-fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
+fn 読めないファイルを全行削除にでっち上げない() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
@@ -946,7 +941,7 @@ fn unreadable_workdir_file_does_not_fabricate_full_deletion() {
 /// 上のガードが本物の削除まで隠してしまわないこと。workdir から消えた
 /// ファイルは読めなくて当然で、全行削除が正しい表示。
 #[test]
-fn deleted_workdir_file_still_reports_full_deletion() {
+fn 本当に消えたファイルは全行削除として出す() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -969,7 +964,7 @@ fn deleted_workdir_file_still_reports_full_deletion() {
 /// libgit2 の Patch::from_diff は「変更なし」でもバイナリでも None を返すので、
 /// 区別せずに落とすと、変更したバイナリが Changed files に現れなくなる。
 #[test]
-fn binary_file_stays_listed_without_line_counts() {
+fn バイナリは行数無しで一覧に残る() {
     let dir = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -1004,7 +999,7 @@ fn fs_ignores_case(dir: &std::path::Path) -> bool {
 // ため。実行時に return すると、検証していないのに緑になる。
 #[cfg(target_os = "macos")]
 #[test]
-fn a_case_colliding_entry_is_not_reported_as_deleted() {
+fn 大小が衝突するエントリを削除として出さない() {
     let dir = tempfile::tempdir().unwrap();
     if !fs_ignores_case(dir.path()) {
         eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");

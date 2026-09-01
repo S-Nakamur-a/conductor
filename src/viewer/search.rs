@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_file_scroll_to_diff_scroll_resolves_deletion_lines_forward() {
+    fn 削除行は後ろ向きに解決して同期する() {
         let mut vs = ViewerState::default();
         vs.diff_view.diff_mode = true;
         vs.diff_view.diff_view_lines = vec![
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_file_scroll_to_diff_scroll_is_noop_outside_diff_mode() {
+    fn diff表示の外では同期は何もしない() {
         let mut vs = ViewerState::default();
         vs.diff_view.diff_mode = false;
         vs.diff_view.diff_view_lines = vec![diff_line(Some(5))];
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_diff_scroll_to_file_scroll_follows_a_search_jump() {
+    fn 検索のジャンプにdiff側も追従する() {
         let mut vs = ViewerState::default();
         vs.diff_view.diff_mode = true;
         vs.diff_view.diff_view_lines = vec![

@@ -71,33 +71,33 @@ mod tests {
     const W: &[u16] = &[10, 10, 10, 10, 10, 10, 10, 10, 10, 10];
 
     #[test]
-    fn everything_fits_when_avail_is_large() {
+    fn 幅が広ければ全部収まる() {
         // 十分な余白がある → ウィンドウ全体を表示、パンなし。
         let (start, end) = visible_window(W, 1, 1000, 0, 0, false);
         assert_eq!((start, end), (0, 10));
     }
 
     #[test]
-    fn greedy_fill_stops_at_available_width() {
+    fn 詰め込みは使える幅で止まる() {
         // avail 32: chip(10) + sep1+chip(10) + sep1+chip(10) = 32 → チップ3個。
         let (start, end) = visible_window(W, 1, 32, 0, 0, false);
         assert_eq!((start, end), (0, 3));
     }
 
     #[test]
-    fn at_least_one_chip_even_when_too_narrow() {
+    fn 狭すぎてもチップは1つは出る() {
         let (start, end) = visible_window(W, 1, 4, 0, 0, false);
         assert_eq!((start, end), (0, 1));
     }
 
     #[test]
-    fn scroll_offset_moves_the_window() {
+    fn スクロール位置が窓を動かす() {
         let (start, end) = visible_window(W, 1, 32, 4, 4, false);
         assert_eq!((start, end), (4, 7));
     }
 
     #[test]
-    fn over_scroll_is_clamped_to_keep_right_edge_full() {
+    fn 行き過ぎたスクロールは右端が埋まる位置でクランプする() {
         // desired start が 9 だと空間が無駄になるので、最後のチップが右端に
         // 来るようクランプする（末尾で終わる3個分のウィンドウになる）。
         let (start, end) = visible_window(W, 1, 32, 9, 0, false);
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn reveal_pans_left_when_selected_is_before_window() {
+    fn 選択が窓より前ならrevealは左へ寄せる() {
         // ウィンドウは現在 [4,7) にある; チップ1を選択 → 見えるよう後方にパンする。
         let (start, end) = visible_window(W, 1, 32, 4, 1, true);
         assert_eq!(start, 1);
@@ -113,20 +113,20 @@ mod tests {
     }
 
     #[test]
-    fn reveal_pans_right_when_selected_is_after_window() {
+    fn 選択が窓より後ろならrevealは右へ寄せる() {
         // ウィンドウは [0,3) にある; チップ8を選択 → 見えるようになるまで進める。
         let (start, end) = visible_window(W, 1, 32, 0, 8, true);
         assert!((start..end).contains(&8));
     }
 
     #[test]
-    fn reveal_does_not_move_when_selected_already_visible() {
+    fn 選択が既に見えていればrevealは動かさない() {
         let (start, end) = visible_window(W, 1, 32, 3, 4, true);
         assert_eq!((start, end), (3, 6));
     }
 
     #[test]
-    fn empty_list_is_handled() {
+    fn 空の一覧でも落ちない() {
         assert_eq!(visible_window(&[], 1, 100, 0, 0, true), (0, 0));
     }
 }

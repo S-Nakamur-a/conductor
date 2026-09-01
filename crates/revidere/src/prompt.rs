@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn system_prompt_states_the_four_importance_values() {
+    fn システムプロンプトは4つの重要度を明示する() {
         for v in ["core", "ripple", "follow", "minor"] {
             assert!(SYSTEM.contains(v), "{v} が説明に無い");
         }
@@ -194,7 +194,7 @@ mod tests {
     /// 関係は複数書けるが、読む順が辿るのは 1 本だけ。この 2 つが両方
     /// 言えていないと、多重に採って森で出す、という形にならない。
     #[test]
-    fn system_prompt_allows_many_relations_but_only_one_primary() {
+    fn 関係は複数でも主は1つだけ() {
         assert!(SYSTEM.contains("複数の相手と関係することはある"));
         assert!(SYSTEM.contains("高々 1 つ"));
     }
@@ -202,27 +202,27 @@ mod tests {
     /// テストを 1 つの節にまとめられると、中核から「その中核のテスト」へ
     /// 移れない。実データが実際にそうなっていた。
     #[test]
-    fn system_prompt_forbids_lumping_tests_into_one_context() {
+    fn テストを1項目にまとめることを禁じる() {
         assert!(SYSTEM.contains("1 つの節にまとめない"));
     }
 
     /// 「コードを信じろ」だけにすると、コードには書けない意図 (置き場所の理由、
     /// 退けた案) の出典まで捨てることになり、段階 1 が痩せる。両方言えていること。
     #[test]
-    fn system_prompt_prefers_code_for_behavior_but_keeps_comments_for_intent() {
+    fn 振る舞いはコード意図はコメントから読ませる() {
         assert!(SYSTEM.contains("振る舞いの根拠はコード"));
         assert!(SYSTEM.contains("食い違いそのものを節に書く"));
         assert!(SYSTEM.contains("そちらは出典として使ってよい"));
     }
 
     #[test]
-    fn system_prompt_forbids_the_caller_count_framing() {
+    fn 呼び出し元の数で語る書き方を禁じる() {
         // 前の版が出していた「呼び出し元が N 箇所」を明示的に禁じている。
         assert!(SYSTEM.contains("呼び出し箇所の件数"));
     }
 
     #[test]
-    fn user_prompt_embeds_the_range_and_the_ledger() {
+    fn ユーザプロンプトは区間と台帳を埋め込む() {
         let p = user("abc1234", "src/a.rs [modified]\n  new: 1-3\n");
         assert!(p.contains("`abc1234` から作業ツリーまで"), "{p}");
         assert!(p.contains("src/a.rs [modified]"));
@@ -233,14 +233,14 @@ mod tests {
     /// モデルに読ませる差分は、起点から作業ツリーまでの 2 点。3 点の
     /// `base...head` を読ませると、未コミットの変更が丸ごと落ちる。
     #[test]
-    fn the_command_the_model_runs_ends_at_the_worktree_not_at_a_commit() {
+    fn モデルに走らせるコマンドの終点はコミットではなく作業ツリー() {
         let p = user("abc1234", "src/a.rs\n  new: 1\n");
         assert!(p.contains("`git diff abc1234` を実行し"), "{p}");
         assert!(!p.contains("..."), "3 点指定を読ませている: {p}");
     }
 
     #[test]
-    fn repair_prompt_carries_both_the_gaps_and_the_previous_answer() {
+    fn 差し戻しのプロンプトは説明もれと前の答えの両方を運ぶ() {
         let p = repair("{\"sections\":[]}", "src/a.rs new: 4\n");
         assert!(p.contains("src/a.rs new: 4"));
         assert!(p.contains("{\"sections\":[]}"));

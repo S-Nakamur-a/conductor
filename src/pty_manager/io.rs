@@ -23,28 +23,20 @@ impl PtyManager {
         Ok(())
     }
 
-    /// マウスホイールのスクロールを、画面を所有する PTY セッションへ転送する。
-    /// スクロールを処理した場合は true を返し、呼び出し側はローカルの
-    /// スクロールバックオフセットを調整して**はいけない**。
+    /// マウスホイールのスクロールを、画面を所有する PTY セッションへ転送する。処理したら
+    /// true を返し、呼び出し側はローカルのスクロールバックオフセットを調整して**はいけない**。
     ///
-    /// tmux / iTerm2 の挙動に合わせた3つのケースがある。
+    /// tmux / iTerm2 の挙動に合わせた 3 つのケースがある。
     ///
-    /// 1. **子プロセスがマウスレポートを要求している**場合(mouse= を設定した
-    ///    vim/neovim、less --mouse、fzf など): ホイールを col/row での
-    ///    正しくエンコードされたマウスイベント(SGR 1006 またはレガシー X10)
-    ///    として転送し、アプリケーション自身にスクロールさせる。これは
-    ///    フルスクリーンアプリでホイールが丸ごと飲み込まれていた問題への
-    ///    修正である。通常画面・オルタネート画面のどちらでも適用する —
-    ///    アプリがマウスレポートを有効にしている以上、そのイベントを望んでいる。
-    /// 2. **オルタネート画面かつマウスレポート無し**(less、bat、man などの
-    ///    ページャ): オルタネート画面は自前のスクロールバックを持たないため、
-    ///    ホイールの1ノッチごとに lines 回の Up/Down 矢印キー入力に変換して
-    ///    子プロセスへ送る(古典的な "alternate-scroll")。
-    /// 3. **通常画面かつマウスレポート無し**: ここでは処理せず false を返す。
-    ///    呼び出し側がパネルのローカルスクロールバックバッファをスクロールする。
+    /// 1. **子がマウスレポートを要求している** (vim、less --mouse、fzf): SGR 1006 または
+    ///    レガシー X10 でエンコードして転送し、アプリ自身にスクロールさせる。通常画面・
+    ///    オルタネート画面のどちらでも。
+    /// 2. **オルタネート画面かつマウスレポート無し** (ページャ): 自前のスクロールバックを
+    ///    持たないので、1 ノッチを lines 回の Up/Down 矢印に変換する (alternate-scroll)。
+    /// 3. **通常画面かつマウスレポート無し**: false を返し、呼び出し側がパネルのローカル
+    ///    スクロールバックをスクロールする。
     ///
-    /// col / row は PTY グリッド内の 1-based 座標で、ケース1のマウスイベント
-    /// エンコードにのみ使う。
+    /// col / row は PTY グリッド内の 1-based 座標で、ケース 1 のエンコードにのみ使う。
     pub fn forward_scroll_to_session(
         &mut self,
         idx: usize,
@@ -53,8 +45,7 @@ impl PtyManager {
         col: u16,
         row: u16,
     ) -> bool {
-        // 関連する端末モードを読み取ってから、書き込み前に session/parser の
-        // 借用を解放する(write_to_session は &mut self を要求する)。
+        // 端末モードを読んでから、書き込み前に session/parser の借用を解放する。
         let (is_alt, app_cursor, mouse_mode, mouse_encoding) = {
             let Some(session) = self.sessions.get(idx) else {
                 return false;
@@ -69,7 +60,6 @@ impl PtyManager {
             )
         };
 
-        // ケース1: 子プロセスが自分でホイールを捕捉する — エンコード済みイベントを渡す。
         if mouse_mode != vt100::MouseProtocolMode::None {
             let seq = encode_mouse_wheel(up, col, row, mouse_encoding);
             if let Err(e) = self.write_to_session(idx, &seq) {
@@ -78,13 +68,10 @@ impl PtyManager {
             return true;
         }
 
-        // ケース3: マウスレポート無しの通常画面 → 呼び出し側がローカルの
-        // スクロールバックバッファをスクロールする。
         if !is_alt {
             return false;
         }
 
-        // ケース2: オルタネート画面のページャ → 矢印キーを合成する。
         let arrow = scroll_arrow_sequence(up, app_cursor);
         let mut buf = Vec::with_capacity(arrow.len() * lines);
         for _ in 0..lines {
@@ -96,13 +83,10 @@ impl PtyManager {
         true
     }
 
-    /// 大きなテキストペイロードを、通常のタイプ入力として(bracketed paste は
-    /// 使わずに)チャンク書き込みで PTY へ送る。カーネルの PTY 入力バッファ上限
-    /// (macOS/Linux では通常 4096 バイト)に触れないようにするため。
-    ///
-    /// これはプログラムによるプロンプト注入(smart worktree など)で、テキストを
-    /// ペーストイベントとして畳み込むのではなく、受け手のアプリケーションに
-    /// 全文表示させたい場合に使う。
+    /// 大きなテキストペイロードを、通常のタイプ入力として (bracketed paste は使わずに)
+    /// チャンク書き込みで PTY へ送る。カーネルの PTY 入力バッファ上限 (通常 4096 バイト) に
+    /// 触れないようにするため。プロンプト注入で、受け手のアプリケーションに全文表示させたい
+    /// 場合に使う。
     pub fn write_chunked_to_session(&mut self, idx: usize, text: &str) -> Result<()> {
         const CHUNK_SIZE: usize = 1024;
         const CHUNK_DELAY: Duration = Duration::from_millis(5);
@@ -113,11 +97,8 @@ impl PtyManager {
             .context("Session index out of bounds")?;
         let mut writer = session.writer.lock().unwrap_or_else(|e| e.into_inner());
 
-        // ペイロードを小さなチャンクに分けて書き込む(bracketed paste マーカーは無し)。
-        // UTF-8 の文字境界でチャンクを分ける: 文字の途中で終わるチャンクは
-        // (チャンク上限に達した場合は遅延の後に)不完全なマルチバイトシーケンスと
-        // してフラッシュされてしまい、受け手のアプリケーションが誤ってデコード
-        // する可能性がある — 全角文字やマルチバイト入力が壊れる原因になる。
+        // チャンクは UTF-8 の文字境界で分ける。文字の途中で終わるチャンクは不完全なマルチバイト
+        // シーケンスとしてフラッシュされ、受け手が誤ってデコードする (全角文字が壊れる)。
         for chunk in utf8_chunks(text, CHUNK_SIZE) {
             writer
                 .write_all(chunk.as_bytes())

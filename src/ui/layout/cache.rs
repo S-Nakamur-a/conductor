@@ -165,9 +165,8 @@ pub(crate) fn accordion_widths(
         // 2 列ビューは main_area 全体を自分で取るので、列幅は使われない。
         Some(Focus::Revidere) => (0, 0, 0),
         None => {
-            // デフォルトの比率。worktree カラムは廃止済み（その状態は上部ストリップに
-            // 移った）ので幅は0になり、空いたスペースは explorer と viewer の
-            // レビューペインに回る。
+            // デフォルトの比率。worktree カラムは幅 0 (状態は上部ストリップにある) で、空いた
+            // スペースは explorer と viewer に回る。
             let min_col = 3_u16;
             let explorer = ((total_width as u32 * explorer_pct as u32 / 100) as u16).max(min_col);
             let viewer = ((total_width as u32 * viewer_pct as u32 / 100) as u16).max(min_col);

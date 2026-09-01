@@ -146,7 +146,7 @@ impl Drop for Repo {
 
 // 成果物の書き出し先の親ディレクトリが無ければ作る。
 #[test]
-fn write_artifact_creates_the_parent_directory_when_it_is_missing() {
+fn 置き場所が無ければ作ってから書く() {
     let dir = unique_dir("artifact");
     let path = dir.join("nested").join("review.json");
     let r = Review {
@@ -173,7 +173,7 @@ fn write_artifact_creates_the_parent_directory_when_it_is_missing() {
 // 対象範囲に差分が無いのは、0 件成功ではなく明示的なエラー。
 // AI を起こす前に分かるので、起こさないことも併せて見る。
 #[test]
-fn a_range_with_no_changes_is_an_explicit_error_not_a_silent_success() {
+fn 変更の無い区間は黙って成功せず明示的なエラーになる() {
     let repo = Repo::new();
     repo.write("a.txt", "1\n2\n3\n");
     let oid = repo.commit_all("base");
@@ -187,7 +187,7 @@ fn a_range_with_no_changes_is_an_explicit_error_not_a_silent_success() {
 // ない。台帳が最後のコミットだけになっていると、それより前のコミットを指した
 // 節は「存在しない行を指した」側に落ちるので、充足検査で捕まる。
 #[test]
-fn analyze_covers_every_commit_since_the_base_plus_the_uncommitted_work() {
+fn 解析はベース以降の全コミットと未コミット分を見る() {
     let repo = Repo::new();
     repo.write("a.txt", "1\n");
     repo.commit_all("base");
@@ -213,7 +213,7 @@ fn analyze_covers_every_commit_since_the_base_plus_the_uncommitted_work() {
 // 差し戻し（repair）で説明なしが減らなかったら、差し戻し後の結果は
 // 採らず元の結果を使う。
 #[test]
-fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
+fn 差し戻しで悪化したら最初の結果を残す() {
     let repo = Repo::new();
     repo.write("a.txt", "1\n2\n3\n");
     let base = repo.commit_all("base");
@@ -242,7 +242,7 @@ fn analyze_keeps_the_first_result_when_repair_makes_coverage_worse() {
 
 // 初回は比べる相手が無いので、前回からの進みは付けない。
 #[test]
-fn the_first_review_carries_no_since_previous_summary() {
+fn 初回のレビューに前回からの進みは付かない() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");
@@ -259,7 +259,7 @@ fn the_first_review_carries_no_since_previous_summary() {
 
 // 2 度目は、前回の対象コミットと今回の HEAD、その間で動いたファイルを持つ。
 #[test]
-fn a_second_review_reports_what_moved_since_the_previous_one() {
+fn 二度目のレビューは前回から動いたものを出す() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");
@@ -294,7 +294,7 @@ fn a_second_review_reports_what_moved_since_the_previous_one() {
 // 読む前に最新化しただけで進みが消える。差分が動いていなければ AI も呼ばない
 // 空振りに見える操作なのに、成果物は上書きされていて、もう戻せない。
 #[test]
-fn re_analyzing_without_a_new_commit_keeps_the_comparison_point() {
+fn コミットせずに解析し直しても比較の起点は動かない() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");
@@ -333,7 +333,7 @@ fn re_analyzing_without_a_new_commit_keeps_the_comparison_point() {
 // ときは、一覧を引けない。それを「変わったファイルは無い」に畳むと、山ほど
 // 動いていても無いと言い切ることになる。
 #[test]
-fn an_unreachable_previous_head_reports_no_list_instead_of_an_empty_one() {
+fn 辿れない前回headは空の一覧ではなく無しを返す() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");
@@ -370,7 +370,7 @@ fn an_unreachable_previous_head_reports_no_list_instead_of_an_empty_one() {
 // 前回のコミットが履歴から消えている（rebase / amend / force push）ことは、
 // 黙って「変わっていない」に畳まず、そう言う。
 #[test]
-fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
+fn 履歴が書き換わったことは進みの要約に印が付く() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");
@@ -397,7 +397,7 @@ fn a_rewritten_history_is_flagged_in_the_since_previous_summary() {
 
 // 片方を見ている間にもう片方が消えると、行き来した時点で読んでいたものが変わる。
 #[test]
-fn the_since_previous_scope_writes_beside_the_branch_review() {
+fn 前回差分の成果物はブランチ全体の隣に置く() {
     let repo = Repo::new();
     repo.ignore_artifacts();
     repo.write("a.txt", "1\n");

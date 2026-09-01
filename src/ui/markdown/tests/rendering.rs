@@ -7,7 +7,7 @@ use ratatui::style::Color;
 // 折り返し / 幅
 
 #[test]
-fn wraps_to_width_and_preserves_words() {
+fn 幅で折り返し単語は壊さない() {
     let lines = render("the quick brown fox", 9);
     for line in &lines {
         assert!(display_width(&line_text(line)) <= 9);
@@ -25,7 +25,7 @@ fn wraps_to_width_and_preserves_words() {
 }
 
 #[test]
-fn full_width_cjk_wraps_by_display_width() {
+fn 全角のcjkは表示幅で折り返す() {
     // 全角文字6個 = 12桁。幅10では必ず分割される。
     let lines = render("ああああああ", 10);
     for line in &lines {
@@ -36,14 +36,14 @@ fn full_width_cjk_wraps_by_display_width() {
 }
 
 #[test]
-fn overlong_token_is_hard_split() {
+fn 長すぎるトークンはハード分割する() {
     let lines = render(&"a".repeat(12), 5);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
     assert_eq!(texts, vec!["aaaaa", "aaaaa", "aa"]);
 }
 
 #[test]
-fn blank_line_preserved_as_spacing() {
+fn 空行は間隔として残る() {
     let lines = render("a\n\nb", 20);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
     assert_eq!(texts, vec!["a", "", "b"]);
@@ -52,7 +52,7 @@ fn blank_line_preserved_as_spacing() {
 // 堅牢性
 
 #[test]
-fn never_panics_on_adversarial_input() {
+fn 意地の悪い入力でも落ちない() {
     let inputs = [
         "",
         "```",
@@ -93,14 +93,14 @@ fn never_panics_on_adversarial_input() {
 }
 
 #[test]
-fn unknown_language_falls_back_without_panic() {
+fn 知らない言語でも落ちずに落ち着く() {
     let lines = render("```brainfuck\n+++.\n```", 40);
     let joined: String = lines.iter().map(line_text).collect();
     assert!(joined.contains("+++."));
 }
 
 #[test]
-fn code_block_is_highlighted_and_carded() {
+fn コードブロックは色が付きカードに載る() {
     let (theme, ss, st) = fixtures();
     let lines = render_markdown("```rust\nlet x = 1;\n```", 40, &theme, &ss, &st);
     // コードの上下にパディング行があり、それぞれカードの背景色で
@@ -129,7 +129,7 @@ fn code_block_is_highlighted_and_carded() {
 }
 
 #[test]
-fn inline_code_sits_on_card_background() {
+fn インラインのコードもカードの背景に載る() {
     let (theme, _, _) = fixtures();
     let base = Style::default().fg(theme.fg);
     let spans = inline_spans("run `cargo test` now", base, &theme, MarkdownFlavor::Rich);
@@ -141,7 +141,7 @@ fn inline_code_sits_on_card_background() {
 }
 
 #[test]
-fn top_level_headings_get_an_underline_rule() {
+fn 最上位の見出しには下線の罫線が付く() {
     // H1/H2 はテキストに加えて全幅の区切り線を描画する。H3以降は描画しない。
     let h1 = render("# Title", 20);
     assert_eq!(h1.len(), 2, "heading + rule");
@@ -153,7 +153,7 @@ fn top_level_headings_get_an_underline_rule() {
 }
 
 #[test]
-fn headings_get_a_colour_bar_and_level_colour() {
+fn 見出しには色の帯と階層ごとの色が付く() {
     let (theme, _, _) = fixtures();
     // 見出しの最初の span は塗りつぶしのカラーバーで、その色と見出しテキストの
     // 色はレベルに応じて変わる。
@@ -176,7 +176,7 @@ fn headings_get_a_colour_bar_and_level_colour() {
 // Transcript フレーバー（Claude のスクロールアップ表示）
 
 #[test]
-fn transcript_bullets_use_dash_in_body_colour() {
+fn transcriptの箇条書きは本文色のダッシュを使う() {
     let (theme, _, _) = fixtures();
     // 箇条書きマーカーは「- 」（「• 」ではない）で、本文色（アクセントではない）。
     let lines = render_transcript("- item", 20);
@@ -190,7 +190,7 @@ fn transcript_bullets_use_dash_in_body_colour() {
 }
 
 #[test]
-fn transcript_ordered_marker_in_body_colour() {
+fn transcriptの番号も本文色になる() {
     let (theme, _, _) = fixtures();
     let lines = render_transcript("1. item", 20);
     let marker = &lines[0].spans[0];
@@ -199,7 +199,7 @@ fn transcript_ordered_marker_in_body_colour() {
 }
 
 #[test]
-fn transcript_headings_are_bold_body_colour_no_bar_no_rule() {
+fn transcriptの見出しは太字の本文色で帯も罫線も無い() {
     let (theme, _, _) = fixtures();
     // H3（他の全レベルも同様）は、太字の本文色プレーンテキストとして描画される:
     // 最初の span は「┃ 」バーではなくテキスト自体で、区切り線もない。
@@ -223,7 +223,7 @@ fn transcript_headings_are_bold_body_colour_no_bar_no_rule() {
 }
 
 #[test]
-fn transcript_h1_is_bold_italic_underlined_h2_h3_stay_bold_only() {
+fn transcriptのh1は太字斜体下線でh2とh3は太字だけ() {
     // 実物の Claude Code は H1 を太字+斜体+下線で描画する。H2/H3 は
     // transcript_headings_are_bold_body_colour_no_bar_no_rule で確認した通りの
     // プレーンな太字のまま。
@@ -266,7 +266,7 @@ fn transcript_h1_is_bold_italic_underlined_h2_h3_stay_bold_only() {
 }
 
 #[test]
-fn transcript_task_checkbox_renders_literally_unstyled() {
+fn transcriptのチェックボックスは装飾なしでそのまま出す() {
     // 実物の Claude Code は GFM のタスクリスト構文を特別扱いしない:
     // チェックボックスのマーカーは本文テキストのまま、普通の箇条書き項目として残る。
     let (theme, _, _) = fixtures();
@@ -308,7 +308,7 @@ fn transcript_task_checkbox_renders_literally_unstyled() {
 }
 
 #[test]
-fn transcript_inline_code_uses_info_colour_with_no_padding() {
+fn transcriptのインラインコードは余白なしのinfo色() {
     let (theme, _, _) = fixtures();
     let lines = render_transcript("use `git` now", 40);
     let code = lines[0]
@@ -333,7 +333,7 @@ fn transcript_inline_code_uses_info_colour_with_no_padding() {
 }
 
 #[test]
-fn transcript_quote_uses_dim_glyph_and_default_colour_italic_body() {
+fn transcriptの引用は減光したグリフと既定色の斜体本文() {
     let (theme, _, _) = fixtures();
     let lines = render_transcript("> quoted text", 40);
     let glyph = &lines[0].spans[0];
@@ -370,7 +370,7 @@ fn transcript_quote_uses_dim_glyph_and_default_colour_italic_body() {
 }
 
 #[test]
-fn transcript_heading_has_blank_line_before_and_after() {
+fn transcriptの見出しは前後に空行を持つ() {
     // "body / ## Head / more" → 見出しの前後どちらにも空行が挿入される。
     let lines = render_transcript("body\n## Head\nmore", 30);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
@@ -384,7 +384,7 @@ fn transcript_heading_has_blank_line_before_and_after() {
 }
 
 #[test]
-fn transcript_heading_does_not_stack_double_blank() {
+fn transcriptの見出しは空行を二重に積まない() {
     // ソース側で見出しの後に書かれた空行は吸収され、積み重ならない。
     let lines = render_transcript("## Head\n\nbody", 30);
     let texts: Vec<String> = lines.iter().map(line_text).collect();
@@ -398,7 +398,7 @@ fn transcript_heading_does_not_stack_double_blank() {
 }
 
 #[test]
-fn transcript_lines_stay_within_width() {
+fn transcriptの行は幅の中に収まる() {
     // ダッシュの箇条書きと太字見出しは折り返し幅を決してはみ出さない。
     for width in [4usize, 8, 20, 40] {
         for line in render_transcript("### 見出し\n- あいうえお item\n1. another one", width)
@@ -409,7 +409,7 @@ fn transcript_lines_stay_within_width() {
 }
 
 #[test]
-fn transcript_table_renders_as_boxed_grid() {
+fn transcriptの表は罫線付きの格子で描く() {
     // 実物の Claude Code のデフォルトのテーブル描画とバイト単位で一致する:
     // 罫線文字の枠線、（ヘッダー下だけでなく）行と行の間すべての区切り線、
     // max(セル幅) + 2 にパディングされた列、色なし、太字なし。
@@ -450,7 +450,7 @@ fn transcript_table_renders_as_boxed_grid() {
 }
 
 #[test]
-fn transcript_table_never_exceeds_width() {
+fn transcriptの表は幅を超えない() {
     let table = "| feature | notes |\n| --- | --- |\n\
         | toggle | switches a markdown file between raw source and rendered prose |\n\
         | scroll | independent of the raw view |";
@@ -465,7 +465,7 @@ fn transcript_table_never_exceeds_width() {
 }
 
 #[test]
-fn rich_table_stays_borderless_after_transcript_boxed_table_change() {
+fn richの表は罫線なしのまま() {
     // ガード: Rich フレーバーは太字ヘッダー/区切り線のみのレイアウトを
     // 維持しなければならない — Transcript 側から罫線文字が漏れてはいけない。
     let table = "| h1 | h2 |\n| --- | --- |\n| a | b |";
@@ -496,7 +496,7 @@ fn rich_table_stays_borderless_after_transcript_boxed_table_change() {
 }
 
 #[test]
-fn apply_background_fills_only_bare_spans() {
+fn 背景の適用は素のスパンだけを埋める() {
     let (theme, ss, st) = fixtures();
     let mut lines = render_markdown("text with `code`", 40, &theme, &ss, &st);
     let bg = theme.comment_preview_bg;
@@ -511,7 +511,7 @@ fn apply_background_fills_only_bare_spans() {
 }
 
 #[test]
-fn markdown_cache_matches_fresh_and_invalidates_on_change() {
+fn キャッシュは作りたてと一致し変更で無効になる() {
     let (theme, ss, st) = fixtures();
     let cache = MarkdownCache::new();
     let texts = |ls: &[Line]| ls.iter().map(line_text).collect::<Vec<_>>();

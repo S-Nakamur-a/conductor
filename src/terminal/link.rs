@@ -128,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_relative_path_becomes_a_link() {
+    fn 素の相対パスはリンクになる() {
         let dir = setup_test_dir();
         let links = detect_file_links("opening src/app.rs now", dir.path());
         assert_eq!(links.len(), 1);
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_line_number_joins_the_link() {
+    fn 末尾の行番号もリンクに含む() {
         let dir = setup_test_dir();
         let links = detect_file_links("error at src/app.rs:42", dir.path());
         assert_eq!(links.len(), 1);
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn a_line_and_column_both_join_the_link() {
+    fn 行と桁の両方をリンクに含む() {
         let dir = setup_test_dir();
         let links = detect_file_links("error at src/app.rs:42:10", dir.path());
         assert_eq!(links.len(), 1);
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rustc_arrow_line_links_to_what_it_points_at() {
+    fn rustcの矢印の行は指す先へのリンクになる() {
         let dir = setup_test_dir();
         let links = detect_file_links("  --> src/main.rs:10:5", dir.path());
         assert_eq!(links.len(), 1);
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dot_slash_prefix_stays_in_the_path() {
+    fn 先頭のドットスラッシュはパスに残る() {
         let dir = setup_test_dir();
         let links = detect_file_links("reading ./src/app.rs ok", dir.path());
         assert_eq!(links.len(), 1);
@@ -175,14 +175,14 @@ mod tests {
     }
 
     #[test]
-    fn a_path_that_is_not_on_disk_is_not_linkified() {
+    fn ディスクに無いパスはリンクにしない() {
         let dir = setup_test_dir();
         let links = detect_file_links("error in src/nonexistent.rs:10", dir.path());
         assert!(links.is_empty());
     }
 
     #[test]
-    fn every_path_on_a_line_becomes_its_own_link() {
+    fn 行の中の各パスがそれぞれリンクになる() {
         let dir = setup_test_dir();
         let links = detect_file_links("src/app.rs:1 and src/main.rs:2", dir.path());
         assert_eq!(links.len(), 2);
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn an_offset_inside_the_path_finds_that_link() {
+    fn パスの途中の位置からそのリンクを引ける() {
         let dir = setup_test_dir();
         let text = "error at src/app.rs:42:10 done";
         let links = detect_file_links(text, dir.path());
@@ -208,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn an_absolute_path_becomes_a_link() {
+    fn 絶対パスもリンクになる() {
         let dir = setup_test_dir();
         let abs = dir.path().join("src/app.rs");
         let text = format!("opening {} now", abs.display());

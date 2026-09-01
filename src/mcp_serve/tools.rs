@@ -1,18 +1,14 @@
 //! stdio 越しに公開される、8個のレビューデータベースツール。
 //!
-//! これらは、かつて別のマーケットプレイスプラグインパッケージとして配布されて
-//! いた Node サーバの移植版である。ワイヤ上の契約 — 引数名、デフォルト値、
-//! 返信文の一字一句 — はあえて変えていない。既に世に出ているセッションや
-//! スラッシュコマンドがそれに依存しているため。
+//! ワイヤ上の契約 — 引数名、デフォルト値、返信文の一字一句 — はあえて変えない。既に
+//! 世に出ているセッションやスラッシュコマンドがそれに依存しているため。
 //!
-//! 書き込みを行うツールは全て TUI のリフレッシュ用 FIFO も突く。これにより、
-//! レビュー担当者が何もしなくてもコメントが Explorer に表示される。
+//! 書き込みを行うツールは全て TUI のリフレッシュ用 FIFO も突く。レビュー担当者が
+//! 何もしなくてもコメントが Explorer に表示される。
 //!
-//! 以下のハンドラの本体は全て完全に同期的である。async fn なのは rmcp の
-//! #[tool] トレイトがそれを要求するからにすぎない。シングルスレッド
-//! ランタイムを SQLite でブロックしても安全なのは、まさにパイプもクライアント
-//! も1つずつしかないからである — 2つ目の同時呼び出し元をサポートするには、
-//! 先にこれを作り直す必要がある（例えば spawn_blocking を使うなど）。
+//! ハンドラの本体は全て同期的で、async fn なのは rmcp の #[tool] が要求するから。
+//! シングルスレッドランタイムを SQLite でブロックして安全なのは、パイプもクライアント
+//! も 1 つずつしかないため — 2 つ目の同時呼び出し元を支えるには先に作り直しが要る。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -203,9 +199,8 @@ impl McpServer {
             .map_err(db_error)?;
         self.signal_refresh();
 
-        // Node サーバはここで新しい返信自身の id を報告していたが、こちらの
-        // 実装では id は add_reply の内部で生成され呼び出し元には返らない
-        // ため、返信はそれが付いたコメントで識別する。
+        // 返信の id は add_reply の内部で生成され呼び出し元に返らないので、返信はそれが付いた
+        // コメントで識別する。
         ok_text(format!("Reply added to comment {}.", short_id(&id)))
     }
 
@@ -391,7 +386,7 @@ mod tests {
     // tools/list
 
     #[test]
-    fn tool_router_lists_exactly_the_seven_tools() {
+    fn 公開するツールはちょうど7つ() {
         let tools = McpServer::tool_router().list_all();
         let names: std::collections::BTreeSet<&str> =
             tools.iter().map(|t| t.name.as_ref()).collect();
@@ -441,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_comment_reports_not_found() {
+    fn 無いコメントの解決はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.resolve_comment(Parameters(CommentIdOnly {
             comment_id: "deadbeef".into(),
@@ -453,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_comment_marks_it_resolved() {
+    fn 解決するとコメントに印が付く() {
         let (server, _dir) = test_server();
         let id = server
             .store()
@@ -484,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn get_comment_thread_reports_not_found() {
+    fn 無いスレッドの取得はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.get_comment_thread(Parameters(CommentIdOnly {
             comment_id: "deadbeef".into(),
@@ -496,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_to_comment_reports_not_found() {
+    fn 無いコメントへの返信はnot_foundを返す() {
         let (server, _dir) = test_server();
         let result = block_on(server.reply_to_comment(Parameters(ReplyToComment {
             comment_id: "deadbeef".into(),
@@ -509,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_to_comment_stores_a_claude_authored_reply() {
+    fn 返信はclaude名義で保存される() {
         let (server, _dir) = test_server();
         let id = server
             .store()

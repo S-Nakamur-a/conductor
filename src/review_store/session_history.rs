@@ -87,7 +87,7 @@ mod tests {
     use super::super::test_support::test_store;
 
     #[test]
-    fn session_history_save_list_search() {
+    fn セッション履歴の保存と一覧と検索() {
         let store = test_store();
 
         // 最初は空。

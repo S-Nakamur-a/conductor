@@ -308,20 +308,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_suspicious_ref_rejects_leading_dash() {
+    fn 先頭がダッシュのrefは拒む() {
         assert!(is_suspicious_ref("--upload-pack=evil"));
         assert!(!is_suspicious_ref("main"));
         assert!(!is_suspicious_ref("release/1.0"));
     }
 
     #[test]
-    fn parse_pr_input_accepts_bare_number() {
+    fn 素の番号を受け付ける() {
         assert_eq!(parse_pr_input("279"), Ok(279));
         assert_eq!(parse_pr_input("  42  "), Ok(42));
     }
 
     #[test]
-    fn parse_pr_input_accepts_github_url() {
+    fn githubのurlを受け付ける() {
         assert_eq!(
             parse_pr_input("https://github.com/S-Nakamur-a/conductor/pull/279"),
             Ok(279)
@@ -333,57 +333,48 @@ mod tests {
     }
 
     #[test]
-    fn parse_pr_input_rejects_garbage() {
+    fn でたらめな入力は拒む() {
         assert_eq!(
             parse_pr_input("not-a-pr"),
             Err(PrIntakeError::InvalidInput("not-a-pr".to_string()))
         );
     }
-
     #[test]
-    fn classify_failure_text_detects_auth() {
-        assert_eq!(
-            classify_failure_text(
+    fn ghとgitのstderrを手の打てるエラーに直す() {
+        let cases = [
+            (
                 1,
-                "To get started with GitHub CLI, please run:  gh auth login"
+                "To get started with GitHub CLI, please run:  gh auth login",
+                PrIntakeError::GhNotAuthenticated,
             ),
-            PrIntakeError::GhNotAuthenticated
-        );
-    }
-
-    #[test]
-    fn classify_failure_text_detects_not_found() {
-        assert_eq!(
-            classify_failure_text(404, "no pull requests found for branch \"x\""),
-            PrIntakeError::PrNotFound(404)
-        );
-        assert_eq!(
-            classify_failure_text(5, "fatal: couldn't find remote ref pull/5/head"),
-            PrIntakeError::PrNotFound(5)
-        );
-    }
-
-    #[test]
-    fn classify_failure_text_detects_network_error() {
-        assert_eq!(
-            classify_failure_text(
+            (
+                404,
+                r#"no pull requests found for branch "x""#,
+                PrIntakeError::PrNotFound(404),
+            ),
+            (
+                5,
+                "fatal: couldn't find remote ref pull/5/head",
+                PrIntakeError::PrNotFound(5),
+            ),
+            (
                 1,
-                "fatal: unable to access: Could not resolve host: github.com"
+                "fatal: unable to access: Could not resolve host: github.com",
+                PrIntakeError::NetworkError,
             ),
-            PrIntakeError::NetworkError
-        );
+            (
+                1,
+                "something unexpected happened",
+                PrIntakeError::Other("something unexpected happened".to_string()),
+            ),
+        ];
+        for (pr, stderr, want) in cases {
+            assert_eq!(classify_failure_text(pr, stderr), want, "{stderr}");
+        }
     }
 
     #[test]
-    fn classify_failure_text_falls_back_to_other() {
-        assert_eq!(
-            classify_failure_text(1, "something unexpected happened"),
-            PrIntakeError::Other("something unexpected happened".to_string())
-        );
-    }
-
-    #[test]
-    fn display_messages_are_actionable() {
+    fn エラー文は次の手が分かる形になっている() {
         assert!(
             PrIntakeError::GhNotAuthenticated
                 .to_string()
@@ -395,7 +386,7 @@ mod tests {
     /// 再入場: intake_pr は gh も git も一切触らずに既存の worktree ディレクトリを
     /// 再利用しなければならない (gh が入っていなくても動くように)。
     #[test]
-    fn intake_pr_reenters_existing_worktree_without_gh_or_network() {
+    fn 既にあるworktreeにはghも通信も無しで入り直す() {
         let parent = tempfile::tempdir().unwrap();
         // OS の一時ディレクトリ自体が symlink になっているプラットフォーム
         // (macOS の /tmp -> /private/tmp など) でも等しく比較できるよう
@@ -428,7 +419,7 @@ mod tests {
     /// Ready を返して空のレビュー画面を見せるのではなく、行動につながる
     /// メッセージで失敗しなければならない。
     #[test]
-    fn intake_pr_reenters_broken_directory_fails_with_actionable_message() {
+    fn 壊れたディレクトリでは手の打てるエラーで落ちる() {
         let parent = tempfile::tempdir().unwrap();
         let parent_path = parent.path().canonicalize().unwrap();
         let repo_path = parent_path.join("repo");
@@ -458,7 +449,7 @@ mod tests {
     /// このリポジトリ自身の worktree に触れないよう、一時ディレクトリへ clone する。
     #[test]
     #[ignore]
-    fn intake_pr_against_real_pr() {
+    fn 実在するprに対する取り込み() {
         let parent = tempfile::tempdir().unwrap();
         let repo_path = parent.path().join("repo");
         let mut fetch_opts = git2::FetchOptions::new();

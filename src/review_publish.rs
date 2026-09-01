@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_publishable_keeps_single_line_on_diff() {
+    fn diff上の単一行のコメントは残す() {
         let diff = diff_with_hunk("src/a.rs", &[10, 11, 12]);
         let (kept, skipped) = filter_publishable(vec![comment("src/a.rs", 11, None)], &diff);
         assert_eq!(kept.len(), 1);
@@ -376,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_publishable_keeps_range_with_both_endpoints_in_hunk() {
+    fn 両端がハンクに入る範囲は残す() {
         let diff = diff_with_hunk("src/a.rs", &[10, 11, 12]);
         let (kept, skipped) = filter_publishable(vec![comment("src/a.rs", 10, Some(12))], &diff);
         assert_eq!(kept.len(), 1);
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_publishable_skips_line_outside_diff() {
+    fn diffの外の行は落とす() {
         let diff = diff_with_hunk("src/a.rs", &[10, 11, 12]);
         let (kept, skipped) = filter_publishable(vec![comment("src/a.rs", 99, None)], &diff);
         assert!(kept.is_empty());
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_publishable_skips_file_not_in_diff() {
+    fn diffに無いファイルは落とす() {
         let diff = diff_with_hunk("src/a.rs", &[10]);
         let (kept, skipped) = filter_publishable(vec![comment("src/missing.rs", 10, None)], &diff);
         assert!(kept.is_empty());
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_repo_from_pr_url_parses_standard_url() {
+    fn 標準のprのurlからownerとrepoを取る() {
         assert_eq!(
             owner_repo_from_pr_url("https://github.com/S-Nakamur-a/conductor/pull/279"),
             Some(("S-Nakamur-a".to_string(), "conductor".to_string()))
@@ -408,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn owner_repo_from_pr_url_rejects_non_github_url() {
+    fn github以外のurlは拒む() {
         assert_eq!(
             owner_repo_from_pr_url("https://example.com/o/r/pull/1"),
             None
@@ -416,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn single_line_comment_payload_omits_start_line() {
+    fn 単一行のコメントはstart_lineを付けない() {
         let c = comment("src/a.rs", 10, None);
         let payload = ReviewCommentPayload::from_comment(&c);
         let json = serde_json::to_value(&payload).unwrap();
@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn range_comment_payload_sets_start_line_and_end_line() {
+    fn 範囲のコメントはstart_lineとend_lineを付ける() {
         let c = comment("src/a.rs", 10, Some(15));
         let payload = ReviewCommentPayload::from_comment(&c);
         let json = serde_json::to_value(&payload).unwrap();
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_with_no_comments_succeeds_without_calling_gh() {
+    fn コメントが無ければghを呼ばずに成功する() {
         // コメントが空ならコミット ID の問い合わせは起きないはず。本物の gh も
         // ネットワークも無いサンドボックスのテスト環境ではそれがハングまたは
         // 失敗するので、ここで動かせる publish() の経路はこれだけ。

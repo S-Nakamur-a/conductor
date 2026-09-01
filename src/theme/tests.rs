@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn complement_rotates_hue_180_and_round_trips() {
+fn 補色は色相を180度回して往復する() {
     // 純粋な赤(h=0) → 同じ彩度/明度のシアン(h=0.5)。
     assert_eq!(
         Theme::complement(Color::Rgb(255, 0, 0)),
@@ -20,12 +20,12 @@ fn complement_rotates_hue_180_and_round_trips() {
 }
 
 #[test]
-fn complement_leaves_non_rgb_unchanged() {
+fn 補色はrgb以外を変えない() {
     assert_eq!(Theme::complement(Color::Reset), Color::Reset);
 }
 
 #[test]
-fn lighten_endpoints_and_midpoint() {
+fn lightenの両端と中点() {
     let c = Color::Rgb(100, 100, 100);
     assert_eq!(Theme::lighten(c, 0.0), c);
     assert_eq!(Theme::lighten(c, 1.0), Color::Rgb(255, 255, 255));
@@ -34,7 +34,7 @@ fn lighten_endpoints_and_midpoint() {
 }
 
 #[test]
-fn lighten_leaves_non_rgb_unchanged() {
+fn lightenはrgb以外を変えない() {
     assert_eq!(Theme::lighten(Color::Reset, 0.5), Color::Reset);
 }
 
@@ -47,7 +47,7 @@ fn luma(c: Color) -> f64 {
 }
 
 #[test]
-fn high_contrast_brightens_dim_greys_on_dark_themes() {
+fn 高コントラストはdarkテーマの薄いグレーを明るくする() {
     // ダークテーマでは、くすんだグレー(border、hint、muted)は明るくならな
     // ければならない — それがハイコントラスト変換の目的そのものである。
     for &name in Theme::all_names() {
@@ -72,7 +72,7 @@ fn high_contrast_brightens_dim_greys_on_dark_themes() {
 }
 
 #[test]
-fn high_contrast_darkens_dim_greys_on_light_themes() {
+fn 高コントラストはlightテーマの薄いグレーを濃くする() {
     // ライトテーマでは、白に近い背景に対するコントラストという意味で、
     // くすんだグレーは明るくではなく暗くならなければならない。
     for &name in Theme::all_names() {
@@ -97,7 +97,7 @@ fn high_contrast_darkens_dim_greys_on_light_themes() {
 }
 
 #[test]
-fn lerp_endpoints_and_midpoint() {
+fn lerpの両端と中点() {
     let a = Color::Rgb(0, 0, 0);
     let b = Color::Rgb(100, 200, 50);
     assert_eq!(Theme::lerp(a, b, 0.0), a);
@@ -106,7 +106,7 @@ fn lerp_endpoints_and_midpoint() {
 }
 
 #[test]
-fn lerp_clamps_out_of_range_t() {
+fn lerpは範囲外のtをクランプする() {
     let a = Color::Rgb(10, 20, 30);
     let b = Color::Rgb(200, 200, 200);
     assert_eq!(Theme::lerp(a, b, -1.0), a);
@@ -116,7 +116,7 @@ fn lerp_clamps_out_of_range_t() {
 /// リストの出どころを1箇所に保つ。テーマを足しても書き足す先は
 /// [Theme::all_names] だけで、light フラグの取り違えは依然ここで捕まる。
 #[test]
-fn light_themes_are_exactly_the_three_at_the_end_of_the_list() {
+fn lightテーマはリスト末尾の3つちょうど() {
     let light: Vec<&str> = Theme::all_names()
         .iter()
         .copied()
@@ -129,7 +129,7 @@ fn light_themes_are_exactly_the_three_at_the_end_of_the_list() {
 }
 
 #[test]
-fn all_names_dark_before_light() {
+fn all_namesはdarkがlightより先() {
     let names = Theme::all_names();
     let last_dark = names
         .iter()
@@ -146,18 +146,16 @@ fn all_names_dark_before_light() {
 }
 
 #[test]
-fn unknown_name_falls_back_to_default() {
+fn 知らない名前は既定へ落ちる() {
     // 未知の名前はデフォルト(catppuccin-mocha、ダーク)を返す。
     let theme = Theme::from_name("does-not-exist");
     assert!(!theme.light);
 }
 
-/// all_names() 内の全ての名前は from_name を経て往復し、同じ正規の
-/// name フィールドを返さなければならない。不一致は、あるテーマが
-/// 片方のリストには登録されているのにもう片方では欠落しているか
+/// 不一致は、あるテーマが片方のリストには登録されているのにもう片方では欠落しているか、
 /// 名前が違っていることを意味する。
 #[test]
-fn all_names_round_trip_through_from_name() {
+fn all_namesの全部がfrom_nameを往復する() {
     for &n in Theme::all_names() {
         let theme = Theme::from_name(n);
         assert_eq!(

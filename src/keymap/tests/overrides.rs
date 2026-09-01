@@ -6,7 +6,7 @@ use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
-fn user_override_adds_a_chord() {
+fn ユーザ設定はキーを足せる() {
     // ワークツリーレイヤーで "n" -> navigate_down をバインドする。
     let mut layer = toml::Table::new();
     layer.insert(
@@ -36,7 +36,7 @@ fn user_override_adds_a_chord() {
 }
 
 #[test]
-fn user_override_shadows_a_default_chord() {
+fn ユーザ設定は既定のキーを覆う() {
     // ワークツリーで "g" -> go_to_top に再バインドする（デフォルトは grab_branch）。
     let mut layer = toml::Table::new();
     layer.insert(
@@ -57,7 +57,7 @@ fn user_override_shadows_a_default_chord() {
 }
 
 #[test]
-fn user_tombstone_unbinds_a_default_chord() {
+fn ユーザの打ち消しは既定のキーを外す() {
     // "ctrl+q" = false はデフォルトの Quit バインディングを完全に取り除く
     // （keymap-suite のマージにおけるトゥームストーン）。そのためこのチョードは
     // 別のアクションに覆われるのではなく、そのまま通過するようになる。これは
@@ -81,7 +81,7 @@ fn user_tombstone_unbinds_a_default_chord() {
 }
 
 #[test]
-fn user_tombstone_in_panel_layer_unbinds() {
+fn パネル層での打ち消しも効く() {
     // トゥームストーンは名前付きレイヤーでも機能する: ワークツリーの 'c'
     // （チェリーピック）を落とす。
     let mut layer = toml::Table::new();
@@ -98,7 +98,7 @@ fn user_tombstone_in_panel_layer_unbinds() {
 }
 
 #[test]
-fn user_unknown_action_is_warned() {
+fn 知らないアクション名は警告になる() {
     let mut keys = toml::Table::new();
     keys.insert(
         "ctrl+z".to_string(),
@@ -118,7 +118,7 @@ fn user_unknown_action_is_warned() {
 }
 
 #[test]
-fn legacy_format_is_reported_not_silent() {
+fn 旧形式は黙らずに報告する() {
     // 旧スキーマ: [keybinds.worktree] navigate_down = "j" — "keys"/"layers"
     // ではなく "worktree" という名前のトップレベルテーブル。
     let mut wt = toml::Table::new();
@@ -139,7 +139,7 @@ fn legacy_format_is_reported_not_silent() {
 }
 
 #[test]
-fn in_layer_conflict_is_warned() {
+fn 同じ層の中の衝突は警告になる() {
     // 1つのレイヤー内で同じチョードの2通りの綴り: keymap-config が Conflict
     // を報告し、後の方のバインディングが勝つ。
     let mut keys = toml::Table::new();
@@ -171,7 +171,7 @@ fn in_layer_conflict_is_warned() {
 }
 
 #[test]
-fn unknown_layer_with_bindings_is_warned() {
+fn 知らない層に割り当てがあれば警告になる() {
     // 空の GLOBAL_LAYER を抑制する仕組みを検証する: 空でない未認識のレイヤー名は
     // 警告になり、常に注入される空のレイヤーは警告にならない。
     let mut layer = toml::Table::new();

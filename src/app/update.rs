@@ -42,11 +42,8 @@ impl App {
         }
     }
 
-    /// GitHub Releasesに新しいバージョンがないか、要求に応じて手動で確認する。
-    /// 起動時/一定間隔でのサイレントな確認と違い、これはバックグラウンドの
-    /// 結果が [poll_all_background_ops](Self::poll_all_background_ops) に届いた
-    /// 時点で、どの結果（更新あり／既に最新／確認失敗）でも明示的なフィード
-    /// バックを出す。
+    /// GitHub Releases に新しいバージョンがないか手動で確認する。起動時のサイレントな確認と
+    /// 違い、どの結果 (更新あり / 既に最新 / 確認失敗) でも明示的なフィードバックを出す。
     pub(super) fn cmd_check_for_update(&mut self) {
         self.update.check_requested = true;
         self.set_status_info(format!(
@@ -101,9 +98,6 @@ impl App {
     }
 
     /// すべてのバックグラウンド処理をポーリングし、その結果を反映する。
-    ///
-    /// 以前はmain.rsのrun_loop()に散らばっていたpoll_*()呼び出しを、
-    /// ここに集約している。
     pub fn poll_all_background_ops(&mut self) {
         self.poll_bg_branches();
         self.poll_bg_pull();
@@ -119,12 +113,10 @@ impl App {
         self.poll_revidere();
         self.poll_publish_review();
 
-        // ccusage
         if let Some(info) = self.bg.ccusage.poll() {
             self.stats.ccusage = Some(info);
         }
 
-        // シンボル索引
         if let Some(result) = self.bg.symbol_index.poll() {
             match result {
                 Ok(count) => {
@@ -138,14 +130,9 @@ impl App {
                     log::warn!("Symbol index build failed: {msg}");
                 }
             }
-            // ビルドが古い根を走査している間に根が動くことがあり、かつ
-            // start_symbol_index_buildは実行中のビルドの上に2つ目を積む
-            // ことを拒む。この組み合わせにより、完了したビルドが自分の
-            // 結果を何もキューに積まずに捨ててしまい、次のファイルシステム
-            // イベントまで索引が空のままになる。ここで追いつきビルドを
-            // 起動するのがその隙間を塞ぐ方法だ: この時点でスロットは
-            // 空いており、根が一度も動いていなければ索引はすでに利用可能
-            // とマークされているのでこれは何もしない。
+            // 根の移動と「実行中のビルドの上に 2 つ目を積まない」制約が重なると、完了したビルドが
+            // 結果を捨てて次のファイルシステムイベントまで索引が空のままになる。ここで追いつき
+            // ビルドを起動して塞ぐ。スロットは空いており、根が動いていなければ何もしない。
             if !self.code_nav.index.is_available() {
                 self.start_symbol_index_build();
             }
@@ -162,15 +149,11 @@ impl App {
             } else if let Some(n) = documents {
                 log::info!("Semantic index loaded: {n} documents");
             } else {
-                // 索引はまだ無い。読んでいるファイルの索引ルートに対して
-                // SemanticIndex::note_open が作らせる。
                 log::info!("No semantic index yet");
             }
         }
 
-        // 更新確認。外側のOptionは「結果が届いた」ことを表し、内側は確認
-        // そのものの結果（成功ならSome(info)、ネットワーク/パースエラー
-        // ならNone）。
+        // 更新確認。外側の Option は「結果が届いた」ことを、内側は確認そのものの結果を表す。
         if let Some(result) = self.bg.update_check.poll() {
             // 今回、ユーザーが明示的なフィードバックを要求していたかどうか。
             let requested = std::mem::take(&mut self.update.check_requested);

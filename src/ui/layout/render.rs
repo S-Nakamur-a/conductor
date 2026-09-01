@@ -33,11 +33,9 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
     // タイトルバー
     super::super::chrome::render_title_bar(frame, title_area, app);
 
-    // メニューバー（常に表示、タイトル直下）
     crate::menu::render::render(frame, menubar_area, app);
 
-    // worktree 監視ストリップ（旧左カラムと、以前あった
-    // CC 待機通知バーの後継）
+    // worktree 監視ストリップ。
     crate::worktree::bar::render(frame, wtbar_area, app);
 
     // revidere の 2 列ビューは main_area 全体を取る。3 列アコーディオンとは
@@ -48,10 +46,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    // アコーディオンのカラム幅（キャッシュから取得）
     let columns = app.layout.cache.columns;
-
-    // カラム0（worktree）は廃止済み――その状態は上部ストリップにある。
 
     if app.editor.is_some() {
         // 組み込みエディタは Explorer + Viewer カラムを1つの結合された PTY パネルに
@@ -197,7 +192,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn border_glyph_detection() {
+    fn 枠線のグリフを見分ける() {
         // 罫線素片（細線 + 太線）はボーダーである。
         assert!(is_border_glyph("│"));
         assert!(is_border_glyph("─"));

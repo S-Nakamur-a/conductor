@@ -220,7 +220,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_state_messages() {
+    fn 状態のメッセージを読む() {
         let CcNotifyEvent::State { kind, cwd } =
             CcNotifyListener::parse_message("waiting /tmp/wt").expect("parsed")
         else {
@@ -231,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_session_rotation() {
+    fn セッションのローテーションを読む() {
         let CcNotifyEvent::SessionRotated {
             panel_id,
             session_id,
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_malformed_messages() {
+    fn 壊れたメッセージは拒む() {
         // 動詞だけ / id 片方だけ / 未知の動詞は捨てる。
         assert!(CcNotifyListener::parse_message("session").is_none());
         assert!(CcNotifyListener::parse_message("session only-one-id").is_none());
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn cwd_with_spaces_survives() {
+    fn 空白を含むcwdも壊れない() {
         // パスは行末まで丸ごと。空白を含むワークツリー名でも壊れない。
         let CcNotifyEvent::State { cwd, .. } =
             CcNotifyListener::parse_message("active /tmp/my worktree").expect("parsed")

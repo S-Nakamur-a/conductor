@@ -3,29 +3,19 @@
 //! チートシート向けの人間が読めるラベル、そして KeyMap（super::KeyMap）が
 //! 解決時に参照する terminal-interception（terminal での横取り）分類。
 
-// Action — カスタマイズ可能なユーザアクションすべて
-
-// actions! マクロ（keymap-suite 0.1.2）が enum、ActionName 実装
-// （from_name / name — 以前手書きだった from_str / as_str が提供していた
-// 設定名のマッピング）、そして宣言順の Action::ALL（チートシートはこの順で
-// 描画するので、宣言順がそのまま表示順になる）を生成する。デフォルトの
-// チョードは意図的にここでは宣言していない: それらは default_keybinds.toml
-// にあり、そのレイヤーごとのテーブルは、このアプリの9レイヤー・共有
-// ナビゲーションのキーマップに、マクロの「アクションごとの "chord" @
-// "layer" のリスト」よりもよく合う（スキーマと、ユーザが上書きする際に
-// 読む根拠のコメントはそのファイルを参照）。
+// actions! マクロが enum、設定名のマッピング、宣言順の Action::ALL (チートシートは
+// この順で描画する) を生成する。デフォルトのチョードは default_keybinds.toml にある —
+// そのレイヤーごとのテーブルのほうが、9 レイヤー・共有ナビゲーションのキーマップには
+// マクロの「アクションごとの chord @ layer のリスト」よりよく合う。
 keymap_suite::actions! {
     pub enum Action {
         // グローバル
         Quit => "quit",
         ShowHelp => "show_help",
         CommandPalette => "command_palette",
-        /// メニューバーにキーボードフォーカスを与える。矢印キーでタイトルを
-        /// ブラウズでき、Down/Enter でリストが開く — GTK/Windows の慣習で
-        /// あり、これがデフォルトのチョードが f10 である理由。Alt+文字の
-        /// ニーモニックは使わない: alt+<文字> はすでにここで密に使われて
-        /// いる（alt+h/l のフォーカス循環、alt+t のテーマピッカー、alt+w の
-        /// レビュー解析）ので、ニーモニックのセットはそこから奪うことになる。
+        /// メニューバーにキーボードフォーカスを与える。Down/Enter でリストが開く GTK/Windows の
+        /// 慣習なので、デフォルトのチョードは f10。Alt+文字のニーモニックは使わない —
+        /// alt+<文字> は既に密に使われている (フォーカス循環、テーマピッカー、レビュー解析)。
         FocusMenuBar => "focus_menu_bar",
         CycleFocusForward => "cycle_focus_forward",
         CycleFocusBackward => "cycle_focus_backward",
@@ -161,7 +151,6 @@ keymap_suite::actions! {
         /// フォーカス中のパネルを下へ広げる（tmux の resize-pane -D）。
         ResizePaneDown => "resize_pane_down",
 
-        // UI
         /// 実行時に UI のカラーテーマを切り替えるため、テーマピッカーの
         /// オーバーレイを開く。
         OpenThemePicker => "open_theme_picker",
@@ -321,30 +310,23 @@ impl Action {
         }
     }
 
-    /// terminal パネル（PTY）がフォーカスされている間、このアクションが
-    /// 横取りされるかどうか。false（デフォルト）は、そのチョードが内側の
-    /// プログラム（shell / Claude Code）へ転送されることを意味し、Conductor
-    /// はプログラムが必要とするキー（ctrl+r の reverse-search、ctrl+q/XON
-    /// など）を奪うことがない。ここに列挙されている
-    /// フォーカス/ナビゲーション/scrollback のアクションだけが奪い返される。
-    /// これが terminal 横取りの単一の真実の源であり、
-    /// KeyMap::resolve（super::KeyMap::resolve）と
-    /// KeyMap::keys_for_action（super::KeyMap::keys_for_action）の両方が
-    /// これに従うので、解決結果 == 実際の挙動 == 表示されるヘルプとなり、
-    /// ディスパッチャ側に手作業で保守する許可リストは存在しない。
+    /// terminal パネル (PTY) がフォーカスされている間、このアクションが横取りされるか。
+    /// false (デフォルト) はチョードが内側のプログラムへ転送されることを意味し、Conductor は
+    /// プログラムが必要とするキー (ctrl+r、ctrl+q/XON など) を奪わない。
+    ///
+    /// これが terminal 横取りの単一の真実の源で、KeyMap::resolve も keys_for_action も
+    /// これに従う。ディスパッチャ側に手作業で保守する許可リストは存在しない。
     pub(crate) fn fires_in_terminal(self) -> bool {
         matches!(
             self,
-            // terminal 限定のアクション（terminal がフォーカスされている
-            // ときにのみ意味を持つ）。
+            // terminal 限定のアクション。
             Action::LeaveTerminal
                 | Action::ScrollbackUp
                 | Action::ScrollbackDown
                 | Action::ScrollbackTop
                 | Action::SnapToLive
                 | Action::OpenFileFromTerminal
-                // セッションタブの循環は、定義からして terminal パネルの
-                // アクションである。
+                // セッションタブの循環は定義からして terminal パネルのアクション。
                 | Action::NextSession
                 | Action::PrevSession
                 // PTY 上でも有用であり続けるグローバルなフォーカス/ナビゲーション。
@@ -355,10 +337,8 @@ impl Action {
                 | Action::FocusTerminalClaude
                 | Action::FocusTerminalShell
                 | Action::CommandPalette
-                // メニューバーは terminal パネルからも到達可能でなければ
-                // ならない — 時間の大半はそこで過ごされるのであり、他の
-                // 何かにフォーカスしてからでないと開けないメニューは、
-                // 使われなくなるメニューである。
+                // メニューバーは terminal パネルからも到達可能でなければならない。時間の大半はそこで
+                // 過ごされるので、他にフォーカスしてからでないと開けないメニューは使われなくなる。
                 | Action::FocusMenuBar
                 | Action::CycleFocusForward
                 | Action::CycleFocusBackward
@@ -366,10 +346,7 @@ impl Action {
                 | Action::PrevWorktree
                 | Action::TogglePanelExpand
                 | Action::TogglePanelOverlay
-                // ペインのリサイズは terminal がフォーカスされているときに
-                // 最も有用（そこに入力しながら Claude/Shell の分割や
-                // terminal カラムをリサイズする）なので、これらも PTY 上で
-                // 発火しなければならない。
+                // ペインのリサイズは terminal がフォーカスされているときに最も有用なので、PTY 上でも発火する。
                 | Action::ResizePaneLeft
                 | Action::ResizePaneRight
                 | Action::ResizePaneUp

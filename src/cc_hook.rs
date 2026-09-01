@@ -80,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_session_id() {
+    fn session_idを取り出す() {
         // 実測した SessionStart (source=clear) の payload 形。
         let raw = r#"{"hook_event_name":"SessionStart","source":"clear",
             "session_id":"6c235e9c-6872-4ffc-a765-813a96c4e471",
@@ -92,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn tolerates_unusable_payloads() {
+    fn 使えない入力でも落ちない() {
         // 壊れた JSON / 欠けたキー / 空文字。どれもフックを失敗させない。
         assert!(session_id_from_payload("not json").is_none());
         assert!(session_id_from_payload(r#"{"source":"clear"}"#).is_none());

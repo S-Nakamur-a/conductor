@@ -22,15 +22,11 @@ const EXTENSION_ALIASES: &[(&str, &str)] = &[
     ("cjs", "js"),
 ];
 
-/// ファイル名と先頭行から syntect のシンタックス定義を決める。
+/// ファイル名と先頭行から syntect のシンタックス定義を決める。解決順は「ファイル名まるごと
+/// → 拡張子 → 拡張子のエイリアス → shebang → plain text」。
 ///
-/// 解決順は「ファイル名まるごと → 拡張子 → 拡張子のエイリアス → 先頭行の
-/// shebang → plain text」。
-///
-/// ファイル名を拡張子より先に見るのが要点。拡張子だけで引くと
-/// Dockerfile・Makefile・Gemfile・.gitignore・.env のような拡張子を持たない
-/// ファイルが軒並み plain text になり、さらに CMakeLists.txt は .txt に
-/// 引っかかって積極的に間違った plain text になる。
+/// ファイル名を拡張子より先に見るのが要点。拡張子だけだと Dockerfile・Makefile・
+/// .gitignore が plain text になり、CMakeLists.txt は .txt に引っかかって積極的に間違う。
 pub(crate) fn find_syntax<'a>(
     syntax_set: &'a SyntaxSet,
     path: Option<&str>,
@@ -38,13 +34,11 @@ pub(crate) fn find_syntax<'a>(
 ) -> &'a syntect::parsing::SyntaxReference {
     let path = path.map(Path::new);
 
-    // 1. ファイル名まるごと (Dockerfile, Makefile, .gitignore, CMakeLists.txt)
     let by_name = path
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .and_then(|n| syntax_set.find_syntax_by_extension(n));
 
-    // 2. 拡張子、3. 拡張子のエイリアス
     let by_ext = || {
         let ext = path.and_then(|p| p.extension()).and_then(|e| e.to_str())?;
         syntax_set.find_syntax_by_extension(ext).or_else(|| {
@@ -56,7 +50,6 @@ pub(crate) fn find_syntax<'a>(
         })
     };
 
-    // 4. 先頭行の shebang (拡張子の無いスクリプト)
     let by_first_line = || syntax_set.find_syntax_by_first_line(first_line?);
 
     by_name
@@ -68,13 +61,8 @@ pub(crate) fn find_syntax<'a>(
 impl ViewerState {
     /// file_content に syntect のハイライトをかけ、結果をキャッシュする。
     ///
-    /// (theme_generation, current_file, file_content) のハッシュを計算し、
-    /// 前回呼び出し以降どれも変わっていなければ再ハイライトをスキップする。
-    ///
-    /// theme_generation は呼び出し側 (App::highlight.generation) がテーマを
-    /// 差し替えるたびに進める世代番号。これをキーに含めないと、テーマだけが
-    /// 変わったとき「内容は同じ」と判定されてキャッシュを素通りし、古い配色の
-    /// span が画面に残り続ける。
+    /// キーは (theme_generation, current_file, file_content) のハッシュ。theme_generation を
+    /// 含めないと、テーマだけが変わったときにキャッシュを素通りして古い配色の span が残る。
     pub fn highlight_content(
         &mut self,
         syntax_set: &SyntaxSet,
@@ -87,7 +75,6 @@ impl ViewerState {
             return;
         }
 
-        // テーマ世代・ファイルパス・内容からキャッシュキーを計算する。
         let hash = {
             let mut hasher = DefaultHasher::new();
             theme_generation.hash(&mut hasher);
@@ -110,7 +97,6 @@ impl ViewerState {
 
         let mut h = HighlightLines::new(syntax, theme);
 
-        // syntect は改行付きのテキストを期待するので、改行を補いながら全文を組み立てる。
         let full_text: String = self
             .content
             .file_content
@@ -122,7 +108,6 @@ impl ViewerState {
             let ranges = match h.highlight_line(line, syntax_set) {
                 Ok(r) => r,
                 Err(_) => {
-                    // フォールバック: 白一色。
                     self.content.highlighted_lines.push(vec![(
                         ratatui::style::Style::default().fg(ratatui::style::Color::White),
                         line.trim_end_matches('\n').to_string(),
@@ -137,7 +122,6 @@ impl ViewerState {
                     let ratatui_style = syntect_tui::translate_style(style)
                         .unwrap_or_default()
                         .bg(ratatui::style::Color::Reset);
-                    // 最後のトークンの末尾改行を取り除く。
                     let text = text.trim_end_matches('\n').to_string();
                     (ratatui_style, text)
                 })
@@ -159,12 +143,9 @@ mod tests {
         find_syntax(&ss, Some(path), first_line).name.clone()
     }
 
-    /// 拡張子を持たないファイルがファイル名で正しく判定されること。
-    ///
-    /// 拡張子だけで引いていた頃はすべて Plain Text に落ち、色がほぼ
-    /// 付かなかった。
+    /// 拡張子を持たないファイルがファイル名で正しく判定されること (拡張子だけだと Plain Text)。
     #[test]
-    fn resolves_extensionless_files_by_name() {
+    fn 拡張子の無いファイルは名前で引く() {
         for (path, expected) in [
             ("Dockerfile", "Dockerfile"),
             ("deep/dir/Dockerfile", "Dockerfile"),
@@ -178,18 +159,13 @@ mod tests {
         }
     }
 
-    /// ファイル名は拡張子より優先されること。
-    ///
-    /// CMakeLists.txt は .txt にマッチして積極的に間違った Plain Text に
-    /// なっていた。
     #[test]
-    fn file_name_wins_over_extension() {
+    fn ファイル名は拡張子より優先される() {
         assert_eq!(syntax_name("CMakeLists.txt", None), "CMake");
     }
 
-    /// 通常の拡張子は今までどおり引けること。
     #[test]
-    fn resolves_ordinary_extensions() {
+    fn 普通の拡張子は引ける() {
         for (path, expected) in [
             ("src/main.rs", "Rust"),
             ("a.tsx", "TypeScriptReact"),
@@ -202,7 +178,7 @@ mod tests {
 
     /// syntect に登録の無い拡張子がエイリアス経由で解決されること。
     #[test]
-    fn resolves_aliased_extensions() {
+    fn 別名の拡張子も引ける() {
         for path in ["a.jsx", "b.mjs", "c.cjs"] {
             let name = syntax_name(path, None);
             assert_ne!(
@@ -215,7 +191,7 @@ mod tests {
 
     /// 拡張子もファイル名も手がかりにならない場合、shebang で判定すること。
     #[test]
-    fn falls_back_to_shebang() {
+    fn 手がかりが無ければshebangに落ちる() {
         assert_eq!(
             syntax_name("bin/deploy", Some("#!/usr/bin/env python3")),
             "Python"
@@ -223,21 +199,18 @@ mod tests {
         assert!(syntax_name("bin/run", Some("#!/bin/bash")).contains("bash"));
     }
 
-    /// 手がかりが何も無ければ plain text に落ちること（パニックしない）。
     #[test]
-    fn falls_back_to_plain_text() {
+    fn 最後はplain_textに落ちる() {
         assert_eq!(
             syntax_name("LICENSE", Some("Copyright (c) 2026")),
             "Plain Text"
         );
     }
 
-    /// テーマ世代が変わるとハイライトのキャッシュが無効化されること。
-    ///
-    /// これが効かないと、テーマを切り替えても内容が同じ限りキャッシュヒットで
-    /// 素通りし、古い配色の span が残り続ける。
+    /// テーマ世代が変わるとハイライトのキャッシュが無効化されること。効かないと、テーマを
+    /// 切り替えても内容が同じ限り古い配色の span が残る。
     #[test]
-    fn theme_generation_invalidates_the_highlight_cache() {
+    fn テーマ世代が変わるとキャッシュが無効になる() {
         let ss = two_face::syntax::extra_newlines();
         let themes = two_face::theme::extra();
         let dark = themes.get(two_face::theme::EmbeddedThemeName::CatppuccinMocha);

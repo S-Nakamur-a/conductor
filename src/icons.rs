@@ -1,19 +1,15 @@
 //! UI 全体のアイコンの一元定義。
 //!
-//! 字形は2種類持つ。nerd 側は Nerd Font の私用領域 (U+E000-F8FF) にあるグリフで、
-//! コードポイントは公式の glyphnames.json (v3.5.1) から取っている。Plane 15 以降に
-//! ある md-* を使っていないのは、端末による幅の扱いが読めないためである。字形は
-//! おおむね Codicons (cod-*) から選んでいる — VSCode 自身が使っているものと同じで、
-//! 見た目を寄せる先がはっきりしている。
+//! 字形は 2 種類持つ。nerd 側は Nerd Font の私用領域 (U+E000-F8FF) のグリフで、字形は
+//! おおむね Codicons から選んでいる。Plane 15 以降の md-* を使わないのは端末による幅の
+//! 扱いが読めないため。
 //!
 //! unicode 側は Nerd Font が無い環境向けで、East Asian Width が Neutral かつ Emoji
-//! プロパティを持たない文字だけを選んでいる。ここに絵文字を使えない理由は2つあり、
-//! どちらも致命的である。1つはカラー絵文字がフォント側の固定色で描かれるためテーマの
-//! 色も git 状態の減光も一切効かないこと。もう1つは幅2で、しかも端末ごとに解釈が
-//! 割れて後続の列がずれること (ui::reflow_view::glyphs に同じ問題の記録がある)。
+//! プロパティを持たない文字だけを選ぶ。絵文字が使えないのは、カラー絵文字がフォント
+//! 側の固定色で描かれてテーマも git 状態の減光も効かないことと、幅 2 の解釈が端末ごと
+//! に割れて後続の列がずれるため。
 //!
-//! 字形が1カラムであることは [tests] が全定数について機械的に検証している。ここが
-//! 崩れると、アイコンより右の内容がまるごと1列ずれる。
+//! 字形が 1 カラムであることは [tests] が全定数について機械的に検証している。
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -22,11 +18,9 @@ use crate::theme::Theme;
 
 /// アイコンに使う文字セット。
 ///
-/// Nerd Font が入っているかどうかは端末に問い合わせられない (フォント情報を
-/// アプリへ渡す仕組みが無い)。字形を描いてカーソル位置を測る手も、幅を決めて
-/// いるのが端末の幅テーブルであってフォントではないため、字が出ていなくても
-/// 同じ結果になり判別できない。判るのは「その端末が Nerd Font のシンボルを
-/// 同梱しているか」だけで、そこから決めるのが term_caps::detect_icon_set。
+/// Nerd Font が入っているかは端末に問い合わせられない。字形を描いて幅を測る手も、幅を
+/// 決めているのが端末の幅テーブルなので判別できない。判るのは「その端末が Nerd Font の
+/// シンボルを同梱しているか」だけで、そこから決めるのが term_caps::detect_icon_set。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum IconSet {
@@ -78,8 +72,6 @@ impl Glyph {
     }
 }
 
-// --- ファイル種別 -----------------------------------------------------------
-
 /// アイコンの色を決める粗い種別。
 ///
 /// テーマは11個あるので、ファイル種別ごとの色を新設すると全テーマに手が入る。
@@ -105,13 +97,11 @@ pub enum IconRole {
 impl IconRole {
     /// この種別のアイコン色。
     ///
-    /// theme.accent はここでは使わない。多くのテーマで accent は
-    /// border_focused や selected_bg と同じ値で、「今どこにフォーカスが
-    /// あるか」を示す状態の色になっている。ファイル種別のような静的な属性に
-    /// 同じ色を割り当てると、フォーカス中のパネルでアイコンが枠線に溶ける。
+    /// theme.accent は使わない。多くのテーマで accent は border_focused や selected_bg と同じ
+    /// 値なので、静的な属性に割り当てるとフォーカス中のパネルでアイコンが枠線に溶ける。
     ///
-    /// ソースコードが本文色なのは、数が最も多いからである。字形が既に種別を
-    /// 示しているので、多数派を落ち着かせて残りを色で立たせるほうが読みやすい。
+    /// ソースコードが本文色なのは数が最も多いから。字形が既に種別を示しているので、多数派を
+    /// 落ち着かせて残りを色で立たせるほうが読みやすい。
     pub fn color(self, theme: &Theme) -> Color {
         match self {
             IconRole::Code => theme.fg,
@@ -232,14 +222,10 @@ pub fn file_icon(name: &str) -> FileIcon {
     }
 }
 
-// --- リストの展開マーカー ---------------------------------------------------
-
 /// リストの展開/折りたたみマーカー。末尾のスペースは含まない。
 ///
-/// Nerd Font 側は Codicons の chevron で、VSCode のエクスプローラが使っている
-/// ものと同じ字形である。フォールバックは幅1を保証できる範囲で chevron に
-/// 最も近い形を選んでいる — 塗りつぶしの三角 (U+25B6/25BC) は Emoji プロパティを
-/// 持ち、端末によっては幅2で描かれる。
+/// Nerd Font 側は Codicons の chevron。フォールバックは幅 1 を保証できる範囲で最も近い形
+/// — 塗りつぶしの三角 (U+25B6/25BC) は Emoji プロパティを持ち、端末によっては幅 2 になる。
 pub fn expand_arrow(is_expanded: bool, set: IconSet) -> &'static str {
     match (set, is_expanded) {
         (IconSet::Nerd, true) => "\u{eab4}",
@@ -248,8 +234,6 @@ pub fn expand_arrow(is_expanded: bool, set: IconSet) -> &'static str {
         (IconSet::Unicode, false) => "\u{203a}",
     }
 }
-
-// --- Viewer のガター --------------------------------------------------------
 
 /// コメント範囲の終端に置くマーカー。クリックするとスレッドが開く。
 pub const COMMENT: Glyph = Glyph::new("\u{ea6b}", "\u{275d}");
@@ -269,15 +253,11 @@ pub const RUN_TEST: Glyph = Glyph::new("\u{eb2c}", "\u{25b8}");
 /// 選択範囲の終端に置く折り返し罫線。折りたたみの hover 表示と同じ語彙。
 pub const RANGE_END: Glyph = Glyph::new("\u{2570}", "\u{2570}");
 
-// --- レビューコメントの種別 -------------------------------------------------
-
 /// 提案・所感のコメント。
 pub const KIND_SUGGEST: Glyph = Glyph::new("\u{ea61}", "!");
 
 /// 人に答えてほしい問いのコメント。
 pub const KIND_QUESTION: Glyph = Glyph::new("\u{eb32}", "?");
-
-// --- パネルのタイトル -------------------------------------------------------
 
 /// ファイルツリー。
 pub const PANEL_EXPLORER: Glyph = Glyph::nerd_only("\u{ea83}");
@@ -296,8 +276,6 @@ pub const PANEL_REVIEW: Glyph = Glyph::nerd_only("\u{eab3}");
 
 /// 別プロセスに grab されていて操作できないパネル。
 pub const LOCKED: Glyph = Glyph::new("\u{ea75}", "\u{22a0}");
-
-// --- メニューバー -----------------------------------------------------------
 
 /// リポジトリ操作。
 pub const MENU_REPO: Glyph = Glyph::nerd_only("\u{ea62}");
@@ -412,7 +390,7 @@ mod tests {
     /// 全ファイルアイコンがどちらの文字セットでも1カラム幅であること。ここが崩れると
     /// アイコンより右の内容が1列ずれ、行がパネル端からはみ出す。
     #[test]
-    fn file_icons_are_single_column() {
+    fn ファイルのアイコンは1カラム幅() {
         for icon in sample_file_icons() {
             for set in [IconSet::Nerd, IconSet::Unicode] {
                 let glyph = icon.glyph(set);
@@ -429,7 +407,7 @@ mod tests {
     /// UI アイコンも同じ制約に従うこと。フォールバック側は空 (この文字セットでは
     /// 描かない) を許すが、描くなら1カラムでなければならない。
     #[test]
-    fn ui_glyphs_are_single_column() {
+    fn uiのグリフは1カラム幅() {
         for (name, glyph) in all_glyphs() {
             assert_eq!(
                 glyph.get(IconSet::Nerd).width(),
@@ -446,7 +424,7 @@ mod tests {
 
     /// 展開マーカーもアイコンと同じく、どちらの文字セットでも幅1であること。
     #[test]
-    fn expand_arrows_are_single_column() {
+    fn 展開の矢印は1カラム幅() {
         for set in [IconSet::Nerd, IconSet::Unicode] {
             for expanded in [true, false] {
                 let arrow = expand_arrow(expanded, set);
@@ -463,7 +441,7 @@ mod tests {
     /// フォールバック側が Nerd Font の私用領域に入り込んでいないこと。
     /// 入っていると Nerd Font の無い端末で tofu になる。
     #[test]
-    fn unicode_fallback_avoids_private_use_area() {
+    fn フォールバックは私用領域を避ける() {
         let fallbacks = sample_file_icons()
             .iter()
             .map(|i| i.glyph(IconSet::Unicode))
@@ -488,7 +466,7 @@ mod tests {
     ///
     /// 罫線のグリフ (COMMENT_SPAN、RANGE_END) は Nerd Font に依存しないので除く。
     #[test]
-    fn nerd_glyphs_stay_in_bmp_private_use_area() {
+    fn nerdのグリフはbmpの私用領域に収まる() {
         let box_drawing = ["\u{2502}", "\u{2570}"];
         let nerd_glyphs = sample_file_icons()
             .iter()
