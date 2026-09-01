@@ -18,7 +18,7 @@ use crate::viewer::code_nav_state::CodeNav;
 use crate::worktree::ops::WorktreeManager;
 
 use super::state::{
-    Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
+    EntranceState, Highlighting, PanelLayout, RepoState, SessionStats, ThemeSelection, UpdateFlow,
 };
 use super::types::BackgroundOps;
 use super::{App, GrabbedBranch, StatusLevel};
@@ -88,6 +88,7 @@ impl App {
                     .unwrap_or_else(|| repo_path.display().to_string())
             });
 
+        let startup_animation = config.ui.startup_animation;
         let active_scrollback = config.terminal.active_scrollback;
         let inactive_scrollback = config.terminal.inactive_scrollback;
 
@@ -160,6 +161,7 @@ impl App {
             bg: BackgroundOps::default(),
             new_worktree_paths: HashSet::new(),
             panel_number_overlay: Default::default(),
+            entrance: EntranceState::new(startup_animation),
             reflow: crate::reflow::ReflowView::default(),
         };
 

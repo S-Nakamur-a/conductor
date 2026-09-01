@@ -11,6 +11,7 @@
 mod appearance;
 mod bars;
 mod change_watch;
+mod entrance;
 mod layout;
 mod panel_number;
 mod publish;
@@ -24,6 +25,7 @@ pub use crate::revidere::state::RevidereState;
 pub use appearance::{Appearance, Highlighting, ThemeSelection};
 pub use bars::WtbarState;
 pub use change_watch::ChangeWatch;
+pub use entrance::EntranceState;
 pub use layout::PanelLayout;
 pub use panel_number::PanelNumberOverlay;
 pub use publish::PublishState;

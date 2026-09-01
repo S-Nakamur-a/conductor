@@ -235,7 +235,7 @@ impl Default for LayoutConfig {
 }
 
 /// [ui] セクション — UI 外観の上書き。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
     /// UI カラーテーマ名。None の場合は後方互換性のため [viewer] theme に
@@ -250,6 +250,20 @@ pub struct UiConfig {
     /// ファイルアイコンに使う文字セット。None のときは初回起動時に端末を見て
     /// 決定し、その結果をこのファイルへ書き戻す (startup::apply_auto_icons)。
     pub icons: Option<IconSet>,
+    /// 起動時にパネルが組み上がる演出を出すか。SSH 越しや描画の遅い端末では
+    /// 邪魔になりうるので切れるようにしてある。
+    pub startup_animation: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            high_contrast: false,
+            icons: None,
+            startup_animation: true,
+        }
+    }
 }
 
 impl UiConfig {

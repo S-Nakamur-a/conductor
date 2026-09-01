@@ -173,6 +173,7 @@ impl App {
     pub fn has_active_transition(&self) -> bool {
         self.focus.changed_at().elapsed() < std::time::Duration::from_millis(crate::anim::FOCUS_MS)
             || self.list_hover.is_animating()
+            || self.entrance.is_animating()
     }
 
     // フォーカス循環

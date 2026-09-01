@@ -113,6 +113,7 @@ fn handle_event(app: &mut App, loop_state: &mut LoopState, event: Event) {
         // キーボードプロトコル下だけで、無い端末はオートリピートを Press の連続
         // として送ってくる。
         Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+            app.entrance.skip();
             log::debug!(
                 "key: code={:?} mods={:?} kind={:?}",
                 key.code,
@@ -127,10 +128,12 @@ fn handle_event(app: &mut App, loop_state: &mut LoopState, event: Event) {
             handle_key_event(app, key);
         }
         Event::Mouse(mouse) => {
+            app.entrance.skip();
             loop_state.last_input_time = Instant::now();
             handle_mouse_event(app, mouse, loop_state.last_frame_area);
         }
         Event::Paste(data) => {
+            app.entrance.skip();
             loop_state.last_input_time = Instant::now();
             handle_paste_event(app, data);
         }
@@ -196,6 +199,9 @@ pub(super) fn render_frame(
         app.terminal.needs_clear = false;
     }
     if app.needs_redraw {
+        // 起動演出の時計はここで始まる。App::new から数えると、worktree と diff の
+        // 走査・端末への背景色問い合わせを挟むぶん (実測 2 秒) を演出が食い潰す。
+        app.entrance.start_if_pending();
         app.ticks.advance_ui();
         expire_status_message(app);
         app.panel_number_overlay.expire_if_due();

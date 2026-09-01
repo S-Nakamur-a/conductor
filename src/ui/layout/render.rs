@@ -123,6 +123,37 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &mut App) {
         &app.repo.path,
         &app.appearance.theme,
     );
+
+    render_entrance(frame, area, app);
+}
+
+/// 起動と索引の演出。全パネルが描き終わったバッファを加工するので、最後に置く。
+fn render_entrance(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::ui::common::entrance as fx;
+
+    let lc = &app.layout.cache;
+    let panels = [
+        lc.columns[1],
+        lc.columns[2],
+        lc.terminal_split[0],
+        lc.terminal_split[1],
+    ];
+    let theme = &app.appearance.theme;
+    let viewer = lc.columns[2];
+    let buf = frame.buffer_mut();
+
+    if let Some(p) = app.entrance.boot_progress() {
+        fx::apply_entrance(buf, area, &panels, p, app.entrance.offsets(), theme);
+        // 起動演出のあいだは索引の合図を重ねない。2 つの光が同時に走ると
+        // どちらも読めなくなる。
+        return;
+    }
+    if let Some(phase) = app.entrance.index_bar_phase() {
+        fx::apply_index_bar(buf, viewer, phase, theme);
+    }
+    if let Some(p) = app.entrance.index_done_progress() {
+        fx::apply_index_done(buf, viewer, p, theme);
+    }
 }
 
 /// s が罫線素片（U+2500..=U+257F）、つまりパネルのボーダー文字で始まるかどうか。
