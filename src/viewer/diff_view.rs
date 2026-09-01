@@ -180,6 +180,12 @@ impl ViewerState {
         self.summary_scroll = 0;
     }
 
+    /// diff から素のファイル表示へ戻る。見ていた行はそのまま引き継ぐ。
+    pub fn leave_diff_view(&mut self) {
+        self.sync_file_scroll_to_diff_scroll();
+        self.exit_diff_mode();
+    }
+
     pub fn is_summary(&self) -> bool {
         self.show_summary
     }
@@ -329,4 +335,29 @@ fn digit_count(n: usize) -> usize {
         val /= 10;
     }
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// diff で見ていた行がそのまま素の表示の先頭に来る。先頭へ巻き戻ると、
+    /// 変更箇所を探し直すことになる。
+    #[test]
+    fn diffを抜けても見ていた行はそのまま出す() {
+        let mut vs = ViewerState::default();
+        vs.diff_view.diff_mode = true;
+        vs.diff_view.diff_view_lines = vec![UnifiedDiffEntry::Line {
+            tag: DiffLineTag::Equal,
+            new_line_no: Some(20),
+            content: String::new(),
+            inline_segments: Vec::new(),
+        }];
+        vs.diff_view.diff_view_scroll = 0;
+
+        vs.leave_diff_view();
+
+        assert!(!vs.diff_view.diff_mode);
+        assert_eq!(vs.content.file_scroll, 19);
+    }
 }

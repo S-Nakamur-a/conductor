@@ -42,13 +42,13 @@ impl App {
     /// diff リストで現在選択中のファイル(diff_list_selected のエントリ)を Viewer で
     /// 開く。ファイルジャンプ系のキーから共有される。選択エントリがファイルでなければ
     /// 何もしない。
-    pub fn open_diff_file_at_selected(&mut self) {
+    pub fn open_diff_file_at_selected(&mut self, how: crate::app::OpenAs) {
         let idx = self.explorer.changes_cursor.selected();
         let (file_path, file_diff_clone) = match self.diff_state.resolve_file(idx) {
             Some(f) => (f.path.clone(), f.clone()),
             None => return,
         };
-        self.show_file(&file_path, crate::app::OpenAs::Persistent);
+        self.show_file(&file_path, how);
         self.expand_threads_for_file(&file_path);
         self.viewer.build_unified_diff_view(&file_diff_clone);
         // ファイルにレビューコメントがあれば最初のコメントへ着地させ(レビュアーが
@@ -104,7 +104,7 @@ impl App {
         if let Some(idx) = target {
             let len = self.diff_state.display_list.len();
             self.explorer.changes_cursor.place(idx, len);
-            self.open_diff_file_at_selected();
+            self.open_diff_file_at_selected(crate::app::OpenAs::Persistent);
         }
     }
 

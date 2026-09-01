@@ -9,20 +9,23 @@
 //! カーソルを読める。運ぶのは、行から中身への解決をパネル側でしか行えないもの
 //! (返信の行から親コメントを引く等) だけ。
 
+use crate::app::OpenAs;
+
 /// Explorer が App に頼むこと。
 pub enum Intent {
     /// ツリーの根からの相対パス。絶対パスに戻せるのは根を持つツリーだけなので、
     /// 意図の側では相対のまま運ぶ。
+    ///
+    /// ツリーが出すのはファイルの中身そのもので、diff ではない。同じファイルを
+    /// diff で見ている最中でも素の表示へ戻す。
     OpenFile {
         path: String,
-    },
-    /// ファイルを Viewer の preview タブで開く。フォーカスは移さない。
-    /// 1 クリックで開いたものが永続タブとして溜まらないようにするため。
-    PreviewFile {
-        path: String,
+        how: OpenAs,
     },
     /// 変更ファイル一覧で選択中の行を Viewer で開く。
-    OpenSelectedChange,
+    OpenSelectedChange {
+        how: OpenAs,
+    },
     /// ブランチの変更サマリを Viewer 全体で開く。
     OpenSummary,
     /// Viewer を該当コメントの位置へ寄せて選択させる。フォーカスは移さない。

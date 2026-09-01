@@ -100,6 +100,7 @@ fn tree(ex: &mut Explorer, key: KeyEvent, ctx: &Ctx, view: Viewport) -> Option<I
                 // 展開も折りたたみもファイルには効かない。Enter だけが意味を持つ。
                 return matches!(action?, Action::Select).then(|| Intent::OpenFile {
                     path: entry.path.clone(),
+                    how: crate::app::OpenAs::Persistent,
                 });
             }
             match action? {
@@ -148,7 +149,9 @@ fn changes(ex: &mut Explorer, key: KeyEvent, ctx: &Ctx, view: Viewport) -> Optio
                 DiffListEntry::Directory { .. } => Intent::Section {
                     op: SectionOp::Toggle,
                 },
-                DiffListEntry::File { .. } => Intent::OpenSelectedChange,
+                DiffListEntry::File { .. } => Intent::OpenSelectedChange {
+                    how: crate::app::OpenAs::Persistent,
+                },
             });
         }
         _ => {}

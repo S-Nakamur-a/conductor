@@ -45,6 +45,7 @@ pub struct Explorer {
     pub viewed: HashSet<String>,
 
     pub tree_clicks: ClickTracker,
+    pub changes_clicks: ClickTracker,
     pub comment_clicks: ClickTracker,
 }
 
@@ -79,6 +80,7 @@ impl Default for Explorer {
             focus: Pane::Tree,
             viewed: HashSet::new(),
             tree_clicks: ClickTracker::default(),
+            changes_clicks: ClickTracker::default(),
             comment_clicks: ClickTracker::default(),
         }
     }
