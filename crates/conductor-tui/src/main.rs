@@ -91,7 +91,7 @@ fn workspace(root: PathBuf) -> Workspace {
     };
     let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
     let theme = Theme::from_name(config.theme_name());
-    let repo = repo_state(root, config.general.main_branch.clone());
+    let repo = repo_state(root, &config);
 
     let mut ws = Workspace::new(repo, config, keymap, theme);
     let warning = config_warning.into_iter().chain(
@@ -109,23 +109,26 @@ fn workspace(root: PathBuf) -> Workspace {
     ws
 }
 
-/// リポジトリ名を添える。git でないディレクトリでも開けるよう、引けなければ
-/// パスから作れるところまでで諦める。ブランチは worktree 一覧が届いてから決まる。
-fn repo_state(root: PathBuf, main_branch: String) -> RepoState {
-    let dir_name = |path: &Path| {
-        path.file_name().map_or_else(
-            || path.display().to_string(),
-            |n| n.to_string_lossy().into(),
-        )
-    };
-    let name = GitEngine::open(&root)
-        .and_then(|g| g.main_worktree_path())
-        .map_or_else(|_| dir_name(&root), |main| dir_name(&main));
-    RepoState {
-        root,
-        name,
-        main_branch,
+/// git でないディレクトリでも開けるよう、引けなければパスから作れるところまでで諦める。
+/// ブランチは worktree 一覧が届いてから決まる。
+fn repo_state(root: PathBuf, config: &Config) -> RepoState {
+    let main_branch = config.general.main_branch.clone();
+    let mut repo = RepoState::open(&root, &main_branch).unwrap_or_else(|_| {
+        let name = root.file_name().map_or_else(
+            || root.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        RepoState {
+            root: root.clone(),
+            name,
+            main_branch,
+            known: vec![root.clone()],
+        }
+    });
+    for extra in &config.general.repos {
+        repo.remember(extra);
     }
+    repo
 }
 
 /// 引数 (無ければ現在のディレクトリ) を絶対パスにする。

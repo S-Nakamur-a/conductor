@@ -11,13 +11,29 @@ use crate::effect::Effect;
 use crate::task::{ReviewWrite, Task};
 use crate::workspace::{Ctx, StatusLevel};
 
+pub mod grep;
+pub mod help;
+pub mod history;
+pub mod input;
+pub mod palette;
+pub mod picker;
+pub mod repo;
+pub mod session;
+pub mod theme;
+
 #[derive(Debug)]
 pub enum Modal {
-    Help,
+    Help(help::Help),
     Prompt(Prompt),
     Confirm(Confirm),
     CommentEditor(CommentEditor),
     CommentList(CommentList),
+    Palette(palette::Palette),
+    ThemePicker(theme::ThemePicker),
+    RepoPicker(repo::RepoPicker),
+    Resume(session::ResumePicker),
+    History(history::HistoryBrowser),
+    Grep(grep::Grep),
 }
 
 /// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
@@ -181,12 +197,22 @@ impl CommentEditor {
 }
 
 impl Modal {
+    pub fn tick(&mut self, ctx: &Ctx) -> Vec<Effect> {
+        match self {
+            Modal::Grep(grep) => grep.tick(ctx.root),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn update(&mut self, key: KeyEvent, ctx: &Ctx) -> Vec<Effect> {
         match self {
-            Modal::Help => match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => vec![Effect::PopModal],
-                _ => vec![],
-            },
+            Modal::Help(help) => help.update(key),
+            Modal::Palette(palette) => palette.update(key, ctx),
+            Modal::ThemePicker(picker) => picker.update(key, ctx),
+            Modal::RepoPicker(picker) => picker.update(key, ctx),
+            Modal::Resume(picker) => picker.update(key, ctx),
+            Modal::History(browser) => browser.update(key, ctx),
+            Modal::Grep(grep) => grep.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Enter => {

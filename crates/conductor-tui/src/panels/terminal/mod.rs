@@ -18,7 +18,8 @@ use crossterm::event::KeyEvent;
 
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
-use crate::workspace::{Ctx, Focus};
+use crate::task::Task;
+use crate::workspace::{Ctx, Focus, StatusLevel};
 
 /// セッションのラベルに使う番号。同じ worktree で空いている一番小さいものを取る。
 const SESSION_SLOTS: usize = 9;
@@ -220,6 +221,7 @@ impl TerminalPanel {
     pub fn spawn(
         &mut self,
         kind: SessionKind,
+        resume: Option<&str>,
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
@@ -238,7 +240,7 @@ impl TerminalPanel {
             },
             _ => Launch::ClaudeCode {
                 repo_root,
-                resume_session_id: None,
+                resume_session_id: resume,
                 session_name: None,
             },
         };
@@ -278,6 +280,32 @@ impl TerminalPanel {
             .map(|n| format!("{prefix}:{n}"))
             .find(|label| !used.contains(label))
             .unwrap_or_else(|| format!("{prefix}:{}", used.len() + 1))
+    }
+
+    /// 見えているセッションのスクロールバックを保存する。Claude を優先するのは、
+    /// 残したくなるのはほぼそちらだから。
+    pub fn save_history(&self) -> Vec<Effect> {
+        let visible = self
+            .index_of(self.claude.session.as_ref())
+            .or_else(|| self.index_of(self.shell.session.as_ref()));
+        let Some(index) = visible else {
+            return vec![Effect::Status(
+                StatusLevel::Warning,
+                "no terminal session to save".into(),
+            )];
+        };
+        let session = &self.pty.sessions()[index];
+        vec![Effect::Spawn(Task::SaveHistory {
+            session_id: session.id.clone(),
+            worktree: session.worktree.clone(),
+            label: session.label.clone(),
+            kind: match session.kind {
+                SessionKind::ClaudeCode => "claude_code",
+                SessionKind::Shell => "shell",
+                SessionKind::Editor => "editor",
+            },
+            output: self.pty.output(index).join("\n"),
+        })]
     }
 
     /// フォーカス中のパネルの PTY へキーを流す。

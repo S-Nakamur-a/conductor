@@ -2,9 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
+use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
+use conductor_core::config::{self, LayoutConfig};
 use conductor_core::diff_state::DiffState;
 use conductor_core::git_engine::{GitEngine, WorktreeInfo, conductor_dir};
-use conductor_core::review_store::{Author, CommentKind, CommentStatus, NewReview, ReviewStore};
+use conductor_core::grep_search::{self, GrepMatch};
+use conductor_core::review_store::{
+    Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
+};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
@@ -50,6 +55,39 @@ pub enum Task {
     LoadReview,
     /// 書いたあとは必ず読み直して返す。
     WriteReview(ReviewWrite),
+    /// `seq` は結果の照合に使う。打鍵の途中で追い越された検索を捨てる。
+    Grep {
+        root: PathBuf,
+        query: String,
+        regex: bool,
+        case_sensitive: bool,
+        seq: u64,
+    },
+    /// resume できる Claude セッション。`all` ならこのリポジトリの外も含める。
+    ListSessions {
+        all: bool,
+    },
+    /// 保存済みのターミナル出力。query が空なら新しい順に一覧する。
+    ListHistory {
+        query: String,
+    },
+    PersistConfig(Persist),
+    /// ターミナル出力を保存し、保存後の一覧を返す。
+    SaveHistory {
+        session_id: String,
+        worktree: String,
+        label: String,
+        kind: &'static str,
+        output: String,
+    },
+}
+
+/// 設定ファイルに書き戻す 1 項目。
+#[derive(Debug)]
+pub enum Persist {
+    Theme(String),
+    HighContrast(bool),
+    Layout(Box<LayoutConfig>),
 }
 
 /// レビュー DB への 1 回の書き込み。
@@ -104,6 +142,17 @@ pub enum TaskResult {
         loaded: Result<content::Loaded, String>,
     },
     Review(Result<Box<Snapshot>, String>),
+    Grep {
+        seq: u64,
+        found: Result<Vec<GrepMatch>, String>,
+    },
+    Sessions(Result<Vec<ResumableSession>, String>),
+    Persisted(Result<(), String>),
+    History {
+        /// 直前に保存したかどうか。ステータスに出す。
+        saved: bool,
+        records: Result<Vec<SessionHistory>, String>,
+    },
 }
 
 impl Task {
@@ -149,8 +198,105 @@ impl Task {
             Task::WriteReview(write) => {
                 svc.spawn(move || write_review(&env, &write), TaskResult::Review);
             }
+            Task::Grep {
+                root,
+                query,
+                regex,
+                case_sensitive,
+                seq,
+            } => {
+                svc.spawn(
+                    move || (seq, grep(&root, &query, regex, case_sensitive)),
+                    |(seq, found)| TaskResult::Grep { seq, found },
+                );
+            }
+            Task::PersistConfig(what) => {
+                svc.spawn(move || persist(&what), TaskResult::Persisted);
+            }
+            Task::ListSessions { all } => {
+                svc.spawn(move || list_sessions(&env, all), TaskResult::Sessions);
+            }
+            Task::ListHistory { query } => {
+                svc.spawn(
+                    move || TaskResult::History {
+                        saved: false,
+                        records: list_history(&env, &query),
+                    },
+                    |result| result,
+                );
+            }
+            Task::SaveHistory {
+                session_id,
+                worktree,
+                label,
+                kind,
+                output,
+            } => {
+                svc.spawn(
+                    move || TaskResult::History {
+                        saved: true,
+                        records: save_history(&env, &session_id, &worktree, &label, kind, &output),
+                    },
+                    |result| result,
+                );
+            }
         }
     }
+}
+
+fn grep(
+    root: &Path,
+    query: &str,
+    regex: bool,
+    case_sensitive: bool,
+) -> Result<Vec<GrepMatch>, String> {
+    let re =
+        grep_search::compile_pattern(query, regex, case_sensitive).map_err(|e| e.to_string())?;
+    Ok(grep_search::search_tree(root, &re))
+}
+
+fn persist(what: &Persist) -> Result<(), String> {
+    match what {
+        Persist::Theme(name) => config::persist_ui_theme(name),
+        Persist::HighContrast(on) => config::persist_ui_high_contrast(*on),
+        Persist::Layout(layout) => config::persist_layout_proportions(layout),
+    }
+    .map_err(|e| e.to_string())
+}
+
+fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, String> {
+    let home = ClaudeHome::detect().ok_or("could not find ~/.claude")?;
+    home.load_resumable_sessions((!all).then_some(env.root.as_path()))
+        .map_err(|e| e.to_string())
+}
+
+/// 一覧に出す上限。ここを超えると保存の古い順に落ちる。
+const HISTORY_LIMIT: usize = 50;
+
+fn list_history(env: &TaskEnv, query: &str) -> Result<Vec<SessionHistory>, String> {
+    let store = open_store(env)?;
+    if query.is_empty() {
+        store.list_session_history(HISTORY_LIMIT)
+    } else {
+        store.search_session_history(query)
+    }
+    .map_err(|e| e.to_string())
+}
+
+fn save_history(
+    env: &TaskEnv,
+    session_id: &str,
+    worktree: &str,
+    label: &str,
+    kind: &str,
+    output: &str,
+) -> Result<Vec<SessionHistory>, String> {
+    let store = open_store(env)?;
+    store
+        .save_session_history(session_id, worktree, label, kind, output)
+        .map_err(|e| e.to_string())?;
+    drop(store);
+    list_history(env, "")
 }
 
 fn open_store(env: &TaskEnv) -> Result<ReviewStore, String> {

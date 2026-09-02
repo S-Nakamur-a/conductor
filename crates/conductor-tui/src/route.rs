@@ -6,10 +6,10 @@
 //! 押した後だけ意味を持つという条件が表に出せない。
 
 use conductor_core::keymap::Action;
-use conductor_svc::pty::SessionKind;
 use crossterm::event::KeyEvent;
 
 use crate::effect::Effect;
+use crate::modal::{Modal, palette::Palette};
 use crate::workspace::{Focus, Workspace};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -23,18 +23,33 @@ pub enum Routed {
 }
 
 pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
-    if ws.chrome.menu_open {
-        return Routed::Ignored;
+    if ws.chrome.menu.is_active() {
+        return Routed::Effects(crate::menu::key(ws, key));
     }
-    if let Some(top) = ws.modals.last_mut() {
+    if !ws.modals.is_empty() {
+        let key_context = ws.key_context();
+        let root = ws.panels.viewer.root().to_path_buf();
+        let Workspace {
+            modals,
+            theme,
+            keymap,
+            config,
+            repo,
+            review,
+            focus,
+            ..
+        } = ws;
         let ctx = crate::workspace::Ctx {
-            theme: &ws.theme,
-            keymap: &ws.keymap,
-            config: &ws.config,
-            repo: &ws.repo,
-            review: &ws.review,
-            focus: ws.focus,
+            theme,
+            keymap,
+            config,
+            repo,
+            review,
+            root: &root,
+            focus: *focus,
+            key_context,
         };
+        let top = modals.last_mut().expect("empty をここまでに弾いている");
         return Routed::Effects(top.update(key, &ctx));
     }
     if ws.focus == Focus::Viewer && ws.panels.viewer.awaiting_chord() {
@@ -53,32 +68,22 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
     }
 }
 
-/// フォーカス移動など、パネルを跨ぐ Action の既定の解釈。パネルが先に消費した Action は来ない。
+/// パネルが消費しなかった Action の解釈。ほとんどは同じ意味のコマンドがあるので
+/// [crate::command::execute] の 1 本に落ち、ここに残るのはコマンドを持たない語彙だけ。
 pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
     match action {
-        Action::Quit => vec![Effect::Quit],
         Action::CycleFocusForward => vec![Effect::Focus(ws.focus.next())],
         Action::CycleFocusBackward => vec![Effect::Focus(ws.focus.prev())],
-        Action::FocusWorktree => vec![Effect::Focus(Focus::Worktree)],
-        Action::FocusExplorer => vec![Effect::Focus(Focus::Explorer)],
-        Action::FocusViewer => vec![Effect::Focus(Focus::Viewer)],
-        Action::FocusTerminalClaude => vec![Effect::Focus(Focus::TerminalClaude)],
-        Action::FocusTerminalShell => vec![Effect::Focus(Focus::TerminalShell)],
-        Action::ShowHelp => vec![Effect::PushModal(crate::modal::Modal::Help)],
+        Action::FocusMenuBar => vec![Effect::FocusMenuBar],
+        Action::CommandPalette => vec![Effect::PushModal(Modal::Palette(Palette::default()))],
         Action::OpenCommentList => vec![crate::comment_list::open_modal()],
-        Action::NewClaudeCode => vec![Effect::NewSession(SessionKind::ClaudeCode)],
-        Action::NewShell => vec![Effect::NewSession(SessionKind::Shell)],
-        Action::RefreshWorktrees => vec![Effect::Spawn(crate::task::Task::ListWorktrees)],
-        _ => vec![],
+        action => crate::command::COMMANDS
+            .iter()
+            .find(|c| c.action == Some(action))
+            .map(|c| vec![Effect::Command(c.id)])
+            .unwrap_or_default(),
     }
 }
-
-impl PartialEq for Effect {
-    fn eq(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-}
-impl Eq for Effect {}
 
 #[cfg(test)]
 mod tests {
@@ -96,7 +101,8 @@ mod tests {
     #[test]
     fn モーダルが開いていれば_topが全てのキーを消費する() {
         let mut ws = Workspace::for_test();
-        ws.modals.push(Modal::Help);
+        ws.modals
+            .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
         for k in [key(KeyCode::Char('j')), ctrl('q'), key(KeyCode::Char('あ'))] {
             assert!(matches!(route(&mut ws, k), Routed::Effects(_)), "{k:?}");
         }
@@ -106,7 +112,8 @@ mod tests {
     #[test]
     fn モーダルは_escで閉じる() {
         let mut ws = Workspace::for_test();
-        ws.modals.push(Modal::Help);
+        ws.modals
+            .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
         assert_eq!(
             route(&mut ws, key(KeyCode::Esc)),
             Routed::Effects(vec![Effect::PopModal])

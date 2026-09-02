@@ -6,9 +6,10 @@ use conductor_core::diff_state::FileDiff;
 use conductor_svc::Services;
 use conductor_svc::pty::SessionKind;
 
+use crate::command::CommandId;
 use crate::modal::Modal;
 use crate::task::{Task, TaskResult};
-use crate::workspace::{Focus, StatusLevel, StatusMessage, Workspace};
+use crate::workspace::{Focus, RepoState, StatusLevel, StatusMessage, Workspace};
 
 #[derive(Debug)]
 pub enum Effect {
@@ -26,6 +27,18 @@ pub enum Effect {
     StepChangedFile(isize),
     SelectWorktree(usize),
     NewSession(SessionKind),
+    /// 既存の Claude セッションを `--resume` で開き直す。
+    ResumeSession(String),
+    Command(CommandId),
+    /// メニューバーにキーボードフォーカスを移す。開くのはそこから。
+    FocusMenuBar,
+    /// リポジトリを開き直す。既知の一覧に無ければ足す。
+    SwitchRepo(PathBuf),
+    /// `persist` ならライブプレビューではなく確定として設定に書く。
+    SetTheme {
+        name: String,
+        persist: bool,
+    },
     Focus(Focus),
     Status(StatusLevel, String),
     PushModal(Modal),
@@ -33,6 +46,14 @@ pub enum Effect {
     Spawn(Task),
     Quit,
 }
+
+/// テストで種類だけを見るための等価。中身が主張の一部なら分解して assert する。
+impl PartialEq for Effect {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+impl Eq for Effect {}
 
 /// Effect を Workspace と svc に反映する唯一の場所。
 pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Effect>) {
@@ -70,7 +91,19 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 }
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
-            Effect::NewSession(kind) => new_session(ws, kind),
+            Effect::NewSession(kind) => new_session(ws, kind, None),
+            Effect::ResumeSession(id) => new_session(ws, SessionKind::ClaudeCode, Some(&id)),
+            Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
+            Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
+            Effect::SwitchRepo(path) => queue.extend(switch_repo(ws, svc, &path)),
+            Effect::SetTheme { name, persist } => {
+                set_theme(ws, &name);
+                if persist {
+                    queue.push_back(Effect::Spawn(Task::PersistConfig(
+                        crate::task::Persist::Theme(name),
+                    )));
+                }
+            }
             Effect::Focus(focus) => ws.focus = focus,
             Effect::Status(level, text) => {
                 ws.chrome.status = Some(StatusMessage {
@@ -125,7 +158,7 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     effects
 }
 
-fn new_session(ws: &mut Workspace, kind: SessionKind) {
+fn new_session(ws: &mut Workspace, kind: SessionKind, resume: Option<&str>) {
     let worktree = ws
         .panels
         .worktree
@@ -134,7 +167,7 @@ fn new_session(ws: &mut Workspace, kind: SessionKind) {
     let result = ws
         .panels
         .terminal
-        .spawn(kind, &worktree, &ws.repo.root, &ws.config);
+        .spawn(kind, resume, &worktree, &ws.repo.root, &ws.config);
     match result {
         Ok(()) => {
             ws.focus = match kind {
@@ -150,4 +183,58 @@ fn new_session(ws: &mut Workspace, kind: SessionKind) {
             })
         }
     }
+}
+
+/// テーマを差し替える。syntect 側は設定から毎フレーム引き直すので、ここは
+/// `ui.theme` を書けば足りる。
+fn set_theme(ws: &mut Workspace, name: &str) {
+    ws.appearance.name = name.to_string();
+    ws.theme = ws.appearance.build();
+    ws.config.ui.theme = Some(name.to_string());
+}
+
+/// 別のリポジトリを開き直す。PTY は殺さない — 走っているセッションは元の
+/// worktree で仕事を続けているので、画面を切り替えただけで落とすのは行き過ぎ。
+fn switch_repo(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    path: &std::path::Path,
+) -> Vec<Effect> {
+    if !path.is_dir() {
+        return vec![Effect::Status(
+            StatusLevel::Error,
+            format!("not a directory: {}", path.display()),
+        )];
+    }
+    let root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let name = match RepoState::open(&root, &ws.config.general.main_branch) {
+        Ok(repo) => repo.name.clone(),
+        Err(e) => {
+            return vec![Effect::Status(
+                StatusLevel::Error,
+                format!("not a git repository: {} ({e})", root.display()),
+            )];
+        }
+    };
+    // 世代を進めてから作り直す。飛んでいる Task の結果が新しいツリーに着地しない。
+    svc.bump_generation();
+    let known = std::mem::take(&mut ws.repo.known);
+    ws.repo = RepoState {
+        root: root.clone(),
+        name: name.clone(),
+        main_branch: ws.config.general.main_branch.clone(),
+        known,
+    };
+    ws.repo.remember(&root);
+    ws.review = Default::default();
+    ws.panels.worktree = Default::default();
+    ws.panels.terminal.follow_worktree(None);
+    let mut effects = ws.panels.viewer.set_root(root.clone());
+    effects.extend(ws.panels.explorer.set_root(root));
+    effects.push(Effect::Spawn(Task::ListWorktrees));
+    effects.push(Effect::Status(
+        StatusLevel::Success,
+        format!("switched to {name}"),
+    ));
+    effects
 }

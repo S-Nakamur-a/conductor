@@ -179,7 +179,7 @@ impl ExplorerPanel {
     }
 
     /// 一覧を替えると同時にフォーカスも下区画へ移す。見えない相手にキーが飛ぶと迷う。
-    fn show(&mut self, view: BottomView) -> Vec<Effect> {
+    pub fn show(&mut self, view: BottomView) -> Vec<Effect> {
         self.bottom = view;
         self.pane = Pane::Bottom;
         Vec::new()

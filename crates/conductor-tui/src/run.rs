@@ -76,6 +76,7 @@ pub fn run(
         }
 
         dirty |= expire_status(ws);
+        dirty |= tick_modals(ws, svc);
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
         dirty |= run_timers(ws, svc, &mut worktree_poll, &mut pty_cleanup);
@@ -84,6 +85,21 @@ pub fn run(
             return Ok(());
         }
     }
+}
+
+/// 締切を持つモーダルを一押しする。何か動いたら true。
+///
+/// 進めるのは top だけ。下のモーダルは入力を受けないので締切も進まない。
+fn tick_modals(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
+    if ws.modals.is_empty() {
+        return false;
+    }
+    let effects = ws.tick_top_modal();
+    if effects.is_empty() {
+        return false;
+    }
+    apply(ws, svc, effects);
+    true
 }
 
 /// watcher からの合図の行き先。MCP のレビュー更新だけがパネルの外に効く。
@@ -176,6 +192,13 @@ fn on_mouse(
     let Some(region) = layout.hit(mouse.column, mouse.row) else {
         return;
     };
+    // メニューが最前面なので、区画より先に見る。開いている間の空振りも飲み込む。
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(effects) = crate::menu::click(ws, layout, mouse.column, mouse.row)
+    {
+        apply(ws, svc, effects);
+        return;
+    }
     match mouse.kind {
         MouseEventKind::ScrollDown => scroll_region(ws, region, 3),
         MouseEventKind::ScrollUp => scroll_region(ws, region, -3),
@@ -334,7 +357,7 @@ mod tests {
     fn ヘルプは開いて閉じるまで入力を独占する() {
         let mut ws = Workspace::for_test();
         press(&mut ws, &[key(KeyCode::Char('?'))]);
-        assert!(matches!(ws.modals.as_slice(), [Modal::Help]));
+        assert!(matches!(ws.modals.as_slice(), [Modal::Help(_)]));
 
         press(&mut ws, &[key(KeyCode::Tab)]);
         assert_eq!(
@@ -470,6 +493,115 @@ mod tests {
         assert_eq!(fresh.review.comments()[0].body, "off by one");
     }
 
+    /// F10 からメニューを歩いて Enter するまでを、実キーで 1 本に通す。
+    /// メニュー・パレット・キーは同じ実行口へ落ちるので、ここが通れば表と実装は繋がっている。
+    #[test]
+    fn f10から矢印とenterでコマンドが実行口に届く() {
+        let mut ws = Workspace::for_test();
+        press(&mut ws, &[key(KeyCode::F(10))]);
+        assert_eq!(ws.chrome.menu, crate::menu::MenuBar::Bar { index: 0 });
+
+        press(&mut ws, &[key(KeyCode::Right), key(KeyCode::Down)]);
+        assert_eq!(
+            ws.chrome.menu,
+            crate::menu::MenuBar::Open {
+                index: 1,
+                selected: 0
+            },
+            "Worktree メニューの先頭"
+        );
+
+        press(&mut ws, &[key(KeyCode::Enter)]);
+        assert_eq!(
+            ws.chrome.menu,
+            crate::menu::MenuBar::Closed,
+            "実行の前に閉じる"
+        );
+        let [Modal::Prompt(prompt)] = ws.modals.as_slice() else {
+            panic!("{:?}", ws.modals);
+        };
+        assert_eq!(prompt.title, "New worktree branch");
+    }
+
+    /// パレットで打ってから Enter するまで。メニューと同じ Effect::Command に落ちる。
+    #[test]
+    fn パレットのあいまい入力からenterで同じ実行口に届く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        on_key(
+            &mut ws,
+            &mut svc,
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+        );
+        assert!(matches!(ws.modals.as_slice(), [Modal::Palette(_)]));
+
+        type_text(&mut ws, &mut svc, "quit");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        assert!(ws.modals.is_empty());
+        assert!(ws.should_quit);
+    }
+
+    /// ライブプレビューは確定しない。Esc で開いた時点のテーマに戻る。
+    #[test]
+    fn テーマピッカーは移動でプレビューしescで戻す() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let before = ws.appearance.name.clone();
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Command(crate::command::CommandId::SwitchTheme)],
+        );
+        assert!(matches!(ws.modals.as_slice(), [Modal::ThemePicker(_)]));
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Down));
+        assert_ne!(ws.appearance.name, before, "移動でプレビューが乗る");
+        assert_eq!(ws.theme.name, ws.appearance.name);
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Esc));
+        assert!(ws.modals.is_empty());
+        assert_eq!(ws.appearance.name, before);
+        assert_eq!(ws.theme.name, before);
+    }
+
+    /// 検索を打ってから結果の行でファイルが開くまで。svc の往復を含む。
+    #[test]
+    fn grep検索は結果からファイルを開く() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "alpha
+needle here
+",
+        )
+        .unwrap();
+
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Command(crate::command::CommandId::SearchFullText)],
+        );
+        type_text(&mut ws, &mut svc, "needle");
+
+        assert!(!tick_modals(&mut ws, &mut svc), "締切の前は何も投げない");
+        std::thread::sleep(Duration::from_millis(220));
+        assert!(tick_modals(&mut ws, &mut svc));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        // 木は ファイル → 一致 の 2 行。下に降りて Enter で開く。
+        on_key(&mut ws, &mut svc, key(KeyCode::Down));
+        on_key(&mut ws, &mut svc, key(KeyCode::Down));
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert!(ws.modals.is_empty());
+        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+        assert_eq!(ws.focus, Focus::Viewer);
+    }
+
     #[test]
     fn watchの行き先は種類で分かれる() {
         use conductor_svc::watch::WatchEvent;
@@ -498,10 +630,15 @@ mod tests {
             assert!(
                 matches!(
                     effects.as_slice(),
-                    [Effect::NewSession(SessionKind::ClaudeCode)]
+                    [Effect::Command(crate::command::CommandId::NewClaudeCode)]
                 ),
                 "{focus:?}: {effects:?}"
             );
+            assert!(matches!(
+                crate::command::execute(&mut ws, crate::command::CommandId::NewClaudeCode)
+                    .as_slice(),
+                [Effect::NewSession(SessionKind::ClaudeCode)]
+            ));
         }
 
         let mut ws = Workspace::for_test();

@@ -14,17 +14,14 @@ use crate::layout::{Layout, Region};
 use crate::modal::Modal;
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
-/// メニューバーの見出し (左から右)。項目はフェーズ 4。
-const MENUS: [&str; 8] = [
-    "Repo", "Worktree", "Review", "View", "Panel", "Search", "Terminal", "Help",
-];
-
 pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     for (region, rect) in &layout.regions {
         let rect = *rect;
         match region {
             Region::TitleBar => frame.render_widget(Paragraph::new(title_line(ws)), rect),
-            Region::MenuBar => frame.render_widget(Paragraph::new(menu_line(ws)), rect),
+            Region::MenuBar => {
+                frame.render_widget(Paragraph::new(crate::menu::bar_line(ws, rect)), rect)
+            }
             Region::WorktreeStrip => frame.render_widget(
                 Paragraph::new(crate::panels::worktree::render::strip(ws, rect)),
                 rect,
@@ -61,6 +58,17 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     if let Some(modal) = ws.modals.last() {
         render_modal(frame, ws, modal, frame.area());
     }
+    // メニューは全ての上。モーダルの上でもあるのは、開いたままモーダルへ
+    // 進む経路がないので、見えているなら必ずそれが最前面だから。
+    if let Some(index) = ws.chrome.menu.open_index() {
+        let rect = crate::menu::dropdown_rect(ws, layout, index);
+        frame.render_widget(Clear, rect);
+        frame.render_widget(
+            Paragraph::new(crate::menu::dropdown_lines(ws, rect, index))
+                .block(modal_block(ws, crate::menu::MENUS[index].title)),
+            rect,
+        );
+    }
 }
 
 fn title_line(ws: &Workspace) -> Line<'_> {
@@ -84,20 +92,6 @@ fn title_line(ws: &Workspace) -> Line<'_> {
             Style::default().fg(theme.dir_fg),
         ),
     ])
-}
-
-fn menu_line(ws: &Workspace) -> Line<'static> {
-    let style = if ws.chrome.menu_open {
-        Style::default().fg(ws.theme.fg)
-    } else {
-        Style::default().fg(ws.theme.muted)
-    };
-    Line::from(
-        MENUS
-            .iter()
-            .map(|title| Span::styled(format!(" {title} "), style))
-            .collect::<Vec<_>>(),
-    )
 }
 
 fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
@@ -145,18 +139,26 @@ fn focused_region(ws: &Workspace) -> Region {
     }
 }
 
+/// 消える前に色を落とし始めるまで。読み終えた合図が最後まで目を引かないようにする。
+const STATUS_FADE: std::time::Duration = std::time::Duration::from_millis(2500);
+
 /// フラッシュメッセージ、無ければフォーカス中パネルのキーヒント。
 pub fn status_line(ws: &Workspace) -> Line<'static> {
     let theme = &ws.theme;
     match &ws.chrome.status {
+        Some(msg) if msg.shown_at.elapsed() >= STATUS_FADE => {
+            Line::styled(msg.text.clone(), Style::default().fg(theme.muted))
+        }
         Some(msg) => Line::styled(
             msg.text.clone(),
-            Style::default().fg(match msg.level {
-                StatusLevel::Success => theme.success,
-                StatusLevel::Error => theme.error,
-                StatusLevel::Warning => theme.warning,
-                StatusLevel::Info => theme.info,
-            }),
+            Style::default()
+                .fg(match msg.level {
+                    StatusLevel::Success => theme.success,
+                    StatusLevel::Error => theme.error,
+                    StatusLevel::Warning => theme.warning,
+                    StatusLevel::Info => theme.info,
+                })
+                .add_modifier(Modifier::BOLD),
         ),
         None => Line::styled(
             key_hint(ws.focus, ws.key_context(), &ws.keymap),
@@ -253,7 +255,11 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
 }
 
 /// そのアクションを発火させるチョードのうち、案内に載せる 1 つ。
-fn representative_chord(keymap: &KeyMap, context: KeyContext, action: Action) -> Option<String> {
+pub fn representative_chord(
+    keymap: &KeyMap,
+    context: KeyContext,
+    action: Action,
+) -> Option<String> {
     keymap
         .keys_for_action(context, action)
         .into_iter()
@@ -269,6 +275,7 @@ pub fn comment_list_rect(area: Rect) -> Rect {
 }
 
 fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
+    let big = centered(area, 76, (area.height * 84 / 100).max(3));
     if let Modal::CommentList(list) = modal {
         let rect = comment_list_rect(area);
         let inner = crate::list::inner(rect);
@@ -288,11 +295,43 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
         frame.render_widget(Paragraph::new(lines).block(block), rect);
         return;
     }
+    let ctx = ws.ctx();
+    let full = |body: Vec<Line<'static>>, title: String| (title, body);
     let (title, body) = match modal {
-        Modal::Help => ("Keys".to_string(), help_lines(ws)),
+        Modal::Help(help) => full(
+            crate::modal::help::lines(help, &ctx, big),
+            crate::modal::help::title(),
+        ),
+        Modal::Palette(palette) => full(
+            crate::modal::palette::lines(palette, ws, big),
+            crate::modal::palette::title(),
+        ),
+        Modal::ThemePicker(picker) => full(
+            crate::modal::theme::lines(picker, &ctx),
+            crate::modal::theme::title(),
+        ),
+        Modal::RepoPicker(picker) => full(
+            crate::modal::repo::lines(picker, &ctx),
+            crate::modal::repo::title(),
+        ),
+        Modal::Resume(picker) => full(
+            crate::modal::session::lines(picker, &ctx, big),
+            crate::modal::session::title(picker),
+        ),
+        Modal::History(browser) => full(
+            crate::modal::history::lines(browser, &ctx, big),
+            crate::modal::history::title(),
+        ),
+        Modal::Grep(grep) => full(
+            crate::modal::grep::lines(grep, ws, big),
+            crate::modal::grep::title(grep),
+        ),
         Modal::Prompt(prompt) => (
             prompt.title.clone(),
-            vec![Line::from(format!("> {}", prompt.input.text()))],
+            crate::modal::input::with_caret(&prompt.input, area.width as usize * 60 / 100)
+                .into_iter()
+                .map(|line| Line::from(format!("> {line}")))
+                .collect(),
         ),
         Modal::Confirm(confirm) => (
             "Confirm".to_string(),
@@ -302,14 +341,35 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
                 Line::styled("y / n", Style::default().fg(ws.theme.hint)),
             ],
         ),
-        Modal::CommentEditor(editor) => (editor.title(), editor_lines(editor, &ws.theme)),
+        Modal::CommentEditor(editor) => (
+            editor.title(),
+            editor_lines(editor, &ws.theme, area.width * 60 / 100),
+        ),
         Modal::CommentList(_) => unreachable!("上で返している"),
     };
 
-    let height = (body.len() as u16 + 2).min(area.height);
-    let rect = centered(area, 60, height);
+    // 一覧を持つモーダルは画面を大きく取る。中身の丈で決めると、絞り込むたびに
+    // 枠が伸び縮みして読みにくい。
+    let rect = if wide(modal) {
+        big
+    } else {
+        centered(area, 60, (body.len() as u16 + 2).min(area.height))
+    };
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(body).block(modal_block(ws, &title)), rect);
+}
+
+fn wide(modal: &Modal) -> bool {
+    matches!(
+        modal,
+        Modal::Help(_)
+            | Modal::Palette(_)
+            | Modal::ThemePicker(_)
+            | Modal::RepoPicker(_)
+            | Modal::Resume(_)
+            | Modal::History(_)
+            | Modal::Grep(_)
+    )
 }
 
 fn modal_block(ws: &Workspace, title: &str) -> Block<'static> {
@@ -325,49 +385,23 @@ fn modal_block(ws: &Workspace, title: &str) -> Block<'static> {
         .style(Style::default().bg(Color::Reset))
 }
 
-/// 本文とキーの案内。カーソルは端末のカーソルではなくブロックで示す — モーダルは
-/// 複数行あり、行を数えて置くより本文に挟むほうがずれない。
-fn editor_lines(editor: &crate::modal::CommentEditor, theme: &Theme) -> Vec<Line<'static>> {
-    let text = format!(
-        "{}\u{2588}{}",
-        editor.input.text_before_cursor(),
-        editor.input.text_after_cursor()
-    );
-    let mut lines: Vec<Line<'static>> = text
-        .lines()
-        .map(|line| Line::styled(line.to_string(), Style::default().fg(theme.fg)))
-        .collect();
-    if lines.is_empty() {
-        lines.push(Line::styled("\u{2588}", Style::default().fg(theme.fg)));
-    }
+/// 本文とキーの案内。
+fn editor_lines(
+    editor: &crate::modal::CommentEditor,
+    theme: &Theme,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> =
+        crate::modal::input::with_caret(&editor.input, width as usize)
+            .into_iter()
+            .map(|line| Line::styled(line, Style::default().fg(theme.fg)))
+            .collect();
     lines.push(Line::from(""));
     lines.push(Line::styled(
         "shift+enter: newline  \u{b7}  enter: save  \u{b7}  esc: cancel",
         Style::default().fg(theme.hint),
     ));
     lines
-}
-
-/// フォーカス中のコンテキストで発火するチョードとアクション名。ヘルプが実挙動から
-/// ずれないよう、表ではなくキーマップを引く。
-fn help_lines(ws: &Workspace) -> Vec<Line<'static>> {
-    let context = ws.key_context();
-    Action::ALL
-        .iter()
-        .filter_map(|action| {
-            let chords = ws.keymap.keys_for_action(context, *action);
-            if chords.is_empty() {
-                return None;
-            }
-            Some(Line::from(vec![
-                Span::styled(
-                    format!("{:<16}", chords.join(" / ")),
-                    Style::default().fg(ws.theme.accent),
-                ),
-                Span::styled(action.label(), Style::default().fg(ws.theme.fg)),
-            ]))
-        })
-        .collect()
 }
 
 fn centered(area: Rect, width_pct: u16, height: u16) -> Rect {
@@ -418,6 +452,42 @@ mod tests {
         assert!(hint.contains("cmds"), "残りの案内まで消えている: {hint}");
     }
 
+    /// 案内は ASCII だけ。macOS の alt グリフ (˙ や †) は端末で読めないことがある。
+    #[test]
+    fn 代表キーはunicodeより短いasciiを選ぶ() {
+        let ws = Workspace::for_test();
+        assert_eq!(
+            representative_chord(&ws.keymap, KeyContext::Global, Action::CycleFocusBackward),
+            Some("alt+h".to_string())
+        );
+        assert_eq!(
+            representative_chord(&ws.keymap, KeyContext::Worktree, Action::NavigateDown),
+            Some("j".to_string()),
+            "別名の down より素の j"
+        );
+    }
+
+    #[test]
+    fn パネルごとのヒントは実際のキーだけを出す() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Worktree;
+        let hint = status_line(&ws).to_string();
+        assert!(
+            hint.contains("j/k: nav") && hint.contains("tab: panel"),
+            "{hint}"
+        );
+        assert!(hint.contains("w: new"), "{hint}");
+        assert!(hint.is_ascii(), "{hint}");
+
+        ws.focus = Focus::TerminalClaude;
+        let hint = status_line(&ws).to_string();
+        assert!(hint.contains("keys \u{2192} terminal"), "{hint}");
+        assert!(
+            hint.contains("ctrl+esc: leave"),
+            "esc ではなく ctrl+esc: {hint}"
+        );
+    }
+
     #[test]
     fn ステータスメッセージはヒントより優先する() {
         let mut ws = Workspace::for_test();
@@ -449,7 +519,8 @@ mod tests {
     fn モーダルは他の全てに重ねて描かれる() {
         let mut ws = Workspace::for_test();
         let without = draw(&ws);
-        ws.modals.push(Modal::Help);
+        ws.modals
+            .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
         let with = draw(&ws);
 
         let middle = with.area.height / 2;

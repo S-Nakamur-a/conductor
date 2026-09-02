@@ -407,22 +407,30 @@ impl ViewerPanel {
     /// z の 2 打鍵目。
     pub fn chord_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         self.pending_fold = false;
+        match key.code {
+            KeyCode::Char(c) => self.fold_chord(c),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 折りたたみの操作。z の 2 打鍵目とコマンドの両方がここへ来る。
+    pub fn fold_chord(&mut self, c: char) -> Vec<Effect> {
         let line = self.cursor_line();
         let mut depth = None;
-        match key.code {
-            KeyCode::Char('a') => {
+        match c {
+            'a' => {
                 self.fold.toggle(line);
             }
-            KeyCode::Char('c') => {
+            'c' => {
                 self.fold.close(line);
             }
-            KeyCode::Char('o') => {
+            'o' => {
                 self.fold.open(line);
             }
-            KeyCode::Char('m') => depth = self.fold.collapse_deepest(),
-            KeyCode::Char('r') => depth = self.fold.expand_shallowest(),
-            KeyCode::Char('R') => self.fold.open_all(),
-            KeyCode::Char('M') => self.fold.close_all(),
+            'm' => depth = self.fold.collapse_deepest(),
+            'r' => depth = self.fold.expand_shallowest(),
+            'R' => self.fold.open_all(),
+            'M' => self.fold.close_all(),
             _ => return Vec::new(),
         }
         // 畳んだ結果カーソル行が隠れることがある。

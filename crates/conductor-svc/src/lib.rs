@@ -7,6 +7,8 @@
 pub mod pty;
 pub mod watch;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -34,7 +36,9 @@ pub enum EventKind<P> {
 pub struct Services<P> {
     tx: Sender<Event<P>>,
     rx: Receiver<Event<P>>,
-    generation: Generation,
+    /// 送信口と共有する。EventSender が値を写し取ると、世代を進めた瞬間に
+    /// watcher の合図が永久に捨てられる。
+    generation: Arc<AtomicU64>,
     next_req: u64,
 }
 
@@ -50,19 +54,18 @@ impl<P: Send + 'static> Services<P> {
         Self {
             tx,
             rx,
-            generation: Generation(0),
+            generation: Arc::new(AtomicU64::new(0)),
             next_req: 0,
         }
     }
 
     pub fn generation(&self) -> Generation {
-        self.generation
+        Generation(self.generation.load(Ordering::Relaxed))
     }
 
     /// 世代を進める。進める前に投げた Task の結果は届いても捨てられる。
     pub fn bump_generation(&mut self) -> Generation {
-        self.generation = Generation(self.generation.0 + 1);
-        self.generation
+        Generation(self.generation.fetch_add(1, Ordering::Relaxed) + 1)
     }
 
     /// 閉包をワーカースレッドで走らせ、結果を今の世代の Event として届ける。
@@ -73,7 +76,7 @@ impl<P: Send + 'static> Services<P> {
     {
         let req = RequestId(self.next_req);
         self.next_req += 1;
-        let generation = self.generation;
+        let generation = self.generation();
         let tx = self.tx.clone();
         thread::spawn(move || {
             let event = Event {
@@ -90,7 +93,7 @@ impl<P: Send + 'static> Services<P> {
     pub fn sender(&self) -> EventSender<P> {
         EventSender {
             tx: self.tx.clone(),
-            generation: self.generation,
+            generation: Arc::clone(&self.generation),
         }
     }
 
@@ -98,7 +101,7 @@ impl<P: Send + 'static> Services<P> {
     pub fn try_recv(&self) -> Option<Event<P>> {
         loop {
             let event = self.rx.try_recv().ok()?;
-            if event.generation == self.generation {
+            if event.generation == self.generation() {
                 return Some(event);
             }
         }
@@ -108,13 +111,13 @@ impl<P: Send + 'static> Services<P> {
 #[derive(Clone)]
 pub struct EventSender<P> {
     tx: Sender<Event<P>>,
-    generation: Generation,
+    generation: Arc<AtomicU64>,
 }
 
 impl<P> EventSender<P> {
     pub fn send_watch(&self, event: watch::WatchEvent) {
         let _ = self.tx.send(Event {
-            generation: self.generation,
+            generation: Generation(self.generation.load(Ordering::Relaxed)),
             req: None,
             kind: EventKind::Watch(event),
         });
@@ -167,6 +170,18 @@ mod tests {
         let event = recv_blocking(&svc).unwrap();
         assert!(matches!(event.kind, EventKind::Task(2)));
         assert!(svc.try_recv().is_none());
+    }
+
+    #[test]
+    fn 世代を進めても_watcherの合図は届く() {
+        let mut svc = Services::<u32>::new();
+        let sender = svc.sender();
+        svc.bump_generation();
+        sender.send_watch(watch::WatchEvent::ConfigChanged);
+        assert!(matches!(
+            recv_blocking(&svc).map(|e| e.kind),
+            Some(EventKind::Watch(watch::WatchEvent::ConfigChanged))
+        ));
     }
 
     #[test]
