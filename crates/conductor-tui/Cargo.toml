@@ -1,0 +1,24 @@
+[package]
+name = "conductor-tui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "conductor の画面。パネル群とシェル (route / layout / Effect / render)"
+
+[[bin]]
+name = "conductor-next"
+path = "src/main.rs"
+
+[dependencies]
+conductor-core = { path = "../conductor-core" }
+conductor-svc = { path = "../conductor-svc" }
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+toml = "1"

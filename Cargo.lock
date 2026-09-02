@@ -554,6 +554,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductor-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "conductor-core",
+ "conductor-svc",
+ "crossterm",
+ "env_logger",
+ "log",
+ "ratatui",
+ "tempfile",
+ "toml 1.1.4+spec-1.1.0",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
 name = "copypasta"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
