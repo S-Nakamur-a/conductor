@@ -752,6 +752,23 @@ fn 索引に載らないファイルの変更では作り直さない() {
 }
 
 #[test]
+fn gitignoreされた変更は作り直しを起こさない() {
+    // 索引ルートの中にあるので owning_root は当たるが、producer は読まない。
+    // 通すと target/ の書き込みが静穏タイマーを永久に押し戻す。
+    let dir = nested_go_tree();
+    std::fs::write(dir.path().join(".gitignore"), "/build\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("build")).unwrap();
+    std::fs::write(dir.path().join("build/gen.go"), "package build\n").unwrap();
+    let mut semantic = surveyed(dir.path(), Some("main.go"));
+
+    semantic.note_change(&dir.path().join("build/gen.go"), dir.path());
+    assert!(pending_roots(&semantic).is_empty());
+
+    semantic.note_change(&dir.path().join("main.go"), dir.path());
+    assert_eq!(pending_roots(&semantic), [PathBuf::from("")]);
+}
+
+#[test]
 fn 索引が既にあるルートには作り直しを頼まない() {
     // 開くたびに頼むと、大きなリポジトリでは producer が止まらなくなる。
     let dir = nested_go_tree();

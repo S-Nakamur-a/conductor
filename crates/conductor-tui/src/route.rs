@@ -26,34 +26,15 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
     if ws.chrome.menu.is_active() {
         return Routed::Effects(crate::menu::key(ws, key));
     }
-    if !ws.modals.is_empty() {
-        let key_context = ws.key_context();
+    let modal = !ws.modals.is_empty();
+    let chord = ws.focus == Focus::Viewer && ws.panels.viewer.awaiting_chord();
+    if modal || chord {
         let root = ws.panels.viewer.root().to_path_buf();
-        let Workspace {
-            modals,
-            theme,
-            keymap,
-            config,
-            repo,
-            review,
-            focus,
-            ..
-        } = ws;
-        let ctx = crate::workspace::Ctx {
-            theme,
-            keymap,
-            config,
-            repo,
-            review,
-            root: &root,
-            focus: *focus,
-            key_context,
-        };
-        let top = modals.last_mut().expect("empty をここまでに弾いている");
-        return Routed::Effects(top.update(key, &ctx));
-    }
-    if ws.focus == Focus::Viewer && ws.panels.viewer.awaiting_chord() {
-        return Routed::Effects(ws.panels.viewer.chord_key(key));
+        let (panels, modals, ctx) = ws.split(&root);
+        return Routed::Effects(match modals.last_mut() {
+            Some(top) => top.update(key, &ctx),
+            None => panels.viewer.chord_key(key, &ctx),
+        });
     }
     let action = ws.keymap.resolve(&key, ws.key_context());
     if ws.focus.is_pty() {

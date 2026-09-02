@@ -10,7 +10,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 use super::diff::{Entry, SideRow, side_by_side};
 use super::tabs;
@@ -21,7 +23,7 @@ use crate::workspace::Workspace;
 
 /// ガターのうち行番号が使わない列: 折りたたみマーカー(1) + 空白(1) + '│'(1) + 空白(1)。
 /// diff 表示ではさらに +/- の 1 列と空白 1 列。
-const GUTTER_FIXED: usize = 4;
+pub const GUTTER_FIXED: usize = 4;
 const DIFF_SIGN: usize = 2;
 
 /// 本文の上に載るタブ帯の高さ。[super::ViewerPanel::sync_layout] も同じ値を引く。
@@ -63,6 +65,27 @@ pub fn render(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     );
     frame.render_widget(Paragraph::new(lines), body_area);
     scrollbar(frame, body_area, panel);
+    if let Some(hover) = &panel.nav.hover {
+        popup(
+            frame,
+            super::hover::popup(hover, &ws.theme, body_area),
+            &ws.theme,
+        );
+    }
+}
+
+/// ホバーのポップアップ。
+fn popup(frame: &mut Frame, popup: super::hover::Popup, theme: &Theme) {
+    frame.render_widget(Clear, popup.rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_focused));
+    let inner = block.inner(popup.rect);
+    frame.render_widget(block, popup.rect);
+    frame.render_widget(Paragraph::new(popup.body).wrap(Wrap { trim: false }), inner);
+    for (rect, line) in popup.footer {
+        frame.render_widget(Paragraph::new(line), rect);
+    }
 }
 
 /// 畳んだぶんを除いた尺で出す。畳んだまま端まで送ったのにつまみが半分、が起きない。
@@ -228,13 +251,25 @@ fn file_body(
             spans.push(thread::marker(comments, line_1, theme, icons));
         }
         spans.extend(gutter_spans(panel, theme, line_1, digits));
-        spans.extend(highlighted_spans(
-            panel,
-            theme,
-            line_1,
-            panel.scroll.column,
-            text_width,
-        ));
+        match panel.nav.labels.as_ref().filter(|l| l.line == line_1) {
+            Some(labels) => spans.extend(
+                super::code_nav::label_line(
+                    labels,
+                    &panel.content.lines[line_1 - 1],
+                    panel.scroll.column,
+                    text_width,
+                    theme,
+                )
+                .spans,
+            ),
+            None => spans.extend(highlighted_spans(
+                panel,
+                theme,
+                line_1,
+                panel.scroll.column,
+                text_width,
+            )),
+        }
         if let Some(hidden) = panel.fold.hidden_count(line_1) {
             spans.push(Span::styled(
                 format!("  \u{22ef} {hidden} lines"),

@@ -21,8 +21,10 @@ pub mod palette;
 pub mod picker;
 pub mod pr;
 pub mod publish;
+pub mod references;
 pub mod repo;
 pub mod session;
+pub mod symbol_actions;
 pub mod theme;
 pub mod update;
 
@@ -44,6 +46,8 @@ pub enum Modal {
     PrInput(pr::PrInput),
     Publish(publish::Publish),
     Update(update::Update),
+    References(references::References),
+    SymbolActions(symbol_actions::SymbolActions),
 }
 
 /// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
@@ -228,6 +232,8 @@ impl Modal {
             Modal::PrInput(prompt) => prompt.update(key, ctx),
             Modal::Publish(confirm) => confirm.update(key, ctx),
             Modal::Update(update) => update.update(key, ctx),
+            Modal::References(list) => list.update(key, ctx),
+            Modal::SymbolActions(actions) => actions.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Enter => {

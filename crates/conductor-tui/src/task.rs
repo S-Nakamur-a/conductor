@@ -13,6 +13,8 @@ use conductor_core::review_publish::{self, PublishComment, PublishOutcome, Publi
 use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
 };
+use conductor_core::semantic_index::{self, IndexRoot};
+use conductor_core::symbol_index::SymbolIndex;
 use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
@@ -136,6 +138,20 @@ pub enum Task {
     },
     /// ビルド済みバイナリを取ってきて入れ替える。途中経過を何度も返す。
     DownloadUpdate(Box<UpdateInfo>),
+
+    /// 索引ルートを調べ直し、置いてある索引を読む。どちらもツリーを歩くので背景で。
+    ///
+    /// `reading` を渡すのは、そのファイルの索引ルートだけは索引が無くても鍵を
+    /// 出しておくため。渡さないと、まだ索引の無いルートは生成が始まらない。
+    SurveyIndex {
+        repo_root: PathBuf,
+        tree_root: PathBuf,
+        reading: Option<PathBuf>,
+        /// 鍵を失ったルート。名指ししないと調査に選ばれず、毎周調査を頼み続ける。
+        wanted: Vec<IndexRoot>,
+    },
+    /// tree-sitter の索引を作る。渡した handle は呼び出し側と同じ索引を指す。
+    BuildSymbols(SymbolIndex),
 }
 
 /// 公開の確認と実行に要るもの。
@@ -265,6 +281,8 @@ pub enum TaskResult {
         announce: bool,
     },
     UpdateProgress(UpdateStage),
+    IndexLoaded(Box<crate::index::Load>),
+    SymbolsBuilt(usize),
 }
 
 impl Task {
@@ -439,6 +457,33 @@ impl Task {
                     |(outcome, announce)| TaskResult::UpdateCheck { outcome, announce },
                 );
             }
+            Task::SurveyIndex {
+                repo_root,
+                tree_root,
+                reading,
+                wanted,
+            } => {
+                svc.spawn(
+                    move || {
+                        let (survey, store) = semantic_index::survey_and_load(
+                            &repo_root,
+                            &tree_root,
+                            reading.as_deref(),
+                            &wanted,
+                        );
+                        Box::new(crate::index::Load {
+                            requested: tree_root,
+                            survey,
+                            store,
+                        })
+                    },
+                    TaskResult::IndexLoaded,
+                );
+            }
+            Task::BuildSymbols(index) => {
+                svc.spawn(move || index.build(), TaskResult::SymbolsBuilt);
+            }
+
             // 段階ごとに報告するので spawn ではなく送信口を持って自前のスレッドで走る。
             Task::DownloadUpdate(info) => {
                 let sender = svc.sender();

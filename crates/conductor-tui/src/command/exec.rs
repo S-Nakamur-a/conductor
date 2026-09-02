@@ -35,7 +35,6 @@ pub(super) const NOT_YET: &[(CommandId, &str)] = &[
     (CommandId::ForceAnalyzeRevidere, "generating a review"),
     (CommandId::ShowReviewTemplates, "review templates"),
     (CommandId::ToggleMarkdownRender, "rendered markdown"),
-    (CommandId::RebuildCodeIndex, "the code index"),
 ];
 
 fn not_yet(id: CommandId) -> Option<&'static str> {
@@ -252,14 +251,30 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             None => Vec::new(),
         },
 
+        // 索引はファイル単位で鮮度を持つので、別のツリーで作った索引は内容の違う
+        // ファイルについてだけ答えなくなる。読むだけの worktree では編集が起きず
+        // 引き金が引かれないので、手で頼む口が要る。
+        CommandId::RebuildCodeIndex => {
+            if ws.index.semantic.rebuild_reading() {
+                vec![Effect::Status(
+                    StatusLevel::Info,
+                    "Rebuilding the code index for this file\u{2026}".into(),
+                )]
+            } else {
+                vec![Effect::Status(
+                    StatusLevel::Warning,
+                    "no indexable file is open".into(),
+                )]
+            }
+        }
+
         // 未実装。enabled が先に弾くのでここには来ない。`_` で受けないのは、
         // コマンドを足したときに実装漏れを型で見つけるため。
         CommandId::ShowRevidere
         | CommandId::AnalyzeRevidere
         | CommandId::ForceAnalyzeRevidere
         | CommandId::ShowReviewTemplates
-        | CommandId::ToggleMarkdownRender
-        | CommandId::RebuildCodeIndex => Vec::new(),
+        | CommandId::ToggleMarkdownRender => Vec::new(),
     }
 }
 

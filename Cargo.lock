@@ -569,6 +569,7 @@ dependencies = [
  "log",
  "open",
  "ratatui",
+ "sheaf-core",
  "syntect",
  "syntect-tui",
  "tempfile",

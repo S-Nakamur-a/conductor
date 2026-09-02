@@ -168,6 +168,18 @@
 - macOS の `/var` が `/private/var` への symlink で git2 は解決した側を返す (テスト)。
 - 認識できないツリーに producer を向けると終了コード 0 で空の索引を書く (テスト)。
 
+## フェーズ 5b で足した 1 本
+
+| 新テスト名 | 固定している事実 |
+|---|---|
+| gitignoreされた変更は作り直しを起こさない | 計画書 4.3 の「gitignore 済みの変更は静穏タイマーを戻さない」。旧にテストが無く、判定は sheaf-core の `Regenerator::is_ignored` にあった。索引ルートの中にあって producer が読まないファイル (`build/`) を通すと、`target/` の書き込みが静穏を永久に押し戻す |
+
+`note_change` は gitignore されたパスでも鍵を落とす (`Root::key = None`)。生成は始まらないが
+調査は 1 回走るので、ビルド中は survey がその都度動く。旧も同じ挙動で、直すなら
+sheaf-core の `is_ignored` を `SemanticIndex` 側から引けるようにする必要があるため据え置いた。
+
+tui 側の配線 (調査・生成・読み込みの駆動) の振り分けは `docs/rewrite-ports/code_nav.md`。
+
 ## 検証
 
 ```

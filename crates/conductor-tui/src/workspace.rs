@@ -8,6 +8,7 @@ use conductor_core::theme::Theme;
 use conductor_core::update_checker::UpdateInfo;
 
 use crate::effect::Effect;
+use crate::index::Index;
 use crate::modal::Modal;
 use crate::panels::explorer::{BottomView, ExplorerPanel};
 use crate::panels::terminal::TerminalPanel;
@@ -182,6 +183,8 @@ pub struct Ctx<'a> {
     pub config: &'a Config,
     pub repo: &'a RepoState,
     pub review: &'a ReviewState,
+    /// 問い合わせるだけなので共有で足りる。
+    pub index: &'a Index,
     /// 相対パスと検索範囲の基準。Viewer が持つ根と同じ。
     pub root: &'a Path,
     /// 1 つのパネルが 2 つの区画を持つことがあるので、どちらが受けたかを添える。
@@ -201,6 +204,7 @@ pub struct Workspace {
     pub should_quit: bool,
     /// 更新を入れ終えた。抜けたあと main が同じ引数で自分を exec し直す。
     pub relaunch: bool,
+    pub index: Index,
     pub theme: Theme,
     pub appearance: Appearance,
     pub keymap: KeyMap,
@@ -225,6 +229,7 @@ impl Workspace {
             entrance: crate::entrance::Entrance::new(config.ui.startup_animation),
             should_quit: false,
             relaunch: false,
+            index: Index::default(),
             appearance: Appearance {
                 name: theme.name.to_string(),
                 high_contrast: config.ui.high_contrast,
@@ -242,6 +247,7 @@ impl Workspace {
             config: &self.config,
             repo: &self.repo,
             review: &self.review,
+            index: &self.index,
             root: self.panels.viewer.root(),
             focus: self.focus,
             key_context: self.key_context(),
@@ -276,24 +282,23 @@ impl Workspace {
         }
     }
 
-    /// Action をフォーカス中のパネルへ渡す。消費しなければ `None` で、
-    /// 呼び出し側は [crate::route::global_effects] の既定の解釈に落とす。
-    pub fn dispatch(&mut self, action: Action) -> Option<Vec<Effect>> {
-        self.dispatch_to(self.focus, action)
-    }
-
-    /// フォーカスの外にあるパネルへ渡す。コマンドの宛先が選択で決まるとき用。
-    pub fn dispatch_to(&mut self, target: Focus, action: Action) -> Option<Vec<Effect>> {
+    /// panels と modals を可変で借りたまま [Ctx] を組む。`root` は panels から引くので、
+    /// 呼び出し側が先に取り出しておく。
+    pub(crate) fn split<'a>(
+        &'a mut self,
+        root: &'a Path,
+    ) -> (&'a mut Panels, &'a mut Vec<Modal>, Ctx<'a>) {
         let key_context = self.key_context();
-        let root = self.panels.viewer.root().to_path_buf();
         let Self {
-            focus,
             panels,
+            modals,
             theme,
             keymap,
             config,
             repo,
             review,
+            index,
+            focus,
             ..
         } = self;
         let ctx = Ctx {
@@ -302,10 +307,24 @@ impl Workspace {
             config,
             repo,
             review,
-            root: &root,
+            index,
+            root,
             focus: *focus,
             key_context,
         };
+        (panels, modals, ctx)
+    }
+
+    /// Action をフォーカス中のパネルへ渡す。消費しなければ `None` で、
+    /// 呼び出し側は [crate::route::global_effects] の既定の解釈に落とす。
+    pub fn dispatch(&mut self, action: Action) -> Option<Vec<Effect>> {
+        self.dispatch_to(self.focus, action)
+    }
+
+    /// フォーカスの外にあるパネルへ渡す。コマンドの宛先が選択で決まるとき用。
+    pub fn dispatch_to(&mut self, target: Focus, action: Action) -> Option<Vec<Effect>> {
+        let root = self.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = self.split(&root);
         match target {
             Focus::Worktree => panels.worktree.update(action, &ctx),
             Focus::Explorer => panels.explorer.update(action, &ctx),
@@ -316,32 +335,19 @@ impl Workspace {
     }
 
     pub fn tick_top_modal(&mut self) -> Vec<Effect> {
-        let key_context = self.key_context();
         let root = self.panels.viewer.root().to_path_buf();
-        let Self {
-            modals,
-            theme,
-            keymap,
-            config,
-            repo,
-            review,
-            focus,
-            ..
-        } = self;
-        let ctx = Ctx {
-            theme,
-            keymap,
-            config,
-            repo,
-            review,
-            root: &root,
-            focus: *focus,
-            key_context,
-        };
+        let (_, modals, ctx) = self.split(&root);
         modals
             .last_mut()
             .map(|top| top.tick(&ctx))
             .unwrap_or_default()
+    }
+
+    /// ホバーの締切を 1 押しする。
+    pub fn tick_viewer(&mut self) -> bool {
+        let root = self.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = self.split(&root);
+        panels.viewer.tick_hover(&ctx)
     }
 
     /// svc から届いた結果を持ち主のパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
@@ -349,6 +355,10 @@ impl Workspace {
         match result {
             TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
             TaskResult::FileLoaded { .. } => self.panels.viewer.apply_result(result),
+            TaskResult::IndexLoaded(_) | TaskResult::SymbolsBuilt(_) => {
+                crate::index::accept(self, result);
+                Vec::new()
+            }
             TaskResult::Grep { .. }
             | TaskResult::Sessions(_)
             | TaskResult::History { .. }
@@ -369,28 +379,8 @@ impl Workspace {
                 }
             }
             _ => {
-                let key_context = self.key_context();
                 let root = self.panels.viewer.root().to_path_buf();
-                let Self {
-                    focus,
-                    panels,
-                    theme,
-                    keymap,
-                    config,
-                    repo,
-                    review,
-                    ..
-                } = self;
-                let ctx = Ctx {
-                    theme,
-                    keymap,
-                    config,
-                    repo,
-                    review,
-                    root: &root,
-                    focus: *focus,
-                    key_context,
-                };
+                let (panels, _, ctx) = self.split(&root);
                 panels.worktree.apply_result(result, &ctx)
             }
         }

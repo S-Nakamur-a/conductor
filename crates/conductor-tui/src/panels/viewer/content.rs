@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use conductor_core::symbol_index::CodeMask;
 use ratatui::style::Style;
 
 use super::fold::{self, FoldRange};
@@ -42,9 +43,12 @@ pub struct Loaded {
     /// タブ展開済み。
     pub lines: Vec<String>,
     pub folds: Vec<FoldRange>,
+    /// どの語がコードでどれが地の文か。ジャンプもホバーもここを最初に通る。
+    pub mask: CodeMask,
 }
 
-/// root/relative を読む。折りたたみ範囲も同じ場所で求める (tree-sitter は重い)。
+/// root/relative を読む。折りたたみ範囲とコードマスクも同じ場所で求める
+/// (どちらも tree-sitter を通すので、開くたびに 3 回パースしない)。
 pub fn read(root: &Path, relative: &str, tab_width: usize) -> Result<Loaded, String> {
     let full = root.join(relative);
     if let Some(reason) = unsupported(&full, relative) {
@@ -58,7 +62,11 @@ pub fn read(root: &Path, relative: &str, tab_width: usize) -> Result<Loaded, Str
     // 折りたたみは展開前のテキストから求める。tree-sitter もインデント幅も、
     // 書かれたままのファイルを前提にしている。
     let folds = fold::compute(&text, relative);
-    Ok(Loaded { lines, folds })
+    Ok(Loaded {
+        lines,
+        folds,
+        mask: CodeMask::compute(&text, relative),
+    })
 }
 
 /// 素のテキストとして開けないなら、その理由。

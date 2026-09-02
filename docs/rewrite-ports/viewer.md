@@ -172,10 +172,16 @@
 
 | 旧ファイル | 本数 | 行き先 |
 |---|---|---|
-| `code_nav.rs` | 14 | フェーズ 5 (gd/gi/gr/gK、語の選択、下線のデバウンス) |
-| `hover_info.rs` | 23 | フェーズ 5 (ホバー情報、索引と字面の優先順位) |
-| `jump_history.rs` | 4 | フェーズ 5 (ジャンプ履歴) |
-| `render/markdown_view.rs` | 6 | フェーズ 5 (markdown のレンダリング表示とトグル) |
+| `code_nav.rs` | 14 | **フェーズ 5b で処理済み** → `docs/rewrite-ports/code_nav.md` |
+| `hover_info.rs` | 23 | **フェーズ 5b で処理済み** → 同上 |
+| `jump_history.rs` | 4 | **フェーズ 5b で処理済み** → 同上 |
+| `render/markdown_view.rs` | 6 | フェーズ 5a (markdown のレンダリング表示とトグル) |
+
+`content.rs` の「開いたファイルのコメントと文字列はマスクされる」「対応しない言語では
+マスクを空にする」の 2 本もフェーズ 5b で処理した。`CodeMask` は `content::Loaded` に
+載って読み込みのワーカーが作るようになり、マスクそのものの検査は conductor-core の
+symbol_index 側 (マスクは地の文だけを隠す / 対応しない言語は何も提示しない) が持っている。
+markdown の 4 本 (`is_markdown_path` とレンダリング表示のトグル) はフェーズ 5a のまま。
 
 フェーズ 3b で処理済み: タブ帯の当たり判定と窓の寄せ直し (tab_row の 5 本)、コメント関連
 (diff_nav の 3 本)、折りたたみマーカーの当たり判定。折りたたみの hover 3 本は新に hover が

@@ -22,6 +22,17 @@ pub struct SymbolIndex {
     inner: Arc<Mutex<Inner>>,
 }
 
+/// 載っているシンボルは数万件あるので、件数だけ名乗る。
+impl std::fmt::Debug for SymbolIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let inner = self.inner.lock().unwrap();
+        f.debug_struct("SymbolIndex")
+            .field("root", &inner.root)
+            .field("symbols", &inner.symbols.as_ref().map(Vec::len))
+            .finish()
+    }
+}
+
 impl SymbolIndex {
     pub fn new(root: PathBuf) -> Self {
         Self {

@@ -3,9 +3,11 @@
 //! 相対パスの解決先はここが持つ。書き換えるのは [ViewerPanel::set_root] だけで、
 //! 表示中のツリーと開く先が食い違う窓を作らない。
 
+pub mod code_nav;
 pub mod content;
 pub mod diff;
 pub mod fold;
+pub mod hover;
 pub mod render;
 pub mod search;
 pub mod syntax;
@@ -28,6 +30,7 @@ use crate::review::{ReviewState, anchor_for, anchors, innermost};
 use crate::task::{ReviewWrite, Task, TaskResult};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
+use code_nav::CodeNav;
 use content::Content;
 use diff::DiffPane;
 use fold::FoldState;
@@ -123,6 +126,7 @@ pub struct ViewerPanel {
     pub selection: Selection,
     pub scroll: Scroll,
     pub threads: ThreadFolds,
+    pub nav: CodeNav,
     /// 構築が重いので最初に必要になるまで作らない。
     highlighter: Option<Highlighter>,
     load: Option<Load>,
@@ -153,6 +157,7 @@ impl ViewerPanel {
             selection: Selection::default(),
             scroll: Scroll::default(),
             threads: ThreadFolds::default(),
+            nav: CodeNav::default(),
             highlighter: None,
             load: None,
             seq: 0,
@@ -339,11 +344,13 @@ impl ViewerPanel {
                 self.content.lines = file.lines;
                 self.content.error = None;
                 self.fold.install(file.folds, &load.path);
+                self.nav.reset_for_file(file.mask);
             }
             Err(reason) => {
                 self.content.lines.clear();
                 self.content.error = Some(reason);
                 self.fold.clear();
+                self.nav.reset_for_file(Default::default());
             }
         }
 
@@ -401,11 +408,14 @@ impl ViewerPanel {
     }
 
     pub fn awaiting_chord(&self) -> bool {
-        self.pending_fold
+        self.pending_fold || self.awaiting_nav()
     }
 
-    /// z の 2 打鍵目。
-    pub fn chord_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+    /// z と g の 2 打鍵目。どちらもキーマップに載せていないので、解決の前にここへ来る。
+    pub fn chord_key(&mut self, key: KeyEvent, ctx: &Ctx) -> Vec<Effect> {
+        if !self.pending_fold {
+            return self.nav_chord(key, ctx);
+        }
         self.pending_fold = false;
         match key.code {
             KeyCode::Char(c) => self.fold_chord(c),
@@ -454,9 +464,15 @@ impl ViewerPanel {
         if let Some(effects) = self.comment_key(action, ctx.review) {
             return Some(effects);
         }
+        if let Some(effects) = self.nav_key(action, ctx) {
+            return Some(effects);
+        }
         match action {
             Action::ExitToExplorer => {
-                if !self.selection.is_empty() {
+                if self.nav.hover.take().is_some() {
+                    // 出ているポップアップが先。畳む前に diff を抜けると、
+                    // 見えているものと esc の意味がずれる。
+                } else if !self.selection.is_empty() {
                     self.selection.clear();
                 } else if self.diff.active {
                     self.diff.clear();
@@ -781,6 +797,12 @@ mod tests {
             &mut self.ws.panels.viewer
         }
 
+        /// 2 打鍵目を実際の経路 (route) で送る。
+        fn press(&mut self, code: KeyCode) {
+            crate::run::on_key(&mut self.ws, &mut self.svc, KeyEvent::from(code));
+            crate::testing::pump(&mut self.ws, &mut self.svc);
+        }
+
         fn click(&mut self, x: u16, y: u16, extend: bool) -> Vec<Effect> {
             let Workspace { panels, review, .. } = &mut self.ws;
             panels.viewer.click(x, y, extend, review)
@@ -950,6 +972,7 @@ mod tests {
             loaded: Ok(content::Loaded {
                 lines: vec!["STALE".into()],
                 folds: Vec::new(),
+                mask: Default::default(),
             }),
         };
         h.viewer().apply_result(stale);
@@ -1018,8 +1041,7 @@ mod tests {
         h.act(Action::FoldPrefix);
         assert!(h.ws.panels.viewer.awaiting_chord());
         h.viewer().scroll.line = 1;
-        let effects = h.viewer().chord_key(KeyEvent::from(KeyCode::Char('c')));
-        h.run(effects);
+        h.press(KeyCode::Char('c'));
         assert!(h.ws.panels.viewer.fold.is_collapsed(1));
         assert_eq!(
             h.ws.panels.viewer.scroll.line, 0,
@@ -1098,13 +1120,13 @@ mod tests {
         let mut h = Harness::at(dir.path());
         h.open("a.rs");
 
-        let effects = h.viewer().chord_key(KeyEvent::from(KeyCode::Char('m')));
+        let effects = h.viewer().fold_chord('m');
         let [Effect::Status(StatusLevel::Info, text)] = effects.as_slice() else {
             panic!("{effects:?}");
         };
         assert_eq!(text, "fold level 1/2");
 
-        let effects = h.viewer().chord_key(KeyEvent::from(KeyCode::Char('a')));
+        let effects = h.viewer().fold_chord('a');
         assert!(effects.is_empty(), "行単位の畳みは段数を出さない");
     }
 

@@ -11,6 +11,7 @@ pub mod command;
 pub mod comment_list;
 pub mod effect;
 pub mod entrance;
+pub mod index;
 pub mod layout;
 pub mod list;
 pub mod liveness;

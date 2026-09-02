@@ -94,6 +94,8 @@ pub fn run(
 
         dirty |= expire_status(ws);
         dirty |= tick_modals(ws, svc);
+        dirty |= tick_index(ws, svc);
+        dirty |= ws.tick_viewer();
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
         dirty |= run_timers(
@@ -126,11 +128,24 @@ fn tick_modals(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
     true
 }
 
+fn tick_index(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
+    let effects = crate::index::tick(ws);
+    if effects.is_empty() {
+        return false;
+    }
+    apply(ws, svc, effects);
+    true
+}
+
 /// watcher からの合図の行き先。MCP のレビュー更新だけがパネルの外に効く。
 fn watch_effects(ws: &mut Workspace, watch: conductor_svc::watch::WatchEvent) -> Vec<Effect> {
+    use conductor_svc::watch::WatchEvent;
     match watch {
-        conductor_svc::watch::WatchEvent::RefreshRequested => {
-            vec![Effect::Spawn(Task::LoadReview)]
+        WatchEvent::RefreshRequested => vec![Effect::Spawn(Task::LoadReview)],
+        // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
+        WatchEvent::FsChanged(path) => {
+            crate::index::note_change(ws, &path);
+            Vec::new()
         }
         watch => ws.panels.terminal.on_watch(&watch),
     }
@@ -240,11 +255,29 @@ fn on_mouse(
     match mouse.kind {
         MouseEventKind::ScrollDown => scroll_region(ws, region, 3),
         MouseEventKind::ScrollUp => scroll_region(ws, region, -3),
+        // 端末はポインタが窓の外に出たことを報せないので、区画の外に出た時点で降ろす。
+        MouseEventKind::Moved => {
+            let Workspace { panels, review, .. } = ws;
+            let over = (region == Region::Viewer)
+                .then(|| {
+                    panels
+                        .viewer
+                        .word_at_screen(mouse.column, mouse.row, review)
+                })
+                .flatten();
+            panels.viewer.note_pointer(over);
+        }
         MouseEventKind::Down(MouseButton::Left) => {
             let Some(focus) = focus_for(region) else {
                 return;
             };
             apply(ws, svc, vec![Effect::Focus(focus)]);
+            if focus == Focus::Viewer
+                && let Some(effects) = viewer_popup_click(ws, mouse)
+            {
+                apply(ws, svc, effects);
+                return;
+            }
             let effects = match focus {
                 Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
                 Focus::Viewer => {
@@ -262,6 +295,21 @@ fn on_mouse(
         }
         _ => {}
     }
+}
+
+/// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
+/// 重なっているので、後ろに回すと下の行が選ばれる。
+fn viewer_popup_click(ws: &mut Workspace, mouse: MouseEvent) -> Option<Vec<Effect>> {
+    let root = ws.panels.viewer.root().to_path_buf();
+    let (panels, _, ctx) = ws.split(&root);
+    if let Some(effects) = panels.viewer.click_hover(mouse.column, mouse.row, &ctx) {
+        return Some(effects);
+    }
+    let jump = mouse
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::CONTROL);
+    jump.then(|| panels.viewer.jump_at_screen(mouse.column, mouse.row, &ctx))
+        .flatten()
 }
 
 fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {

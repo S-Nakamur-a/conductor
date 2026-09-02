@@ -380,6 +380,14 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
             crate::modal::publish::lines(confirm, &ctx),
             crate::modal::publish::title(confirm),
         ),
+        Modal::References(list) => full(
+            crate::modal::references::lines(list, &ctx, big),
+            crate::modal::references::title(list),
+        ),
+        Modal::SymbolActions(actions) => full(
+            crate::modal::symbol_actions::lines(actions, &ctx),
+            crate::modal::symbol_actions::title(actions),
+        ),
         Modal::Update(update) => (
             crate::modal::update::title(update),
             crate::modal::update::lines(update, &ctx),
@@ -434,6 +442,7 @@ fn wide(modal: &Modal) -> bool {
             | Modal::BranchPicker(_)
             | Modal::CherryPick(_)
             | Modal::Publish(_)
+            | Modal::References(_)
     )
 }
 

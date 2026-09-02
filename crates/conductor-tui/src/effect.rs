@@ -20,6 +20,12 @@ pub enum Effect {
         diff: Option<Box<FileDiff>>,
         preview: bool,
     },
+    /// 戻り先を積んでからファイルを開く。ジャンプの出どころが Viewer の外にもあるので、
+    /// 積む場所を 1 つにするために [Effect::OpenFile] と分けてある。
+    JumpTo {
+        path: PathBuf,
+        line: usize,
+    },
     FindFile(String),
     SearchInFile(String),
     /// レビュー済みの印。持ち主は Explorer。
@@ -72,6 +78,15 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             } => {
                 let follow_up = open_file(ws, &path, line, diff, preview);
                 queue.extend(follow_up);
+            }
+            Effect::JumpTo { path, line } => {
+                ws.panels.viewer.note_jump_from();
+                queue.push_back(Effect::OpenFile {
+                    path,
+                    line: Some(line),
+                    diff: None,
+                    preview: false,
+                });
             }
             Effect::FindFile(query) => {
                 if let Some(effect) = ws.panels.explorer.find_file(&query) {
