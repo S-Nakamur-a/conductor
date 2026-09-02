@@ -4,12 +4,12 @@ pub mod render;
 
 use std::path::{Path, PathBuf};
 
-use conductor_core::git_engine::WorktreeInfo;
+use conductor_core::git_engine::{GrabState, WorktreeInfo};
 use conductor_core::keymap::Action;
 
 use crate::effect::Effect;
 use crate::modal::{Confirm, Modal, Prompt};
-use crate::task::{Task, TaskResult};
+use crate::task::{GrabDone, Task, TaskResult};
 use crate::workspace::{Ctx, StatusLevel};
 
 #[derive(Debug, Default)]
@@ -19,6 +19,11 @@ pub struct WorktreePanel {
     selected: Option<PathBuf>,
     /// 作成・削除の完了を待っている数。ストリップの回転マーカーが読む。
     pending: usize,
+    /// 一覧に載ったら選び直したい worktree。作った直後や取り込んだ直後はまだ
+    /// 載っていないので、パスだけ覚えて次の一覧で拾う。
+    pending_select: Option<PathBuf>,
+    /// main worktree へ持ってきているブランチ。wt-grab の中身。
+    grabbed: Option<GrabState>,
 }
 
 impl WorktreePanel {
@@ -40,6 +45,31 @@ impl WorktreePanel {
 
     pub fn is_busy(&self) -> bool {
         self.pending > 0
+    }
+
+    pub fn grabbed(&self) -> Option<&GrabState> {
+        self.grabbed.as_ref()
+    }
+
+    pub fn grab_sources(&self) -> std::collections::HashMap<String, PathBuf> {
+        self.list
+            .iter()
+            .filter(|w| !w.is_main)
+            .map(|w| (w.branch.clone(), w.path.clone()))
+            .collect()
+    }
+
+    pub fn other_branches(&self) -> Vec<String> {
+        let current = self.selected().map(|w| w.branch.as_str());
+        self.list
+            .iter()
+            .map(|w| w.branch.clone())
+            .filter(|b| Some(b.as_str()) != current)
+            .collect()
+    }
+
+    pub fn select_when_listed(&mut self, path: PathBuf) {
+        self.pending_select = Some(path);
     }
 
     pub fn select(&mut self, index: usize) {
@@ -112,6 +142,33 @@ impl WorktreePanel {
                 self.list = list;
                 self.settle_selection(&ctx.repo.root)
             }
+            TaskResult::GitDone(outcome) => self.git_done(outcome),
+            TaskResult::GrabState(state) => {
+                self.grabbed = state.unwrap_or_else(|e| {
+                    log::warn!("could not read the grab state: {e}");
+                    None
+                });
+                Vec::new()
+            }
+            TaskResult::Grab(Ok(done)) => self.grab_done(*done),
+            TaskResult::Grab(Err(e)) => vec![Effect::Status(StatusLevel::Error, e)],
+            TaskResult::StaleWorktrees(Ok(stale)) if stale.is_empty() => {
+                vec![Effect::Status(
+                    StatusLevel::Info,
+                    "No stale worktrees found.".into(),
+                )]
+            }
+            TaskResult::StaleWorktrees(Ok(stale)) => {
+                vec![Effect::PushModal(Modal::Confirm(Confirm {
+                    question: format!(
+                        "Prune {} stale worktree(s)? {}",
+                        stale.len(),
+                        stale.join(", ")
+                    ),
+                    on_yes: vec![Effect::Spawn(Task::PruneWorktrees { names: stale })],
+                }))]
+            }
+            TaskResult::StaleWorktrees(Err(e)) => vec![Effect::Status(StatusLevel::Error, e)],
             TaskResult::Worktrees(Err(e)) => {
                 vec![Effect::Status(
                     StatusLevel::Error,
@@ -121,9 +178,8 @@ impl WorktreePanel {
             TaskResult::WorktreeCreated(result) => {
                 self.pending = self.pending.saturating_sub(1);
                 match result {
-                    // 一覧に載るまで選べないので、先に選択だけ移しておく。
                     Ok((path, branch)) => {
-                        self.selected = Some(path);
+                        self.select_when_listed(path);
                         vec![
                             Effect::Status(StatusLevel::Success, format!("created '{branch}'")),
                             Effect::Spawn(Task::ListWorktrees),
@@ -146,9 +202,40 @@ impl WorktreePanel {
         }
     }
 
+    fn git_done(&self, outcome: Result<String, String>) -> Vec<Effect> {
+        match outcome {
+            Ok(message) => vec![
+                Effect::Status(level_of(&message), message),
+                Effect::Spawn(Task::ListWorktrees),
+            ],
+            Err(e) => vec![Effect::Status(StatusLevel::Error, e)],
+        }
+    }
+
+    fn grab_done(&mut self, done: GrabDone) -> Vec<Effect> {
+        self.grabbed = done.state;
+        let mut effects = vec![
+            Effect::Status(StatusLevel::Success, done.message),
+            Effect::Spawn(Task::ListWorktrees),
+        ];
+        if let Some((id, worktree)) = done.resume {
+            effects.push(Effect::ResumeSession {
+                id,
+                worktree: Some(worktree),
+            });
+        }
+        effects
+    }
+
     /// 一覧が入れ替わったあとの選択。指していた worktree が消えていたら、
     /// conductor を開いた worktree へ戻す。
     fn settle_selection(&mut self, root: &Path) -> Vec<Effect> {
+        if let Some(wanted) = &self.pending_select
+            && let Some(index) = self.list.iter().position(|w| w.path == *wanted)
+        {
+            self.pending_select = None;
+            return vec![Effect::SelectWorktree(index)];
+        }
         let known = self
             .selected
             .as_ref()
@@ -168,10 +255,21 @@ impl WorktreePanel {
     pub fn note_spawned(&mut self, task: &Task) {
         if matches!(
             task,
-            Task::CreateWorktree { .. } | Task::DeleteWorktree { .. }
+            Task::CreateWorktree { .. }
+                | Task::DeleteWorktree { .. }
+                | Task::CreateWorktreeFromRemote { .. }
         ) {
             self.pending += 1;
         }
+    }
+}
+
+/// pull だけは「動かなかった」も成功なので、文言から段を決める。
+fn level_of(message: &str) -> StatusLevel {
+    if message.contains("up-to-date") {
+        StatusLevel::Info
+    } else {
+        StatusLevel::Success
     }
 }
 

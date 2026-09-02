@@ -326,6 +326,22 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
             crate::modal::grep::lines(grep, ws, big),
             crate::modal::grep::title(grep),
         ),
+        Modal::BranchPicker(picker) => full(
+            crate::modal::branch::lines(picker, &ctx, big),
+            crate::modal::branch::title(picker),
+        ),
+        Modal::CherryPick(picker) => full(
+            crate::modal::commits::lines(picker, &ctx, big),
+            crate::modal::commits::title(picker),
+        ),
+        Modal::Publish(confirm) => full(
+            crate::modal::publish::lines(confirm, &ctx),
+            crate::modal::publish::title(confirm),
+        ),
+        Modal::PrInput(prompt) => (
+            crate::modal::pr::title(),
+            crate::modal::pr::lines(prompt, &ctx, area.width * 60 / 100),
+        ),
         Modal::Prompt(prompt) => (
             prompt.title.clone(),
             crate::modal::input::with_caret(&prompt.input, area.width as usize * 60 / 100)
@@ -369,6 +385,9 @@ fn wide(modal: &Modal) -> bool {
             | Modal::Resume(_)
             | Modal::History(_)
             | Modal::Grep(_)
+            | Modal::BranchPicker(_)
+            | Modal::CherryPick(_)
+            | Modal::Publish(_)
     )
 }
 

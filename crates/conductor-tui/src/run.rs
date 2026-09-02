@@ -40,7 +40,14 @@ pub fn run(
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
     let mut dirty = true;
 
-    apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+    apply(
+        ws,
+        svc,
+        vec![
+            Effect::Spawn(Task::ListWorktrees),
+            Effect::Spawn(Task::LoadGrabState),
+        ],
+    );
 
     loop {
         // 区画は描く前に決める。PTY のリサイズが描画の副産物になると、
@@ -410,6 +417,263 @@ mod tests {
         ws.chrome.status.as_mut().unwrap().shown_at = Instant::now() - STATUS_TIMEOUT;
         assert!(expire_status(&mut ws));
         assert_eq!(liveness(&ws, false), Liveness::Idle);
+    }
+
+    /// メニューを開いて、その CommandId の行に降りて Enter を押す。実際の経路
+    /// (メニュー → コマンド → Effect) をそのまま通す。
+    fn menu_pick(
+        ws: &mut Workspace,
+        svc: &mut Services<TaskResult>,
+        id: crate::command::CommandId,
+    ) {
+        let menu = crate::menu::MENUS
+            .iter()
+            .position(|m| m.items.iter().any(|item| item.command() == Some(id)))
+            .unwrap_or_else(|| panic!("{id:?} はどのメニューにも無い"));
+        on_key(ws, svc, key(KeyCode::F(10)));
+        for _ in 0..crate::menu::MENUS.len() {
+            if ws.chrome.menu.index() == Some(menu) {
+                break;
+            }
+            on_key(ws, svc, key(KeyCode::Right));
+        }
+        assert_eq!(ws.chrome.menu.index(), Some(menu), "メニューが開かない");
+        on_key(ws, svc, key(KeyCode::Down));
+        let row = |ws: &Workspace| match ws.chrome.menu {
+            crate::menu::MenuBar::Open { selected, .. } => selected,
+            other => panic!("ドロップダウンが開いていない: {other:?}"),
+        };
+        for _ in 0..crate::menu::MENUS[menu].items.len() {
+            if crate::menu::MENUS[menu].items[row(ws)].command() == Some(id) {
+                break;
+            }
+            on_key(ws, svc, key(KeyCode::Down));
+        }
+        assert_eq!(crate::menu::MENUS[menu].items[row(ws)].command(), Some(id));
+        on_key(ws, svc, key(KeyCode::Enter));
+    }
+
+    /// 取り消せない git 操作は必ず確認を挟む。
+    #[test]
+    fn メニューからのmergeは確認を通ってからタスクになる() {
+        let repo = crate::testing::TestRepo::new();
+        let feature = repo.worktree("feature/x");
+        repo.commit_in(&feature, "b.txt", "bravo\n", "add bravo");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let index = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .position(|w| w.path == feature)
+            .expect("linked worktree が一覧に無い");
+        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(index)]);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        menu_pick(&mut ws, &mut svc, crate::command::CommandId::MergeToMain);
+        let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
+            panic!("確認が出ていない: {:?}", ws.modals);
+        };
+        assert!(
+            confirm.question.contains("feature/x"),
+            "{}",
+            confirm.question
+        );
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Char('n')));
+        assert!(ws.modals.is_empty());
+        assert!(svc.try_recv().is_none(), "n でタスクが飛んだ");
+
+        menu_pick(&mut ws, &mut svc, crate::command::CommandId::MergeToMain);
+        on_key(&mut ws, &mut svc, key(KeyCode::Char('y')));
+        crate::testing::pump(&mut ws, &mut svc);
+        let status = ws.chrome.status.as_ref().expect("結果が出ていない");
+        assert_eq!(status.level, crate::workspace::StatusLevel::Success);
+        assert!(
+            repo.git(&["log", "--oneline", "main"])
+                .contains("add bravo"),
+            "main に入っていない"
+        );
+    }
+
+    #[test]
+    fn git操作の結果は文言と一覧の取り直しになる() {
+        let mut ws = Workspace::for_test();
+        let effects = ws.accept(TaskResult::GitDone(Ok("Merged.".into())));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Status(crate::workspace::StatusLevel::Success, text),
+                    Effect::Spawn(Task::ListWorktrees)
+                ] if text == "Merged."
+            ),
+            "{effects:?}"
+        );
+
+        let effects = ws.accept(TaskResult::GitDone(Err("no upstream".into())));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Status(crate::workspace::StatusLevel::Error, _)]
+            ),
+            "失敗で一覧を取り直している: {effects:?}"
+        );
+    }
+
+    #[test]
+    fn pr取り込みに失敗しても入力は残る() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        run_command(
+            &mut ws,
+            &mut svc,
+            crate::command::CommandId::ReviewPullRequest,
+        );
+        type_text(&mut ws, &mut svc, "12345");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+
+        let effects = ws.accept(TaskResult::PrIntake(Err(
+            "Pull request #12345 not found.".into()
+        )));
+        apply(&mut ws, &mut svc, effects);
+
+        let Some(Modal::PrInput(prompt)) = ws.modals.last() else {
+            panic!("入力が閉じた: {:?}", ws.modals);
+        };
+        assert_eq!(prompt.input.text(), "12345");
+    }
+
+    #[test]
+    fn pr取り込みが成功すると閉じてその_worktreeへ移る() {
+        let repo = crate::testing::TestRepo::new();
+        let fetched = repo.worktree("pr-9");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        ws.modals.push(Modal::PrInput(Default::default()));
+
+        let effects = ws.accept(TaskResult::PrIntake(Ok((9, fetched.clone()))));
+        apply(&mut ws, &mut svc, effects);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert!(ws.modals.is_empty(), "入力が開いたまま");
+        assert_eq!(
+            ws.panels.worktree.selected().map(|w| w.path.clone()),
+            Some(fetched)
+        );
+        assert_eq!(ws.focus, Focus::Explorer);
+    }
+
+    #[test]
+    fn リモートブランチを選ぶと_worktreeができる() {
+        let repo = crate::testing::TestRepo::new();
+        repo.remote_branch("feature/remote-only");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+
+        run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(matches!(ws.modals.last(), Some(Modal::BranchPicker(_))));
+
+        type_text(&mut ws, &mut svc, "remote-only");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert!(
+            ws.panels
+                .worktree
+                .list()
+                .iter()
+                .any(|w| w.branch == "feature/remote-only"),
+            "{:?}",
+            ws.panels.worktree.list()
+        );
+    }
+
+    #[test]
+    fn prune_は消えたworktreeを数えて確認してから消す() {
+        let repo = crate::testing::TestRepo::new();
+        let gone = repo.worktree("feature/gone");
+        std::fs::remove_dir_all(&gone).unwrap();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+
+        run_command(&mut ws, &mut svc, crate::command::CommandId::PruneWorktrees);
+        crate::testing::pump(&mut ws, &mut svc);
+        let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
+            panic!("確認が出ていない: {:?}", ws.modals);
+        };
+        assert!(
+            confirm.question.contains("feature-gone"),
+            "{}",
+            confirm.question
+        );
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Char('y')));
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(
+            repo.git(&["worktree", "list"]).lines().count() == 1,
+            "{}",
+            repo.git(&["worktree", "list"])
+        );
+    }
+
+    #[test]
+    fn cherry_pickは選んだコミットを今のworktreeへ積む() {
+        let repo = crate::testing::TestRepo::new();
+        let source = repo.worktree("feature/source");
+        repo.commit_in(
+            &source,
+            "b.txt",
+            "bravo
+",
+            "add bravo",
+        );
+        let here = repo.worktree("feature/here");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let index = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .position(|w| w.path == here)
+            .unwrap();
+        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(index)]);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        run_command(&mut ws, &mut svc, crate::command::CommandId::CherryPick);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        // 取り出し元は tab で回る。bravo を持つブランチに当たるまで送る。
+        let source_title = |ws: &Workspace| match ws.modals.last() {
+            Some(Modal::CherryPick(picker)) => crate::modal::commits::title(picker),
+            other => panic!("cherry-pick が開いていない: {other:?}"),
+        };
+        for _ in 0..ws.panels.worktree.list().len() {
+            if source_title(&ws).contains("feature/source") {
+                break;
+            }
+            on_key(&mut ws, &mut svc, key(KeyCode::Tab));
+            crate::testing::pump(&mut ws, &mut svc);
+        }
+        assert!(
+            source_title(&ws).contains("feature/source"),
+            "取り出し元に届かない"
+        );
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(here.join("b.txt").exists(), "cherry-pick が届いていない");
+        assert_eq!(
+            ws.chrome.status.as_ref().map(|s| s.level),
+            Some(crate::workspace::StatusLevel::Success)
+        );
+    }
+
+    fn run_command(
+        ws: &mut Workspace,
+        svc: &mut Services<TaskResult>,
+        id: crate::command::CommandId,
+    ) {
+        let effects = crate::command::execute(ws, id);
+        apply(ws, svc, effects);
     }
 
     fn type_text(ws: &mut Workspace, svc: &mut Services<TaskResult>, text: &str) {

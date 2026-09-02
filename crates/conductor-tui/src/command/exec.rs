@@ -8,7 +8,9 @@ use conductor_svc::pty::SessionKind;
 
 use super::CommandId;
 use crate::effect::Effect;
-use crate::modal::{Modal, Prompt, grep, help, history, repo, session, theme};
+use crate::modal::{
+    Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme,
+};
 use crate::panels::explorer::BottomView;
 use crate::task::{Persist, Task};
 use crate::workspace::{Focus, StatusLevel, Workspace};
@@ -28,17 +30,6 @@ impl Enabled {
 
 /// まだ実装していない操作。到達できることだけ先に固定してある。
 pub(super) const NOT_YET: &[(CommandId, &str)] = &[
-    (CommandId::SwitchBranch, "switching branches"),
-    (CommandId::GrabBranch, "grabbing a branch"),
-    (CommandId::UngrabBranch, "ungrabbing a branch"),
-    (CommandId::PruneWorktrees, "pruning worktrees"),
-    (CommandId::MergeToMain, "merging into main"),
-    (CommandId::ResetMainToOrigin, "resetting main"),
-    (CommandId::CherryPick, "cherry-picking"),
-    (CommandId::PullWorktree, "pulling a worktree"),
-    (CommandId::OpenPullRequest, "opening a pull request"),
-    (CommandId::ReviewPullRequest, "reviewing a pull request"),
-    (CommandId::PublishReview, "publishing comments"),
     (CommandId::ShowRevidere, "the review view"),
     (CommandId::AnalyzeRevidere, "generating a review"),
     (CommandId::ForceAnalyzeRevidere, "generating a review"),
@@ -72,6 +63,23 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
         }
         CommandId::DeleteWorktree if worktree.is_none_or(|w| w.is_main) => {
             Enabled::No("the main worktree cannot be deleted")
+        }
+        CommandId::MergeToMain if worktree.is_none_or(|w| w.is_main) => {
+            Enabled::No("main cannot be merged into itself")
+        }
+        CommandId::OpenPullRequest if worktree.is_none() => Enabled::No("no worktree is selected"),
+        CommandId::GrabBranch if ws.panels.worktree.grabbed().is_some() => {
+            Enabled::No("a branch is already grabbed")
+        }
+        CommandId::UngrabBranch if ws.panels.worktree.grabbed().is_none() => {
+            Enabled::No("no branch is grabbed")
+        }
+        CommandId::CherryPick if ws.panels.worktree.other_branches().is_empty() => {
+            Enabled::No("no other worktree branch to pick from")
+        }
+        // 「PR のブランチか」は DB を引くので毎フレームは訊けない。それはコマンドが答える。
+        CommandId::PublishReview if ws.review.unpublished_count() == 0 => {
+            Enabled::No("no unpublished comments on this branch")
         }
         CommandId::FoldOneLevel
         | CommandId::UnfoldOneLevel
@@ -170,20 +178,64 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         ))],
         CommandId::Quit => vec![Effect::Quit],
 
+        CommandId::SwitchBranch => {
+            let (picker, load) = branch::BranchPicker::remote();
+            let mut effects = vec![Effect::PushModal(Modal::BranchPicker(picker))];
+            effects.extend(load);
+            effects
+        }
+        CommandId::GrabBranch => grab(ws),
+        CommandId::UngrabBranch => confirm(
+            ws.panels
+                .worktree
+                .grabbed()
+                .map(|g| format!("Ungrab '{}'? Main returns to its own branch.", g.branch)),
+            Task::Ungrab,
+        ),
+        CommandId::PruneWorktrees => vec![Effect::Spawn(Task::ListStaleWorktrees)],
+        CommandId::CherryPick => cherry_pick(ws),
+        CommandId::PullWorktree => {
+            let worktree = ws.panels.worktree.selected();
+            confirm(
+                worktree.map(|w| format!("Pull '{}' (fast-forward only)?", w.branch)),
+                Task::PullWorktree {
+                    worktree: worktree.map(|w| w.path.clone()).unwrap_or_default(),
+                },
+            )
+        }
+        CommandId::MergeToMain => {
+            let branch = ws.panels.worktree.selected().map(|w| w.branch.clone());
+            confirm(
+                branch
+                    .as_ref()
+                    .map(|b| format!("Merge '{b}' into '{}'?", ws.repo.main_branch)),
+                Task::MergeToMain {
+                    branch: branch.unwrap_or_default(),
+                },
+            )
+        }
+        // R は refresh の r の隣で、失うのはローカルのコミット。押し間違いで走らせない。
+        CommandId::ResetMainToOrigin => confirm(
+            Some(format!(
+                "Reset '{}' to origin? Local commits on it are DISCARDED.",
+                ws.repo.main_branch
+            )),
+            Task::ResetMainToOrigin,
+        ),
+        CommandId::OpenPullRequest => match ws.panels.worktree.selected() {
+            Some(worktree) => vec![Effect::Spawn(Task::OpenPullRequest {
+                branch: worktree.branch.clone(),
+            })],
+            None => Vec::new(),
+        },
+        CommandId::ReviewPullRequest => {
+            vec![Effect::PushModal(Modal::PrInput(pr::PrInput::default()))]
+        }
+        CommandId::PublishReview => vec![Effect::Spawn(Task::LoadPublishable)],
+
         // 未実装。enabled が先に弾くのでここには来ない。`_` で受けないのは、
         // コマンドを足したときに実装漏れを型で見つけるため。
-        CommandId::SwitchBranch
-        | CommandId::GrabBranch
-        | CommandId::UngrabBranch
-        | CommandId::PruneWorktrees
-        | CommandId::MergeToMain
-        | CommandId::ResetMainToOrigin
-        | CommandId::CherryPick
-        | CommandId::PullWorktree
-        | CommandId::OpenPullRequest
-        | CommandId::ReviewPullRequest
-        | CommandId::PublishReview
-        | CommandId::ShowRevidere
+        CommandId::ShowRevidere
         | CommandId::AnalyzeRevidere
         | CommandId::ForceAnalyzeRevidere
         | CommandId::ShowReviewTemplates
@@ -191,6 +243,43 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         | CommandId::RebuildCodeIndex
         | CommandId::CheckForUpdate
         | CommandId::UpdateAndRestart => Vec::new(),
+    }
+}
+
+/// 文言が作れないことが「対象が無い」の印。
+fn confirm(question: Option<String>, on_yes: Task) -> Vec<Effect> {
+    match question {
+        Some(question) => vec![Effect::PushModal(Modal::Confirm(Confirm {
+            question,
+            on_yes: vec![Effect::Spawn(on_yes)],
+        }))],
+        None => vec![Effect::Status(
+            StatusLevel::Warning,
+            "no worktree selected".into(),
+        )],
+    }
+}
+
+fn grab(ws: &Workspace) -> Vec<Effect> {
+    let sources = ws.panels.worktree.grab_sources();
+    if sources.is_empty() {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            "no non-main worktrees to grab".into(),
+        )];
+    }
+    vec![Effect::PushModal(Modal::BranchPicker(
+        branch::BranchPicker::grab(sources),
+    ))]
+}
+
+fn cherry_pick(ws: &Workspace) -> Vec<Effect> {
+    let Some(target) = ws.panels.worktree.selected().map(|w| w.path.clone()) else {
+        return Vec::new();
+    };
+    match commits::CherryPick::open(ws.panels.worktree.other_branches(), target) {
+        Some((picker, load)) => vec![Effect::PushModal(Modal::CherryPick(picker)), load],
+        None => Vec::new(),
     }
 }
 

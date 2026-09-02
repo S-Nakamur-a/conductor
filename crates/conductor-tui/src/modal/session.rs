@@ -60,7 +60,10 @@ impl ResumePicker {
                     .get(self.cursor.selected)
                     .map(|s| s.session_id.clone());
                 return match id {
-                    Some(id) => vec![Effect::PopModal, Effect::ResumeSession(id)],
+                    Some(id) => vec![
+                        Effect::PopModal,
+                        Effect::ResumeSession { id, worktree: None },
+                    ],
                     None => Vec::new(),
                 };
             }
@@ -187,7 +190,7 @@ mod tests {
         let (mut picker, ws) = picker();
         picker.update(key(KeyCode::Down), &ws.ctx());
         let effects = picker.update(key(KeyCode::Enter), &ws.ctx());
-        let [Effect::PopModal, Effect::ResumeSession(id)] = effects.as_slice() else {
+        let [Effect::PopModal, Effect::ResumeSession { id, .. }] = effects.as_slice() else {
             panic!("{effects:?}");
         };
         assert_eq!(id, "s2");

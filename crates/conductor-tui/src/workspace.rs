@@ -8,7 +8,7 @@ use conductor_core::theme::Theme;
 
 use crate::effect::Effect;
 use crate::modal::Modal;
-use crate::panels::explorer::ExplorerPanel;
+use crate::panels::explorer::{BottomView, ExplorerPanel};
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
@@ -341,9 +341,14 @@ impl Workspace {
         match result {
             TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
             TaskResult::FileLoaded { .. } => self.panels.viewer.apply_result(result),
-            TaskResult::Grep { .. } | TaskResult::Sessions(_) | TaskResult::History { .. } => {
-                self.accept_in_modal(result)
-            }
+            TaskResult::Grep { .. }
+            | TaskResult::Sessions(_)
+            | TaskResult::History { .. }
+            | TaskResult::RemoteBranches(_)
+            | TaskResult::Commits(_) => self.accept_in_modal(result),
+            TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
+            TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
+            TaskResult::Published(outcome) => published(outcome),
             TaskResult::Review(loaded) => {
                 self.review.install(loaded.map(|s| *s));
                 match self.review.error.clone() {
@@ -386,6 +391,14 @@ impl Workspace {
         };
         match (modal, result) {
             (Modal::Grep(grep), TaskResult::Grep { seq, found }) => grep.install(seq, found),
+            (Modal::BranchPicker(picker), TaskResult::RemoteBranches(Ok(branches))) => {
+                picker.install(branches);
+                Vec::new()
+            }
+            (Modal::CherryPick(picker), TaskResult::Commits(Ok(commits))) => {
+                picker.install(commits);
+                Vec::new()
+            }
             (Modal::Resume(picker), TaskResult::Sessions(Ok(sessions))) => {
                 picker.install(sessions);
                 Vec::new()
@@ -409,12 +422,78 @@ impl Workspace {
                 TaskResult::Sessions(Err(e))
                 | TaskResult::History {
                     records: Err(e), ..
-                },
+                }
+                | TaskResult::RemoteBranches(Err(e))
+                | TaskResult::Commits(Err(e)),
             ) => {
                 vec![Effect::Status(StatusLevel::Error, e)]
             }
             _ => Vec::new(),
         }
+    }
+
+    /// 取り込みは閉じたあとでも効かせる。gh も fetch も済んでいるので捨てない。
+    /// 失敗のときだけ入力へ戻し、打ち直さずに直せるようにする。
+    fn accept_pr_intake(&mut self, outcome: Result<(u64, PathBuf), String>) -> Vec<Effect> {
+        match outcome {
+            Ok((pr_number, worktree)) => {
+                self.panels.worktree.select_when_listed(worktree);
+                self.panels.explorer.show(BottomView::Comments);
+                let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
+                if matches!(self.modals.last(), Some(Modal::PrInput(_))) {
+                    effects.push(Effect::PopModal);
+                }
+                effects.push(Effect::Focus(Focus::Explorer));
+                effects.push(Effect::Status(
+                    StatusLevel::Success,
+                    format!("PR #{pr_number} ready for review."),
+                ));
+                effects
+            }
+            Err(e) => match self.modals.last_mut() {
+                Some(Modal::PrInput(prompt)) => {
+                    prompt.failed(e);
+                    Vec::new()
+                }
+                _ => vec![Effect::Status(StatusLevel::Error, e)],
+            },
+        }
+    }
+
+    /// 差分の外に出たコメントを落としてから確認を出す。GitHub は 1 件でも
+    /// ハンク外が混ざると一括投稿を丸ごと拒む。
+    fn accept_publishable(
+        &mut self,
+        loaded: Result<Box<crate::task::Publishable>, String>,
+    ) -> Vec<Effect> {
+        let mut request = match loaded {
+            Ok(request) => request,
+            Err(e) => return vec![Effect::Status(StatusLevel::Warning, e)],
+        };
+        let total = request.comments.len();
+        if total == 0 {
+            return vec![Effect::Status(
+                StatusLevel::Info,
+                "No unpublished comments on this branch.".into(),
+            )];
+        }
+        let (comments, skipped) = conductor_core::review_publish::filter_publishable(
+            std::mem::take(&mut request.comments),
+            self.panels.explorer.diff(),
+        );
+        request.comments = comments;
+        request.skipped = skipped;
+        if request.comments.is_empty() {
+            return vec![Effect::Status(
+                StatusLevel::Warning,
+                format!(
+                    "All {skipped} unpublished comment(s) are outside the current diff \u{2014} nothing to publish."
+                ),
+            )];
+        }
+        vec![Effect::PushModal(Modal::Publish(
+            crate::modal::publish::Publish::new(request),
+        ))]
     }
 
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
@@ -441,4 +520,40 @@ impl Workspace {
         let (keymap, _) = KeyMap::with_warnings(&toml::Table::new());
         Self::new(repo, Config::default(), keymap, Theme::default())
     }
+}
+
+/// 投稿の結果。通ったものはワーカーが既に published にしているので、
+/// 見えている件数を合わせるためにレビューを読み直す。
+fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Effect> {
+    use conductor_core::review_publish::PublishOutcome;
+    let (level, message) = match outcome {
+        PublishOutcome::Succeeded { published_ids } => (
+            StatusLevel::Success,
+            format!("Published {} comment(s) to GitHub.", published_ids.len()),
+        ),
+        PublishOutcome::PartialFailure {
+            published_ids,
+            failed,
+        } => {
+            for (id, error) in &failed {
+                log::warn!("failed to publish comment {id}: {error}");
+            }
+            (
+                StatusLevel::Warning,
+                format!(
+                    "Published {} comment(s); {} failed \u{2014} see the log.",
+                    published_ids.len(),
+                    failed.len()
+                ),
+            )
+        }
+        PublishOutcome::Failed { error } => (
+            StatusLevel::Error,
+            format!("Failed to publish comments: {error}"),
+        ),
+    };
+    vec![
+        Effect::Status(level, message),
+        Effect::Spawn(crate::task::Task::LoadReview),
+    ]
 }

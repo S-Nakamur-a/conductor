@@ -239,3 +239,76 @@ fn 幅が動いたときだけ設定に書き戻す() {
     ws.focus = Focus::Worktree;
     assert!(execute(&mut ws, CommandId::ResizePaneLeft).is_empty());
 }
+
+#[test]
+fn git系コマンドは状態で灰色になる() {
+    use conductor_core::git_engine::{GrabState, WorktreeInfo};
+
+    fn worktree(path: &str, branch: &str, is_main: bool) -> WorktreeInfo {
+        WorktreeInfo {
+            path: path.into(),
+            branch: branch.into(),
+            is_main,
+            added: 0,
+            modified: 0,
+            deleted: 0,
+            staged: 0,
+            is_clean: true,
+            ahead: None,
+            behind: None,
+            head_oid: None,
+            head_time: None,
+        }
+    }
+
+    let list = |ws: &mut Workspace, worktrees: Vec<WorktreeInfo>| {
+        ws.accept(crate::task::TaskResult::Worktrees(Ok(worktrees)));
+    };
+
+    // main しか無いとき。
+    let mut ws = Workspace::for_test();
+    list(&mut ws, vec![worktree("/tmp/repo", "main", true)]);
+    for id in [
+        CommandId::MergeToMain,
+        CommandId::CherryPick,
+        CommandId::UngrabBranch,
+        CommandId::PublishReview,
+    ] {
+        assert!(matches!(enabled(&ws, id), Enabled::No(_)), "{id:?}");
+    }
+    assert_eq!(enabled(&ws, CommandId::GrabBranch), Enabled::Yes);
+    assert_eq!(enabled(&ws, CommandId::OpenPullRequest), Enabled::Yes);
+
+    list(
+        &mut ws,
+        vec![
+            worktree("/tmp/repo", "main", true),
+            worktree("/tmp/wt/a", "feature/a", false),
+        ],
+    );
+    crate::effect::apply(
+        &mut ws,
+        &mut conductor_svc::Services::new(),
+        vec![Effect::SelectWorktree(1)],
+    );
+    assert_eq!(enabled(&ws, CommandId::MergeToMain), Enabled::Yes);
+    assert_eq!(enabled(&ws, CommandId::CherryPick), Enabled::Yes);
+
+    ws.accept(crate::task::TaskResult::GrabState(Ok(Some(GrabState {
+        branch: "feature/a".into(),
+        source_worktree: "/tmp/wt/a".into(),
+        stash_branch: "feature/a__grab".into(),
+        claude_session_id: None,
+    }))));
+    assert!(matches!(
+        enabled(&ws, CommandId::GrabBranch),
+        Enabled::No(_)
+    ));
+    assert_eq!(enabled(&ws, CommandId::UngrabBranch), Enabled::Yes);
+
+    ws.review.install(Ok(crate::review::Snapshot {
+        unpublished: 2,
+        ..Default::default()
+    }));
+    assert_eq!(enabled(&ws, CommandId::PublishReview), Enabled::Yes);
+}

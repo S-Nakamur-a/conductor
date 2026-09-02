@@ -567,6 +567,7 @@ dependencies = [
  "env_logger",
  "git2",
  "log",
+ "open",
  "ratatui",
  "syntect",
  "syntect-tui",

@@ -11,12 +11,16 @@ use crate::effect::Effect;
 use crate::task::{ReviewWrite, Task};
 use crate::workspace::{Ctx, StatusLevel};
 
+pub mod branch;
+pub mod commits;
 pub mod grep;
 pub mod help;
 pub mod history;
 pub mod input;
 pub mod palette;
 pub mod picker;
+pub mod pr;
+pub mod publish;
 pub mod repo;
 pub mod session;
 pub mod theme;
@@ -34,6 +38,10 @@ pub enum Modal {
     Resume(session::ResumePicker),
     History(history::HistoryBrowser),
     Grep(grep::Grep),
+    BranchPicker(branch::BranchPicker),
+    CherryPick(commits::CherryPick),
+    PrInput(pr::PrInput),
+    Publish(publish::Publish),
 }
 
 /// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
@@ -213,6 +221,10 @@ impl Modal {
             Modal::Resume(picker) => picker.update(key, ctx),
             Modal::History(browser) => browser.update(key, ctx),
             Modal::Grep(grep) => grep.update(key, ctx),
+            Modal::BranchPicker(picker) => picker.update(key, ctx),
+            Modal::CherryPick(picker) => picker.update(key, ctx),
+            Modal::PrInput(prompt) => prompt.update(key, ctx),
+            Modal::Publish(confirm) => confirm.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Enter => {

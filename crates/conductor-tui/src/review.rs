@@ -18,6 +18,8 @@ pub struct Snapshot {
     pub replies: HashMap<String, Vec<ReviewReply>>,
     pub summary: Option<String>,
     pub viewed: HashSet<String>,
+    /// まだ GitHub へ出していないコメントの数。DB にしか無いので数だけ持ち越す。
+    pub unpublished: usize,
 }
 
 #[derive(Debug, Default)]
@@ -68,6 +70,10 @@ impl ReviewState {
             .iter()
             .filter(|c| c.file_path == path)
             .collect()
+    }
+
+    pub fn unpublished_count(&self) -> usize {
+        self.snapshot.unpublished
     }
 
     pub fn pending_count(&self) -> usize {

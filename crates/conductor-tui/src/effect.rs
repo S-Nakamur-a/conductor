@@ -27,8 +27,12 @@ pub enum Effect {
     StepChangedFile(isize),
     SelectWorktree(usize),
     NewSession(SessionKind),
-    /// 既存の Claude セッションを `--resume` で開き直す。
-    ResumeSession(String),
+    /// 既存の Claude セッションを `--resume` で開き直す。`worktree` を指すと
+    /// 選択とは別の場所で開く。grab はブランチを持ってきた main で開き直す。
+    ResumeSession {
+        id: String,
+        worktree: Option<PathBuf>,
+    },
     Command(CommandId),
     /// メニューバーにキーボードフォーカスを移す。開くのはそこから。
     FocusMenuBar,
@@ -91,8 +95,10 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 }
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
-            Effect::NewSession(kind) => new_session(ws, kind, None),
-            Effect::ResumeSession(id) => new_session(ws, SessionKind::ClaudeCode, Some(&id)),
+            Effect::NewSession(kind) => new_session(ws, kind, None, None),
+            Effect::ResumeSession { id, worktree } => {
+                new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree)
+            }
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
             Effect::SwitchRepo(path) => queue.extend(switch_repo(ws, svc, &path)),
@@ -158,12 +164,13 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     effects
 }
 
-fn new_session(ws: &mut Workspace, kind: SessionKind, resume: Option<&str>) {
-    let worktree = ws
-        .panels
-        .worktree
-        .selected()
-        .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone());
+fn new_session(ws: &mut Workspace, kind: SessionKind, resume: Option<&str>, at: Option<PathBuf>) {
+    let worktree = at.unwrap_or_else(|| {
+        ws.panels
+            .worktree
+            .selected()
+            .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone())
+    });
     let result = ws
         .panels
         .terminal
@@ -232,6 +239,7 @@ fn switch_repo(
     let mut effects = ws.panels.viewer.set_root(root.clone());
     effects.extend(ws.panels.explorer.set_root(root));
     effects.push(Effect::Spawn(Task::ListWorktrees));
+    effects.push(Effect::Spawn(Task::LoadGrabState));
     effects.push(Effect::Status(
         StatusLevel::Success,
         format!("switched to {name}"),
