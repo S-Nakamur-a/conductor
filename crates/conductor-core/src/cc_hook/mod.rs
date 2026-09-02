@@ -14,6 +14,10 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
+mod settings;
+
+pub use settings::{install_settings, socket_path};
+
 pub const PANEL_ID_ENV: &str = "CONDUCTOR_PANEL_ID";
 pub const NOTIFY_SOCK_ENV: &str = "CONDUCTOR_NOTIFY_SOCK";
 

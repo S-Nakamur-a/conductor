@@ -522,6 +522,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductor-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "conductor-core",
+ "git2",
+ "libc",
+ "log",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "conductor-svc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "conductor-core",
+ "libc",
+ "log",
+ "notify",
+ "portable-pty",
+ "tempfile",
+ "uuid",
+ "vt100",
+]
+
+[[package]]
 name = "copypasta"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -16,5 +16,13 @@ pub mod symbol_index;
 pub mod text_input;
 pub mod theme;
 
+pub mod ai_caller;
+pub mod grep_search;
+pub mod instance_lock;
+pub mod pr_intake;
+pub mod review_publish;
+pub mod semantic_index;
+pub mod term_caps;
+pub mod test_run;
 #[cfg(test)]
 mod test_support;
