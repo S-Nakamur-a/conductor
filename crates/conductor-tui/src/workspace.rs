@@ -8,7 +8,9 @@ use conductor_core::theme::Theme;
 
 use crate::effect::Effect;
 use crate::modal::Modal;
+use crate::panels::explorer::ExplorerPanel;
 use crate::panels::terminal::TerminalPanel;
+use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
 use crate::task::{TaskEnv, TaskResult};
 
@@ -98,6 +100,8 @@ pub struct RepoState {
 /// パネルの状態はここに 1 つずつ。
 pub struct Panels {
     pub worktree: WorktreePanel,
+    pub explorer: ExplorerPanel,
+    pub viewer: ViewerPanel,
     pub terminal: TerminalPanel,
 }
 
@@ -127,6 +131,8 @@ impl Workspace {
     pub fn new(repo: RepoState, config: Config, keymap: KeyMap, theme: Theme) -> Self {
         let panels = Panels {
             worktree: WorktreePanel::default(),
+            explorer: ExplorerPanel::default(),
+            viewer: ViewerPanel::new(&config),
             terminal: TerminalPanel::new(&config),
         };
         Self {
@@ -152,8 +158,13 @@ impl Workspace {
         }
     }
 
+    /// 1 つのパネルが 2 つの層を持つことがあるので、区画やモードは持ち主に訊く。
     pub fn key_context(&self) -> KeyContext {
-        self.focus.key_context()
+        match self.focus {
+            Focus::Explorer => self.panels.explorer.key_context(),
+            Focus::Viewer => self.panels.viewer.key_context(),
+            focus => focus.key_context(),
+        }
     }
 
     /// 今のブランチ。worktree 一覧が届くまでは設定の main ブランチ。
@@ -169,6 +180,8 @@ impl Workspace {
             root: self.repo.root.clone(),
             main_branch: self.repo.main_branch.clone(),
             worktree_dir: self.config.general.worktree_dir.clone(),
+            word_diff: self.config.diff.word_diff,
+            tab_width: self.config.viewer.tab_width,
         }
     }
 
@@ -193,30 +206,45 @@ impl Workspace {
         };
         match focus {
             Focus::Worktree => panels.worktree.update(action, &ctx),
+            Focus::Explorer => panels.explorer.update(action, &ctx),
+            Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
             _ => None,
         }
     }
 
-    /// svc から届いた結果をパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
+    /// svc から届いた結果を持ち主のパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
     pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
-        let Self {
-            focus,
-            panels,
-            theme,
-            keymap,
-            config,
-            repo,
-            ..
-        } = self;
-        let ctx = Ctx {
-            theme,
-            keymap,
-            config,
-            repo,
-            focus: *focus,
-        };
-        panels.worktree.apply_result(result, &ctx)
+        match result {
+            TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
+            TaskResult::FileLoaded { .. } => self.panels.viewer.apply_result(result),
+            _ => {
+                let Self {
+                    focus,
+                    panels,
+                    theme,
+                    keymap,
+                    config,
+                    repo,
+                    ..
+                } = self;
+                let ctx = Ctx {
+                    theme,
+                    keymap,
+                    config,
+                    repo,
+                    focus: *focus,
+                };
+                panels.worktree.apply_result(result, &ctx)
+            }
+        }
+    }
+
+    /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
+    pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
+        self.panels.explorer.sync_layout(layout);
+        self.panels.viewer.sync_layout(layout);
+        self.panels.terminal.sync_sizes(layout);
     }
 
     #[cfg(test)]

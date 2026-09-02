@@ -75,6 +75,7 @@ keymap_suite::actions! {
         PrevViewerTab => "prev_viewer_tab",
         CloseViewerTab => "close_viewer_tab",
         ToggleMarkdownRender => "toggle_markdown_render",
+        ToggleDiffView => "toggle_diff_view",
 
         // ターミナルパネル
         LeaveTerminal => "leave_terminal",
@@ -217,6 +218,7 @@ impl Action {
             Action::NextViewerTab => "Next file tab",
             Action::PrevViewerTab => "Previous file tab",
             Action::CloseViewerTab => "Close file tab",
+            Action::ToggleDiffView => "Toggle unified / side-by-side diff",
             Action::ToggleMarkdownRender => "Toggle markdown Raw / Rendered",
             Action::LeaveTerminal => "Leave terminal (keep session)",
             Action::ScrollbackUp => "Scrollback up",

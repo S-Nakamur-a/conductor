@@ -315,6 +315,8 @@
 "K" = "prev_changed_file"
 "c" = "add_comment"
 "v" = "toggle_viewed"
+# 's' for "side by side": unified と左右 2 列を行き来する。
+"s" = "toggle_diff_view"
 # File tabs — several files stay open at once in the Viewer; t/T walk them and
 # x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
 # same three work in diff mode so the strip behaves identically in both.

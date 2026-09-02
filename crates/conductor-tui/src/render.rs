@@ -29,13 +29,28 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                 rect,
             ),
             Region::StatusBar => frame.render_widget(Paragraph::new(status_line(ws)), rect),
+            // Explorer の 2 区画は枠だけ先に描き、中身は 2 つ揃ったところで 1 回描く。
+            Region::ExplorerTree | Region::ExplorerChanges => {
+                frame.render_widget(panel_block(ws, *region), rect)
+            }
             panel => {
                 frame.render_widget(panel_block(ws, *panel), rect);
-                if matches!(panel, Region::TerminalClaude | Region::TerminalShell) {
-                    crate::panels::terminal::render::pane(frame, rect, ws, *panel);
+                match panel {
+                    Region::TerminalClaude | Region::TerminalShell => {
+                        crate::panels::terminal::render::pane(frame, rect, ws, *panel)
+                    }
+                    Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
+                    _ => {}
                 }
             }
         }
+    }
+
+    if let (Some(tree), Some(changes)) = (
+        layout.rect(Region::ExplorerTree),
+        layout.rect(Region::ExplorerChanges),
+    ) {
+        crate::panels::explorer::render::render(frame, tree, changes, ws);
     }
 
     // worktree は全幅のストリップに収まらないので、フォーカス中だけ一覧を重ねる。
@@ -85,24 +100,28 @@ fn menu_line(ws: &Workspace) -> Line<'static> {
 }
 
 fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
-    let focused = focused_region(ws.focus) == region;
+    let focused = focused_region(ws) == region;
     let border = if focused {
         Style::default().fg(ws.theme.border_focused)
     } else {
         Style::default().fg(ws.theme.border_unfocused)
     };
+    let explorer = &ws.panels.explorer;
     let title = match region {
-        Region::Explorer => "Explorer",
-        Region::Viewer => "Viewer",
-        Region::TerminalClaude => "Claude Code",
-        Region::TerminalShell => "Shell",
-        _ => "",
+        Region::ExplorerTree => {
+            crate::panels::explorer::render::tree_title(explorer, explorer.tree_viewport().height)
+        }
+        Region::ExplorerChanges => crate::panels::explorer::render::changes_title(explorer),
+        Region::Viewer => " Viewer ".to_string(),
+        Region::TerminalClaude => " Claude Code ".to_string(),
+        Region::TerminalShell => " Shell ".to_string(),
+        _ => String::new(),
     };
     Block::default()
         .borders(Borders::ALL)
         .border_style(border)
         .title(Span::styled(
-            format!(" {title} "),
+            title,
             if focused {
                 border.add_modifier(Modifier::BOLD)
             } else {
@@ -112,10 +131,13 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
 }
 
 /// フォーカスが枠を光らせる区画。Editor と Revidere は Viewer の場所を借りる。
-fn focused_region(focus: Focus) -> Region {
-    match focus {
+fn focused_region(ws: &Workspace) -> Region {
+    match ws.focus {
         Focus::Worktree => Region::WorktreeStrip,
-        Focus::Explorer => Region::Explorer,
+        Focus::Explorer => match ws.panels.explorer.pane() {
+            crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
+            crate::panels::explorer::Pane::Changes => Region::ExplorerChanges,
+        },
         Focus::Viewer | Focus::Editor | Focus::Revidere => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
@@ -136,7 +158,7 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
             }),
         ),
         None => Line::styled(
-            key_hint(ws.focus, &ws.keymap),
+            key_hint(ws.focus, ws.key_context(), &ws.keymap),
             Style::default().fg(theme.hint),
         ),
     }
@@ -145,7 +167,7 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
 /// フッターのキーヒントを今のキーマップから組み立てる。
 ///
 /// 未割り当てのアクションだけのエントリは落ちるので、発火しないキーを案内しない。
-fn key_hint(focus: Focus, keymap: &KeyMap) -> String {
+fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Worktree => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
@@ -162,10 +184,21 @@ fn key_hint(focus: Focus, keymap: &KeyMap) -> String {
             ("diff", &[Action::ShowDiffList]),
             ("search", &[Action::SearchFilename]),
         ],
+        // diff を見ている間はハンク送りと文脈の展開が主役になる。案内も入れ替える。
+        Focus::Viewer if context == KeyContext::ViewerDiffMode => &[
+            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            ("hunk", &[Action::NextHunk, Action::PrevHunk]),
+            ("expand", &[Action::ExpandContext]),
+            ("split", &[Action::ToggleDiffView]),
+            ("viewed", &[Action::ToggleViewed]),
+            ("file", &[Action::NextChangedFile]),
+            ("back", &[Action::ExitToExplorer]),
+        ],
         Focus::Viewer => &[
             ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),
             ("search", &[Action::SearchInFile]),
+            ("fold", &[Action::FoldPrefix]),
             ("tab", &[Action::NextViewerTab, Action::CloseViewerTab]),
             ("back", &[Action::ExitToExplorer]),
         ],
@@ -196,7 +229,6 @@ fn key_hint(focus: Focus, keymap: &KeyMap) -> String {
         ],
     };
 
-    let context = focus.key_context();
     let mut parts: Vec<String> = Vec::new();
     for (label, actions) in entries {
         let chords: Vec<String> = actions
@@ -264,7 +296,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
 /// フォーカス中のコンテキストで発火するチョードとアクション名。ヘルプが実挙動から
 /// ずれないよう、表ではなくキーマップを引く。
 fn help_lines(ws: &Workspace) -> Vec<Line<'static>> {
-    let context = ws.focus.key_context();
+    let context = ws.key_context();
     Action::ALL
         .iter()
         .filter_map(|action| {

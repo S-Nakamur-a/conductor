@@ -1,5 +1,5 @@
 # config
-旧テスト 41 本 → 新テスト 17 本 (移植 25 / 削除 8 / tui へ保留 8)
+旧テスト 41 本 → 新テスト 17 本 (移植 25 / 削除 8 / tui へ移した 8 — docs/rewrite-ports/viewer.md の syntax 節)
 
 新の置き場: crates/conductor-core/src/config/{mod,sections,snapshot,persist,tests}.rs
 
@@ -38,14 +38,14 @@
 | tests_snapshot: liveだけの差ならhas_restart_changesはfalse | 移植 | liveフィールドを全部変えても再起動は要らない |
 | tests_snapshot: restartフィールド1つでhas_restart_changesはtrue | 移植 | 全フィールドはliveかrestartのどちらか一方に属する (Restart 行 13 本) |
 | tests_snapshot: 全フィールドがliveかrestartのどちらかに属する | 移植 | 同名 1 本。旧は「どちらか」だったが新は「どちらか一方 (両方はない)」まで固定。旧が抜かしていた ui.icons / keybinds / api.model / api.command / api.command_timeout_secs / terminal.inactive_scrollback / viewer.syntax_theme_file / layout.explorer_split_pct も表に載せた |
-| tests_syntax_theme: 全テーマが同じ明暗のsyntectテーマに対応する | tui へ保留 | syntect / two-face は core に入れない。Theme::all_names との網羅チェックごと tui の syntax_theme に持ち越す |
-| tests_syntax_theme: 組み込みテーマは全部が自前のsyntectテーマを持つ | tui へ保留 | 同上 |
-| tests_syntax_theme: 主要言語で十分な割合のトークンに色が付く | tui へ保留 | 同上 |
-| tests_syntax_theme: ui_themeはviewer_themeより優先される | 移植 + tui へ保留 | 固定している事実は theme_name の優先順位。core では theme_nameはui_themeを優先する で固定。syntect 経由の確認は tui 側に残す |
-| tests_syntax_theme: ui_themeが無ければviewer_themeへ落ちる | 移植 + tui へ保留 | 同上 (None 行) |
-| tests_syntax_theme: 構文テーマのidはテーマ名とファイルを追う | tui へ保留 | syntax_theme_id ごと tui へ |
-| tests_syntax_theme: 知らないテーマ名でも落ちずに落ち着く | tui へ保留 | syntect の解決 |
-| tests_syntax_theme: テーマファイルが無くても落ちずに落ち着く | tui へ保留 | syntect の解決 |
+| tests_syntax_theme: 全テーマが同じ明暗のsyntectテーマに対応する | tui へ移植 | syntect / two-face は core に入れない。Theme::all_names との網羅チェックごと tui の syntax_theme に持ち越す |
+| tests_syntax_theme: 組み込みテーマは全部が自前のsyntectテーマを持つ | tui へ移植 | 同上 |
+| tests_syntax_theme: 主要言語で十分な割合のトークンに色が付く | tui へ移植 | 同上 |
+| tests_syntax_theme: ui_themeはviewer_themeより優先される | 移植 + tui へ移植 | 固定している事実は theme_name の優先順位。core では theme_nameはui_themeを優先する で固定。syntect 経由の確認は tui 側に残す |
+| tests_syntax_theme: ui_themeが無ければviewer_themeへ落ちる | 移植 + tui へ移植 | 同上 (None 行) |
+| tests_syntax_theme: 構文テーマのidはテーマ名とファイルを追う | tui へ移植 | syntax_theme_id ごと tui へ |
+| tests_syntax_theme: 知らないテーマ名でも落ちずに落ち着く | tui へ移植 | syntect の解決 |
+| tests_syntax_theme: テーマファイルが無くても落ちずに落ち着く | tui へ移植 | syntect の解決 |
 
 新規 (旧に無かった事実):
 - 無ければ既定ファイルを書いて既定値を返す / 読み込み時にパスのチルダを展開する: load の実ファイル挙動 (旧は serde しか見ていなかった)

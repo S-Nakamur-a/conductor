@@ -1,4 +1,9 @@
-//! キー 1 つの行き先を決める唯一の関数。段は menu → modal の top → PTY 転送 → keymap。
+//! キー 1 つの行き先を決める唯一の関数。段は menu → modal の top → パネルの 2 打鍵目
+//! → PTY 転送 → keymap。
+//!
+//! 2 打鍵目の段があるのは、折りたたみ (za/zc/zo/zm/zr/zR/zM) の語彙をキーマップに
+//! 載せていないため。キーマップに載せると 7 つのアクションが増え、しかも 1 打鍵目を
+//! 押した後だけ意味を持つという条件が表に出せない。
 
 use conductor_core::keymap::Action;
 use conductor_svc::pty::SessionKind;
@@ -30,6 +35,9 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
             focus: ws.focus,
         };
         return Routed::Effects(top.update(key, &ctx));
+    }
+    if ws.focus == Focus::Viewer && ws.panels.viewer.awaiting_chord() {
+        return Routed::Effects(ws.panels.viewer.chord_key(key));
     }
     let action = ws.keymap.resolve(&key, ws.key_context());
     if ws.focus.is_pty() {

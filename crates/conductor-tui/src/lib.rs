@@ -6,6 +6,7 @@
 
 pub mod effect;
 pub mod layout;
+pub mod list;
 pub mod liveness;
 pub mod modal;
 pub mod panels;
@@ -15,5 +16,7 @@ pub mod run;
 pub mod strip;
 pub mod task;
 pub mod term;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod timer;
 pub mod workspace;

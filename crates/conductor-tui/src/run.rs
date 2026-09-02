@@ -4,7 +4,9 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
@@ -45,7 +47,8 @@ pub fn run(
         // 子プロセスは 1 フレーム古い幅に描いたものを送ってくる。
         let size = terminal.size()?;
         let last_layout = layout(ws, Rect::new(0, 0, size.width, size.height));
-        ws.panels.terminal.sync_sizes(&last_layout);
+        ws.sync_layout(&last_layout);
+        ws.panels.viewer.refresh_highlight(&ws.config);
 
         // 描くのが先。起動直後に既にキーが溜まっていると、捌いてから描く並びでは
         // 1 フレームも出さないまま終了しうる。
@@ -152,26 +155,51 @@ pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent)
     apply(ws, svc, effects);
 }
 
-/// クリックした区画へフォーカスを移す。パネル内の当たり判定はフェーズ 3 以降。
+/// クリックした区画へフォーカスを移し、その区画に行を渡す。ホイールは
+/// フォーカスを動かさない — 覗くだけでキーの行き先が変わると事故になる。
 fn on_mouse(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
     layout: &Layout,
     mouse: MouseEvent,
 ) {
-    if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-        return;
-    }
-    let Some(focus) = layout.hit(mouse.column, mouse.row).and_then(focus_for) else {
+    let Some(region) = layout.hit(mouse.column, mouse.row) else {
         return;
     };
-    apply(ws, svc, vec![Effect::Focus(focus)]);
+    match mouse.kind {
+        MouseEventKind::ScrollDown => scroll_region(ws, region, 3),
+        MouseEventKind::ScrollUp => scroll_region(ws, region, -3),
+        MouseEventKind::Down(MouseButton::Left) => {
+            let Some(focus) = focus_for(region) else {
+                return;
+            };
+            apply(ws, svc, vec![Effect::Focus(focus)]);
+            let effects = match focus {
+                Focus::Explorer => ws.panels.explorer.click(mouse.row),
+                Focus::Viewer => ws
+                    .panels
+                    .viewer
+                    .click(mouse.row, mouse.modifiers.contains(KeyModifiers::SHIFT)),
+                _ => Vec::new(),
+            };
+            apply(ws, svc, effects);
+        }
+        _ => {}
+    }
+}
+
+fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {
+    match region {
+        Region::ExplorerTree | Region::ExplorerChanges => ws.panels.explorer.scroll(region, delta),
+        Region::Viewer => ws.panels.viewer.scroll_lines(delta),
+        _ => {}
+    }
 }
 
 fn focus_for(region: Region) -> Option<Focus> {
     match region {
         Region::WorktreeStrip => Some(Focus::Worktree),
-        Region::Explorer => Some(Focus::Explorer),
+        Region::ExplorerTree | Region::ExplorerChanges => Some(Focus::Explorer),
         Region::Viewer => Some(Focus::Viewer),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
@@ -198,7 +226,7 @@ mod tests {
     use super::*;
     use crate::modal::Modal;
     use conductor_svc::pty::SessionKind;
-    use crossterm::event::{KeyCode, KeyModifiers};
+    use crossterm::event::KeyCode;
     use ratatui::layout::Rect;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -210,6 +238,56 @@ mod tests {
         for k in keys {
             on_key(ws, &mut svc, *k);
         }
+    }
+
+    /// Explorer で Enter を押してから Viewer に中身が出るまでを、実キーと svc の
+    /// 往復を通して 1 本で確かめる。パネル単体では「根が食い違う」経路が出ない。
+    #[test]
+    fn enterで開いた1枚のタブがworktree切替まで生き残る() {
+        let a = tempfile::TempDir::new().unwrap();
+        std::fs::write(a.path().join("a.txt"), "ALPHA\n").unwrap();
+        std::fs::write(a.path().join("b.txt"), "BRAVO\n").unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        std::fs::write(b.path().join("b.txt"), "OTHER\n").unwrap();
+
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, a.path());
+        assert_eq!(ws.panels.explorer.root(), a.path());
+        assert_eq!(ws.panels.viewer.root(), a.path());
+
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        ws.sync_layout(&l);
+        ws.focus = Focus::Explorer;
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert_eq!(ws.focus, Focus::Viewer);
+        assert_eq!(ws.panels.viewer.tabs().len(), 1);
+        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+        assert_eq!(ws.panels.viewer.content.lines, ["ALPHA"]);
+
+        // 同じファイルをもう一度開いてもタブは増えない。
+        ws.focus = Focus::Explorer;
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+        assert_eq!(ws.panels.viewer.tabs().len(), 1);
+
+        // worktree を切り替えると 2 つの根が揃って動き、新しい根に無いタブは落ちる。
+        let info = ws.panels.worktree.list()[0].clone();
+        let moved = conductor_core::git_engine::WorktreeInfo {
+            path: b.path().to_path_buf(),
+            branch: "feature".into(),
+            is_main: false,
+            ..info
+        };
+        let effects = ws.accept(TaskResult::Worktrees(Ok(vec![moved])));
+        apply(&mut ws, &mut svc, effects);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert_eq!(ws.panels.explorer.root(), b.path());
+        assert_eq!(ws.panels.viewer.root(), b.path());
+        assert!(ws.panels.viewer.tabs().is_empty(), "a.txt は新しい根に無い");
     }
 
     /// ターミナルへ入ると Tab も ctrl+q も PTY のものになり、パネルを跨ぐのは

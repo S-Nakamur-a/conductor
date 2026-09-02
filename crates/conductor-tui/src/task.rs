@@ -2,8 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use conductor_core::diff_state::DiffState;
 use conductor_core::git_engine::{GitEngine, WorktreeInfo};
 use conductor_svc::Services;
+
+use crate::panels::explorer::tree;
+use crate::panels::viewer::content;
 
 /// Task が git を触るのに要るもの。Workspace が持っているので、Task 自身は運ばない。
 #[derive(Debug, Clone)]
@@ -11,13 +15,34 @@ pub struct TaskEnv {
     pub root: PathBuf,
     pub main_branch: String,
     pub worktree_dir: Option<PathBuf>,
+    pub word_diff: bool,
+    pub tab_width: usize,
 }
 
 #[derive(Debug)]
 pub enum Task {
     ListWorktrees,
-    CreateWorktree { branch: String },
-    DeleteWorktree { path: PathBuf, branch: String },
+    CreateWorktree {
+        branch: String,
+    },
+    DeleteWorktree {
+        path: PathBuf,
+        branch: String,
+    },
+    LoadTree {
+        root: PathBuf,
+        expanded: Vec<String>,
+    },
+    ComputeDiff {
+        worktree: PathBuf,
+    },
+    /// `seq` は結果の照合に使う。同じファイルを続けて開いても古い結果が新しい本文を
+    /// 上書きしない。
+    LoadFile {
+        root: PathBuf,
+        path: String,
+        seq: u64,
+    },
 }
 
 #[derive(Debug)]
@@ -26,6 +51,13 @@ pub enum TaskResult {
     /// 作成できた worktree のパスと、そのブランチ。
     WorktreeCreated(Result<(PathBuf, String), String>),
     WorktreeDeleted(Result<String, String>),
+    Tree(Box<tree::Snapshot>),
+    /// DiffState は失敗の理由を自分の中に持つので Result にしない。
+    Diff(Box<DiffState>),
+    FileLoaded {
+        seq: u64,
+        loaded: Result<content::Loaded, String>,
+    },
 }
 
 impl Task {
@@ -45,6 +77,24 @@ impl Task {
                 svc.spawn(
                     move || delete_worktree(&env, &path, &branch),
                     TaskResult::WorktreeDeleted,
+                );
+            }
+            Task::LoadTree { root, expanded } => {
+                svc.spawn(
+                    move || Box::new(tree::survey(&root, &expanded)),
+                    TaskResult::Tree,
+                );
+            }
+            Task::ComputeDiff { worktree } => {
+                svc.spawn(
+                    move || Box::new(compute_diff(&env, &worktree)),
+                    TaskResult::Diff,
+                );
+            }
+            Task::LoadFile { root, path, seq } => {
+                svc.spawn(
+                    move || (seq, content::read(&root, &path, env.tab_width)),
+                    |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
                 );
             }
         }
@@ -77,4 +127,10 @@ fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, S
         log::warn!("removed the worktree but could not delete branch '{branch}': {e:#}");
     }
     Ok(branch.to_string())
+}
+
+fn compute_diff(env: &TaskEnv, worktree: &Path) -> DiffState {
+    let mut diff = DiffState::new(&env.main_branch);
+    diff.load_diff(worktree, &env.main_branch, env.word_diff, env.tab_width);
+    diff
 }

@@ -4,5 +4,7 @@
 //! [crate::effect::Effect] でしか表現できない。消費しなかった Action は `None` を
 //! 返し、[crate::route::global_effects] の既定の解釈に落ちる。
 
+pub mod explorer;
 pub mod terminal;
+pub mod viewer;
 pub mod worktree;

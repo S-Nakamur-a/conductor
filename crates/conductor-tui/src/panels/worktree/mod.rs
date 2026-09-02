@@ -142,6 +142,7 @@ impl WorktreePanel {
                     Err(e) => vec![Effect::Status(StatusLevel::Error, format!("delete: {e}"))],
                 }
             }
+            _ => Vec::new(),
         }
     }
 

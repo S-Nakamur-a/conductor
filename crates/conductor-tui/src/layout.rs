@@ -10,7 +10,8 @@ pub enum Region {
     TitleBar,
     MenuBar,
     WorktreeStrip,
-    Explorer,
+    ExplorerTree,
+    ExplorerChanges,
     Viewer,
     TerminalClaude,
     TerminalShell,
@@ -58,24 +59,42 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     let status_y = area.y + area.height.saturating_sub(1);
     let main = Rect::new(area.x, y, area.width, status_y.saturating_sub(y));
 
+    let cfg = &ws.config.layout;
+    // 最大化してもこの分割は残す。変更ファイル一覧ごと消えると、レビュー中に
+    // 広げただけで導線が切れる。
+    let push_explorer = |regions: &mut Vec<(Region, Rect)>, area: Rect| {
+        let tree_h = area.height * cfg.explorer_split_pct / 100;
+        regions.push((
+            Region::ExplorerTree,
+            Rect::new(area.x, area.y, area.width, tree_h),
+        ));
+        regions.push((
+            Region::ExplorerChanges,
+            Rect::new(
+                area.x,
+                area.y + tree_h,
+                area.width,
+                area.height.saturating_sub(tree_h),
+            ),
+        ));
+    };
+
     if ws.chrome.maximized {
-        let region = match ws.focus {
-            Focus::Worktree | Focus::Explorer => Region::Explorer,
-            Focus::Viewer | Focus::Editor | Focus::Revidere => Region::Viewer,
-            Focus::TerminalClaude => Region::TerminalClaude,
-            Focus::TerminalShell => Region::TerminalShell,
-        };
-        regions.push((region, main));
+        match ws.focus {
+            Focus::Worktree | Focus::Explorer => push_explorer(&mut regions, main),
+            Focus::Viewer | Focus::Editor | Focus::Revidere => regions.push((Region::Viewer, main)),
+            Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
+            Focus::TerminalShell => regions.push((Region::TerminalShell, main)),
+        }
     } else {
-        let cfg = &ws.config.layout;
         let explorer_w = main.width * cfg.explorer_width_pct / 100;
         let viewer_w = main.width * cfg.viewer_width_pct / 100;
         let terminal_w = main.width.saturating_sub(explorer_w + viewer_w);
         let claude_h = main.height * cfg.terminal_split_pct / 100;
-        regions.push((
-            Region::Explorer,
+        push_explorer(
+            &mut regions,
             Rect::new(main.x, main.y, explorer_w, main.height),
-        ));
+        );
         regions.push((
             Region::Viewer,
             Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
@@ -133,7 +152,14 @@ mod tests {
         ws.focus = Focus::TerminalShell;
         let l = layout(&ws, Rect::new(0, 0, 120, 40));
         assert!(l.rect(Region::TerminalShell).is_some());
-        assert!(l.rect(Region::Explorer).is_none());
+        assert!(l.rect(Region::ExplorerTree).is_none());
         assert!(l.rect(Region::WorktreeStrip).is_none());
+
+        ws.focus = Focus::Explorer;
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        assert!(
+            l.rect(Region::ExplorerTree).is_some() && l.rect(Region::ExplorerChanges).is_some(),
+            "最大化しても Explorer の 2 区画は残る"
+        );
     }
 }
