@@ -76,6 +76,13 @@ tokio = { version = "1", features = ["rt", "io-std", "time"] }
 [profile.dev]
 debug = "limited"
 
+# vt100 0.15.2 の Grid::visible_rows は `rows - scrollback_offset` を符号なしで引く。
+# 1 画面より深いスクロールバックを読むと debug ビルドだけが panic し、release は
+# ラップして正しい窓を返す。ラップ後の巨大な take() は我々が読む行数に届かないので
+# 無害で、ここを外すと端末のスクロールバックが 1 画面に縮む。
+[profile.dev.package.vt100]
+overflow-checks = false
+
 [profile.dev.package."*"]
 opt-level = 2
 

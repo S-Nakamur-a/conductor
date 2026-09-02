@@ -14,6 +14,7 @@ use conductor_core::keymap::KeyMap;
 use conductor_core::theme::Theme;
 use conductor_core::{cc_hook, config, instance_lock, semantic_index, term_caps};
 use conductor_svc::Services;
+use conductor_svc::watch::CcNotifyListener;
 use conductor_tui::workspace::{RepoState, StatusLevel, StatusMessage, Workspace};
 use conductor_tui::{run, term};
 use crossterm::execute;
@@ -48,6 +49,14 @@ fn main() -> Result<()> {
 
     let mut ws = workspace(repo_root);
     let mut svc = Services::new();
+    // Claude Code のフックがこのソケットへ active/waiting とセッション id を送る。
+    let _cc_notify = match CcNotifyListener::new(&ws.repo.root, svc.sender()) {
+        Ok(listener) => Some(listener),
+        Err(e) => {
+            log::warn!("cc-notify listener: {e:#}");
+            None
+        }
+    };
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let modes = term::enter(terminal.backend_mut())?;
     let _ = execute!(
@@ -92,8 +101,8 @@ fn workspace(root: PathBuf) -> Workspace {
     ws
 }
 
-/// リポジトリ名と HEAD ブランチを添える。git でないディレクトリでも開けるよう、
-/// 引けなければパスから作れるところまでで諦める。
+/// リポジトリ名を添える。git でないディレクトリでも開けるよう、引けなければ
+/// パスから作れるところまでで諦める。ブランチは worktree 一覧が届いてから決まる。
 fn repo_state(root: PathBuf, main_branch: String) -> RepoState {
     let dir_name = |path: &Path| {
         path.file_name().map_or_else(
@@ -101,25 +110,12 @@ fn repo_state(root: PathBuf, main_branch: String) -> RepoState {
             |n| n.to_string_lossy().into(),
         )
     };
-    let git = GitEngine::open(&root).ok();
-    let name = git
-        .as_ref()
-        .and_then(|g| g.main_worktree_path().ok())
-        .map_or_else(|| dir_name(&root), |main| dir_name(&main));
-    let branch = git
-        .as_ref()
-        .and_then(|g| g.list_worktrees().ok())
-        .and_then(|worktrees| {
-            worktrees
-                .into_iter()
-                .find(|w| w.path == root)
-                .map(|w| w.branch)
-        })
-        .unwrap_or_else(|| main_branch.clone());
+    let name = GitEngine::open(&root)
+        .and_then(|g| g.main_worktree_path())
+        .map_or_else(|_| dir_name(&root), |main| dir_name(&main));
     RepoState {
         root,
         name,
-        branch,
         main_branch,
     }
 }

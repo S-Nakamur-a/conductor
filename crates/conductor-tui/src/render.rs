@@ -24,14 +24,24 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
         match region {
             Region::TitleBar => frame.render_widget(Paragraph::new(title_line(ws)), rect),
             Region::MenuBar => frame.render_widget(Paragraph::new(menu_line(ws)), rect),
-            Region::WorktreeStrip => {
-                frame.render_widget(Paragraph::new(worktree_strip_line(ws)), rect)
-            }
+            Region::WorktreeStrip => frame.render_widget(
+                Paragraph::new(crate::panels::worktree::render::strip(ws, rect)),
+                rect,
+            ),
             Region::StatusBar => frame.render_widget(Paragraph::new(status_line(ws)), rect),
-            panel => frame.render_widget(panel_block(ws, *panel), rect),
+            panel => {
+                frame.render_widget(panel_block(ws, *panel), rect);
+                if matches!(panel, Region::TerminalClaude | Region::TerminalShell) {
+                    crate::panels::terminal::render::pane(frame, rect, ws, *panel);
+                }
+            }
         }
     }
 
+    // worktree は全幅のストリップに収まらないので、フォーカス中だけ一覧を重ねる。
+    if ws.focus == Focus::Worktree {
+        crate::panels::worktree::render::list(frame, frame.area(), ws);
+    }
     if let Some(modal) = ws.modals.last() {
         render_modal(frame, ws, modal, frame.area());
     }
@@ -49,7 +59,7 @@ fn title_line(ws: &Workspace) -> Line<'_> {
         ),
         Span::raw(" "),
         Span::styled(
-            &ws.repo.branch,
+            ws.branch().to_string(),
             Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" │ ", Style::default().fg(theme.muted)),
@@ -72,15 +82,6 @@ fn menu_line(ws: &Workspace) -> Line<'static> {
             .map(|title| Span::styled(format!(" {title} "), style))
             .collect::<Vec<_>>(),
     )
-}
-
-fn worktree_strip_line(ws: &Workspace) -> Line<'static> {
-    let style = Style::default().fg(if ws.focus == Focus::Worktree {
-        ws.theme.border_focused
-    } else {
-        ws.theme.muted
-    });
-    Line::styled("", style)
 }
 
 fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {

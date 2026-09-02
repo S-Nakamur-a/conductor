@@ -1,6 +1,7 @@
 //! キー 1 つの行き先を決める唯一の関数。段は menu → modal の top → PTY 転送 → keymap。
 
 use conductor_core::keymap::Action;
+use conductor_svc::pty::SessionKind;
 use crossterm::event::KeyEvent;
 
 use crate::effect::Effect;
@@ -26,6 +27,7 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
             keymap: &ws.keymap,
             config: &ws.config,
             repo: &ws.repo,
+            focus: ws.focus,
         };
         return Routed::Effects(top.update(key, &ctx));
     }
@@ -54,6 +56,9 @@ pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
         Action::FocusTerminalClaude => vec![Effect::Focus(Focus::TerminalClaude)],
         Action::FocusTerminalShell => vec![Effect::Focus(Focus::TerminalShell)],
         Action::ShowHelp => vec![Effect::PushModal(crate::modal::Modal::Help)],
+        Action::NewClaudeCode => vec![Effect::NewSession(SessionKind::ClaudeCode)],
+        Action::NewShell => vec![Effect::NewSession(SessionKind::Shell)],
+        Action::RefreshWorktrees => vec![Effect::Spawn(crate::task::Task::ListWorktrees)],
         _ => vec![],
     }
 }

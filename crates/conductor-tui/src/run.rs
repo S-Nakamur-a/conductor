@@ -7,6 +7,7 @@ use anyhow::Result;
 use crossterm::event::{Event, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 
 use conductor_svc::{EventKind, Services};
 
@@ -15,7 +16,8 @@ use crate::layout::{Layout, Region, layout};
 use crate::liveness::{Liveness, liveness};
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
-use crate::task::TaskResult;
+use crate::task::{Task, TaskResult};
+use crate::timer::{PTY_CLEANUP, Timer, WORKTREE_POLL};
 use crate::workspace::{Focus, Workspace};
 
 /// フレームを描く前にイベントを捌き続ける上限。高速スクロール中に中間フレームが
@@ -32,19 +34,23 @@ pub fn run(
     svc: &mut Services<TaskResult>,
 ) -> Result<()> {
     let mut last_input = Instant::now();
-    let mut last_layout = Layout {
-        regions: Vec::new(),
-    };
+    let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
+    let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
     let mut dirty = true;
 
+    apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+
     loop {
+        // 区画は描く前に決める。PTY のリサイズが描画の副産物になると、
+        // 子プロセスは 1 フレーム古い幅に描いたものを送ってくる。
+        let size = terminal.size()?;
+        let last_layout = layout(ws, Rect::new(0, 0, size.width, size.height));
+        ws.panels.terminal.sync_sizes(&last_layout);
+
         // 描くのが先。起動直後に既にキーが溜まっていると、捌いてから描く並びでは
         // 1 フレームも出さないまま終了しうる。
         if dirty {
-            terminal.draw(|frame| {
-                last_layout = layout(ws, frame.area());
-                render(frame, ws, &last_layout);
-            })?;
+            terminal.draw(|frame| render(frame, ws, &last_layout))?;
             dirty = false;
         }
 
@@ -58,18 +64,40 @@ pub fn run(
             dirty = true;
         }
         while let Some(event) = svc.try_recv() {
-            match event.kind {
-                EventKind::Task(result) => match result {},
-                EventKind::Watch(watch) => log::debug!("watch event (未配線): {watch:?}"),
-            }
+            let effects = match event.kind {
+                EventKind::Task(result) => ws.accept(result),
+                EventKind::Watch(watch) => ws.panels.terminal.on_watch(&watch),
+            };
+            apply(ws, svc, effects);
             dirty = true;
         }
+
         dirty |= expire_status(ws);
+        dirty |= ws.panels.terminal.took_output();
+        ws.panels.terminal.nudge();
+        dirty |= run_timers(ws, svc, &mut worktree_poll, &mut pty_cleanup);
 
         if ws.should_quit {
             return Ok(());
         }
     }
+}
+
+fn run_timers(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    worktree_poll: &mut Timer,
+    pty_cleanup: &mut Timer,
+) -> bool {
+    let now = Instant::now();
+    let mut dirty = false;
+    if worktree_poll.due(now) {
+        apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+    }
+    if pty_cleanup.due(now) {
+        dirty |= ws.panels.terminal.cleanup_dead();
+    }
+    dirty
 }
 
 fn tick_rate(liveness: Liveness) -> Duration {
@@ -112,15 +140,19 @@ fn drain_input(
 pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent) {
     let effects = match route(ws, key) {
         Routed::Effects(effects) => effects,
-        // パネルはまだ Action を消費しないので、全て既定の解釈に落ちる。
-        Routed::Action(action) => global_effects(ws, action),
-        // PTY はフェーズ 2。
-        Routed::ForwardToPty(_) | Routed::Ignored => Vec::new(),
+        Routed::Action(action) => ws
+            .dispatch(action)
+            .unwrap_or_else(|| global_effects(ws, action)),
+        Routed::ForwardToPty(key) => {
+            ws.panels.terminal.forward_key(key, ws.focus);
+            Vec::new()
+        }
+        Routed::Ignored => Vec::new(),
     };
     apply(ws, svc, effects);
 }
 
-/// クリックした区画へフォーカスを移す。パネル内の当たり判定はフェーズ 2 以降。
+/// クリックした区画へフォーカスを移す。パネル内の当たり判定はフェーズ 3 以降。
 fn on_mouse(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
@@ -165,6 +197,7 @@ fn expire_status(ws: &mut Workspace) -> bool {
 mod tests {
     use super::*;
     use crate::modal::Modal;
+    use conductor_svc::pty::SessionKind;
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::layout::Rect;
 
@@ -258,5 +291,33 @@ mod tests {
         ws.chrome.status.as_mut().unwrap().shown_at = Instant::now() - STATUS_TIMEOUT;
         assert!(expire_status(&mut ws));
         assert_eq!(liveness(&ws, false), Liveness::Idle);
+    }
+
+    /// パネルが消費しない Action が global の解釈へ落ちる配線。ターミナルの中では
+    /// new_claude_code は fires_in_terminal ではないので PTY のものになる。
+    #[test]
+    fn ctrl_nはパネルからは新規セッションターミナルからはptyへ() {
+        let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
+        for focus in [Focus::Explorer, Focus::Worktree, Focus::Viewer] {
+            let mut ws = Workspace::for_test();
+            ws.focus = focus;
+            let Routed::Action(action) = route(&mut ws, ctrl_n) else {
+                panic!("{focus:?} で ctrl+n が Action にならない");
+            };
+            let effects = ws
+                .dispatch(action)
+                .unwrap_or_else(|| global_effects(&ws, action));
+            assert!(
+                matches!(
+                    effects.as_slice(),
+                    [Effect::NewSession(SessionKind::ClaudeCode)]
+                ),
+                "{focus:?}: {effects:?}"
+            );
+        }
+
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::TerminalClaude;
+        assert!(matches!(route(&mut ws, ctrl_n), Routed::ForwardToPty(_)));
     }
 }

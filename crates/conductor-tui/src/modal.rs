@@ -22,10 +22,12 @@ pub struct Prompt {
     pub on_submit: fn(String) -> Vec<Effect>,
 }
 
+/// y で発火する Effect を積んだ確認。開いた側が対象を捕まえたまま作れるよう、
+/// 閉包ではなく組み立て済みの Effect を持つ。
 #[derive(Debug)]
 pub struct Confirm {
     pub question: String,
-    pub on_yes: fn() -> Vec<Effect>,
+    pub on_yes: Vec<Effect>,
 }
 
 impl Modal {
@@ -50,7 +52,7 @@ impl Modal {
             Modal::Confirm(confirm) => match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                     let mut effects = vec![Effect::PopModal];
-                    effects.extend((confirm.on_yes)());
+                    effects.append(&mut confirm.on_yes);
                     effects
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => vec![Effect::PopModal],

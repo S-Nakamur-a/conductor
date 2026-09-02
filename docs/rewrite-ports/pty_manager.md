@@ -86,7 +86,9 @@
 
 - **Claude 出力のスキャナ** は旧 pty_manager に無い。`get_output()` を読む側 (`terminal/terminal_cc_state.rs`) の責務。
 - **vt100 0.15.2 の scrollback debug panic** に触れるコードも旧 pty_manager に無い。`set_scrollback` の呼び出しは
-  全て terminal パネル側 (`terminal/{mouse,input,render/pty,resize}.rs`)。回避コードはそちらの移植で扱うこと。
+  全て terminal パネル側 (`terminal/{mouse,input,render/pty,resize}.rs`)。フェーズ 2 で
+  `[profile.dev.package.vt100] overflow-checks = false` (ルート Cargo.toml) として決着し、
+  `conductor-tui` の `panels/terminal/render.rs` のテスト `一画面より深いスクロールバックも読める` が番人になっている。
 
 ## 検証
 

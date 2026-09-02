@@ -20,6 +20,8 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 unicode-width = "0.2"
+# PTY 画面の読み出し。PtyStore が渡す Parser を描画時に直接ロックする。
+vt100 = "0.15"
 # panic ログの置き場と時刻。
 dirs = "6"
 chrono = "0.4"

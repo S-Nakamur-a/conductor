@@ -3,10 +3,14 @@
 use std::path::PathBuf;
 
 use conductor_core::config::Config;
-use conductor_core::keymap::{KeyContext, KeyMap};
+use conductor_core::keymap::{Action, KeyContext, KeyMap};
 use conductor_core::theme::Theme;
 
+use crate::effect::Effect;
 use crate::modal::Modal;
+use crate::panels::terminal::TerminalPanel;
+use crate::panels::worktree::WorktreePanel;
+use crate::task::{TaskEnv, TaskResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
@@ -88,14 +92,14 @@ pub struct RepoState {
     pub root: PathBuf,
     /// main worktree のディレクトリ名。linked worktree から開いてもリポジトリの名前。
     pub name: String,
-    /// root の HEAD ブランチ。worktree 一覧が入るフェーズ 2 で選択中のものに変わる。
-    pub branch: String,
     pub main_branch: String,
 }
 
-/// パネルの状態はここに 1 つずつ。フェーズ 2 以降で中身が入る。
-#[derive(Debug, Default)]
-pub struct Panels {}
+/// パネルの状態はここに 1 つずつ。
+pub struct Panels {
+    pub worktree: WorktreePanel,
+    pub terminal: TerminalPanel,
+}
 
 /// 読み取り専用の環境。パネルの update と render の両方に渡す。
 pub struct Ctx<'a> {
@@ -103,6 +107,8 @@ pub struct Ctx<'a> {
     pub keymap: &'a KeyMap,
     pub config: &'a Config,
     pub repo: &'a RepoState,
+    /// 1 つのパネルが 2 つの区画を持つことがあるので、どちらが受けたかを添える。
+    pub focus: Focus,
 }
 
 pub struct Workspace {
@@ -119,10 +125,14 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(repo: RepoState, config: Config, keymap: KeyMap, theme: Theme) -> Self {
+        let panels = Panels {
+            worktree: WorktreePanel::default(),
+            terminal: TerminalPanel::new(&config),
+        };
         Self {
             repo,
             focus: Focus::Explorer,
-            panels: Panels::default(),
+            panels,
             modals: Vec::new(),
             chrome: Chrome::default(),
             should_quit: false,
@@ -138,6 +148,7 @@ impl Workspace {
             keymap: &self.keymap,
             config: &self.config,
             repo: &self.repo,
+            focus: self.focus,
         }
     }
 
@@ -145,12 +156,74 @@ impl Workspace {
         self.focus.key_context()
     }
 
+    /// 今のブランチ。worktree 一覧が届くまでは設定の main ブランチ。
+    pub fn branch(&self) -> &str {
+        self.panels
+            .worktree
+            .selected()
+            .map_or(self.repo.main_branch.as_str(), |w| w.branch.as_str())
+    }
+
+    pub fn task_env(&self) -> TaskEnv {
+        TaskEnv {
+            root: self.repo.root.clone(),
+            main_branch: self.repo.main_branch.clone(),
+            worktree_dir: self.config.general.worktree_dir.clone(),
+        }
+    }
+
+    /// Action をフォーカス中のパネルへ渡す。消費しなければ `None` で、
+    /// 呼び出し側は [crate::route::global_effects] の既定の解釈に落とす。
+    pub fn dispatch(&mut self, action: Action) -> Option<Vec<Effect>> {
+        let Self {
+            focus,
+            panels,
+            theme,
+            keymap,
+            config,
+            repo,
+            ..
+        } = self;
+        let ctx = Ctx {
+            theme,
+            keymap,
+            config,
+            repo,
+            focus: *focus,
+        };
+        match focus {
+            Focus::Worktree => panels.worktree.update(action, &ctx),
+            Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
+            _ => None,
+        }
+    }
+
+    /// svc から届いた結果をパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
+    pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
+        let Self {
+            focus,
+            panels,
+            theme,
+            keymap,
+            config,
+            repo,
+            ..
+        } = self;
+        let ctx = Ctx {
+            theme,
+            keymap,
+            config,
+            repo,
+            focus: *focus,
+        };
+        panels.worktree.apply_result(result, &ctx)
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
         let repo = RepoState {
             root: PathBuf::from("/tmp/repo"),
             name: "repo".into(),
-            branch: "main".into(),
             main_branch: "main".into(),
         };
         let (keymap, _) = KeyMap::with_warnings(&toml::Table::new());
