@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/revidere", "crates/revidere-fixtures", "crates/sheaf-core"]
+members = [
+    "crates/conductor-core",
+    "crates/revidere",
+    "crates/revidere-fixtures",
+    "crates/sheaf-core",
+]
 
 [package]
 name = "conductor"

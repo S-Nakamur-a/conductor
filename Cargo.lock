@@ -488,6 +488,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "conductor-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "crossterm",
+ "dirs",
+ "git2",
+ "keymap-suite",
+ "log",
+ "ratatui",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "toml 1.1.4+spec-1.1.0",
+ "unicode-segmentation",
+ "unicode-width 0.2.0",
+ "uuid",
+]
+
+[[package]]
 name = "copypasta"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
