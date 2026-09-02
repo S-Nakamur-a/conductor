@@ -4,6 +4,7 @@
 //! 取らない。パネルは自分の状態しか &mut で受け取れず、他への影響は Effect でしか
 //! 表現できない。
 
+pub mod comment_list;
 pub mod effect;
 pub mod layout;
 pub mod list;
@@ -11,6 +12,7 @@ pub mod liveness;
 pub mod modal;
 pub mod panels;
 pub mod render;
+pub mod review;
 pub mod route;
 pub mod run;
 pub mod strip;

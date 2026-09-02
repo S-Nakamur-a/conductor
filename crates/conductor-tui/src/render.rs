@@ -1,6 +1,7 @@
 //! 画面を描く唯一の入口。`&Workspace` しか取らないので、描画が次フレームの入力の
 //! 前提を作ることがない。区画は [crate::layout] が先に決めている。
 
+use conductor_core::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -111,7 +112,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::ExplorerTree => {
             crate::panels::explorer::render::tree_title(explorer, explorer.tree_viewport().height)
         }
-        Region::ExplorerChanges => crate::panels::explorer::render::changes_title(explorer),
+        Region::ExplorerChanges => crate::panels::explorer::render::bottom_title(explorer, ws),
         Region::Viewer => " Viewer ".to_string(),
         Region::TerminalClaude => " Claude Code ".to_string(),
         Region::TerminalShell => " Shell ".to_string(),
@@ -136,7 +137,7 @@ fn focused_region(ws: &Workspace) -> Region {
         Focus::Worktree => Region::WorktreeStrip,
         Focus::Explorer => match ws.panels.explorer.pane() {
             crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
-            crate::panels::explorer::Pane::Changes => Region::ExplorerChanges,
+            crate::panels::explorer::Pane::Bottom => Region::ExplorerChanges,
         },
         Focus::Viewer | Focus::Editor | Focus::Revidere => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
@@ -260,7 +261,33 @@ fn representative_chord(keymap: &KeyMap, context: KeyContext, action: Action) ->
         .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }
 
+/// 全画面のコメント一覧が占める矩形。ヒットジオメトリを描画の副産物にしないよう、
+/// [crate::workspace::Workspace::sync_layout] も同じ関数を引く。
+pub fn comment_list_rect(area: Rect) -> Rect {
+    let height = (area.height * 80 / 100).max(3);
+    centered(area, 70, height)
+}
+
 fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
+    if let Modal::CommentList(list) = modal {
+        let rect = comment_list_rect(area);
+        let inner = crate::list::inner(rect);
+        let lines = crate::comment_list::lines(
+            list,
+            &ws.review,
+            &ws.theme,
+            ws.config.ui.icon_set(),
+            inner.height as usize,
+            true,
+        );
+        let block = modal_block(
+            ws,
+            &crate::comment_list::title(&ws.review, ws.config.ui.icon_set()),
+        );
+        frame.render_widget(Clear, rect);
+        frame.render_widget(Paragraph::new(lines).block(block), rect);
+        return;
+    }
     let (title, body) = match modal {
         Modal::Help => ("Keys".to_string(), help_lines(ws)),
         Modal::Prompt(prompt) => (
@@ -275,11 +302,18 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
                 Line::styled("y / n", Style::default().fg(ws.theme.hint)),
             ],
         ),
+        Modal::CommentEditor(editor) => (editor.title(), editor_lines(editor, &ws.theme)),
+        Modal::CommentList(_) => unreachable!("上で返している"),
     };
 
     let height = (body.len() as u16 + 2).min(area.height);
     let rect = centered(area, 60, height);
-    let block = Block::default()
+    frame.render_widget(Clear, rect);
+    frame.render_widget(Paragraph::new(body).block(modal_block(ws, &title)), rect);
+}
+
+fn modal_block(ws: &Workspace, title: &str) -> Block<'static> {
+    Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ws.theme.border_focused))
         .title(Span::styled(
@@ -288,9 +322,30 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
                 .fg(ws.theme.fg)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(Color::Reset));
-    frame.render_widget(Clear, rect);
-    frame.render_widget(Paragraph::new(body).block(block), rect);
+        .style(Style::default().bg(Color::Reset))
+}
+
+/// 本文とキーの案内。カーソルは端末のカーソルではなくブロックで示す — モーダルは
+/// 複数行あり、行を数えて置くより本文に挟むほうがずれない。
+fn editor_lines(editor: &crate::modal::CommentEditor, theme: &Theme) -> Vec<Line<'static>> {
+    let text = format!(
+        "{}\u{2588}{}",
+        editor.input.text_before_cursor(),
+        editor.input.text_after_cursor()
+    );
+    let mut lines: Vec<Line<'static>> = text
+        .lines()
+        .map(|line| Line::styled(line.to_string(), Style::default().fg(theme.fg)))
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::styled("\u{2588}", Style::default().fg(theme.fg)));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "shift+enter: newline  \u{b7}  enter: save  \u{b7}  esc: cancel",
+        Style::default().fg(theme.hint),
+    ));
+    lines
 }
 
 /// フォーカス中のコンテキストで発火するチョードとアクション名。ヘルプが実挙動から

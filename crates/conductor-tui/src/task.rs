@@ -3,11 +3,13 @@
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::DiffState;
-use conductor_core::git_engine::{GitEngine, WorktreeInfo};
+use conductor_core::git_engine::{GitEngine, WorktreeInfo, conductor_dir};
+use conductor_core::review_store::{Author, CommentKind, CommentStatus, NewReview, ReviewStore};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
 use crate::panels::viewer::content;
+use crate::review::Snapshot;
 
 /// Task が git を触るのに要るもの。Workspace が持っているので、Task 自身は運ばない。
 #[derive(Debug, Clone)]
@@ -17,6 +19,8 @@ pub struct TaskEnv {
     pub worktree_dir: Option<PathBuf>,
     pub word_diff: bool,
     pub tab_width: usize,
+    /// レビュー DB の行を引くキー。
+    pub branch: String,
 }
 
 #[derive(Debug)]
@@ -43,6 +47,47 @@ pub enum Task {
         path: String,
         seq: u64,
     },
+    LoadReview,
+    /// 書いたあとは必ず読み直して返す。
+    WriteReview(ReviewWrite),
+}
+
+/// レビュー DB への 1 回の書き込み。
+#[derive(Debug)]
+pub enum ReviewWrite {
+    AddComment {
+        file_path: String,
+        line_start: u32,
+        line_end: Option<u32>,
+        kind: CommentKind,
+        body: String,
+    },
+    EditComment {
+        id: String,
+        body: String,
+    },
+    DeleteComment {
+        id: String,
+    },
+    SetStatus {
+        id: String,
+        status: CommentStatus,
+    },
+    AddReply {
+        comment_id: String,
+        body: String,
+    },
+    EditReply {
+        id: String,
+        body: String,
+    },
+    DeleteReply {
+        id: String,
+    },
+    SetViewed {
+        file_path: String,
+        viewed: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -58,6 +103,7 @@ pub enum TaskResult {
         seq: u64,
         loaded: Result<content::Loaded, String>,
     },
+    Review(Result<Box<Snapshot>, String>),
 }
 
 impl Task {
@@ -97,8 +143,79 @@ impl Task {
                     |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
                 );
             }
+            Task::LoadReview => {
+                svc.spawn(move || load_review(&env), TaskResult::Review);
+            }
+            Task::WriteReview(write) => {
+                svc.spawn(move || write_review(&env, &write), TaskResult::Review);
+            }
         }
     }
+}
+
+fn open_store(env: &TaskEnv) -> Result<ReviewStore, String> {
+    let dir = conductor_dir(&env.root);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    ReviewStore::open(&dir.join("conductor.db")).map_err(|e| e.to_string())
+}
+
+fn load_review(env: &TaskEnv) -> Result<Box<Snapshot>, String> {
+    let store = open_store(env)?;
+    let branch = env.branch.as_str();
+    let read = || -> anyhow::Result<Snapshot> {
+        let mut comments = store.reviews_for_worktree(branch)?;
+        comments.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then(a.line_start.cmp(&b.line_start))
+        });
+        Ok(Snapshot {
+            branch: branch.to_string(),
+            comments,
+            replies: store.replies_for_worktree(branch)?,
+            summary: store.get_change_summary(branch)?,
+            viewed: store.viewed_files(branch)?,
+        })
+    };
+    read().map(Box::new).map_err(|e| e.to_string())
+}
+
+fn write_review(env: &TaskEnv, write: &ReviewWrite) -> Result<Box<Snapshot>, String> {
+    let store = open_store(env)?;
+    let branch = env.branch.as_str();
+    let applied = match write {
+        ReviewWrite::AddComment {
+            file_path,
+            line_start,
+            line_end,
+            kind,
+            body,
+        } => store
+            .add_review(NewReview {
+                branch,
+                file_path,
+                line_start: *line_start,
+                line_end: *line_end,
+                kind: *kind,
+                body,
+                author: Author::User,
+            })
+            .map(|_| ()),
+        ReviewWrite::EditComment { id, body } => store.update_review_body(id, body),
+        ReviewWrite::DeleteComment { id } => store.delete_review(id),
+        ReviewWrite::SetStatus { id, status } => store.update_review_status(id, *status),
+        ReviewWrite::AddReply { comment_id, body } => {
+            store.add_reply(comment_id, body, Author::User)
+        }
+        ReviewWrite::EditReply { id, body } => store.update_reply_body(id, body),
+        ReviewWrite::DeleteReply { id } => store.delete_reply(id),
+        ReviewWrite::SetViewed { file_path, viewed } => {
+            store.set_viewed(branch, file_path, *viewed)
+        }
+    };
+    applied.map_err(|e| e.to_string())?;
+    drop(store);
+    load_review(env)
 }
 
 fn list_worktrees(env: &TaskEnv) -> Result<Vec<WorktreeInfo>, String> {

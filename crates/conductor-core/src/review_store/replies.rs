@@ -55,6 +55,38 @@ impl ReviewStore {
         ensure_found(changed, "reply", id)
     }
 
+    /// worktree の全コメントの返信を、コメント id ごとにまとめて作成順で返す。
+    /// 返信の無いコメントは載らない。
+    pub fn replies_for_worktree(
+        &self,
+        worktree: &str,
+    ) -> Result<HashMap<String, Vec<ReviewReply>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.review_id, r.id, r.body, r.author, r.created_at
+             FROM review_replies r
+             JOIN reviews rv ON rv.id = r.review_id
+             WHERE rv.worktree = ?1
+             ORDER BY r.created_at",
+        )?;
+        let rows = stmt.query_map(params![worktree], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                ReviewReply {
+                    id: row.get(1)?,
+                    body: row.get(2)?,
+                    author: row.get(3)?,
+                    created_at: row.get(4)?,
+                },
+            ))
+        })?;
+        let mut out: HashMap<String, Vec<ReviewReply>> = HashMap::new();
+        for row in rows {
+            let (review_id, reply) = row?;
+            out.entry(review_id).or_default().push(reply);
+        }
+        Ok(out)
+    }
+
     /// worktree の各コメント id に対する返信数。返信の無いコメントは載らない。
     pub fn reply_counts_for_worktree(&self, worktree: &str) -> Result<HashMap<String, usize>> {
         let mut stmt = self.conn.prepare(

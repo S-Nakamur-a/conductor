@@ -14,7 +14,7 @@ use conductor_core::keymap::KeyMap;
 use conductor_core::theme::Theme;
 use conductor_core::{cc_hook, config, instance_lock, semantic_index, term_caps};
 use conductor_svc::Services;
-use conductor_svc::watch::CcNotifyListener;
+use conductor_svc::watch::{CcNotifyListener, RefreshPipe};
 use conductor_tui::workspace::{RepoState, StatusLevel, StatusMessage, Workspace};
 use conductor_tui::{run, term};
 use crossterm::execute;
@@ -54,6 +54,14 @@ fn main() -> Result<()> {
         Ok(listener) => Some(listener),
         Err(e) => {
             log::warn!("cc-notify listener: {e:#}");
+            None
+        }
+    };
+    // MCP がレビュー DB を書いたら、この FIFO 越しに読み直しを促してくる。
+    let _refresh = match RefreshPipe::new(&ws.repo.root, svc.sender()) {
+        Ok(pipe) => Some(pipe),
+        Err(e) => {
+            log::warn!("refresh pipe: {e:#}");
             None
         }
     };

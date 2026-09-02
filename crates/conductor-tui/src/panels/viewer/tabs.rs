@@ -216,3 +216,187 @@ impl ViewerPanel {
         self.diff.side_by_side = side_by_side;
     }
 }
+
+/// タブ帯の 1 行ぶんの割り付け。描画と当たり判定が同じ 1 回の計算を読む。
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Strip {
+    /// (タブの添字, 列の範囲)。
+    pub cells: Vec<(usize, std::ops::Range<u16>)>,
+    /// 左右に隠れているタブがあるか。
+    pub left: bool,
+    pub right: bool,
+}
+
+pub const OVERFLOW_LEFT: char = '\u{2039}';
+pub const OVERFLOW_RIGHT: char = '\u{203a}';
+
+/// タブ 1 枚の表示文字列。長ければ先頭を省いてファイル名を残す。
+pub fn label(path: &str) -> String {
+    let budget = 28;
+    let len = path.chars().count();
+    if len <= budget {
+        return format!(" {path} ");
+    }
+    let kept: String = path.chars().skip(len - budget + 1).collect();
+    format!(" \u{2026}{kept} ")
+}
+
+/// scroll 枚目から描けるだけ並べる。
+pub fn strip(tabs: &[Tab], scroll: usize, width: u16) -> Strip {
+    let scroll = scroll.min(tabs.len().saturating_sub(1));
+    let left = scroll > 0;
+    let mut x = u16::from(left);
+    let mut cells = Vec::new();
+    for (i, tab) in tabs.iter().enumerate().skip(scroll) {
+        let w = label(&tab.path).chars().count() as u16;
+        // 最後の 1 桁は次の印のために空ける。1 枚も入らないときだけ削ってでも出す。
+        if x + w > width.saturating_sub(1) && !cells.is_empty() {
+            return Strip {
+                cells,
+                left,
+                right: true,
+            };
+        }
+        cells.push((i, x..(x + w).min(width)));
+        x += w;
+    }
+    Strip {
+        cells,
+        left,
+        right: false,
+    }
+}
+
+/// タブ帯のどこを押したか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripHit {
+    Tab(usize),
+    ScrollLeft,
+    ScrollRight,
+}
+
+impl Strip {
+    pub fn hit(&self, x: u16, width: u16) -> Option<StripHit> {
+        if self.left && x == 0 {
+            return Some(StripHit::ScrollLeft);
+        }
+        if self.right && x + 1 >= width {
+            return Some(StripHit::ScrollRight);
+        }
+        self.cells
+            .iter()
+            .find(|(_, range)| range.contains(&x))
+            .map(|(i, _)| StripHit::Tab(*i))
+    }
+}
+
+impl ViewerPanel {
+    /// アクティブなタブが窓から外れていたら窓を寄せ直す。溢れの印で送っただけの
+    /// スクロールは巻き戻さない — 見たくて送ったものが毎フレーム戻る。
+    pub(super) fn reveal_tab(&mut self, width: u16) {
+        if self.active < self.tab_scroll {
+            self.tab_scroll = self.active;
+            return;
+        }
+        while !strip(&self.tabs, self.tab_scroll, width)
+            .cells
+            .iter()
+            .any(|(i, _)| *i == self.active)
+            && self.tab_scroll < self.active
+        {
+            self.tab_scroll += 1;
+        }
+    }
+
+    pub fn tab_scroll(&self) -> usize {
+        self.tab_scroll
+    }
+
+    pub(super) fn click_tab_row(&mut self, x: u16, width: u16) -> Vec<Effect> {
+        let strip = strip(&self.tabs, self.tab_scroll, width);
+        match strip.hit(x, width) {
+            Some(StripHit::Tab(idx)) => self.focus_tab(idx),
+            Some(StripHit::ScrollLeft) => {
+                self.tab_scroll = self.tab_scroll.saturating_sub(1);
+                Vec::new()
+            }
+            Some(StripHit::ScrollRight) => {
+                self.tab_scroll = (self.tab_scroll + 1).min(self.tabs.len().saturating_sub(1));
+                Vec::new()
+            }
+            None => Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conductor_core::config::Config;
+
+    fn panel(paths: &[&str]) -> ViewerPanel {
+        let mut panel = ViewerPanel::new(&Config::default());
+        for path in paths {
+            panel.activate_tab_for(path, TabStatus::Persistent);
+        }
+        panel
+    }
+
+    /// ラベルはどれも " name " の 6 桁。窓 20 桁は右端 1 桁を印に取るので 3 枚まで。
+    const W: u16 = 20;
+
+    #[test]
+    fn 溢れると印が出て押した向きへ1枚ずつ送る() {
+        let mut panel = panel(&["a.rs", "b.rs", "c.rs", "d.rs"]);
+        panel.tab_scroll = 0;
+        let strip = strip(panel.tabs(), 0, W);
+        assert_eq!(strip.cells.len(), 3, "{strip:?}");
+        assert!(strip.right && !strip.left);
+
+        panel.click_tab_row(W - 1, W);
+        assert_eq!(panel.tab_scroll(), 1);
+        let sent = super::strip(panel.tabs(), panel.tab_scroll(), W);
+        assert!(sent.left, "送ったぶん左にも印が出る");
+        assert_eq!(sent.hit(0, W), Some(StripHit::ScrollLeft));
+
+        panel.click_tab_row(0, W);
+        assert_eq!(panel.tab_scroll(), 0);
+    }
+
+    #[test]
+    fn 見えているタブは押した位置のものが選ばれる() {
+        let mut panel = panel(&["a.rs", "b.rs", "c.rs"]);
+        let strip = strip(panel.tabs(), 0, W);
+        let (_, range) = strip.cells[1].clone();
+        assert_eq!(strip.hit(range.start, W), Some(StripHit::Tab(1)));
+        panel.click_tab_row(range.start, W);
+        assert_eq!(panel.active_tab(), 1);
+    }
+
+    #[test]
+    fn 窓はアクティブが外に出たときだけ寄せ直す() {
+        let mut panel = panel(&["a.rs", "b.rs", "c.rs", "d.rs"]);
+        assert_eq!(panel.active_tab(), 3);
+        panel.reveal_tab(W);
+        assert_eq!(panel.tab_scroll(), 1, "末尾が見える位置まで送る");
+
+        panel.click_tab_row(W - 1, W);
+        let sent = panel.tab_scroll();
+        panel.reveal_tab(W);
+        assert_eq!(panel.tab_scroll(), sent, "送った窓は戻らない");
+
+        panel.focus_tab(0);
+        panel.reveal_tab(W);
+        assert_eq!(panel.tab_scroll(), 0);
+    }
+
+    #[test]
+    fn 長いパスは先頭を省いてファイル名を残す() {
+        let text = label("src/very/deep/directory/tree/name.rs");
+        assert!(
+            text.contains("name.rs") && text.contains('\u{2026}'),
+            "{text}"
+        );
+        assert_eq!(label("a.rs"), " a.rs ");
+    }
+}

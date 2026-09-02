@@ -20,6 +20,8 @@ pub enum Region {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
+    /// 画面全体。モーダルは区画の上に重なるので、区画からは引けない。
+    pub area: Rect,
     pub regions: Vec<(Region, Rect)>,
 }
 
@@ -113,7 +115,7 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         Region::StatusBar,
         Rect::new(area.x, status_y, area.width, 1),
     ));
-    Layout { regions }
+    Layout { area, regions }
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use crate::panels::explorer::ExplorerPanel;
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
+use crate::review::ReviewState;
 use crate::task::{TaskEnv, TaskResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -111,6 +112,7 @@ pub struct Ctx<'a> {
     pub keymap: &'a KeyMap,
     pub config: &'a Config,
     pub repo: &'a RepoState,
+    pub review: &'a ReviewState,
     /// 1 つのパネルが 2 つの区画を持つことがあるので、どちらが受けたかを添える。
     pub focus: Focus,
 }
@@ -120,6 +122,7 @@ pub struct Workspace {
     pub focus: Focus,
     pub panels: Panels,
     pub modals: Vec<Modal>,
+    pub review: ReviewState,
     pub chrome: Chrome,
     pub should_quit: bool,
     pub theme: Theme,
@@ -140,6 +143,7 @@ impl Workspace {
             focus: Focus::Explorer,
             panels,
             modals: Vec::new(),
+            review: ReviewState::default(),
             chrome: Chrome::default(),
             should_quit: false,
             theme,
@@ -154,6 +158,7 @@ impl Workspace {
             keymap: &self.keymap,
             config: &self.config,
             repo: &self.repo,
+            review: &self.review,
             focus: self.focus,
         }
     }
@@ -182,6 +187,7 @@ impl Workspace {
             worktree_dir: self.config.general.worktree_dir.clone(),
             word_diff: self.config.diff.word_diff,
             tab_width: self.config.viewer.tab_width,
+            branch: self.branch().to_string(),
         }
     }
 
@@ -195,6 +201,7 @@ impl Workspace {
             keymap,
             config,
             repo,
+            review,
             ..
         } = self;
         let ctx = Ctx {
@@ -202,6 +209,7 @@ impl Workspace {
             keymap,
             config,
             repo,
+            review,
             focus: *focus,
         };
         match focus {
@@ -218,6 +226,13 @@ impl Workspace {
         match result {
             TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
             TaskResult::FileLoaded { .. } => self.panels.viewer.apply_result(result),
+            TaskResult::Review(loaded) => {
+                self.review.install(loaded.map(|s| *s));
+                match self.review.error.clone() {
+                    Some(e) => vec![Effect::Status(StatusLevel::Warning, e)],
+                    None => Vec::new(),
+                }
+            }
             _ => {
                 let Self {
                     focus,
@@ -226,6 +241,7 @@ impl Workspace {
                     keymap,
                     config,
                     repo,
+                    review,
                     ..
                 } = self;
                 let ctx = Ctx {
@@ -233,6 +249,7 @@ impl Workspace {
                     keymap,
                     config,
                     repo,
+                    review,
                     focus: *focus,
                 };
                 panels.worktree.apply_result(result, &ctx)
@@ -245,6 +262,12 @@ impl Workspace {
         self.panels.explorer.sync_layout(layout);
         self.panels.viewer.sync_layout(layout);
         self.panels.terminal.sync_sizes(layout);
+        let modal = crate::render::comment_list_rect(layout.area);
+        for open in &mut self.modals {
+            if let Modal::CommentList(list) = open {
+                list.set_viewport(crate::list::Viewport::inside(modal, 0));
+            }
+        }
     }
 
     #[cfg(test)]

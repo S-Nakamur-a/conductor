@@ -6,7 +6,10 @@
 
 use std::ops::Range;
 
+use conductor_core::theme::Theme;
 use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 
 /// リストに割り当てられた画面。`top` は最初の行の画面 y。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -133,6 +136,25 @@ impl ListCursor {
         let index = self.scroll + offset;
         (index < len).then_some(index)
     }
+}
+
+/// 一覧の 1 行。
+pub fn row_line(
+    spans: Vec<Span<'static>>,
+    theme: &Theme,
+    selected: bool,
+    focused: bool,
+) -> Line<'static> {
+    let line = Line::from(spans);
+    if !selected {
+        return line;
+    }
+    let (bg, fg) = if focused {
+        (theme.selected_bg, theme.selected_fg)
+    } else {
+        (theme.selected_bg_inactive, theme.selected_fg_inactive)
+    };
+    line.style(Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD))
 }
 
 #[cfg(test)]

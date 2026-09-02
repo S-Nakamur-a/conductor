@@ -14,6 +14,7 @@ mod schema;
 mod session_history;
 mod templates;
 mod view_state;
+mod viewed;
 mod worktree_metadata;
 
 #[cfg(test)]

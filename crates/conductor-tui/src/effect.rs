@@ -57,7 +57,13 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 let follow_up = ws.panels.viewer.search_for(&query);
                 queue.extend(follow_up);
             }
-            Effect::ToggleViewed(path) => ws.panels.explorer.toggle_viewed(&path),
+            Effect::ToggleViewed(path) => {
+                let write = crate::task::ReviewWrite::SetViewed {
+                    viewed: !ws.review.is_viewed(&path),
+                    file_path: path,
+                };
+                queue.push_back(Effect::Spawn(Task::WriteReview(write)));
+            }
             Effect::StepChangedFile(delta) => {
                 if let Some(effect) = ws.panels.explorer.step_changed_file(delta) {
                     queue.push_back(effect);
@@ -114,6 +120,8 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
     effects.extend(ws.panels.explorer.set_root(worktree));
+    // コメントはブランチで引くので、worktree が動いたら読み直す。
+    effects.push(Effect::Spawn(Task::LoadReview));
     effects
 }
 

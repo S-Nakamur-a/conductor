@@ -10,18 +10,22 @@ pub mod render;
 pub mod search;
 pub mod syntax;
 pub mod tabs;
+pub mod thread;
 
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::FileDiff;
 use conductor_core::keymap::{Action, KeyContext};
+use conductor_core::review_store::ReviewComment;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 
+use crate::comment_list::flip_status;
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
-use crate::modal::{Modal, Prompt};
-use crate::task::{Task, TaskResult};
+use crate::modal::{CommentEditor, Modal, Prompt};
+use crate::review::{ReviewState, anchor_for, anchors, innermost};
+use crate::task::{ReviewWrite, Task, TaskResult};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
 use content::Content;
@@ -30,12 +34,21 @@ use fold::FoldState;
 use search::Search;
 use syntax::Highlighter;
 use tabs::{Tab, TabStatus};
+use thread::ThreadFolds;
 
 /// 半ページの行数。
 const HALF_PAGE: isize = 15;
 
 /// 横スクロールの 1 回分。
 const H_STEP: usize = 4;
+
+/// ガターの桁が持っている意味。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Zone {
+    Comment,
+    Fold,
+    Text,
+}
 
 /// 行の選択。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -109,14 +122,18 @@ pub struct ViewerPanel {
     pub fold: FoldState,
     pub selection: Selection,
     pub scroll: Scroll,
+    pub threads: ThreadFolds,
     /// 構築が重いので最初に必要になるまで作らない。
     highlighter: Option<Highlighter>,
     load: Option<Load>,
     seq: u64,
     /// z の 2 打鍵目を待っている。
     pending_fold: bool,
+    /// タブ帯の窓の左端。
+    tab_scroll: usize,
     /// 本文の矩形。レイアウトから引く。当たり判定と半ページの歩幅が読む。
     body: Rect,
+    tab_row: Rect,
 }
 
 impl ViewerPanel {
@@ -135,11 +152,14 @@ impl ViewerPanel {
             fold: FoldState::default(),
             selection: Selection::default(),
             scroll: Scroll::default(),
+            threads: ThreadFolds::default(),
             highlighter: None,
             load: None,
             seq: 0,
             pending_fold: false,
+            tab_scroll: 0,
             body: Rect::default(),
+            tab_row: Rect::default(),
         }
     }
 
@@ -166,18 +186,24 @@ impl ViewerPanel {
             return;
         };
         let inner = crate::list::inner(rect);
+        self.tab_row = Rect {
+            height: render::TAB_ROW,
+            ..inner
+        };
         self.body = Rect {
             y: inner.y + render::TAB_ROW,
             height: inner.height.saturating_sub(render::TAB_ROW),
             ..inner
         };
+        self.reveal_tab(self.tab_row.width);
     }
 
-    /// 画面行のクリック。ガターでもテキストでも、その行を選ぶ。
-    ///
-    /// shift 付きは起点から範囲を伸ばす。コメントの付与はフェーズ 3b。
-    pub fn click(&mut self, y: u16, extend: bool) -> Vec<Effect> {
-        if self.diff.active || y < self.body.y {
+    /// 画面上の 1 点のクリック。shift 付きは起点から範囲を伸ばす。
+    pub fn click(&mut self, x: u16, y: u16, extend: bool, review: &ReviewState) -> Vec<Effect> {
+        if y < self.body.y {
+            return self.click_tab_row(x.saturating_sub(self.tab_row.x), self.tab_row.width);
+        }
+        if self.diff.active {
             return Vec::new();
         }
         let offset = (y - self.body.y) as usize;
@@ -189,8 +215,42 @@ impl ViewerPanel {
         else {
             return Vec::new();
         };
-        self.selection.click(line, extend);
+        let comments = self
+            .content
+            .path
+            .as_deref()
+            .map_or_else(Vec::new, |path| review.for_file(path));
+        match self.gutter_zone(x.saturating_sub(self.body.x), total, comments.is_empty()) {
+            Zone::Comment => {
+                if let Some(anchor) = anchor_for(&comments, line) {
+                    self.threads.flip(anchor);
+                }
+            }
+            Zone::Fold => {
+                self.fold.toggle(line);
+                self.scroll.line = self.fold.visible_anchor(line) - 1;
+            }
+            Zone::Text => self.selection.click(line, extend),
+        }
         Vec::new()
+    }
+
+    /// ガターの桁割り。render の組み方と 1 対 1 で、印の下を押せば印の意味になる。
+    fn gutter_zone(&self, column: u16, total: usize, no_comments: bool) -> Zone {
+        let mark = if no_comments { 0 } else { render::MARK };
+        let column = column as usize;
+        if column < mark {
+            return Zone::Comment;
+        }
+        let digits = render::digit_count(if self.diff.active {
+            self.diff.max_line_no
+        } else {
+            total
+        });
+        if column == mark + digits {
+            return Zone::Fold;
+        }
+        Zone::Text
     }
 
     /// worktree が変わった。相対パスは根が変わると別のファイルを指すので、
@@ -272,6 +332,7 @@ impl ViewerPanel {
         self.content.highlight_key = None;
         self.search.matches.clear();
         self.diff.clear();
+        self.threads.clear();
 
         match loaded {
             Ok(file) => {
@@ -381,7 +442,10 @@ impl ViewerPanel {
         self.scroll.line + 1
     }
 
-    pub fn update(&mut self, action: Action, _ctx: &Ctx) -> Option<Vec<Effect>> {
+    pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if let Some(effects) = self.comment_key(action, ctx.review) {
+            return Some(effects);
+        }
         match action {
             Action::ExitToExplorer => {
                 if !self.selection.is_empty() {
@@ -415,6 +479,82 @@ impl ViewerPanel {
             self.diff_key(action)
         } else {
             self.file_key(action)
+        }
+    }
+
+    /// レビューコメントのキー。素の本文と diff のどちらでも同じ意味になる。
+    fn comment_key(&mut self, action: Action, review: &ReviewState) -> Option<Vec<Effect>> {
+        if !matches!(
+            action,
+            Action::AddComment
+                | Action::ToggleInlineThread
+                | Action::ReplyToComment
+                | Action::ToggleResolve
+                | Action::NextComment
+                | Action::PrevComment
+        ) {
+            return None;
+        }
+        let path = self.content.path.clone()?;
+        let comments = review.for_file(&path);
+        let Some(line) = self.comment_line() else {
+            return Some(vec![Effect::Status(
+                StatusLevel::Warning,
+                "a deleted line has no place to hang a comment".into(),
+            )]);
+        };
+        let effects = match action {
+            Action::AddComment => {
+                let (start, end) = self.comment_range(line);
+                self.selection.clear();
+                vec![Effect::PushModal(Modal::CommentEditor(
+                    CommentEditor::new_comment(path, start, end),
+                ))]
+            }
+            Action::ToggleInlineThread => {
+                if let Some(anchor) = anchor_for(&comments, line) {
+                    self.threads.flip(anchor);
+                }
+                Vec::new()
+            }
+            Action::ReplyToComment => match innermost(&comments, line) {
+                Some(comment) => vec![Effect::PushModal(Modal::CommentEditor(
+                    CommentEditor::reply_to(comment),
+                ))],
+                None => no_comment_here(),
+            },
+            Action::ToggleResolve => match innermost(&comments, line) {
+                Some(comment) => vec![Effect::Spawn(Task::WriteReview(ReviewWrite::SetStatus {
+                    id: comment.id.clone(),
+                    status: flip_status(comment.status),
+                }))],
+                None => no_comment_here(),
+            },
+            _ => {
+                let forward = action == Action::NextComment;
+                match step_anchor(&comments, line, forward) {
+                    Some(next) => self.goto_line(next),
+                    None => return Some(no_comment_here()),
+                }
+                Vec::new()
+            }
+        };
+        Some(effects)
+    }
+
+    /// コメントを付ける行 (1 始まり)。削除行のように新ファイル側の行番号を持たない
+    /// 位置は None — コメントのキーは新ファイル側の行番号なので、置き場所が無い。
+    fn comment_line(&self) -> Option<usize> {
+        if !self.diff.active {
+            return (!self.content.lines.is_empty()).then(|| self.scroll.line + 1);
+        }
+        self.diff.entries.get(self.scroll.diff)?.new_line_no()
+    }
+
+    fn comment_range(&self, line: usize) -> (u32, Option<u32>) {
+        match self.selection.range() {
+            Some((start, end)) if !self.diff.active => (start as u32, Some(end as u32)),
+            _ => (line as u32, None),
         }
     }
 
@@ -557,6 +697,24 @@ impl ViewerPanel {
     }
 }
 
+fn no_comment_here() -> Vec<Effect> {
+    vec![Effect::Status(
+        StatusLevel::Info,
+        "no comment on this line".into(),
+    )]
+}
+
+/// 前後のスレッドの行。今いる行のスレッドには止まらない。
+fn step_anchor(comments: &[&ReviewComment], line: usize, forward: bool) -> Option<usize> {
+    let mut found: Vec<usize> = anchors(comments).into_iter().collect();
+    found.sort_unstable();
+    if forward {
+        found.into_iter().find(|a| *a > line)
+    } else {
+        found.into_iter().rev().find(|a| *a < line)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +771,20 @@ mod tests {
 
         fn viewer(&mut self) -> &mut ViewerPanel {
             &mut self.ws.panels.viewer
+        }
+
+        fn click(&mut self, x: u16, y: u16, extend: bool) -> Vec<Effect> {
+            let Workspace { panels, review, .. } = &mut self.ws;
+            panels.viewer.click(x, y, extend, review)
+        }
+
+        fn install(&mut self, comments: Vec<conductor_core::review_store::ReviewComment>) {
+            self.ws.focus = Focus::Viewer;
+            self.ws.review.install(Ok(crate::review::Snapshot {
+                branch: "main".into(),
+                comments,
+                ..crate::review::Snapshot::default()
+            }));
         }
 
         fn body(&self) -> &[String] {
@@ -856,18 +1028,46 @@ mod tests {
         h.open("a.rs");
         h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
 
-        h.viewer().click(11, false);
+        h.viewer().click(20, 11, false, &ReviewState::default());
         assert_eq!(h.ws.panels.viewer.selection.range(), Some((2, 2)));
-        h.viewer().click(13, true);
+        h.viewer().click(20, 13, true, &ReviewState::default());
         assert_eq!(h.ws.panels.viewer.selection.range(), Some((2, 4)));
 
         h.viewer().fold.close(1);
-        h.viewer().click(11, false);
+        h.viewer().click(20, 11, false, &ReviewState::default());
         assert_eq!(
             h.ws.panels.viewer.selection.range(),
             Some((5, 5)),
             "閉じ括弧まで畳むので 2..4 を飛ばす"
         );
+    }
+
+    /// ガターの桁ごとに意味が違う。印の下を押せば印の意味になる。
+    #[test]
+    fn ガターの桁は印と畳みと本文で意味が分かれる() {
+        let comments = vec![crate::review::tests::comment("a", "a.rs", 2, None)];
+        let dir = fixture(&[("a.rs", "fn a() {\n    b();\n    c();\n}\nfn d() {}\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.rs");
+        h.install(comments.clone());
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+        let all: Vec<&conductor_core::review_store::ReviewComment> = comments.iter().collect();
+
+        // 印は 0..2、行番号は 2、その右の 3 が畳みの印、以降が本文。
+        assert!(h.ws.panels.viewer.threads.is_open(&all, 2));
+        h.click(0, 11, false);
+        assert!(
+            !h.ws.panels.viewer.threads.is_open(&all, 2),
+            "印でスレッドを畳む"
+        );
+        assert!(h.ws.panels.viewer.selection.is_empty());
+
+        h.click(3, 10, false);
+        assert!(h.ws.panels.viewer.fold.is_collapsed(1), "畳みの印で畳む");
+        assert!(h.ws.panels.viewer.selection.is_empty());
+
+        h.click(20, 10, false);
+        assert_eq!(h.ws.panels.viewer.selection.range(), Some((1, 1)));
     }
 
     #[test]
@@ -898,6 +1098,163 @@ mod tests {
 
         let effects = h.viewer().chord_key(KeyEvent::from(KeyCode::Char('a')));
         assert!(effects.is_empty(), "行単位の畳みは段数を出さない");
+    }
+
+    /// 選択があれば範囲、無ければカーソル行。どちらもコメント側の座標で渡す。
+    #[test]
+    fn cは選択の範囲をそのままコメントのアンカーにする() {
+        let dir = fixture(&[("a.txt", "one\ntwo\nthree\nfour\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.ws.focus = Focus::Viewer;
+
+        h.viewer().scroll.line = 2;
+        let effects = h.ws.dispatch(Action::AddComment).unwrap();
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(matches!(
+            editor.target,
+            crate::modal::EditTarget::New {
+                line_start: 3,
+                line_end: None,
+                ..
+            }
+        ));
+
+        h.viewer().selection.click(2, false);
+        h.viewer().selection.click(4, true);
+        let effects = h.ws.dispatch(Action::AddComment).unwrap();
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(matches!(
+            editor.target,
+            crate::modal::EditTarget::New {
+                line_start: 2,
+                line_end: Some(4),
+                ..
+            }
+        ));
+        assert!(
+            h.ws.panels.viewer.selection.is_empty(),
+            "書き始めたら選択は畳む"
+        );
+    }
+
+    /// コメントの座標は新ファイル側の行番号なので、削除行には置き場所が無い。
+    #[test]
+    fn 削除行ではコメントを始められない() {
+        let dir = fixture(&[("a.txt", "one\n")]);
+        let mut h = Harness::at(dir.path());
+        let file_diff = FileDiff {
+            path: "a.txt".into(),
+            added_lines: 0,
+            deleted_lines: 1,
+            hunks: vec![conductor_core::diff_state::DiffHunk {
+                lines: vec![conductor_core::diff_state::DiffLine {
+                    tag: conductor_core::diff_state::DiffLineTag::Delete,
+                    old_line_no: Some(1),
+                    new_line_no: None,
+                    inline_segments: Vec::new(),
+                    content: "gone".into(),
+                }],
+                func_header: None,
+            }],
+        };
+        let effects = h
+            .viewer()
+            .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+        h.run(effects);
+        h.ws.focus = Focus::Viewer;
+
+        let entry = h.ws.panels.viewer.diff.entries.iter().position(|e| {
+            matches!(
+                e,
+                diff::Entry::Line {
+                    new_line_no: None,
+                    ..
+                }
+            )
+        });
+        h.viewer().scroll.diff = entry.expect("削除行");
+        assert_eq!(h.ws.panels.viewer.comment_line(), None);
+        let effects = h.ws.dispatch(Action::AddComment).unwrap();
+        assert!(
+            matches!(effects.as_slice(), [Effect::Status(..)]),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn spaceはカーソル行を覆うスレッドを開閉する() {
+        let comments = vec![crate::review::tests::comment("a", "a.txt", 2, Some(4))];
+        let dir = fixture(&[("a.txt", "1\n2\n3\n4\n5\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.install(comments.clone());
+        let all: Vec<&conductor_core::review_store::ReviewComment> = comments.iter().collect();
+
+        h.viewer().scroll.line = 2;
+        assert!(
+            h.ws.panels.viewer.threads.is_open(&all, 4),
+            "未解決は既定で開く"
+        );
+        h.ws.dispatch(Action::ToggleInlineThread).unwrap();
+        assert!(
+            !h.ws.panels.viewer.threads.is_open(&all, 4),
+            "範囲の途中から終端のスレッドを閉じる"
+        );
+    }
+
+    #[test]
+    fn 返信と解決はカーソル行のコメントに効きコメントが無ければ知らせる() {
+        let comments = vec![crate::review::tests::comment("a", "a.txt", 2, None)];
+        let dir = fixture(&[("a.txt", "1\n2\n3\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.install(comments);
+
+        h.viewer().scroll.line = 1;
+        let effects = h.ws.dispatch(Action::ReplyToComment).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::PushModal(Modal::CommentEditor(_))]
+        ));
+        let effects = h.ws.dispatch(Action::ToggleResolve).unwrap();
+        assert!(matches!(effects.as_slice(), [Effect::Spawn(_)]));
+
+        h.viewer().scroll.line = 2;
+        for action in [Action::ReplyToComment, Action::ToggleResolve] {
+            let effects = h.ws.dispatch(action).unwrap();
+            assert!(
+                matches!(effects.as_slice(), [Effect::Status(..)]),
+                "{action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn コメント間の移動は今の行を飛ばして両端で止まる() {
+        let comments = vec![
+            crate::review::tests::comment("a", "a.txt", 2, None),
+            crate::review::tests::comment("b", "a.txt", 5, None),
+        ];
+        let dir = fixture(&[("a.txt", "1\n2\n3\n4\n5\n6\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.install(comments);
+
+        let step = |h: &mut Harness, action| {
+            let effects = h.ws.dispatch(action).unwrap();
+            (h.ws.panels.viewer.scroll.line, effects)
+        };
+        assert_eq!(step(&mut h, Action::NextComment).0, 1);
+        assert_eq!(step(&mut h, Action::NextComment).0, 4);
+        let (line, effects) = step(&mut h, Action::NextComment);
+        assert_eq!(line, 4, "末尾では動かない");
+        assert!(matches!(effects.as_slice(), [Effect::Status(..)]));
+        assert_eq!(step(&mut h, Action::PrevComment).0, 1);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use rusqlite::Connection;
 
 use super::ReviewStore;
 
-const CURRENT_VERSION: i32 = 9;
+const CURRENT_VERSION: i32 = 10;
 
 impl ReviewStore {
     /// DB を開き (無ければ作り)、最新スキーマまでマイグレーションする。
@@ -235,6 +235,22 @@ fn migrate(conn: &Connection) -> Result<()> {
             ",
         )
         .context("failed to migrate to v9 (drop gamification stats)")?;
+    }
+
+    if version < 10 {
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS viewed_files (
+                branch     TEXT NOT NULL,
+                file_path  TEXT NOT NULL,
+                viewed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (branch, file_path)
+            );
+
+            PRAGMA user_version = 10;
+            ",
+        )
+        .context("failed to migrate to v10 (viewed_files)")?;
     }
 
     debug_assert_eq!(

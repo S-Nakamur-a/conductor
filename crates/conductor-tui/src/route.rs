@@ -32,6 +32,7 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
             keymap: &ws.keymap,
             config: &ws.config,
             repo: &ws.repo,
+            review: &ws.review,
             focus: ws.focus,
         };
         return Routed::Effects(top.update(key, &ctx));
@@ -64,6 +65,7 @@ pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
         Action::FocusTerminalClaude => vec![Effect::Focus(Focus::TerminalClaude)],
         Action::FocusTerminalShell => vec![Effect::Focus(Focus::TerminalShell)],
         Action::ShowHelp => vec![Effect::PushModal(crate::modal::Modal::Help)],
+        Action::OpenCommentList => vec![crate::comment_list::open_modal()],
         Action::NewClaudeCode => vec![Effect::NewSession(SessionKind::ClaudeCode)],
         Action::NewShell => vec![Effect::NewSession(SessionKind::Shell)],
         Action::RefreshWorktrees => vec![Effect::Spawn(crate::task::Task::ListWorktrees)],

@@ -3,16 +3,17 @@
 pub mod render;
 pub mod tree;
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::{DiffListEntry, DiffState};
 use conductor_core::keymap::{Action, KeyContext};
 
+use crate::comment_list::CommentList;
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
 use crate::list::{ListCursor, Viewport};
 use crate::modal::{Modal, Prompt};
+use crate::review::ReviewState;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{Ctx, StatusLevel};
 
@@ -23,7 +24,15 @@ use tree::FileTree;
 pub enum Pane {
     #[default]
     Tree,
+    Bottom,
+}
+
+/// 下区画に何を出しているか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BottomView {
+    #[default]
     Changes,
+    Comments,
 }
 
 #[derive(Debug)]
@@ -31,10 +40,10 @@ pub struct ExplorerPanel {
     tree: FileTree,
     diff: DiffState,
     pane: Pane,
+    bottom: BottomView,
     tree_cursor: ListCursor,
     changes_cursor: ListCursor,
-    /// レビュー済みの印。相対パス。
-    viewed: HashSet<String>,
+    pub comments: CommentList,
     tree_view: Viewport,
     changes_view: Viewport,
     /// 投げたまま結果がまだ届いていない Task の数。
@@ -47,9 +56,10 @@ impl Default for ExplorerPanel {
             tree: FileTree::default(),
             diff: DiffState::new("main"),
             pane: Pane::default(),
+            bottom: BottomView::default(),
             tree_cursor: ListCursor::default(),
             changes_cursor: ListCursor::default(),
-            viewed: HashSet::new(),
+            comments: CommentList::default(),
             tree_view: Viewport::default(),
             changes_view: Viewport::default(),
             pending: 0,
@@ -78,8 +88,8 @@ impl ExplorerPanel {
         self.pending > 0
     }
 
-    pub fn is_viewed(&self, path: &str) -> bool {
-        self.viewed.contains(path)
+    pub fn bottom(&self) -> BottomView {
+        self.bottom
     }
 
     pub fn tree_cursor(&self) -> ListCursor {
@@ -98,12 +108,11 @@ impl ExplorerPanel {
         self.changes_view
     }
 
-    /// 変更ファイル一覧のキーは別のレイヤに載る。旧版と同じく、区画ごとに
-    /// 割り当てを変えられるようにするため。
     pub fn key_context(&self) -> KeyContext {
-        match self.pane {
-            Pane::Tree => KeyContext::Explorer,
-            Pane::Changes => KeyContext::ExplorerDiffList,
+        match (self.pane, self.bottom) {
+            (Pane::Tree, _) => KeyContext::Explorer,
+            (Pane::Bottom, BottomView::Changes) => KeyContext::ExplorerDiffList,
+            (Pane::Bottom, BottomView::Comments) => KeyContext::ExplorerCommentList,
         }
     }
 
@@ -113,6 +122,7 @@ impl ExplorerPanel {
         }
         if let Some(rect) = layout.rect(Region::ExplorerChanges) {
             self.changes_view = Viewport::inside(rect, self.banner_rows());
+            self.comments.set_viewport(Viewport::inside(rect, 0));
         }
     }
 
@@ -147,16 +157,32 @@ impl ExplorerPanel {
         ]
     }
 
-    pub fn update(&mut self, action: Action, _ctx: &Ctx) -> Option<Vec<Effect>> {
+    pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         self.clamp();
-        if action == Action::ShowDiffList {
-            self.pane = Pane::Changes;
-            return Some(Vec::new());
+        self.comments.clamp(ctx.review);
+        match action {
+            Action::ShowDiffList => return Some(self.show(BottomView::Changes)),
+            Action::ShowCommentList => return Some(self.show(BottomView::Comments)),
+            _ => {}
         }
-        match self.pane {
-            Pane::Tree => self.tree_key(action),
-            Pane::Changes => self.changes_key(action),
+        match (self.pane, self.bottom) {
+            (Pane::Tree, _) => self.tree_key(action),
+            (Pane::Bottom, BottomView::Changes) => self.changes_key(action),
+            (Pane::Bottom, BottomView::Comments) => match action {
+                Action::ExitSubPanel => {
+                    self.pane = Pane::Tree;
+                    Some(Vec::new())
+                }
+                _ => self.comments.update(action, ctx.review),
+            },
         }
+    }
+
+    /// 一覧を替えると同時にフォーカスも下区画へ移す。見えない相手にキーが飛ぶと迷う。
+    fn show(&mut self, view: BottomView) -> Vec<Effect> {
+        self.bottom = view;
+        self.pane = Pane::Bottom;
+        Vec::new()
     }
 
     /// 中身が入れ替わっていることがあるので、窓の高さを知っているここで収め直す。
@@ -201,6 +227,10 @@ impl ExplorerPanel {
         let row = self.changes_cursor.selected();
         match action {
             Action::ExitSubPanel => self.pane = Pane::Tree,
+            Action::ToggleViewed => {
+                let path = self.diff.resolve_file(row)?.path.clone();
+                return Some(vec![Effect::ToggleViewed(path)]);
+            }
             Action::NavigateDown => self.changes_cursor.step(1, len, self.changes_view),
             Action::NavigateUp => self.changes_cursor.step(-1, len, self.changes_view),
             Action::GoToTop => self.changes_cursor.select(0, len, self.changes_view),
@@ -209,10 +239,6 @@ impl ExplorerPanel {
                 .select(usize::MAX, len, self.changes_view),
             Action::CollapseOrLeft => self.diff.collapse_section(row),
             Action::ExpandOrRight => self.diff.expand_section(row),
-            Action::ToggleViewed => {
-                let path = self.diff.resolve_file(row)?.path.clone();
-                self.toggle_viewed(&path);
-            }
             Action::Select => return Some(self.activate_change(row)),
             _ => return None,
         }
@@ -242,7 +268,7 @@ impl ExplorerPanel {
 
     /// 行のクリック。ファイルは preview で開き、ディレクトリは開閉する。
     /// 区画の外なら何も起きない。
-    pub fn click(&mut self, y: u16) -> Vec<Effect> {
+    pub fn click(&mut self, y: u16, review: &ReviewState) -> Vec<Effect> {
         let visible = self.tree.visible();
         if let Some(row) = self.tree_cursor.index_at(y, visible.len(), self.tree_view) {
             self.pane = Pane::Tree;
@@ -260,11 +286,15 @@ impl ExplorerPanel {
             let path = entry.path.clone();
             return vec![self.open(&path, true)];
         }
+        if self.bottom == BottomView::Comments {
+            self.pane = Pane::Bottom;
+            return self.comments.click(y, review);
+        }
         let len = self.diff.display_list.len();
         let Some(row) = self.changes_cursor.index_at(y, len, self.changes_view) else {
             return Vec::new();
         };
-        self.pane = Pane::Changes;
+        self.pane = Pane::Bottom;
         self.changes_cursor.select(row, len, self.changes_view);
         self.activate_change(row)
     }
@@ -282,8 +312,11 @@ impl ExplorerPanel {
     }
 
     /// ホイール。選択は動かさず窓だけ送る。
-    pub fn scroll(&mut self, region: Region, delta: isize) {
+    pub fn scroll(&mut self, region: Region, delta: isize, review: &ReviewState) {
         match region {
+            Region::ExplorerChanges if self.bottom == BottomView::Comments => {
+                self.comments.scroll(delta, review)
+            }
             Region::ExplorerChanges => {
                 self.changes_cursor
                     .pan(delta, self.diff.display_list.len(), self.changes_view)
@@ -291,12 +324,6 @@ impl ExplorerPanel {
             _ => self
                 .tree_cursor
                 .pan(delta, self.tree.visible().len(), self.tree_view),
-        }
-    }
-
-    pub fn toggle_viewed(&mut self, path: &str) {
-        if !self.viewed.remove(path) {
-            self.viewed.insert(path.to_string());
         }
     }
 
@@ -427,7 +454,7 @@ mod tests {
         diff.files = paths.iter().map(|p| file(p)).collect();
         diff.rebuild_display_list();
         ws.panels.explorer.diff = diff;
-        ws.panels.explorer.pane = Pane::Changes;
+        ws.panels.explorer.pane = Pane::Bottom;
         ws.panels.explorer.changes_view = Viewport::new(0, 20);
         ws
     }
@@ -484,12 +511,40 @@ mod tests {
     }
 
     #[test]
-    fn viewedは押すたびに入れ替わる() {
+    fn viewedは選択中のファイルの印を反転させる() {
         let mut ws = with_changes(&["a.rs"]);
-        drive(&mut ws, &[Action::ToggleViewed]);
-        assert!(ws.panels.explorer.is_viewed("a.rs"));
-        drive(&mut ws, &[Action::ToggleViewed]);
-        assert!(!ws.panels.explorer.is_viewed("a.rs"));
+        let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+        let [Effect::ToggleViewed(path)] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(path, "a.rs");
+    }
+
+    #[test]
+    fn cとdで下区画の中身が入れ替わりキーの層も変わる() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.review.install(Ok(crate::review::Snapshot {
+            branch: "main".into(),
+            comments: vec![crate::review::tests::comment("a", "a.rs", 4, None)],
+            ..crate::review::Snapshot::default()
+        }));
+
+        drive(&mut ws, &[Action::ShowCommentList]);
+        assert_eq!(ws.panels.explorer.bottom(), BottomView::Comments);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerCommentList);
+
+        let effects = ws.dispatch(Action::Select).unwrap();
+        let [Effect::OpenFile { path, line, .. }] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!((path.to_str(), *line), (Some("a.rs"), Some(4)));
+
+        drive(&mut ws, &[Action::ShowDiffList]);
+        assert_eq!(ws.panels.explorer.bottom(), BottomView::Changes);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerDiffList);
+
+        drive(&mut ws, &[Action::ShowCommentList, Action::ExitSubPanel]);
+        assert_eq!(ws.key_context(), KeyContext::Explorer, "escで上区画へ戻る");
     }
 
     #[test]
@@ -536,10 +591,14 @@ mod tests {
     fn ホイールは選択を動かさず窓だけ送る() {
         let mut ws = with_changes(&["a.rs", "b.rs", "c.rs", "d.rs", "e.rs"]);
         ws.panels.explorer.changes_view = Viewport::new(0, 2);
-        ws.panels.explorer.scroll(Region::ExplorerChanges, 2);
+        ws.panels
+            .explorer
+            .scroll(Region::ExplorerChanges, 2, &ReviewState::default());
         assert_eq!(ws.panels.explorer.changes_cursor.scroll(), 2);
         assert_eq!(ws.panels.explorer.changes_cursor.selected(), 0);
-        ws.panels.explorer.scroll(Region::ExplorerChanges, -9);
+        ws.panels
+            .explorer
+            .scroll(Region::ExplorerChanges, -9, &ReviewState::default());
         assert_eq!(ws.panels.explorer.changes_cursor.scroll(), 0);
     }
 

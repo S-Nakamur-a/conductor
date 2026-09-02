@@ -8,11 +8,13 @@ use conductor_core::icons::{IconSet, dir_icon, expand_arrow, file_icon};
 use conductor_core::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{ExplorerPanel, Pane};
+use super::{BottomView, ExplorerPanel, Pane};
+use crate::list::row_line;
+use crate::review::ReviewState;
 use crate::workspace::Workspace;
 
 pub fn render(frame: &mut Frame, tree_area: Rect, changes_area: Rect, ws: &Workspace) {
@@ -27,8 +29,23 @@ pub fn render(frame: &mut Frame, tree_area: Rect, changes_area: Rect, ws: &Works
 
     let inner = crate::list::inner(changes_area);
     if inner.height > 0 {
-        let lines = changes_lines(panel, &ws.theme, &ws.config, inner.height as usize);
+        let lines = bottom_lines(ws, inner.height as usize);
         frame.render_widget(Paragraph::new(lines), inner);
+    }
+}
+
+pub fn bottom_lines(ws: &Workspace, height: usize) -> Vec<Line<'static>> {
+    let panel = &ws.panels.explorer;
+    match panel.bottom() {
+        BottomView::Changes => changes_lines(panel, &ws.review, &ws.theme, &ws.config, height),
+        BottomView::Comments => crate::comment_list::lines(
+            &panel.comments,
+            &ws.review,
+            &ws.theme,
+            ws.config.ui.icon_set(),
+            height,
+            panel.pane() == Pane::Bottom,
+        ),
     }
 }
 
@@ -42,6 +59,14 @@ pub fn tree_title(panel: &ExplorerPanel, height: usize) -> String {
         )
     } else {
         " Explorer ".to_string()
+    }
+}
+
+/// 下区画の見出し。中身が入れ替わるので、何を見ているかは枠で示す。
+pub fn bottom_title(panel: &ExplorerPanel, ws: &Workspace) -> String {
+    match panel.bottom() {
+        BottomView::Comments => crate::comment_list::title(&ws.review, ws.config.ui.icon_set()),
+        BottomView::Changes => changes_title(panel),
     }
 }
 
@@ -118,6 +143,7 @@ pub fn tree_lines(
 
 pub fn changes_lines(
     panel: &ExplorerPanel,
+    review: &ReviewState,
     theme: &Theme,
     config: &Config,
     height: usize,
@@ -144,7 +170,7 @@ pub fn changes_lines(
     }
 
     let cursor = panel.changes_cursor();
-    let focused = panel.pane() == Pane::Changes;
+    let focused = panel.pane() == Pane::Bottom;
     let rows = cursor.visible(diff.display_list.len(), panel.changes_viewport());
     for row in rows.take(height.saturating_sub(panel.banner_rows())) {
         let Some(entry) = diff.display_list.get(row) else {
@@ -188,7 +214,7 @@ pub fn changes_lines(
                 // ファイル名の色は git のステージ状態。行数はベースからの合計なので、
                 // その内訳がコミット済みか手元の編集かはこの色でしか分からない。
                 let fg = stage_color(theme, panel.tree().status().status(&file.path));
-                let mark = if panel.is_viewed(&file.path) {
+                let mark = if review.is_viewed(&file.path) {
                     "\u{2713} "
                 } else {
                     "  "
@@ -237,24 +263,6 @@ fn stage_color(theme: &Theme, status: Option<git2::Status>) -> ratatui::style::C
     }
 }
 
-fn row_line(
-    spans: Vec<Span<'static>>,
-    theme: &Theme,
-    selected: bool,
-    focused: bool,
-) -> Line<'static> {
-    let line = Line::from(spans);
-    if !selected {
-        return line;
-    }
-    let (bg, fg) = if focused {
-        (theme.selected_bg, theme.selected_fg)
-    } else {
-        (theme.selected_bg_inactive, theme.selected_fg_inactive)
-    };
-    line.style(Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +309,7 @@ mod tests {
 
         let lines = texts(&changes_lines(
             &with_diff(&["a"], Some("boom\nsecond")),
+            &ReviewState::default(),
             &Theme::default(),
             &Config::default(),
             10,
@@ -317,6 +326,7 @@ mod tests {
     fn 変更なしと読み込み前は別の行になる() {
         let lines = texts(&changes_lines(
             &with_diff(&[], None),
+            &ReviewState::default(),
             &Theme::default(),
             &Config::default(),
             10,
@@ -337,24 +347,26 @@ mod tests {
 
     #[test]
     fn 変更ファイルの行は増減とviewedを添える() {
-        let mut panel = with_diff(&["a.rs"], None);
-        let unmarked = texts(&changes_lines(
-            &panel,
-            &Theme::default(),
-            &Config::default(),
-            10,
-        ));
+        let panel = with_diff(&["a.rs"], None);
+        let render = |review: &ReviewState| {
+            texts(&changes_lines(
+                &panel,
+                review,
+                &Theme::default(),
+                &Config::default(),
+                10,
+            ))
+        };
+        let unmarked = render(&ReviewState::default());
         assert!(unmarked[0].contains("+3 -0"), "{:?}", unmarked[0]);
         assert!(!unmarked[0].contains('\u{2713}'));
 
-        panel.toggle_viewed("a.rs");
-        let marked = texts(&changes_lines(
-            &panel,
-            &Theme::default(),
-            &Config::default(),
-            10,
-        ));
-        assert!(marked[0].contains('\u{2713}'), "{:?}", marked[0]);
+        let mut review = ReviewState::default();
+        review.install(Ok(crate::review::Snapshot {
+            viewed: ["a.rs".to_string()].into_iter().collect(),
+            ..crate::review::Snapshot::default()
+        }));
+        assert!(render(&review)[0].contains('\u{2713}'));
     }
 
     #[test]

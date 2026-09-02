@@ -161,7 +161,7 @@ fn 既存のv5から最後まで移行できる() {
     }
 
     let store = ReviewStore::open(&path).unwrap();
-    assert_eq!(pragma::<i32>(&store, "user_version"), 9);
+    assert_eq!(pragma::<i32>(&store, "user_version"), 10);
 
     let reviews = store.reviews_for_worktree("feat/x").unwrap();
     assert_eq!(reviews.len(), 1);
@@ -181,7 +181,7 @@ fn 既存のv5から最後まで移行できる() {
 }
 
 #[test]
-fn v9は統計テーブルを落とす() {
+fn v9は統計テーブルを落としv10はviewedを足す() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("conductor.db");
     {
@@ -198,10 +198,47 @@ fn v9は統計テーブルを落とす() {
             .unwrap();
     }
     let store = ReviewStore::open(&path).unwrap();
-    assert_eq!(pragma::<i32>(&store, "user_version"), 9);
+    assert_eq!(pragma::<i32>(&store, "user_version"), 10);
     assert!(!table_exists(&store, "daily_stats"));
     assert!(!table_exists(&store, "session_stats"));
     assert!(table_exists(&store, "session_history"));
+    assert!(table_exists(&store, "viewed_files"));
+}
+
+#[test]
+fn 返信はworktreeごとにまとめて引ける() {
+    let store = memory_store();
+    let a = store.add_review(comment("main", "a.rs", 1)).unwrap();
+    let b = store.add_review(comment("main", "b.rs", 1)).unwrap();
+    store.add_review(comment("other", "c.rs", 1)).unwrap();
+    store.add_reply(&a.id, "first", Author::User).unwrap();
+    store.add_reply(&a.id, "second", Author::Claude).unwrap();
+
+    let replies = store.replies_for_worktree("main").unwrap();
+    assert_eq!(replies.len(), 1, "返信の無いコメントは載らない");
+    assert!(!replies.contains_key(&b.id));
+    let bodies: Vec<&str> = replies[&a.id].iter().map(|r| r.body.as_str()).collect();
+    assert_eq!(bodies, ["first", "second"], "作成順");
+    assert!(store.replies_for_worktree("other").unwrap().is_empty());
+}
+
+#[test]
+fn viewedの印はブランチごとに残る() {
+    let store = memory_store();
+    assert!(store.viewed_files("main").unwrap().is_empty());
+
+    store.set_viewed("main", "src/a.rs", true).unwrap();
+    store.set_viewed("main", "src/a.rs", true).unwrap();
+    store.set_viewed("feat/x", "src/b.rs", true).unwrap();
+    assert_eq!(
+        store.viewed_files("main").unwrap(),
+        ["src/a.rs".to_string()].into_iter().collect()
+    );
+
+    store.set_viewed("main", "src/a.rs", false).unwrap();
+    store.set_viewed("main", "src/never.rs", false).unwrap();
+    assert!(store.viewed_files("main").unwrap().is_empty());
+    assert_eq!(store.viewed_files("feat/x").unwrap().len(), 1);
 }
 
 #[test]

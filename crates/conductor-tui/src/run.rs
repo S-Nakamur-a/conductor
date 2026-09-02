@@ -69,7 +69,7 @@ pub fn run(
         while let Some(event) = svc.try_recv() {
             let effects = match event.kind {
                 EventKind::Task(result) => ws.accept(result),
-                EventKind::Watch(watch) => ws.panels.terminal.on_watch(&watch),
+                EventKind::Watch(watch) => watch_effects(ws, watch),
             };
             apply(ws, svc, effects);
             dirty = true;
@@ -83,6 +83,16 @@ pub fn run(
         if ws.should_quit {
             return Ok(());
         }
+    }
+}
+
+/// watcher からの合図の行き先。MCP のレビュー更新だけがパネルの外に効く。
+fn watch_effects(ws: &mut Workspace, watch: conductor_svc::watch::WatchEvent) -> Vec<Effect> {
+    match watch {
+        conductor_svc::watch::WatchEvent::RefreshRequested => {
+            vec![Effect::Spawn(Task::LoadReview)]
+        }
+        watch => ws.panels.terminal.on_watch(&watch),
     }
 }
 
@@ -175,11 +185,16 @@ fn on_mouse(
             };
             apply(ws, svc, vec![Effect::Focus(focus)]);
             let effects = match focus {
-                Focus::Explorer => ws.panels.explorer.click(mouse.row),
-                Focus::Viewer => ws
-                    .panels
-                    .viewer
-                    .click(mouse.row, mouse.modifiers.contains(KeyModifiers::SHIFT)),
+                Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
+                Focus::Viewer => {
+                    let Workspace { panels, review, .. } = ws;
+                    panels.viewer.click(
+                        mouse.column,
+                        mouse.row,
+                        mouse.modifiers.contains(KeyModifiers::SHIFT),
+                        review,
+                    )
+                }
                 _ => Vec::new(),
             };
             apply(ws, svc, effects);
@@ -190,7 +205,10 @@ fn on_mouse(
 
 fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {
     match region {
-        Region::ExplorerTree | Region::ExplorerChanges => ws.panels.explorer.scroll(region, delta),
+        Region::ExplorerTree | Region::ExplorerChanges => {
+            let Workspace { panels, review, .. } = ws;
+            panels.explorer.scroll(region, delta, review)
+        }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
         _ => {}
     }
@@ -369,6 +387,98 @@ mod tests {
         ws.chrome.status.as_mut().unwrap().shown_at = Instant::now() - STATUS_TIMEOUT;
         assert!(expire_status(&mut ws));
         assert_eq!(liveness(&ws, false), Liveness::Idle);
+    }
+
+    fn type_text(ws: &mut Workspace, svc: &mut Services<TaskResult>, text: &str) {
+        for c in text.chars() {
+            on_key(ws, svc, key(KeyCode::Char(c)));
+        }
+    }
+
+    #[test]
+    fn 書いたコメントはスレッドと一覧に出て起動し直しても残る() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "alpha\nbravo\ncharlie\n").unwrap();
+
+        let mut ws = Workspace::for_test();
+        ws.repo.root = dir.path().to_path_buf();
+        let mut svc = Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        ws.sync_layout(&l);
+
+        let effects = ws
+            .panels
+            .viewer
+            .open(std::path::Path::new("a.txt"), Some(2), None, false);
+        apply(&mut ws, &mut svc, effects);
+        crate::testing::pump(&mut ws, &mut svc);
+        ws.focus = Focus::Viewer;
+
+        on_key(&mut ws, &mut svc, key(KeyCode::Char('c')));
+        assert!(
+            matches!(
+                ws.modals.as_slice(),
+                [crate::modal::Modal::CommentEditor(_)]
+            ),
+            "{:?}",
+            ws.modals
+        );
+        type_text(&mut ws, &mut svc, "off by one");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert!(ws.modals.is_empty(), "確定でモーダルは閉じる");
+        assert_eq!(ws.review.comments().len(), 1);
+        assert_eq!(ws.review.comments()[0].line_start, 2);
+
+        let rendered = crate::panels::viewer::render::body(
+            &ws.panels.viewer,
+            &ws.review,
+            &ws.theme,
+            ws.config.ui.icon_set(),
+            80,
+            20,
+        );
+        let text: Vec<String> = rendered
+            .iter()
+            .map(ratatui::text::Line::to_string)
+            .collect();
+        assert!(
+            text.iter().any(|l| l.contains("off by one")),
+            "インラインスレッドが出ない: {text:?}"
+        );
+
+        ws.focus = Focus::Explorer;
+        on_key(&mut ws, &mut svc, key(KeyCode::Char('c')));
+        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 10)
+            .iter()
+            .map(ratatui::text::Line::to_string)
+            .collect();
+        assert!(
+            listed.iter().any(|l| l.contains("a.txt:L2")),
+            "Comments ペインに出ない: {listed:?}"
+        );
+
+        // 起動し直しても DB に残っている。
+        let mut fresh = Workspace::for_test();
+        fresh.repo.root = dir.path().to_path_buf();
+        let mut svc = Services::new();
+        apply(&mut fresh, &mut svc, vec![Effect::Spawn(Task::LoadReview)]);
+        crate::testing::pump(&mut fresh, &mut svc);
+        assert_eq!(fresh.review.comments().len(), 1);
+        assert_eq!(fresh.review.comments()[0].body, "off by one");
+    }
+
+    #[test]
+    fn watchの行き先は種類で分かれる() {
+        use conductor_svc::watch::WatchEvent;
+        let mut ws = Workspace::for_test();
+        assert!(matches!(
+            watch_effects(&mut ws, WatchEvent::RefreshRequested).as_slice(),
+            [Effect::Spawn(Task::LoadReview)]
+        ));
+        assert!(watch_effects(&mut ws, WatchEvent::ConfigChanged).is_empty());
     }
 
     /// パネルが消費しない Action が global の解釈へ落ちる配線。ターミナルの中では
