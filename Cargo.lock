@@ -558,9 +558,12 @@ name = "conductor-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "conductor-core",
+ "conductor-mcp",
  "conductor-svc",
  "crossterm",
+ "dirs",
  "env_logger",
  "log",
  "ratatui",

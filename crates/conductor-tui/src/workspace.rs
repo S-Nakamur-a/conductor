@@ -86,6 +86,10 @@ pub struct Chrome {
 #[derive(Debug, Clone)]
 pub struct RepoState {
     pub root: PathBuf,
+    /// main worktree のディレクトリ名。linked worktree から開いてもリポジトリの名前。
+    pub name: String,
+    /// root の HEAD ブランチ。worktree 一覧が入るフェーズ 2 で選択中のものに変わる。
+    pub branch: String,
     pub main_branch: String,
 }
 
@@ -145,6 +149,8 @@ impl Workspace {
     pub(crate) fn for_test() -> Self {
         let repo = RepoState {
             root: PathBuf::from("/tmp/repo"),
+            name: "repo".into(),
+            branch: "main".into(),
             main_branch: "main".into(),
         };
         let (keymap, _) = KeyMap::with_warnings(&toml::Table::new());
