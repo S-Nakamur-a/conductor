@@ -75,13 +75,32 @@ fn main() -> Result<()> {
     apply_auto_theme(&mut ws);
     apply_auto_icons(&mut ws);
 
+    // 更新は走っているファイルを rename で置き換えるので、済んだあとの current_exe は
+    // 消えた inode を指す。再起動に使うパスと引数はここで捕まえておく。
+    let relaunch_exe = std::env::current_exe();
+    let relaunch_args: Vec<String> = std::env::args().skip(1).collect();
+
     let result = run::run(&mut terminal, &mut ws, &mut svc);
 
     // 復旧はエラー時も必ず。1 つ失敗しても残りを試す。
     let _ = term::leave(terminal.backend_mut(), modes);
     let _ = execute!(terminal.backend_mut(), SetTitle(""));
     let _ = terminal.show_cursor();
+    if ws.relaunch
+        && let Ok(exe) = relaunch_exe
+    {
+        relaunch(&exe, &relaunch_args);
+    }
     result
+}
+
+/// 同じ引数で自分自身を exec し直す (戻らない)。プロセスイメージを置き換えるので、
+/// 永続化が必要なものはすべて呼ぶ前に済ませておくこと。
+fn relaunch(exe: &Path, args: &[String]) -> ! {
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(exe).args(args).exec();
+    eprintln!("Failed to restart: {err}");
+    std::process::exit(1);
 }
 
 fn workspace(root: PathBuf) -> Workspace {

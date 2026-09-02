@@ -9,7 +9,7 @@ use conductor_svc::pty::SessionKind;
 use super::CommandId;
 use crate::effect::Effect;
 use crate::modal::{
-    Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme,
+    Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme, update,
 };
 use crate::panels::explorer::BottomView;
 use crate::task::{Persist, Task};
@@ -36,8 +36,6 @@ pub(super) const NOT_YET: &[(CommandId, &str)] = &[
     (CommandId::ShowReviewTemplates, "review templates"),
     (CommandId::ToggleMarkdownRender, "rendered markdown"),
     (CommandId::RebuildCodeIndex, "the code index"),
-    (CommandId::CheckForUpdate, "checking for updates"),
-    (CommandId::UpdateAndRestart, "updating and restarting"),
 ];
 
 fn not_yet(id: CommandId) -> Option<&'static str> {
@@ -80,6 +78,9 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
         // 「PR のブランチか」は DB を引くので毎フレームは訊けない。それはコマンドが答える。
         CommandId::PublishReview if ws.review.unpublished_count() == 0 => {
             Enabled::No("no unpublished comments on this branch")
+        }
+        CommandId::UpdateAndRestart if ws.chrome.update.is_none() => {
+            Enabled::No("no newer release is known \u{2014} check for updates first")
         }
         CommandId::FoldOneLevel
         | CommandId::UnfoldOneLevel
@@ -233,6 +234,24 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         }
         CommandId::PublishReview => vec![Effect::Spawn(Task::LoadPublishable)],
 
+        CommandId::CheckForUpdate => vec![
+            Effect::Status(
+                StatusLevel::Info,
+                format!("Checking for updates\u{2026} (running v{})", crate::VERSION),
+            ),
+            // 手で頼んだのだからキャッシュは見ない。
+            Effect::Spawn(Task::CheckForUpdate {
+                max_age: std::time::Duration::ZERO,
+                announce: true,
+            }),
+        ],
+        CommandId::UpdateAndRestart => match &ws.chrome.update {
+            Some(info) => vec![Effect::PushModal(Modal::Update(update::Update::Confirm(
+                Box::new(info.clone()),
+            )))],
+            None => Vec::new(),
+        },
+
         // 未実装。enabled が先に弾くのでここには来ない。`_` で受けないのは、
         // コマンドを足したときに実装漏れを型で見つけるため。
         CommandId::ShowRevidere
@@ -240,9 +259,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         | CommandId::ForceAnalyzeRevidere
         | CommandId::ShowReviewTemplates
         | CommandId::ToggleMarkdownRender
-        | CommandId::RebuildCodeIndex
-        | CommandId::CheckForUpdate
-        | CommandId::UpdateAndRestart => Vec::new(),
+        | CommandId::RebuildCodeIndex => Vec::new(),
     }
 }
 

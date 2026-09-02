@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use conductor_core::config::Config;
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 use conductor_core::theme::Theme;
+use conductor_core::update_checker::UpdateInfo;
 
 use crate::effect::Effect;
 use crate::modal::Modal;
@@ -13,7 +14,7 @@ use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
 use crate::review::ReviewState;
-use crate::task::{TaskEnv, TaskResult};
+use crate::task::{TaskEnv, TaskResult, UpdateCheck, UpdateStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
@@ -101,6 +102,8 @@ pub struct Chrome {
     pub status: Option<StatusMessage>,
     pub menu: crate::menu::MenuBar,
     pub maximized: bool,
+    /// 走っているものより新しいリリース。タイトルバーのバッジが読む。
+    pub update: Option<UpdateInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -194,7 +197,10 @@ pub struct Workspace {
     pub modals: Vec<Modal>,
     pub review: ReviewState,
     pub chrome: Chrome,
+    pub entrance: crate::entrance::Entrance,
     pub should_quit: bool,
+    /// 更新を入れ終えた。抜けたあと main が同じ引数で自分を exec し直す。
+    pub relaunch: bool,
     pub theme: Theme,
     pub appearance: Appearance,
     pub keymap: KeyMap,
@@ -216,7 +222,9 @@ impl Workspace {
             modals: Vec::new(),
             review: ReviewState::default(),
             chrome: Chrome::default(),
+            entrance: crate::entrance::Entrance::new(config.ui.startup_animation),
             should_quit: false,
+            relaunch: false,
             appearance: Appearance {
                 name: theme.name.to_string(),
                 high_contrast: config.ui.high_contrast,
@@ -346,6 +354,10 @@ impl Workspace {
             | TaskResult::History { .. }
             | TaskResult::RemoteBranches(_)
             | TaskResult::Commits(_) => self.accept_in_modal(result),
+            TaskResult::UpdateCheck { outcome, announce } => {
+                self.accept_update_check(outcome, announce)
+            }
+            TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
@@ -381,6 +393,48 @@ impl Workspace {
                 };
                 panels.worktree.apply_result(result, &ctx)
             }
+        }
+    }
+
+    fn accept_update_check(&mut self, outcome: UpdateCheck, announce: bool) -> Vec<Effect> {
+        let (level, message) = match outcome {
+            UpdateCheck::Newer(info) => {
+                let text = format!(
+                    "Update available: v{} \u{2014} run \u{201c}App: Update and Restart\u{201d}",
+                    info.latest_version
+                );
+                self.chrome.update = Some(*info);
+                (StatusLevel::Success, text)
+            }
+            UpdateCheck::UpToDate => {
+                self.chrome.update = None;
+                (
+                    StatusLevel::Info,
+                    format!("Already up to date (v{}).", crate::VERSION),
+                )
+            }
+            // 届かなかっただけ。すでに出ているバッジは消さない。
+            UpdateCheck::Unreachable => (
+                StatusLevel::Warning,
+                String::from("Update check failed \u{2014} could not reach GitHub"),
+            ),
+        };
+        if !announce {
+            return Vec::new();
+        }
+        vec![Effect::Status(level, message)]
+    }
+
+    /// 差し替えの報告は開いているモーダルへ。閉じられていても再起動と失敗は届ける。
+    fn accept_update_progress(&mut self, stage: UpdateStage) -> Vec<Effect> {
+        self.relaunch |= matches!(stage, UpdateStage::Installed);
+        match self.modals.last_mut() {
+            Some(Modal::Update(modal)) => modal.accept(stage).unwrap_or_default(),
+            _ => match stage {
+                UpdateStage::Installed => vec![Effect::Quit],
+                UpdateStage::Failed(reason) => vec![Effect::Status(StatusLevel::Error, reason)],
+                UpdateStage::Step(_) => Vec::new(),
+            },
         }
     }
 
@@ -518,7 +572,10 @@ impl Workspace {
             known: vec![PathBuf::from("/tmp/repo")],
         };
         let (keymap, _) = KeyMap::with_warnings(&toml::Table::new());
-        Self::new(repo, Config::default(), keymap, Theme::default())
+        // 起動演出は画面を伏せるので、描画とフレームの理由を見るテストでは切っておく。
+        let mut config = Config::default();
+        config.ui.startup_animation = false;
+        Self::new(repo, config, keymap, Theme::default())
     }
 }
 

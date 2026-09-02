@@ -20,7 +20,8 @@ pub use persist::{
     persist_ui_icons, persist_ui_theme,
 };
 pub use sections::{
-    ApiConfig, DiffConfig, GeneralConfig, LayoutConfig, TerminalConfig, UiConfig, ViewerConfig,
+    ApiConfig, DiffConfig, GeneralConfig, LayoutConfig, TerminalConfig, UiConfig, UpdatesConfig,
+    ViewerConfig,
 };
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
 
@@ -37,6 +38,7 @@ pub struct Config {
     pub api: ApiConfig,
     pub ui: UiConfig,
     pub layout: LayoutConfig,
+    pub updates: UpdatesConfig,
 }
 
 impl Config {

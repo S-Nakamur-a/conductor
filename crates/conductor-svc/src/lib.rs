@@ -116,10 +116,19 @@ pub struct EventSender<P> {
 
 impl<P> EventSender<P> {
     pub fn send_watch(&self, event: watch::WatchEvent) {
+        self.send(EventKind::Watch(event));
+    }
+
+    /// 途中経過を返す仕事のための送信口。1 回で終わる仕事は [Services::spawn] を使う。
+    pub fn send_task(&self, payload: P) {
+        self.send(EventKind::Task(payload));
+    }
+
+    fn send(&self, kind: EventKind<P>) {
         let _ = self.tx.send(Event {
             generation: Generation(self.generation.load(Ordering::Relaxed)),
             req: None,
-            kind: EventKind::Watch(event),
+            kind,
         });
     }
 }
@@ -181,6 +190,18 @@ mod tests {
         assert!(matches!(
             recv_blocking(&svc).map(|e| e.kind),
             Some(EventKind::Watch(watch::WatchEvent::ConfigChanged))
+        ));
+    }
+
+    #[test]
+    fn 世代を進めても途中経過は届く() {
+        let mut svc = Services::<u32>::new();
+        let sender = svc.sender();
+        svc.bump_generation();
+        sender.send_task(7);
+        assert!(matches!(
+            recv_blocking(&svc).map(|e| e.kind),
+            Some(EventKind::Task(7))
         ));
     }
 

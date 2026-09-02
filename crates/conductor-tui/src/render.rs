@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 
@@ -18,7 +19,9 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     for (region, rect) in &layout.regions {
         let rect = *rect;
         match region {
-            Region::TitleBar => frame.render_widget(Paragraph::new(title_line(ws)), rect),
+            Region::TitleBar => {
+                frame.render_widget(Paragraph::new(title_line(ws, rect.width)), rect)
+            }
             Region::MenuBar => {
                 frame.render_widget(Paragraph::new(crate::menu::bar_line(ws, rect)), rect)
             }
@@ -69,11 +72,34 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
             rect,
         );
     }
+
+    crate::entrance::apply(
+        &ws.entrance,
+        frame.buffer_mut(),
+        layout.area,
+        &entrance_panels(layout),
+        layout.rect(Region::Viewer),
+        &ws.theme,
+    );
 }
 
-fn title_line(ws: &Workspace) -> Line<'_> {
+/// 演出が枠を組み上げる区画。左から順。
+fn entrance_panels(layout: &Layout) -> Vec<Rect> {
+    [
+        Region::ExplorerTree,
+        Region::ExplorerChanges,
+        Region::Viewer,
+        Region::TerminalClaude,
+        Region::TerminalShell,
+    ]
+    .iter()
+    .filter_map(|region| layout.rect(*region))
+    .collect()
+}
+
+pub(crate) fn title_line(ws: &Workspace, width: u16) -> Line<'_> {
     let theme = &ws.theme;
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!(" {} ", ws.repo.name),
             Style::default()
@@ -91,7 +117,23 @@ fn title_line(ws: &Workspace) -> Line<'_> {
             ws.repo.root.display().to_string(),
             Style::default().fg(theme.dir_fg),
         ),
-    ])
+    ];
+    if let Some(update) = &ws.chrome.update {
+        let badge = format!(" \u{2191} v{} available ", update.latest_version);
+        let used: usize = spans.iter().map(|s| s.width()).sum();
+        let pad = (width as usize).saturating_sub(used + badge.width());
+        if pad > 0 {
+            spans.push(Span::raw(" ".repeat(pad)));
+            spans.push(Span::styled(
+                badge,
+                Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
+    Line::from(spans)
 }
 
 fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
@@ -337,6 +379,10 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
         Modal::Publish(confirm) => full(
             crate::modal::publish::lines(confirm, &ctx),
             crate::modal::publish::title(confirm),
+        ),
+        Modal::Update(update) => (
+            crate::modal::update::title(update),
+            crate::modal::update::lines(update, &ctx),
         ),
         Modal::PrInput(prompt) => (
             crate::modal::pr::title(),

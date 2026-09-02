@@ -1,5 +1,10 @@
 # config
-旧テスト 41 本 → 新テスト 17 本 (移植 25 / 削除 8 / tui へ移した 8 — docs/rewrite-ports/viewer.md の syntax 節)
+旧テスト 41 本 → 新テスト 17 本 (移植 26 / 削除 7 / tui へ移した 8 — docs/rewrite-ports/viewer.md の syntax 節)
+
+訂正 (フェーズ 4c): `[updates]` と `[ui] startup_animation` は捨てない。フェーズ 0 で
+「削除」に振り分けたのは、自己更新と起動演出を捨てる前提だったため。どちらも残すと
+決まった (docs/plans/rewrite-plan.md 6 章の訂正) ので、設定も読める側へ戻した。
+下の表の該当行は取り消し線ではなく、この段落が上書きする。
 
 新の置き場: crates/conductor-core/src/config/{mod,sections,snapshot,persist,tests}.rs
 
@@ -9,10 +14,10 @@
 | tests_config: 空のtomlは既定値になる | 移植 | 空のtomlは既定値になる (Config 全体で比較するので diff/layout の個別 assert も含む) |
 | tests_config: diff_viewのserde | 移植 | セクションごとに鍵を読む ([diff] 行) |
 | tests_config: 削除したreview_promptの鍵は無視される | 移植 | 捨てた設定と知らない鍵は無視される (LEGACY_CONFIG fixture に [review] の 3 鍵を持ち越し) |
-| tests_config: 削除したrichセクションは無視される | 移植 | 同上 ([rich] を fixture に持ち越し)。[updates] [ccusage] [ui] startup_animation [viewer] word_wrap も同じ fixture で固定 |
+| tests_config: 削除したrichセクションは無視される | 移植 | 同上 ([rich] を fixture に持ち越し)。[ccusage] [viewer] word_wrap も同じ fixture で固定。**[updates] と [ui] startup_animation は fixture から外し、セクションごとに鍵を読む が読める側で固定する (4c)** |
 | tests_config: チルダの展開 | 移植 | チルダの展開 (テーブル: ~/ は home に、絶対/相対はそのまま) |
 | tests_config: ccusageの設定を読む | 削除 | [ccusage] は持ち込まない。「残っていても落ちない」側は 捨てた設定と知らない鍵は無視される が固定 |
-| tests_config: updatesの設定を読む | 削除 | 同上 ([updates]) |
+| tests_config: updatesの設定を読む | **移植 (4c で復活)** | セクションごとに鍵を読む ([updates] 行)。既定値は 空のtomlは既定値になる、live/restart の所属は 全フィールドはliveかrestartのどちらか一方に属する (updates.* 2 行) |
 | tests_config: keybindsを読む | 移植 | keybindsは生のテーブルのまま持つ |
 | tests_config: 生成した既定のconfigは妥当なtoml | 移植 | 既定ファイルは読むと既定値になる (個別 assert でなく Config::default() と全体比較) |
 | tests_config: high_contrastは既定offでtomlを往復する | 移植 | 3 本に分散: 既定は 空のtomlは既定値になる、読みは セクションごとに鍵を読む ([ui] 行)、live 判定は 全フィールドはliveかrestartのどちらか一方に属する (ui.high_contrast 行) |
@@ -53,7 +58,8 @@
 - 文字セットはserdeの綴りでtomlの文字列になる: persist_ui_icons が toml::Value 経由で "nerd" と書く前提
 
 API 変更:
-- 削除: `syntax_theme_id` / `syntect_theme_for` (tui へ)、`CcusageConfig` / `UpdatesConfig` / `ReviewConfig`、`UiConfig::startup_animation`、`ViewerConfig::word_wrap`、`config::DiffView` の再エクスポート (`crate::diff_state::DiffView` を使う)
+- 削除: `syntax_theme_id` / `syntect_theme_for` (tui へ)、`CcusageConfig` / `ReviewConfig`、`ViewerConfig::word_wrap`、`config::DiffView` の再エクスポート (`crate::diff_state::DiffView` を使う)
+- **4c で復活: `UpdatesConfig` (`Config::updates`) と `UiConfig::startup_animation`。** 既定値は旧と同じ (`check_on_startup = true` / `check_interval_secs = 3600` / `startup_animation = true`)。`DEFAULT_CONFIG` にもコメント行を戻した。live/restart の所属は `updates.*` が Restart (起動時にしか読まない)、`ui.startup_animation` が Live (`adopt_appearance` が `ui` ごと写す)
 - `generate_default_config() -> String` → `pub const DEFAULT_CONFIG: &str`
 - `persist_layout_proportions(u16, u16, u16, u16)` → `persist_layout_proportions(&LayoutConfig)` (4 つの位置引数は順番を間違えても型で気づけなかった)
 - 追加: `Config::load_from(&Path)` (`load()` はこれに委譲。テストの入口)

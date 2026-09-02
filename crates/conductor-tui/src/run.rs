@@ -38,16 +38,25 @@ pub fn run(
     let mut last_input = Instant::now();
     let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
+    let update_interval = Duration::from_secs(ws.config.updates.check_interval_secs);
+    let mut update_poll = ws
+        .config
+        .updates
+        .check_on_startup
+        .then(|| Timer::new(update_interval, last_input));
     let mut dirty = true;
 
-    apply(
-        ws,
-        svc,
-        vec![
-            Effect::Spawn(Task::ListWorktrees),
-            Effect::Spawn(Task::LoadGrabState),
-        ],
-    );
+    let mut startup = vec![
+        Effect::Spawn(Task::ListWorktrees),
+        Effect::Spawn(Task::LoadGrabState),
+    ];
+    if update_poll.is_some() {
+        startup.push(Effect::Spawn(Task::CheckForUpdate {
+            max_age: update_interval,
+            announce: false,
+        }));
+    }
+    apply(ws, svc, startup);
 
     loop {
         // 区画は描く前に決める。PTY のリサイズが描画の副産物になると、
@@ -60,6 +69,7 @@ pub fn run(
         // 描くのが先。起動直後に既にキーが溜まっていると、捌いてから描く並びでは
         // 1 フレームも出さないまま終了しうる。
         if dirty {
+            ws.entrance.start_if_pending();
             terminal.draw(|frame| render(frame, ws, &last_layout))?;
             dirty = false;
         }
@@ -86,7 +96,14 @@ pub fn run(
         dirty |= tick_modals(ws, svc);
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
-        dirty |= run_timers(ws, svc, &mut worktree_poll, &mut pty_cleanup);
+        dirty |= run_timers(
+            ws,
+            svc,
+            &mut worktree_poll,
+            &mut pty_cleanup,
+            update_poll.as_mut().map(|timer| (timer, update_interval)),
+        );
+        dirty |= ws.entrance.is_animating();
 
         if ws.should_quit {
             return Ok(());
@@ -124,6 +141,7 @@ fn run_timers(
     svc: &mut Services<TaskResult>,
     worktree_poll: &mut Timer,
     pty_cleanup: &mut Timer,
+    update_poll: Option<(&mut Timer, Duration)>,
 ) -> bool {
     let now = Instant::now();
     let mut dirty = false;
@@ -132,6 +150,18 @@ fn run_timers(
     }
     if pty_cleanup.due(now) {
         dirty |= ws.panels.terminal.cleanup_dead();
+    }
+    if let Some((update_poll, interval)) = update_poll
+        && update_poll.due(now)
+    {
+        apply(
+            ws,
+            svc,
+            vec![Effect::Spawn(Task::CheckForUpdate {
+                max_age: interval,
+                announce: false,
+            })],
+        );
     }
     dirty
 }
@@ -155,6 +185,7 @@ fn drain_input(
         return Ok(false);
     }
     let deadline = Instant::now() + MAX_DRAIN;
+    ws.entrance.skip();
     loop {
         match crossterm::event::read()? {
             // オートリピートは押下と同じに扱う。Repeat が届くのは kitty プロトコル下
@@ -451,6 +482,104 @@ mod tests {
         }
         assert_eq!(crate::menu::MENUS[menu].items[row(ws)].command(), Some(id));
         on_key(ws, svc, key(KeyCode::Enter));
+    }
+
+    /// 更新の導線を端から端まで: 新しいリリースが届く → バッジが出る → メニューの
+    /// 行が有効になる → 実行で確認のモーダルが積まれる。
+    #[test]
+    fn 新しいリリースが届くとバッジと更新コマンドが生きる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let id = crate::command::CommandId::UpdateAndRestart;
+        let title = |ws: &Workspace| {
+            crate::render::title_line(ws, 120)
+                .to_string()
+                .trim_end()
+                .to_string()
+        };
+
+        assert!(!title(&ws).contains("available"), "{}", title(&ws));
+        assert!(!crate::command::enabled(&ws, id).is_yes());
+
+        let effects = ws.accept(TaskResult::UpdateCheck {
+            outcome: crate::task::UpdateCheck::Newer(Box::new(crate::modal::update::tests::info())),
+            announce: true,
+        });
+        apply(&mut ws, &mut svc, effects);
+        assert!(title(&ws).ends_with("v9.9.9 available"), "{}", title(&ws));
+        assert!(
+            crate::render::status_line(&ws)
+                .to_string()
+                .contains("9.9.9")
+        );
+        assert!(crate::command::enabled(&ws, id).is_yes());
+
+        menu_pick(&mut ws, &mut svc, id);
+        assert!(
+            matches!(ws.modals.last(), Some(Modal::Update(_))),
+            "{:?}",
+            ws.modals.last()
+        );
+    }
+
+    /// 届かなかったことと最新だったことは別。混ぜると、1 度の通信失敗で出ていた
+    /// バッジが消え、オフラインで「最新です」と嘘をつく。
+    #[test]
+    fn 更新チェックは届かなかったことを最新と混ぜない() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let check = |outcome| TaskResult::UpdateCheck {
+            outcome,
+            announce: true,
+        };
+
+        let effects = ws.accept(check(crate::task::UpdateCheck::Newer(Box::new(
+            crate::modal::update::tests::info(),
+        ))));
+        apply(&mut ws, &mut svc, effects);
+
+        let effects = ws.accept(check(crate::task::UpdateCheck::Unreachable));
+        apply(&mut ws, &mut svc, effects);
+        assert!(ws.chrome.update.is_some(), "届かないだけでバッジが消えた");
+        let status = crate::render::status_line(&ws).to_string();
+        assert!(status.contains("could not reach GitHub"), "{status}");
+
+        let effects = ws.accept(check(crate::task::UpdateCheck::UpToDate));
+        apply(&mut ws, &mut svc, effects);
+        assert!(ws.chrome.update.is_none());
+        assert!(
+            crate::render::status_line(&ws)
+                .to_string()
+                .contains("up to date")
+        );
+    }
+
+    /// モーダルを閉じたあとに届いた失敗も伝える。隠す導線が用意されている以上、
+    /// 黙って消えると差し替えが済んだのか落ちたのか分からなくなる。
+    #[test]
+    fn 更新の失敗はモーダルを閉じていても伝わる() {
+        let mut ws = Workspace::for_test();
+        let effects = ws.accept(TaskResult::UpdateProgress(
+            crate::task::UpdateStage::Failed("no route to host".into()),
+        ));
+        let [Effect::Status(crate::workspace::StatusLevel::Error, text)] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(text, "no route to host");
+        assert!(!ws.relaunch);
+    }
+
+    /// 演出は「動いている理由」に数えられる。切ってあれば起動直後から Idle。
+    #[test]
+    fn 起動演出の有無がフレームを流す理由になる() {
+        let mut ws = Workspace::for_test();
+        assert_eq!(liveness(&ws, false), Liveness::Idle, "切ってあるのに動く");
+
+        ws.entrance = crate::entrance::Entrance::new(true);
+        assert_eq!(liveness(&ws, false), Liveness::Active);
+        ws.entrance.skip();
+        assert_eq!(liveness(&ws, false), Liveness::Idle);
     }
 
     /// 取り消せない git 操作は必ず確認を挟む。

@@ -24,6 +24,7 @@ pub mod publish;
 pub mod repo;
 pub mod session;
 pub mod theme;
+pub mod update;
 
 #[derive(Debug)]
 pub enum Modal {
@@ -42,6 +43,7 @@ pub enum Modal {
     CherryPick(commits::CherryPick),
     PrInput(pr::PrInput),
     Publish(publish::Publish),
+    Update(update::Update),
 }
 
 /// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
@@ -225,6 +227,7 @@ impl Modal {
             Modal::CherryPick(picker) => picker.update(key, ctx),
             Modal::PrInput(prompt) => prompt.update(key, ctx),
             Modal::Publish(confirm) => confirm.update(key, ctx),
+            Modal::Update(update) => update.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Enter => {

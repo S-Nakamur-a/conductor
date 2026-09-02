@@ -111,6 +111,12 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #                                       # Ghostty and WezTerm do). Terminals cannot report which font is in
 #                                       # use, so on first run conductor picks a set from $TERM_PROGRAM and
 #                                       # writes the result here. Edit it freely; an explicit value always wins.
+# startup_animation = true              # panels assemble themselves on the first frames.
+#                                       # Turn it off over SSH or on slow-drawing terminals.
+
+[updates]
+# check_on_startup = true               # look for a newer release on GitHub at startup
+# check_interval_secs = 3600            # minimum interval between checks; also the cache lifetime
 
 [layout]
 # explorer_width_pct = 24               # explorer column width % (default: 24)

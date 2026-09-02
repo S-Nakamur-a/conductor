@@ -123,6 +123,24 @@ impl Default for ApiConfig {
     }
 }
 
+/// [updates] セクション。GitHub Releases との照合。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdatesConfig {
+    pub check_on_startup: bool,
+    /// 問い合わせの最小間隔。キャッシュの鮮度もこの値で測る。
+    pub check_interval_secs: u64,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_on_startup: true,
+            check_interval_secs: 3600,
+        }
+    }
+}
+
 /// [layout] セクション。値はパーセント。terminal 列は explorer と viewer の残り幅を取る。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -147,7 +165,7 @@ impl Default for LayoutConfig {
 }
 
 /// [ui] セクション。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
     /// UI カラーテーマ名。None なら [viewer] theme に落ちる。
@@ -156,6 +174,19 @@ pub struct UiConfig {
     /// None なら初回起動時に端末から判定し、その結果をファイルへ書き戻す
     /// ([persist_ui_icons](super::persist_ui_icons))。
     pub icons: Option<IconSet>,
+    /// 起動時にパネルが組み上がる演出。SSH 越しや描画の遅い端末では邪魔になりうる。
+    pub startup_animation: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            high_contrast: false,
+            icons: None,
+            startup_animation: true,
+        }
+    }
 }
 
 impl UiConfig {

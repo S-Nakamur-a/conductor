@@ -24,13 +24,6 @@ mode = "force"
 [ccusage]
 enabled = true
 poll_interval_secs = 60
-
-[updates]
-check_on_startup = false
-check_interval_secs = 3600
-
-[ui]
-startup_animation = false
 "#;
 
 fn parse(toml: &str) -> Config {
@@ -76,12 +69,17 @@ fn non_default() -> Config {
             theme: Some(String::from("dracula")),
             high_contrast: true,
             icons: Some(IconSet::Nerd),
+            startup_animation: false,
         },
         layout: LayoutConfig {
             explorer_width_pct: 30,
             viewer_width_pct: 40,
             terminal_split_pct: 70,
             explorer_split_pct: 60,
+        },
+        updates: UpdatesConfig {
+            check_on_startup: false,
+            check_interval_secs: 60,
         },
     }
 }
@@ -159,12 +157,23 @@ fn セクションごとに鍵を読む() {
             },
         ),
         (
-            "[ui]\ntheme = \"catppuccin-latte\"\nhigh_contrast = true\nicons = \"nerd\"",
+            "[ui]\ntheme = \"catppuccin-latte\"\nhigh_contrast = true\nicons = \"nerd\"\nstartup_animation = false",
             Config {
                 ui: UiConfig {
                     theme: Some(String::from("catppuccin-latte")),
                     high_contrast: true,
                     icons: Some(IconSet::Nerd),
+                    startup_animation: false,
+                },
+                ..d.clone()
+            },
+        ),
+        (
+            "[updates]\ncheck_on_startup = false\ncheck_interval_secs = 60",
+            Config {
+                updates: UpdatesConfig {
+                    check_on_startup: false,
+                    check_interval_secs: 60,
                 },
                 ..d.clone()
             },
@@ -522,6 +531,21 @@ fn 全フィールドはliveかrestartのどちらか一方に属する() {
         ("ui.theme", |c| c.ui.theme = Some("dracula".into()), Live),
         ("ui.high_contrast", |c| c.ui.high_contrast = true, Live),
         ("ui.icons", |c| c.ui.icons = Some(IconSet::Nerd), Live),
+        (
+            "ui.startup_animation",
+            |c| c.ui.startup_animation = false,
+            Live,
+        ),
+        (
+            "updates.check_on_startup",
+            |c| c.updates.check_on_startup = false,
+            Restart,
+        ),
+        (
+            "updates.check_interval_secs",
+            |c| c.updates.check_interval_secs = 60,
+            Restart,
+        ),
         (
             "layout.explorer_width_pct",
             |c| c.layout.explorer_width_pct = 30,

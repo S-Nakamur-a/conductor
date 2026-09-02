@@ -1,6 +1,7 @@
 //! svc に投げる仕事と、その結果の語彙。svc は中身を知らない。
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, LayoutConfig};
@@ -12,6 +13,7 @@ use conductor_core::review_publish::{self, PublishComment, PublishOutcome, Publi
 use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
 };
+use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
@@ -125,6 +127,15 @@ pub enum Task {
     /// 未公開コメントと投稿先。
     LoadPublishable,
     Publish(Box<Publishable>),
+
+    /// GitHub の最新リリース。`max_age` 以内のキャッシュがあればそれで済ませる。
+    CheckForUpdate {
+        max_age: Duration,
+        /// 結果がどうであれステータスに出すか。起動時のチェックは黙って済ませる。
+        announce: bool,
+    },
+    /// ビルド済みバイナリを取ってきて入れ替える。途中経過を何度も返す。
+    DownloadUpdate(Box<UpdateInfo>),
 }
 
 /// 公開の確認と実行に要るもの。
@@ -136,6 +147,23 @@ pub struct Publishable {
     pub comments: Vec<PublishComment>,
     /// 差分の外にあって落としたコメントの数。
     pub skipped: usize,
+}
+
+/// 走っているものと比べた結果。届かなかったことを「最新だった」と混ぜない。
+#[derive(Debug)]
+pub enum UpdateCheck {
+    Newer(Box<UpdateInfo>),
+    UpToDate,
+    Unreachable,
+}
+
+/// 自己更新の進み具合。
+#[derive(Debug)]
+pub enum UpdateStage {
+    Step(update_checker::Progress),
+    /// 入れ替えが済んだ。あとは再起動するだけ。
+    Installed,
+    Failed(String),
 }
 
 /// grab / ungrab が返すもの。
@@ -232,6 +260,11 @@ pub enum TaskResult {
     PrIntake(Result<(u64, PathBuf), String>),
     Publishable(Result<Box<Publishable>, String>),
     Published(PublishOutcome),
+    UpdateCheck {
+        outcome: UpdateCheck,
+        announce: bool,
+    },
+    UpdateProgress(UpdateStage),
 }
 
 impl Task {
@@ -399,7 +432,50 @@ impl Task {
             Task::Publish(request) => {
                 svc.spawn(move || publish(&env, *request), TaskResult::Published);
             }
+
+            Task::CheckForUpdate { max_age, announce } => {
+                svc.spawn(
+                    move || (check_update(max_age), announce),
+                    |(outcome, announce)| TaskResult::UpdateCheck { outcome, announce },
+                );
+            }
+            // 段階ごとに報告するので spawn ではなく送信口を持って自前のスレッドで走る。
+            Task::DownloadUpdate(info) => {
+                let sender = svc.sender();
+                std::thread::spawn(move || {
+                    let stage = install_update(&info, &sender);
+                    sender.send_task(TaskResult::UpdateProgress(stage));
+                });
+            }
         }
+    }
+}
+
+fn check_update(max_age: Duration) -> UpdateCheck {
+    let Some(info) = update_checker::check(max_age) else {
+        return UpdateCheck::Unreachable;
+    };
+    if update_checker::is_newer(&info.latest_version, crate::VERSION) {
+        UpdateCheck::Newer(Box::new(info))
+    } else {
+        UpdateCheck::UpToDate
+    }
+}
+
+fn install_update(
+    info: &UpdateInfo,
+    sender: &conductor_svc::EventSender<TaskResult>,
+) -> UpdateStage {
+    let Some(asset) = update_checker::find_binary_asset(&info.assets) else {
+        return UpdateStage::Failed(format!(
+            "No pre-built binary for this platform in v{}.",
+            info.latest_version
+        ));
+    };
+    let report = |step| sender.send_task(TaskResult::UpdateProgress(UpdateStage::Step(step)));
+    match update_checker::install(asset, &info.latest_version, report) {
+        Ok(()) => UpdateStage::Installed,
+        Err(e) => UpdateStage::Failed(format!("{e:#}")),
     }
 }
 
