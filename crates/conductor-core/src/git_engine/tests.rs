@@ -5,115 +5,9 @@ use git2::Repository;
 
 use super::cherry_pick::format_duration_ago;
 use super::*;
-
-/// git2 の Repository に、テストで繰り返す操作を生やしたもの。main worktree にも
-/// linked worktree にも同じ操作をしたいので TestRepo から分けている。
-struct Tree {
-    path: PathBuf,
-    repo: Repository,
-}
-
-impl Tree {
-    fn open(path: PathBuf) -> Self {
-        let repo = Repository::open(&path).unwrap();
-        Self { path, repo }
-    }
-
-    fn file(&self, rel: &str, content: &str) -> &Self {
-        let full = self.path.join(rel);
-        fs::create_dir_all(full.parent().unwrap()).unwrap();
-        fs::write(full, content).unwrap();
-        self
-    }
-
-    fn add(&self, rel: &str) -> &Self {
-        let mut index = self.repo.index().unwrap();
-        index.add_path(Path::new(rel)).unwrap();
-        index.write().unwrap();
-        self
-    }
-
-    fn commit(&self, message: &str) -> git2::Oid {
-        let sig = signature();
-        let mut index = self.repo.index().unwrap();
-        let tree = self.repo.find_tree(index.write_tree().unwrap()).unwrap();
-        let parent = self.repo.head().ok().and_then(|h| h.peel_to_commit().ok());
-        let parents: Vec<&git2::Commit> = parent.iter().collect();
-        self.repo
-            .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
-            .unwrap()
-    }
-
-    /// HEAD にブランチを作ってチェックアウトする。
-    fn branch(&self, name: &str) -> &Self {
-        let head = self.repo.head().unwrap().peel_to_commit().unwrap();
-        self.repo.branch(name, &head, false).unwrap();
-        self.checkout(name)
-    }
-
-    fn checkout(&self, name: &str) -> &Self {
-        self.repo.set_head(&format!("refs/heads/{name}")).unwrap();
-        self.repo
-            .checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
-            .unwrap();
-        self
-    }
-
-    fn tip(&self, branch: &str) -> git2::Oid {
-        self.repo
-            .find_branch(branch, git2::BranchType::Local)
-            .unwrap()
-            .get()
-            .target()
-            .unwrap()
-    }
-
-    fn head_branch(&self) -> String {
-        self.repo.head().unwrap().shorthand().unwrap().to_string()
-    }
-
-    fn read(&self, rel: &str) -> String {
-        fs::read_to_string(self.path.join(rel)).unwrap()
-    }
-
-    fn engine(&self) -> GitEngine {
-        GitEngine::open(&self.path).unwrap()
-    }
-}
-
-/// 一時ディレクトリの `main/` にリポジトリを持ち、linked worktree はその隣に作る。
-struct TestRepo {
-    root: tempfile::TempDir,
-    main: Tree,
-}
-
-impl std::ops::Deref for TestRepo {
-    type Target = Tree;
-    fn deref(&self) -> &Tree {
-        &self.main
-    }
-}
+use crate::test_support::{TestRepo, Tree, signature};
 
 impl TestRepo {
-    fn new() -> Self {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("main");
-        let mut opts = git2::RepositoryInitOptions::new();
-        opts.initial_head("main");
-        Repository::init_opts(&path, &opts).unwrap();
-        Self {
-            root,
-            main: Tree::open(path),
-        }
-    }
-
-    /// a.txt を 1 つコミットした状態。
-    fn with_base_commit() -> Self {
-        let repo = Self::new();
-        repo.file("a.txt", "base\n").add("a.txt").commit("base");
-        repo
-    }
-
     /// origin を登録したリポジトリ。HEAD を unborn の scratch に逃がしてあるのは、
     /// git が「チェックアウト中のブランチ」への fetch を拒むため。
     fn with_remote(origin: &Origin) -> Self {
@@ -133,29 +27,6 @@ impl TestRepo {
         let repo = Self::new();
         repo.repo.remote("origin", url).unwrap();
         repo
-    }
-
-    /// HEAD から name ブランチを切り、`<root>/<name>` に linked worktree を作る。
-    fn linked_worktree(&self, name: &str) -> Tree {
-        let head = self.repo.head().unwrap().peel_to_commit().unwrap();
-        self.repo.branch(name, &head, false).unwrap();
-        let reference = self
-            .repo
-            .find_reference(&format!("refs/heads/{name}"))
-            .unwrap();
-        let path = self.root.path().join(name);
-        self.repo
-            .worktree(
-                name,
-                &path,
-                Some(git2::WorktreeAddOptions::new().reference(Some(&reference))),
-            )
-            .unwrap();
-        Tree::open(path)
-    }
-
-    fn worktrees_dir(&self) -> PathBuf {
-        self.root.path().join("worktrees")
     }
 }
 
@@ -203,10 +74,6 @@ impl Origin {
             )
             .unwrap()
     }
-}
-
-fn signature() -> git2::Signature<'static> {
-    git2::Signature::now("Test", "test@test.com").unwrap()
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -839,15 +706,6 @@ fn 本当の削除はちゃんと報告する() {
     );
 }
 
-#[cfg(target_os = "macos")]
-fn fs_ignores_case(dir: &Path) -> bool {
-    let probe = dir.join("CaseProbe");
-    fs::write(&probe, b"").unwrap();
-    let ignores = dir.join("caseprobe").is_file();
-    fs::remove_file(&probe).unwrap();
-    ignores
-}
-
 /// リグレッション: ケース違いの 2 エントリに実ファイルが 1 つしか無い状態を git 本体は
 /// clean と報告する。cfg で外してあるのは、走らない環境で「テストが無い」ことを一覧から
 /// 見えるようにするため。
@@ -855,7 +713,7 @@ fn fs_ignores_case(dir: &Path) -> bool {
 #[test]
 fn 大小が衝突するエントリは削除扱いにしない() {
     let repo = TestRepo::new();
-    if !fs_ignores_case(&repo.path) {
+    if !crate::test_support::fs_ignores_case(&repo.path) {
         eprintln!("skipped: 大文字小文字を区別するファイルシステムでは再現しない");
         return;
     }

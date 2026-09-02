@@ -23,6 +23,16 @@ regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
+ignore = "0.4"
+sheaf-core = { path = "../sheaf-core" }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+libc = "0.2"
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.25"
+tree-sitter-typescript = "0.23"
 
 [dev-dependencies]
 tempfile = "3"
+scip = "0.9"
+protobuf = "3.7"
