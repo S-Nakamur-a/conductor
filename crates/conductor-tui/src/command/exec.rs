@@ -219,7 +219,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::CheckForUpdate => vec![
             Effect::Status(
                 StatusLevel::Info,
-                format!("Checking for updates\u{2026} (running v{})", crate::VERSION),
+                format!("Checking for updates\u{2026} (running v{})", ws.version),
             ),
             // 手で頼んだのだからキャッシュは見ない。
             Effect::Spawn(Task::CheckForUpdate {

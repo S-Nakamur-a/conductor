@@ -55,3 +55,52 @@ pub(crate) fn signal_refresh(pipe_path: &Path) {
         log::debug!("refresh pipe write failed: {e}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// .conductor/ に refresh.pipe すら無い「conductor が動いていない」経路。
+    #[test]
+    fn パイプが無ければ即座に返る() {
+        let dir = tempfile::tempdir().unwrap();
+        signal_refresh(&dir.path().join("does-not-exist.pipe"));
+    }
+
+    /// FIFO を書き込み用に開くのは読み手が繋がるまでブロックするので、O_NONBLOCK を
+    /// 落とすとツール呼び出しが永久に固まる。退行時に CI がハングせず落ちるよう、
+    /// 別スレッドで期限を切る。
+    #[test]
+    fn 読み手がいなければ即座に返る() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe_path = dir.path().join("refresh.pipe");
+        let path_cstr = std::ffi::CString::new(pipe_path.to_str().unwrap()).unwrap();
+        // SAFETY: 標準的な POSIX の mkfifo。path_cstr は有効かつ null 終端されている。
+        assert_eq!(unsafe { libc::mkfifo(path_cstr.as_ptr(), 0o660) }, 0);
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            signal_refresh(&pipe_path);
+            let _ = tx.send(());
+        });
+
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("signal_refresh hung on a reader-less FIFO");
+    }
+
+    /// 特殊ファイル抜きで展開されたアーカイブや復元されたバックアップでは、
+    /// refresh.pipe が通常ファイルとして戻ってくる。
+    #[test]
+    fn 普通のファイルには書き込まない() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_pipe = dir.path().join("refresh.pipe");
+        let original = "IMPORTANT PRE-EXISTING CONTENT";
+        std::fs::write(&not_a_pipe, original).unwrap();
+
+        signal_refresh(&not_a_pipe);
+
+        assert_eq!(std::fs::read_to_string(&not_a_pipe).unwrap(), original);
+    }
+}

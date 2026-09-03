@@ -37,6 +37,7 @@ const AI_TIMEOUT_SECS: u64 = 15 * 60;
 #[derive(Debug, Clone)]
 pub struct TaskEnv {
     pub root: PathBuf,
+    pub version: &'static str,
     pub main_branch: String,
     pub worktree_dir: Option<PathBuf>,
     pub word_diff: bool,
@@ -549,7 +550,7 @@ impl Task {
 
             Task::CheckForUpdate { max_age, announce } => {
                 svc.spawn(
-                    move || (check_update(max_age), announce),
+                    move || (check_update(max_age, env.version), announce),
                     |(outcome, announce)| TaskResult::UpdateCheck { outcome, announce },
                 );
             }
@@ -717,11 +718,11 @@ fn tail_chars(s: &str, n: usize) -> &str {
     }
 }
 
-fn check_update(max_age: Duration) -> UpdateCheck {
+fn check_update(max_age: Duration, version: &str) -> UpdateCheck {
     let Some(info) = update_checker::check(max_age) else {
         return UpdateCheck::Unreachable;
     };
-    if update_checker::is_newer(&info.latest_version, crate::VERSION) {
+    if update_checker::is_newer(&info.latest_version, version) {
         UpdateCheck::Newer(Box::new(info))
     } else {
         UpdateCheck::UpToDate

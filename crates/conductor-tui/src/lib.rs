@@ -4,13 +4,11 @@
 //! 取らない。パネルは自分の状態しか &mut で受け取れず、他への影響は Effect でしか
 //! 表現できない。
 
-/// このバイナリのバージョン。更新の判定とタイトルバーが読む。
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 pub mod command;
 pub mod comment_list;
 pub mod effect;
 pub mod entrance;
+pub mod entry;
 pub mod index;
 pub mod layout;
 pub mod list;

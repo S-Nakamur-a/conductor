@@ -69,8 +69,7 @@ pub fn lines(modal: &Update, ctx: &Ctx) -> Vec<Line<'static>> {
             Line::styled(
                 format!(
                     " Download v{} and restart? (running v{})",
-                    info.latest_version,
-                    crate::VERSION
+                    info.latest_version, ctx.version
                 ),
                 Style::default().fg(theme.fg),
             ),
@@ -134,7 +133,7 @@ pub(crate) mod tests {
             .map(Line::to_string)
             .collect();
         assert!(text.contains("v9.9.9"), "{text}");
-        assert!(text.contains(crate::VERSION), "{text}");
+        assert!(text.contains(ws.version), "{text}");
         assert!(title(&modal).contains("v9.9.9"));
     }
 

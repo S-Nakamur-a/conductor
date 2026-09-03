@@ -1,4 +1,4 @@
-//! conductor-next の起動と終了。
+//! conductor の起動と終了。
 //!
 //! 順番に意味がある — CLI の即答フラグは端末に触る前に返さねばならず (mcp-serve は
 //! stdout で JSON-RPC を話す)、端末ケイパビリティの問い合わせは raw mode に入った
@@ -7,6 +7,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::workspace::{RepoState, StatusLevel, StatusMessage, Workspace};
+use crate::{run, term};
 use anyhow::Result;
 use conductor_core::config::Config;
 use conductor_core::git_engine::GitEngine;
@@ -15,18 +17,20 @@ use conductor_core::theme::Theme;
 use conductor_core::{cc_hook, config, instance_lock, semantic_index, term_caps};
 use conductor_svc::Services;
 use conductor_svc::watch::{CcNotifyListener, RefreshPipe};
-use conductor_tui::workspace::{RepoState, StatusLevel, StatusMessage, Workspace};
-use conductor_tui::{run, term};
 use crossterm::execute;
 use crossterm::terminal::SetTitle;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-fn main() -> Result<()> {
+/// 端末を借りて画面を回し、抜けるときは必ず返す。
+///
+/// version は root の Cargo.toml のもの。conductor-tui 自身の版は 0.1.0 なので、ここを
+/// env!("CARGO_PKG_VERSION") に畳むと更新チェックが常に「新版あり」になる。
+pub fn run(version: &'static str) -> Result<()> {
     term::install_panic_hook();
     env_logger::init();
 
-    if let Some(result) = cli_fast_path() {
+    if let Some(result) = cli_fast_path(version) {
         return result;
     }
 
@@ -47,7 +51,7 @@ fn main() -> Result<()> {
         }
     };
 
-    let mut ws = workspace(repo_root);
+    let mut ws = workspace(repo_root, version);
     let mut svc = Services::new();
     // Claude Code のフックがこのソケットへ active/waiting とセッション id を送る。
     let _cc_notify = match CcNotifyListener::new(&ws.repo.root, svc.sender()) {
@@ -104,7 +108,7 @@ fn relaunch(exe: &Path, args: &[String]) -> ! {
     std::process::exit(1);
 }
 
-fn workspace(root: PathBuf) -> Workspace {
+fn workspace(root: PathBuf, version: &'static str) -> Workspace {
     let (config, config_warning) = match Config::load() {
         Ok(config) => (config, None),
         Err(e) => (Config::default(), Some(format!("config: {e}"))),
@@ -113,7 +117,7 @@ fn workspace(root: PathBuf) -> Workspace {
     let theme = Theme::from_name(config.theme_name());
     let repo = repo_state(root, &config);
 
-    let mut ws = Workspace::new(repo, config, keymap, theme);
+    let mut ws = Workspace::new(repo, config, keymap, theme, version);
     let warning = config_warning.into_iter().chain(
         keybind_warnings
             .iter()
@@ -178,20 +182,17 @@ fn worktree_root(from: &Path) -> PathBuf {
 }
 
 /// 何か出力して終了すべきなら Some(結果)、TUI を起動して続けるなら None。
-fn cli_fast_path() -> Option<Result<()>> {
+fn cli_fast_path(version: &str) -> Option<Result<()>> {
     match std::env::args().nth(1)?.as_str() {
         "--version" | "-V" => {
-            println!("conductor {}", env!("CARGO_PKG_VERSION"));
+            println!("conductor {version}");
             Some(Ok(()))
         }
         "--help" | "-h" => {
-            print_help();
+            print_help(version);
             Some(Ok(()))
         }
-        "mcp-serve" => Some(conductor_mcp::run(
-            std::env::args(),
-            env!("CARGO_PKG_VERSION"),
-        )),
+        "mcp-serve" => Some(conductor_mcp::run(std::env::args(), version)),
         "cc-hook" => Some(cc_hook::run()),
         "index" => Some(build_index()),
         _ => None,
@@ -215,14 +216,14 @@ fn build_index() -> Result<()> {
     Ok(())
 }
 
-fn print_help() {
+fn print_help(version: &str) {
     println!(
-        r#"conductor {}
+        r#"conductor {version}
 
-Usage: conductor-next [REPO_PATH]
-       conductor-next index [REPO_PATH]
-       conductor-next mcp-serve [--db <PATH>]
-       conductor-next cc-hook
+Usage: conductor [REPO_PATH]
+       conductor index [REPO_PATH]
+       conductor mcp-serve [--db <PATH>]
+       conductor cc-hook
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
@@ -248,8 +249,7 @@ Commands:
 
 Options:
   -V, --version    Print version and exit
-  -h, --help       Print this help and exit"#,
-        env!("CARGO_PKG_VERSION")
+  -h, --help       Print this help and exit"#
     );
 }
 

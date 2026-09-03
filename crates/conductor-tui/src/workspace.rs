@@ -181,6 +181,7 @@ pub struct Panels {
 /// 読み取り専用の環境。パネルの update と render の両方に渡す。
 pub struct Ctx<'a> {
     pub theme: &'a Theme,
+    pub version: &'static str,
     pub keymap: &'a KeyMap,
     pub config: &'a Config,
     pub repo: &'a RepoState,
@@ -197,6 +198,7 @@ pub struct Ctx<'a> {
 
 pub struct Workspace {
     pub repo: RepoState,
+    pub version: &'static str,
     pub focus: Focus,
     pub panels: Panels,
     pub modals: Vec<Modal>,
@@ -214,7 +216,13 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(repo: RepoState, config: Config, keymap: KeyMap, theme: Theme) -> Self {
+    pub fn new(
+        repo: RepoState,
+        config: Config,
+        keymap: KeyMap,
+        theme: Theme,
+        version: &'static str,
+    ) -> Self {
         let panels = Panels {
             worktree: WorktreePanel::default(),
             explorer: ExplorerPanel::default(),
@@ -224,6 +232,7 @@ impl Workspace {
         };
         Self {
             repo,
+            version,
             focus: Focus::Explorer,
             panels,
             modals: Vec::new(),
@@ -246,6 +255,7 @@ impl Workspace {
     pub fn ctx(&self) -> Ctx<'_> {
         Ctx {
             theme: &self.theme,
+            version: self.version,
             keymap: &self.keymap,
             config: &self.config,
             repo: &self.repo,
@@ -285,6 +295,7 @@ impl Workspace {
     pub fn task_env(&self) -> TaskEnv {
         TaskEnv {
             root: self.repo.root.clone(),
+            version: self.version,
             main_branch: self.repo.main_branch.clone(),
             worktree_dir: self.config.general.worktree_dir.clone(),
             word_diff: self.config.diff.word_diff,
@@ -303,6 +314,7 @@ impl Workspace {
         let Self {
             panels,
             modals,
+            version,
             theme,
             keymap,
             config,
@@ -314,6 +326,7 @@ impl Workspace {
         } = self;
         let ctx = Ctx {
             theme,
+            version,
             keymap,
             config,
             repo,
@@ -429,7 +442,7 @@ impl Workspace {
                 self.chrome.update = None;
                 (
                     StatusLevel::Info,
-                    format!("Already up to date (v{}).", crate::VERSION),
+                    format!("Already up to date (v{}).", self.version),
                 )
             }
             // 届かなかっただけ。すでに出ているバッジは消さない。
@@ -619,7 +632,7 @@ impl Workspace {
         // 起動演出は画面を伏せるので、描画とフレームの理由を見るテストでは切っておく。
         let mut config = Config::default();
         config.ui.startup_animation = false;
-        Self::new(repo, config, keymap, Theme::default())
+        Self::new(repo, config, keymap, Theme::default(), "0.0.0-test")
     }
 }
 
