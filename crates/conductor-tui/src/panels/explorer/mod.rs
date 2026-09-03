@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use conductor_core::diff_state::{DiffListEntry, DiffState};
 use conductor_core::keymap::{Action, KeyContext};
 
+use crate::click::ClickTracker;
 use crate::comment_list::CommentList;
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
@@ -46,6 +47,10 @@ pub struct ExplorerPanel {
     pub comments: CommentList,
     tree_view: Viewport,
     changes_view: Viewport,
+    /// ダブルクリックの判定は区画ごとに持つ。ひとつにすると、ツリーと変更一覧を
+    /// 1 回ずつ押しただけで 2 回目になる。
+    tree_clicks: ClickTracker,
+    changes_clicks: ClickTracker,
     /// 投げたまま結果がまだ届いていない Task の数。
     pending: usize,
 }
@@ -62,6 +67,8 @@ impl Default for ExplorerPanel {
             comments: CommentList::default(),
             tree_view: Viewport::default(),
             changes_view: Viewport::default(),
+            tree_clicks: ClickTracker::default(),
+            changes_clicks: ClickTracker::default(),
             pending: 0,
         }
     }
@@ -239,7 +246,7 @@ impl ExplorerPanel {
                 .select(usize::MAX, len, self.changes_view),
             Action::CollapseOrLeft => self.diff.collapse_section(row),
             Action::ExpandOrRight => self.diff.expand_section(row),
-            Action::Select => return Some(self.activate_change(row)),
+            Action::Select => return Some(self.activate_change(row, false)),
             _ => return None,
         }
         Some(Vec::new())
@@ -256,17 +263,18 @@ impl ExplorerPanel {
         }
     }
 
-    fn open_diff(&self, row: usize) -> Option<Effect> {
+    fn open_diff(&self, row: usize, preview: bool) -> Option<Effect> {
         let file = self.diff.resolve_file(row)?;
         Some(Effect::OpenFile {
             path: PathBuf::from(&file.path),
             line: None,
             diff: Some(Box::new(file.clone())),
-            preview: false,
+            preview,
         })
     }
 
-    /// 行のクリック。ファイルは preview で開き、ディレクトリは開閉する。
+    /// 行のクリック。ディレクトリは開閉し、ファイルは preview で開いて 2 回目で固定する
+    /// — preview のタブは 1 枚しか残らないので、開いたタブが溜まらない。
     /// 区画の外なら何も起きない。
     pub fn click(&mut self, y: u16, review: &ReviewState) -> Vec<Effect> {
         let visible = self.tree.visible();
@@ -284,7 +292,8 @@ impl ExplorerPanel {
                 return Vec::new();
             }
             let path = entry.path.clone();
-            return vec![self.open(&path, true)];
+            let preview = !self.tree_clicks.is_double(row);
+            return vec![self.open(&path, preview)];
         }
         if self.bottom == BottomView::Comments {
             self.pane = Pane::Bottom;
@@ -296,17 +305,18 @@ impl ExplorerPanel {
         };
         self.pane = Pane::Bottom;
         self.changes_cursor.select(row, len, self.changes_view);
-        self.activate_change(row)
+        let preview = !self.changes_clicks.is_double(row);
+        self.activate_change(row, preview)
     }
 
     /// 変更一覧の 1 行を発火させる。ディレクトリは開閉し、ファイルは diff を開く。
-    fn activate_change(&mut self, row: usize) -> Vec<Effect> {
+    fn activate_change(&mut self, row: usize, preview: bool) -> Vec<Effect> {
         match self.diff.display_list.get(row) {
             Some(DiffListEntry::Directory { .. }) => {
                 self.diff.toggle_section(row);
                 Vec::new()
             }
-            Some(DiffListEntry::File { .. }) => self.open_diff(row).into_iter().collect(),
+            Some(DiffListEntry::File { .. }) => self.open_diff(row, preview).into_iter().collect(),
             _ => Vec::new(),
         }
     }
@@ -346,7 +356,7 @@ impl ExplorerPanel {
         };
         self.changes_cursor
             .select(next, self.diff.display_list.len(), self.changes_view);
-        self.open_diff(next)
+        self.open_diff(next, false)
     }
 
     /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
@@ -524,6 +534,38 @@ mod tests {
         };
         assert_eq!(path.to_str(), Some("a.rs"));
         assert_eq!(diff.as_ref().map(|d| d.path.as_str()), Some("a.rs"));
+    }
+
+    #[test]
+    fn ツリーの2回目のクリックは固定して開く() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+        let mut ex = ExplorerPanel::default();
+        ex.tree.install(tree::survey(dir.path(), &[]));
+        ex.tree_view = Viewport::new(0, 20);
+        let review = ReviewState::default();
+
+        for want_preview in [true, false] {
+            let effects = ex.click(0, &review);
+            let [Effect::OpenFile { path, preview, .. }] = effects.as_slice() else {
+                panic!("{effects:?}");
+            };
+            assert_eq!((path.to_str(), *preview), (Some("a.rs"), want_preview));
+        }
+    }
+
+    #[test]
+    fn 変更一覧の2回目のクリックは固定して開く() {
+        let mut ws = with_changes(&["a.rs", "b.rs"]);
+        let review = ReviewState::default();
+
+        for want_preview in [true, false] {
+            let effects = ws.panels.explorer.click(0, &review);
+            let [Effect::OpenFile { path, preview, .. }] = effects.as_slice() else {
+                panic!("{effects:?}");
+            };
+            assert_eq!((path.to_str(), *preview), (Some("a.rs"), want_preview));
+        }
     }
 
     #[test]

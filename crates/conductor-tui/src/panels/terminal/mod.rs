@@ -19,6 +19,7 @@ use conductor_svc::pty::{Launch, PtyStore, SessionKind, Spawn};
 use conductor_svc::watch::{CcState, WatchEvent};
 use crossterm::event::KeyEvent;
 
+use crate::click::ClickTracker;
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
 use crate::panels::viewer::syntax::Highlighter;
@@ -40,6 +41,7 @@ pub struct Pane {
     size: (u16, u16),
     /// スクロールバックのオフセット。0 が最新。
     scroll: usize,
+    clicks: ClickTracker,
 }
 
 impl Pane {
@@ -49,6 +51,7 @@ impl Pane {
             session: None,
             size,
             scroll: 0,
+            clicks: ClickTracker::default(),
         }
     }
 
@@ -335,6 +338,18 @@ impl TerminalPanel {
             reflow.jump_to_latest();
         }
         hit
+    }
+
+    /// 空の区画のクリック。2 回目で新しいセッションを起こす。1 回で起こすと、
+    /// 区画へフォーカスを移すだけのつもりのクリックがそのままプロセスを増やす。
+    pub fn click(&mut self, focus: Focus) -> Vec<Effect> {
+        let Some(pane) = self.pane_mut(focus) else {
+            return Vec::new();
+        };
+        if pane.session.is_some() || !pane.clicks.is_double(0) {
+            return Vec::new();
+        }
+        vec![Effect::NewSession(pane.kind)]
     }
 
     /// 描く前に行を組み直す。トランスクリプトを開いていなければ何もしない。
@@ -908,6 +923,16 @@ mod tests {
         );
         let reflow = panel.transcript.as_ref().expect("ビューは開いたまま");
         assert!(reflow.is_loading(), "他人のログを載せてはいけない");
+    }
+
+    #[test]
+    fn 空の区画は2回目のクリックでセッションを起こす() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        assert!(panel.click(Focus::TerminalClaude).is_empty(), "1 回目");
+        assert!(matches!(
+            panel.click(Focus::TerminalClaude).as_slice(),
+            [Effect::NewSession(SessionKind::ClaudeCode)]
+        ));
     }
 
     #[test]

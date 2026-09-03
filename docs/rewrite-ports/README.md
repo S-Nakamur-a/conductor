@@ -11,6 +11,7 @@
   変わって対象そのものが無くなった。往復は `conductor-tui/src/layout.rs` のテストが固定する
 - `src/refresh_pipe.rs` の書き手側 3 本 — `conductor-mcp/src/refresh_signal.rs` へ移植
   (watchers.md の「未移植」が解消)
+- `src/widget/click.rs` の `ClickTracker` 4 本 — 切替時に落ちていたのを移植し直した。click.md
 
 Smart Worktree (`src/worktree/worktree_smart.rs`) は機能ごと未移植のまま。テスト 6 本の
 一覧は git_modals.md に残してある。

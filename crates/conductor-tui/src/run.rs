@@ -328,6 +328,7 @@ fn on_mouse(
                         review,
                     )
                 }
+                Focus::TerminalClaude | Focus::TerminalShell => ws.panels.terminal.click(focus),
                 _ => Vec::new(),
             };
             apply(ws, svc, effects);
