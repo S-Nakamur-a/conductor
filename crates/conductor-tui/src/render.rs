@@ -42,6 +42,10 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     }
                     Region::Editor => crate::panels::terminal::render::editor(frame, rect, ws),
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
+                    Region::RevidereOrder => {
+                        crate::panels::revidere::render::order(frame, rect, ws)
+                    }
+                    Region::RevidereDiff => crate::panels::revidere::render::diff(frame, rect, ws),
                     _ => {}
                 }
             }
@@ -163,6 +167,8 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         },
         Region::TerminalClaude => " Claude Code ".to_string(),
         Region::TerminalShell => " Shell ".to_string(),
+        Region::RevidereOrder => crate::panels::revidere::render::order_title(ws),
+        Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
         _ => String::new(),
     };
     Block::default()
@@ -178,7 +184,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         ))
 }
 
-/// フォーカスが枠を光らせる区画。Editor と Revidere は Viewer の場所を借りる。
+/// フォーカスが枠を光らせる区画。Editor は Viewer の場所を借りる。
 fn focused_region(ws: &Workspace) -> Region {
     match ws.focus {
         Focus::Worktree => Region::WorktreeStrip,
@@ -187,7 +193,11 @@ fn focused_region(ws: &Workspace) -> Region {
             crate::panels::explorer::Pane::Bottom => Region::ExplorerChanges,
         },
         Focus::Editor => Region::Editor,
-        Focus::Viewer | Focus::Revidere => Region::Viewer,
+        Focus::Revidere => match ws.panels.revidere.column() {
+            crate::panels::revidere::Column::Order => Region::RevidereOrder,
+            crate::panels::revidere::Column::Diff => Region::RevidereDiff,
+        },
+        Focus::Viewer => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
     }
@@ -277,11 +287,13 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("panel", &[Action::CycleFocusForward]),
         ],
         Focus::Revidere => &[
-            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("column", &[Action::ExpandOrRight, Action::CollapseOrLeft]),
             (
                 "section",
-                &[Action::RevidereNextSection, Action::RevidererPrevSection],
+                &[Action::RevidereNextSection, Action::ReviderePrevSection],
             ),
+            ("overview", &[Action::RevidereShowOverview]),
             ("close", &[Action::ExitSubPanel]),
         ],
     };
@@ -422,6 +434,10 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
                 Line::from(""),
                 Line::styled("y / n", Style::default().fg(ws.theme.hint)),
             ],
+        ),
+        Modal::RevidereConfirm(confirm) => (
+            crate::modal::revidere::title(confirm),
+            crate::modal::revidere::lines(confirm, &ws.theme),
         ),
         Modal::CommentEditor(editor) => (
             editor.title(),

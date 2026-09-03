@@ -134,7 +134,7 @@ fn 既定のキーが解決する() {
         ),
         (Revidere, ch('j'), Action::NavigateDown),
         (Revidere, ch('n'), Action::RevidereNextSection),
-        (Revidere, shift('N'), Action::RevidererPrevSection),
+        (Revidere, shift('N'), Action::ReviderePrevSection),
         (
             Revidere,
             key(KeyCode::Enter, KeyModifiers::NONE),

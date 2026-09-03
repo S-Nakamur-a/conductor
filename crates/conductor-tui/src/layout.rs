@@ -17,6 +17,8 @@ pub enum Region {
     Editor,
     TerminalClaude,
     TerminalShell,
+    RevidereOrder,
+    RevidereDiff,
     StatusBar,
 }
 
@@ -44,6 +46,10 @@ impl Layout {
             .map(|(region, _)| *region)
     }
 }
+
+/// レビューの左列 (読む順) が取る幅の割合。項目の見出しが 2〜3 行に収まりつつ、
+/// diff 側に十分な幅が残る配分。
+const REVIDERE_ORDER_PCT: u16 = 32;
 
 /// 幅の配分。フォーカスされた列が広がるアコーディオン。
 pub fn layout(ws: &Workspace, area: Rect) -> Layout {
@@ -83,10 +89,27 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         ));
     };
 
-    if ws.chrome.maximized {
+    // レビューは 3 列アコーディオンと重ならない。最大化とも無関係に main を 2 つに割る。
+    if ws.focus == Focus::Revidere {
+        // 概要は 1 列。
+        if !ws.panels.revidere.showing_overview() {
+            let order_w = main.width * REVIDERE_ORDER_PCT / 100;
+            regions.push((
+                Region::RevidereOrder,
+                Rect::new(main.x, main.y, order_w, main.height),
+            ));
+            regions.push((
+                Region::RevidereDiff,
+                Rect::new(main.x + order_w, main.y, main.width - order_w, main.height),
+            ));
+        } else {
+            regions.push((Region::RevidereDiff, main));
+        }
+    } else if ws.chrome.maximized {
         match ws.focus {
             Focus::Worktree | Focus::Explorer => push_explorer(&mut regions, main),
             Focus::Editor => regions.push((Region::Editor, main)),
+            // Revidere は上で返しているのでここには来ない。
             Focus::Viewer | Focus::Revidere => regions.push((Region::Viewer, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
             Focus::TerminalShell => regions.push((Region::TerminalShell, main)),
@@ -136,14 +159,18 @@ mod tests {
     #[test]
     fn 全ての区画は_hitで自分に戻る() {
         let mut ws = Workspace::for_test();
-        for (maximized, focus) in [
-            (false, Focus::Explorer),
-            (true, Focus::Explorer),
-            (false, Focus::Editor),
-            (true, Focus::Editor),
+        for (maximized, focus, overview) in [
+            (false, Focus::Explorer, false),
+            (true, Focus::Explorer, false),
+            (false, Focus::Editor, false),
+            (true, Focus::Editor, false),
+            (false, Focus::Revidere, false),
+            (false, Focus::Revidere, true),
+            (true, Focus::Revidere, false),
         ] {
             ws.chrome.maximized = maximized;
             ws.focus = focus;
+            ws.panels.revidere.show_overview(overview);
             let l = layout(&ws, Rect::new(0, 0, 120, 40));
             for (region, rect) in &l.regions {
                 for (x, y) in [
@@ -159,7 +186,7 @@ mod tests {
     #[test]
     fn 区画は重ならず画面を埋める() {
         let mut ws = Workspace::for_test();
-        for focus in [Focus::Explorer, Focus::Editor] {
+        for focus in [Focus::Explorer, Focus::Editor, Focus::Revidere] {
             ws.focus = focus;
             let l = layout(&ws, Rect::new(0, 0, 120, 40));
             let total: u32 = l.regions.iter().map(|(_, r)| r.area()).sum();
@@ -183,5 +210,25 @@ mod tests {
             l.rect(Region::ExplorerTree).is_some() && l.rect(Region::ExplorerChanges).is_some(),
             "最大化しても Explorer の 2 区画は残る"
         );
+    }
+
+    #[test]
+    fn レビューは_2_列で_main_を占め概要では_1_列になる() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Revidere;
+        ws.panels.revidere.show_overview(false);
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let order = l.rect(Region::RevidereOrder).expect("読む順の列");
+        let diff = l.rect(Region::RevidereDiff).expect("diff の列");
+        assert_eq!(order.x + order.width, diff.x);
+        assert!(
+            l.rect(Region::TerminalClaude).is_none() && l.rect(Region::Viewer).is_none(),
+            "アコーディオンの列は隠れる"
+        );
+
+        ws.panels.revidere.show_overview(true);
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        assert!(l.rect(Region::RevidereOrder).is_none());
+        assert_eq!(l.rect(Region::RevidereDiff).map(|r| r.width), Some(120));
     }
 }

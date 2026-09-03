@@ -1,11 +1,14 @@
 //! svc に投げる仕事と、その結果の語彙。svc は中身を知らない。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use conductor_core::ai_caller::{self, AiCaller};
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
-use conductor_core::config::{self, LayoutConfig};
+use conductor_core::config::{self, ApiConfig, LayoutConfig};
 use conductor_core::diff_state::DiffState;
 use conductor_core::git_engine::{CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir};
 use conductor_core::grep_search::{self, GrepMatch};
@@ -20,8 +23,15 @@ use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
+use crate::panels::revidere::artifact;
 use crate::panels::viewer::{content, media};
 use crate::review::Snapshot;
+
+/// 解析 1 回の AI 呼び出しに与える実時間の上限 (秒)。
+///
+/// `[api] command_timeout_secs` の既定は数秒のブランチ命名を想定した値で、
+/// 差分を読んで語る呼び出しはそのままでは打ち切られる。
+const AI_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// Task が git を触るのに要るもの。Workspace が持っているので、Task 自身は運ばない。
 #[derive(Debug, Clone)]
@@ -165,6 +175,33 @@ pub enum Task {
     },
     /// tree-sitter の索引を作る。渡した handle は呼び出し側と同じ索引を指す。
     BuildSymbols(SymbolIndex),
+
+    /// レビューの成果物を読み、読む順まで組む。git diff を取り直すので UI では読まない。
+    LoadRevidere {
+        worktree: PathBuf,
+        scope: revidere::Scope,
+    },
+    /// AI にレビューを書かせる。数分かかる。`cancel` は終了時に子プロセスを殺すための
+    /// 旗で、起こした側と共有する。
+    Analyze {
+        worktree: PathBuf,
+        branch: String,
+        scope: revidere::Scope,
+        /// 貯めた応答を捨てるか。捨てないと、作り直しを選んだのに前と同じ答えが返る。
+        force: bool,
+        api: ApiConfig,
+        cancel: Arc<AtomicBool>,
+    },
+}
+
+/// 解析が終わったときの結果。
+#[derive(Debug)]
+pub enum AnalyzeOutcome {
+    /// 成果物ができた。`coverage_complete` が false でも成果物は読める。
+    Done {
+        coverage_complete: bool,
+    },
+    Failed(String),
 }
 
 /// 公開の確認と実行に要るもの。
@@ -305,6 +342,11 @@ pub enum TaskResult {
     UpdateProgress(UpdateStage),
     IndexLoaded(Box<crate::index::Load>),
     SymbolsBuilt(usize),
+    RevidereLoaded(Box<artifact::Outcome>),
+    Analyzed {
+        branch: String,
+        outcome: AnalyzeOutcome,
+    },
 }
 
 impl Task {
@@ -538,6 +580,29 @@ impl Task {
                 svc.spawn(move || index.build(), TaskResult::SymbolsBuilt);
             }
 
+            Task::LoadRevidere { worktree, scope } => {
+                svc.spawn(
+                    move || Box::new(artifact::load(&worktree, scope)),
+                    TaskResult::RevidereLoaded,
+                );
+            }
+            Task::Analyze {
+                worktree,
+                branch,
+                scope,
+                force,
+                api,
+                cancel,
+            } => {
+                svc.spawn(
+                    move || {
+                        let outcome = analyze(&worktree, scope, force, &api, &cancel);
+                        TaskResult::Analyzed { branch, outcome }
+                    },
+                    |result| result,
+                );
+            }
+
             // 段階ごとに報告するので spawn ではなく送信口を持って自前のスレッドで走る。
             Task::DownloadUpdate(info) => {
                 let sender = svc.sender();
@@ -547,6 +612,108 @@ impl Task {
                 });
             }
         }
+    }
+}
+
+/// revidere の AI の継ぎ目を [conductor_core::ai_caller] に繋ぐ。
+struct AiSeam {
+    caller: Box<dyn AiCaller>,
+    identity: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl revidere::Ai for AiSeam {
+    fn complete(&self, system: &str, user: &str) -> Result<String, String> {
+        self.caller.complete(system, user, &self.cancel)
+    }
+
+    fn identity(&self) -> String {
+        self.identity.clone()
+    }
+}
+
+/// 答えを出しているものが変わったら別物として扱えればよいので、provider と
+/// その provider が実際に叩く先だけを並べる。
+fn ai_identity(api: &ApiConfig) -> String {
+    let provider = api.provider.trim().to_lowercase();
+    let target = if provider == "command" {
+        api.command.join(" ")
+    } else {
+        api.model.clone()
+    };
+    format!("{provider}:{target}")
+}
+
+/// panic を握るのは、結果を送らずにワーカーが死ぬとブランチの枠が解放されず、
+/// 次の要求が「すでに実行中」と言われ続けるため。
+fn analyze(
+    worktree: &Path,
+    scope: revidere::Scope,
+    force: bool,
+    api: &ApiConfig,
+    cancel: &Arc<AtomicBool>,
+) -> AnalyzeOutcome {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_analyze(worktree, scope, force, api, cancel)
+    }))
+    .unwrap_or_else(|_| AnalyzeOutcome::Failed("the analysis thread panicked".into()))
+}
+
+fn run_analyze(
+    worktree: &Path,
+    scope: revidere::Scope,
+    force: bool,
+    api: &ApiConfig,
+    cancel: &Arc<AtomicBool>,
+) -> AnalyzeOutcome {
+    // 起点はブランチ全体の成果物にしか書かれていない。無いのは 1 度目のレビューを
+    // 作った直後で、比べる前回がまだ存在しない。
+    let base = match scope {
+        revidere::Scope::Base => None,
+        revidere::Scope::SincePrevious => match artifact::previous_head(worktree) {
+            Some(base) => Some(base),
+            None => {
+                return AnalyzeOutcome::Failed(
+                    "no previous review to compare against yet \u{2014} analyse the branch (W), \
+                     commit, then analyse again"
+                        .into(),
+                );
+            }
+        },
+    };
+    let env = ai_caller::TaskEnv {
+        timeout_secs: Some(AI_TIMEOUT_SECS),
+        working_dir: Some(worktree.to_path_buf()),
+    };
+    let caller = match ai_caller::build_caller(api, &env) {
+        Ok(caller) => caller,
+        Err(e) => return AnalyzeOutcome::Failed(e),
+    };
+    let ai = AiSeam {
+        caller,
+        identity: ai_identity(api),
+        cancel: Arc::clone(cancel),
+    };
+    let options = revidere::Options {
+        repo: worktree.to_path_buf(),
+        base,
+        cache: !force,
+        scope,
+    };
+    match revidere::analyze(&options, &ai) {
+        Ok(review) => AnalyzeOutcome::Done {
+            coverage_complete: review.coverage.is_complete(),
+        },
+        Err(e) => AnalyzeOutcome::Failed(tail_chars(&e.to_string(), 300).to_string()),
+    }
+}
+
+/// s の末尾 n 文字 (文字境界を壊さず)。
+fn tail_chars(s: &str, n: usize) -> &str {
+    match n.checked_sub(1).and_then(|n| s.char_indices().nth_back(n)) {
+        Some((i, _)) => &s[i..],
+        None if n == 0 => "",
+        None => s,
     }
 }
 
@@ -984,4 +1151,55 @@ fn compute_diff(env: &TaskEnv, worktree: &Path) -> DiffState {
     let mut diff = DiffState::new(&env.main_branch);
     diff.load_diff(worktree, &env.main_branch, env.word_diff, env.tab_width);
     diff
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn api(provider: &str, model: &str, command: &[&str]) -> ApiConfig {
+        ApiConfig {
+            provider: provider.into(),
+            model: model.into(),
+            command: command.iter().map(|s| (*s).to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// 貯めた応答の鍵に混ざる。ここが定数だと、モデルを替えても前のモデルの答えが
+    /// 返り続ける。command では叩く先が argv にしかないので、argv まで含める。
+    #[test]
+    fn 呼び先の見分けは_provider_と叩く先を含む() {
+        let cases = [
+            (
+                api("gemini", "gemini-2.5-flash", &[]),
+                "gemini:gemini-2.5-flash",
+            ),
+            (api("gemini", "gemini-3", &[]), "gemini:gemini-3"),
+            (
+                api("command", "ignored", &["claude", "-p"]),
+                "command:claude -p",
+            ),
+            (
+                api("command", "ignored", &["codex", "exec"]),
+                "command:codex exec",
+            ),
+            (api("COMMAND", "ignored", &["claude"]), "command:claude"),
+        ];
+        for (api, want) in &cases {
+            assert_eq!(&ai_identity(api), want);
+        }
+    }
+
+    #[test]
+    fn 末尾のn文字は文字境界を壊さない() {
+        for (text, n, want) in [
+            ("abcdef", 3, "def"),
+            ("abc", 10, "abc"),
+            ("abc", 0, ""),
+            ("あいうえお", 2, "えお"),
+        ] {
+            assert_eq!(tail_chars(text, n), want, "{text} {n}");
+        }
+    }
 }

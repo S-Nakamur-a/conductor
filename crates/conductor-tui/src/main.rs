@@ -81,6 +81,7 @@ fn main() -> Result<()> {
     let relaunch_args: Vec<String> = std::env::args().skip(1).collect();
 
     let result = run::run(&mut terminal, &mut ws, &mut svc);
+    ws.panels.revidere.abort();
 
     // 復旧はエラー時も必ず。1 つ失敗しても残りを試す。
     let _ = term::leave(terminal.backend_mut(), modes);

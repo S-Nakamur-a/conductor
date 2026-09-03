@@ -16,6 +16,8 @@ conductor-svc = { path = "../conductor-svc" }
 conductor-mcp = { path = "../conductor-mcp" }
 # コードジャンプの確信度。答えの型そのものなので、包み直さず直接読む。
 sheaf-core = { path = "../sheaf-core" }
+# レビューの成果物。読む順も重要度も revidere の型のまま扱う。
+revidere = { path = "../revidere" }
 ratatui = "0.29"
 crossterm = "0.28"
 anyhow = "1"
@@ -47,3 +49,4 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [dev-dependencies]
 tempfile = "3"
 toml = "1"
+revidere-fixtures = { path = "../revidere-fixtures" }

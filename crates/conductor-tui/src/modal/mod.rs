@@ -23,6 +23,7 @@ pub mod pr;
 pub mod publish;
 pub mod references;
 pub mod repo;
+pub mod revidere;
 pub mod session;
 pub mod symbol_actions;
 pub mod theme;
@@ -48,6 +49,7 @@ pub enum Modal {
     Update(update::Update),
     References(references::References),
     SymbolActions(symbol_actions::SymbolActions),
+    RevidereConfirm(revidere::RevidereConfirm),
 }
 
 /// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
@@ -210,6 +212,19 @@ impl CommentEditor {
     }
 }
 
+/// y / enter で積んだ Effect を流し、n / esc で閉じるだけの確認。
+fn yes_no(key: KeyEvent, on_yes: &mut Vec<Effect>) -> Vec<Effect> {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            let mut effects = vec![Effect::PopModal];
+            effects.append(on_yes);
+            effects
+        }
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => vec![Effect::PopModal],
+        _ => Vec::new(),
+    }
+}
+
 impl Modal {
     pub fn tick(&mut self, ctx: &Ctx) -> Vec<Effect> {
         match self {
@@ -246,15 +261,8 @@ impl Modal {
                     vec![]
                 }
             },
-            Modal::Confirm(confirm) => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    let mut effects = vec![Effect::PopModal];
-                    effects.append(&mut confirm.on_yes);
-                    effects
-                }
-                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => vec![Effect::PopModal],
-                _ => vec![],
-            },
+            Modal::Confirm(confirm) => yes_no(key, &mut confirm.on_yes),
+            Modal::RevidereConfirm(confirm) => yes_no(key, &mut confirm.on_yes),
             Modal::CommentEditor(editor) => editor.key(key),
             Modal::CommentList(list) => {
                 if key.code == KeyCode::Esc {

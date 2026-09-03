@@ -211,9 +211,15 @@
 "up" = "navigate_up"
 "g" = "go_to_top"
 "G" = "go_to_bottom"
+# 2 列を 1 つのフォーカスで歩く。列を分けないと j/k が「次の項目」と「次の diff 行」の
+# 両方を意味することになる。
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
 # Move between sections rather than lines, with the diff following along —
 # the same n/N pairing the comment list uses.
-"enter" = "select"
 "n" = "revidere_next_section"
 "N" = "revidere_prev_section"
 # GitHub が PR description と Files changed を分けているのと同じ切り分け。総括は
@@ -224,6 +230,8 @@
 # p は列 (o/d) とは別の軸で、見ている区間を入れ替える。W をこのレイヤーにも置くのは、
 # 切り替えた先が未解析のときに、いったん抜けないと作れないのでは行き止まりになるため。
 "p" = "revidere_toggle_scope"
+# 開いた w で閉じる。
+"w" = "show_revidere"
 "W" = "analyze_revidere"
 "alt+w" = "force_analyze_revidere"
 "tab" = "cycle_focus_forward"

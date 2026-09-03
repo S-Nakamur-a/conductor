@@ -3,7 +3,6 @@
 //! 到達性を担保するのはこのファイルと [crate::menu] のテスト。「すべての操作に
 //! 行き先がある」を、コマンドを足すたびに古びる主張ではなく検証済みの性質にする。
 
-use super::exec::NOT_YET;
 use super::*;
 use crate::effect::Effect;
 use crate::modal::Modal;
@@ -143,19 +142,6 @@ fn 使えないコマンドは理由を出して何もしない() {
         ),
         "{effects:?}"
     );
-}
-
-#[test]
-fn 未実装のコマンドは理由付きで灰色になる() {
-    let mut ws = Workspace::for_test();
-    for (id, _) in NOT_YET {
-        assert!(matches!(enabled(&ws, *id), Enabled::No(_)), "{id:?}");
-        let effects = execute(&mut ws, *id);
-        let [Effect::Status(_, text)] = effects.as_slice() else {
-            panic!("{id:?}: {effects:?}");
-        };
-        assert!(text.contains("not implemented yet"), "{id:?}: {text}");
-    }
 }
 
 #[test]

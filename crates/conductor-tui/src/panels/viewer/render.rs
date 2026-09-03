@@ -601,7 +601,8 @@ fn diff_body(
     out
 }
 
-fn unified_line(
+/// レビューの読み順ビューも同じ行を出すので共有する。
+pub(crate) fn unified_line(
     entry: &Entry,
     theme: &Theme,
     digits: usize,

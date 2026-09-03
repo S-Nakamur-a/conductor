@@ -120,7 +120,7 @@ keymap_suite::actions! {
         // PR レビュー
         ShowRevidere => "show_revidere",
         RevidereNextSection => "revidere_next_section",
-        RevidererPrevSection => "revidere_prev_section",
+        ReviderePrevSection => "revidere_prev_section",
         /// 総括と節+diff は 1 キーで交互に切り替えず、行き先ごとにキーを分ける。
         /// 押した結果がいまどちらを出しているかに依存しないようにするため。
         RevidereShowOverview => "revidere_show_overview",
@@ -182,7 +182,7 @@ impl Action {
             Action::OpenPullRequest => "Open pull request",
             Action::ShowRevidere => "Show the review (sections + diff)",
             Action::RevidereNextSection => "Jump to next section",
-            Action::RevidererPrevSection => "Jump to previous section",
+            Action::ReviderePrevSection => "Jump to previous section",
             Action::RevidereShowOverview => "Show the overview (1 column)",
             Action::RevidereShowSections => "Show the sections + diff (2 columns)",
             Action::RevidereToggleScope => {

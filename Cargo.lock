@@ -571,6 +571,8 @@ dependencies = [
  "log",
  "open",
  "ratatui",
+ "revidere",
+ "revidere-fixtures",
  "serde_json",
  "sheaf-core",
  "syntect",

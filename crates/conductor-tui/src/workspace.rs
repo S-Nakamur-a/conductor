@@ -11,6 +11,7 @@ use crate::effect::Effect;
 use crate::index::Index;
 use crate::modal::Modal;
 use crate::panels::explorer::{BottomView, ExplorerPanel};
+use crate::panels::revidere::RevidereState;
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
@@ -174,6 +175,7 @@ pub struct Panels {
     pub explorer: ExplorerPanel,
     pub viewer: ViewerPanel,
     pub terminal: TerminalPanel,
+    pub revidere: RevidereState,
 }
 
 /// 読み取り専用の環境。パネルの update と render の両方に渡す。
@@ -218,6 +220,7 @@ impl Workspace {
             explorer: ExplorerPanel::default(),
             viewer: ViewerPanel::new(&config),
             terminal: TerminalPanel::new(&config),
+            revidere: RevidereState::default(),
         };
         Self {
             repo,
@@ -261,6 +264,14 @@ impl Workspace {
             Focus::Viewer => self.panels.viewer.key_context(),
             focus => focus.key_context(),
         }
+    }
+
+    /// 選択中の worktree。一覧が届くまではリポジトリの根。
+    pub fn worktree_path(&self) -> PathBuf {
+        self.panels
+            .worktree
+            .selected()
+            .map_or_else(|| self.repo.root.clone(), |w| w.path.clone())
     }
 
     /// 今のブランチ。worktree 一覧が届くまでは設定の main ブランチ。
@@ -330,6 +341,7 @@ impl Workspace {
             Focus::Explorer => panels.explorer.update(action, &ctx),
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
+            Focus::Revidere => panels.revidere.update(action, &ctx),
             _ => None,
         }
     }
@@ -380,6 +392,14 @@ impl Workspace {
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
+            TaskResult::RevidereLoaded(outcome) => self.panels.revidere.install(*outcome),
+            TaskResult::Analyzed { branch, outcome } => {
+                let worktree = self.worktree_path();
+                let selected = self.branch().to_string();
+                self.panels
+                    .revidere
+                    .finished(&branch, outcome, worktree, &selected)
+            }
             TaskResult::Review(loaded) => {
                 self.review.install(loaded.map(|s| *s));
                 match self.review.error.clone() {
@@ -551,6 +571,9 @@ impl Workspace {
 
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
+        if self.focus == Focus::Revidere {
+            self.panels.revidere.prepare(&self.theme, &self.config);
+        }
         let effects = self.panels.viewer.prepare(&self.config, &self.theme);
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
         if self.panels.terminal.transcript().is_none() {
@@ -575,6 +598,7 @@ impl Workspace {
         self.panels.explorer.sync_layout(layout);
         self.panels.viewer.sync_layout(layout);
         self.panels.terminal.sync_sizes(layout);
+        self.panels.revidere.sync_layout(layout);
         let modal = crate::render::comment_list_rect(layout.area);
         for open in &mut self.modals {
             if let Modal::CommentList(list) = open {

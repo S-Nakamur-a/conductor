@@ -27,6 +27,11 @@ pub enum Effect {
         line: usize,
     },
     FindFile(String),
+    /// 変更ファイルとして開く (差分表示のまま)。読む順のビューから Viewer へ渡す唯一の口。
+    OpenChangedFile {
+        path: String,
+        line: Option<usize>,
+    },
     SearchInFile(String),
     /// レビュー済みの印。持ち主は Explorer。
     ToggleViewed(String),
@@ -97,6 +102,15 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     queue.push_back(effect);
                 }
             }
+            Effect::OpenChangedFile { path, line } => {
+                queue.push_back(match ws.panels.explorer.open_changed(&path, line) {
+                    Some(effect) => effect,
+                    None => Effect::Status(
+                        StatusLevel::Warning,
+                        format!("Section's file isn't in this diff: {path}"),
+                    ),
+                });
+            }
             Effect::SearchInFile(query) => {
                 let follow_up = ws.panels.viewer.search_for(&query);
                 queue.extend(follow_up);
@@ -145,6 +159,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             }
             Effect::Spawn(task) => {
                 ws.panels.worktree.note_spawned(&task);
+                ws.panels.revidere.note_spawned(&task);
                 task.spawn(svc, &ws.task_env());
             }
             Effect::Quit => ws.should_quit = true,
@@ -179,9 +194,12 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     };
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
-    effects.extend(ws.panels.explorer.set_root(worktree));
+    effects.extend(ws.panels.explorer.set_root(worktree.clone()));
     // コメントはブランチで引くので、worktree が動いたら読み直す。
     effects.push(Effect::Spawn(Task::LoadReview));
+    // 確認ダイアログが「作り直しか、初めてか」を答えられるよう、成果物も先に読む。
+    // UI スレッドでファイルを読まないので、訊かれてから調べることはできない。
+    effects.push(ws.panels.revidere.reload(worktree));
     effects
 }
 

@@ -5,6 +5,7 @@
 //! 返し、[crate::route::global_effects] の既定の解釈に落ちる。
 
 pub mod explorer;
+pub mod revidere;
 pub mod terminal;
 pub mod viewer;
 pub mod worktree;

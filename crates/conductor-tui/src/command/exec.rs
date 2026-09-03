@@ -8,10 +8,12 @@ use conductor_svc::pty::SessionKind;
 
 use super::CommandId;
 use crate::effect::Effect;
+use crate::modal::revidere as revidere_modal;
 use crate::modal::{
     Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme, update,
 };
 use crate::panels::explorer::BottomView;
+use crate::panels::revidere as revidere_panel;
 use crate::task::{Persist, Task};
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -28,29 +30,12 @@ impl Enabled {
     }
 }
 
-/// まだ実装していない操作。到達できることだけ先に固定してある。
-pub(super) const NOT_YET: &[(CommandId, &str)] = &[
-    (CommandId::ShowRevidere, "the review view"),
-    (CommandId::AnalyzeRevidere, "generating a review"),
-    (CommandId::ForceAnalyzeRevidere, "generating a review"),
-];
-
-fn not_yet(id: CommandId) -> Option<&'static str> {
-    NOT_YET
-        .iter()
-        .find(|(known, _)| *known == id)
-        .map(|(_, what)| *what)
-}
-
 /// 今この状態でコマンドが意味を持つか。
 ///
 /// 既定は Yes。No を書くのは、コマンド自身が具体的な場所で既に拒んでいるときだけで、
 /// 誤って No にすると全操作を並べるはずの UI から動く操作が黙って消える。
 /// 逆に Yes を誤ってもコマンドがステータスで理由を返すだけで済む。
 pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
-    if not_yet(id).is_some() {
-        return Enabled::No("not implemented yet");
-    }
     let worktree = ws.panels.worktree.selected();
     match id {
         CommandId::SwitchRepo if ws.repo.known.len() < 2 => {
@@ -93,10 +78,7 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
 
 pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
     if let Enabled::No(reason) = enabled(ws, id) {
-        let what = not_yet(id)
-            .map(|what| format!("{what} is not implemented yet"))
-            .unwrap_or_else(|| reason.to_string());
-        return vec![Effect::Status(StatusLevel::Warning, what)];
+        return vec![Effect::Status(StatusLevel::Warning, reason.to_string())];
     }
     match id {
         CommandId::FocusWorktree => vec![Effect::Focus(Focus::Worktree)],
@@ -269,12 +251,97 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             }
         }
 
-        // 未実装。enabled が先に弾くのでここには来ない。`_` で受けないのは、
-        // コマンドを足したときに実装漏れを型で見つけるため。
-        CommandId::ShowRevidere | CommandId::AnalyzeRevidere | CommandId::ForceAnalyzeRevidere => {
-            Vec::new()
-        }
+        CommandId::ShowRevidere => show_revidere(ws),
+        CommandId::AnalyzeRevidere => confirm_analyze(ws),
+        // 押した人はもう一度作ると決めている。ヘルプも "without asking" と名乗る。
+        CommandId::ForceAnalyzeRevidere => analyze(ws, true),
     }
+}
+
+/// 開いているなら閉じる。成果物が無ければ「無い」と言って終わるより、作る口を
+/// その場で出したほうが早い。
+fn show_revidere(ws: &mut Workspace) -> Vec<Effect> {
+    if ws.focus == Focus::Revidere {
+        return vec![Effect::Focus(Focus::Explorer)];
+    }
+    let panel = &ws.panels.revidere;
+    if let Some(why) = panel.error() {
+        return vec![Effect::Status(
+            StatusLevel::Error,
+            format!("Review artifact unreadable: {why}"),
+        )];
+    }
+    if panel.review().is_none() {
+        return confirm_analyze(ws);
+    }
+    // 成果物が同じでも作業ツリーが動いていれば読む順は変わっている。
+    let worktree = ws.worktree_path();
+    vec![
+        ws.panels.revidere.reload(worktree),
+        Effect::Focus(Focus::Revidere),
+    ]
+}
+
+/// 解析の前に確認を出す。worktree が無いときや既に走っているときの断り方は解析側が
+/// 持っているので、そこには確認を挟まずそのまま渡す。
+fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
+    let branch = ws.branch().to_string();
+    if branch.is_empty() || ws.panels.revidere.is_running(&branch) {
+        return analyze(ws, false);
+    }
+    let head = ws
+        .panels
+        .worktree
+        .selected()
+        .and_then(|w| w.head_oid.clone());
+    let artifact = ws.panels.revidere.artifact(head.as_deref());
+    // 同じコミットの成果物があるなら貯めた応答を捨てる。
+    let on_yes = analyze(ws, artifact == revidere_panel::Artifact::Current);
+    vec![Effect::PushModal(Modal::RevidereConfirm(
+        revidere_modal::RevidereConfirm {
+            branch,
+            scope: revidere_panel::scope_label(ws.panels.revidere.scope()),
+            artifact,
+            on_yes,
+        },
+    ))]
+}
+
+/// 既定でキャッシュは効くので、diff が動いていなければ AI は起動せず即座に返る。
+fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
+    let branch = ws.branch().to_string();
+    if branch.is_empty() {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            "No worktree selected \u{2014} open one to analyse.".into(),
+        )];
+    }
+    if ws.panels.revidere.is_running(&branch) {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            "revidere is already analysing this branch.".into(),
+        )];
+    }
+    let scope = ws.panels.revidere.scope();
+    vec![
+        Effect::Spawn(Task::Analyze {
+            worktree: ws.worktree_path(),
+            branch,
+            scope,
+            force,
+            api: ws.config.api.clone(),
+            cancel: Default::default(),
+        }),
+        // どちらの区間かを言う。区間はビューを閉じても残るので、外から W を押すと
+        // 数分待った先で思っていない方が出てくることがある。
+        Effect::Status(
+            StatusLevel::Info,
+            format!(
+                "Analysing [{}] with revidere \u{2014} this takes a few minutes.",
+                revidere_panel::scope_label(scope)
+            ),
+        ),
+    ]
 }
 
 /// 文言が作れないことが「対象が無い」の印。

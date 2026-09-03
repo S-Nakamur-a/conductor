@@ -314,6 +314,10 @@ fn on_mouse(
                 return;
             }
             let effects = match focus {
+                Focus::Revidere => {
+                    ws.panels.revidere.click(region, mouse.row);
+                    Vec::new()
+                }
                 Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
                 Focus::Viewer => {
                     let Workspace { panels, review, .. } = ws;
@@ -355,6 +359,7 @@ fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
         Region::TerminalClaude => ws.panels.terminal.transcript_scroll(delta),
+        Region::RevidereOrder | Region::RevidereDiff => ws.panels.revidere.scroll(region, delta),
         _ => {}
     }
 }
@@ -367,6 +372,7 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::Editor => Some(Focus::Editor),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
+        Region::RevidereOrder | Region::RevidereDiff => Some(Focus::Revidere),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
 }

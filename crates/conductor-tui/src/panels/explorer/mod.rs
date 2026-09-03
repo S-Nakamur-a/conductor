@@ -349,6 +349,22 @@ impl ExplorerPanel {
         self.open_diff(next)
     }
 
+    /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
+    /// — 展開するまで表示行が無く、一覧の選択が動かせない。
+    pub fn open_changed(&mut self, path: &str, line: Option<usize>) -> Option<Effect> {
+        let path = self.diff.resolve_changed_path(path)?;
+        let row = self.diff.reveal_path(&path)?;
+        self.changes_cursor
+            .select(row, self.diff.display_list.len(), self.changes_view);
+        let file = self.diff.resolve_file(row)?;
+        Some(Effect::OpenFile {
+            path: PathBuf::from(&file.path),
+            line,
+            diff: Some(Box::new(file.clone())),
+            preview: false,
+        })
+    }
+
     /// あいまい検索で最も近いファイルを開き、ツリー上でも選択する。
     pub fn find_file(&mut self, query: &str) -> Option<Effect> {
         let path = best_match(self.tree.all_files(), query)?.to_string();
