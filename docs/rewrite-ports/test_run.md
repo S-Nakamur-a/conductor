@@ -1,6 +1,10 @@
 # test_run
 旧テスト 18 本 (go_test.rs 8 + rust_test.rs 10) → 新テスト 18 本
 
+UI 側 (行頭の実行ボタンとシェルへの送出) はフェーズ 5a で
+`crates/conductor-tui/src/panels/viewer/` に着地した。振り分けは
+`docs/rewrite-ports/viewer.md` の「フェーズ 5a で足したもの」。
+
 | 旧テスト名 | 扱い | 新テスト名 / 削除理由 |
 |---|---|---|
 | go_test::テストでないファイルからは何も出ない | 移植 | 同名で移植 (tests::go サブモジュール) |

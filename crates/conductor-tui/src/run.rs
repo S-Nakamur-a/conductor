@@ -64,7 +64,8 @@ pub fn run(
         let size = terminal.size()?;
         let last_layout = layout(ws, Rect::new(0, 0, size.width, size.height));
         ws.sync_layout(&last_layout);
-        ws.panels.viewer.refresh_highlight(&ws.config);
+        let prepared = ws.panels.viewer.prepare(&ws.config, &ws.theme);
+        apply(ws, svc, prepared);
 
         // 描くのが先。起動直後に既にキーが溜まっていると、捌いてから描く並びでは
         // 1 フレームも出さないまま終了しうる。

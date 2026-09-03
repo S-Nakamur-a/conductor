@@ -33,6 +33,8 @@ pub enum Effect {
     StepChangedFile(isize),
     SelectWorktree(usize),
     NewSession(SessionKind),
+    /// シェルへ 1 行流して実行させる。テスト実行ボタンの行き先。
+    SendToShell(String),
     /// 既存の Claude セッションを `--resume` で開き直す。`worktree` を指すと
     /// 選択とは別の場所で開く。grab はブランチを持ってきた main で開き直す。
     ResumeSession {
@@ -111,6 +113,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
             Effect::NewSession(kind) => new_session(ws, kind, None, None),
+            Effect::SendToShell(command) => queue.extend(send_to_shell(ws, &command)),
             Effect::ResumeSession { id, worktree } => {
                 new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree)
             }
@@ -177,6 +180,18 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     // コメントはブランチで引くので、worktree が動いたら読み直す。
     effects.push(Effect::Spawn(Task::LoadReview));
     effects
+}
+
+/// 見えているシェルへ 1 行送る。走っていなければ起こしてから送る — 押した人は
+/// テストを走らせたいのであって、先にシェルを開けと言われたいわけではない。
+fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
+    if !ws.panels.terminal.has_shell() {
+        new_session(ws, SessionKind::Shell, None, None);
+    }
+    match ws.panels.terminal.send_line(command) {
+        Ok(()) => vec![Effect::Focus(Focus::TerminalShell)],
+        Err(e) => vec![Effect::Status(StatusLevel::Error, format!("{e:#}"))],
+    }
 }
 
 fn new_session(ws: &mut Workspace, kind: SessionKind, resume: Option<&str>, at: Option<PathBuf>) {

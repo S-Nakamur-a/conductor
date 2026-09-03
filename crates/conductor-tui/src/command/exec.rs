@@ -33,8 +33,6 @@ pub(super) const NOT_YET: &[(CommandId, &str)] = &[
     (CommandId::ShowRevidere, "the review view"),
     (CommandId::AnalyzeRevidere, "generating a review"),
     (CommandId::ForceAnalyzeRevidere, "generating a review"),
-    (CommandId::ShowReviewTemplates, "review templates"),
-    (CommandId::ToggleMarkdownRender, "rendered markdown"),
 ];
 
 fn not_yet(id: CommandId) -> Option<&'static str> {
@@ -155,6 +153,9 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             theme::ThemePicker::open(&ws.appearance.name),
         ))],
         CommandId::ToggleHighContrast => toggle_high_contrast(ws),
+        CommandId::ToggleMarkdownRender => {
+            to_panel(ws, Focus::Viewer, Action::ToggleMarkdownRender)
+        }
 
         // 対象は選択中の行。行を持たない場所から押しても宛先がないので、
         // フォーカス中のパネルにそのまま渡す。
@@ -270,11 +271,9 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
 
         // 未実装。enabled が先に弾くのでここには来ない。`_` で受けないのは、
         // コマンドを足したときに実装漏れを型で見つけるため。
-        CommandId::ShowRevidere
-        | CommandId::AnalyzeRevidere
-        | CommandId::ForceAnalyzeRevidere
-        | CommandId::ShowReviewTemplates
-        | CommandId::ToggleMarkdownRender => Vec::new(),
+        CommandId::ShowRevidere | CommandId::AnalyzeRevidere | CommandId::ForceAnalyzeRevidere => {
+            Vec::new()
+        }
     }
 }
 

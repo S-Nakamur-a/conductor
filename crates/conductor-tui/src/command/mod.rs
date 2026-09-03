@@ -59,7 +59,6 @@ pub enum CommandId {
     ToggleHighContrast,
 
     ShowReviewComments,
-    ShowReviewTemplates,
     ReviewPullRequest,
     AnalyzeRevidere,
     ForceAnalyzeRevidere,
@@ -196,7 +195,6 @@ commands! {
     ToggleHighContrast, "UI: Toggle High Contrast", View, None, "high contrast accessibility a11y legibility bright bold theme readable vision";
 
     ShowReviewComments, "Review: Show Comments", Review, None, "comment list";
-    ShowReviewTemplates, "Review: Show Templates", Review, None, "template prompt";
     ReviewPullRequest, "Review: Review Pull Request…", Review, Some(Action::ReviewPullRequest), "pr pull request github fetch worktree review number url";
     AnalyzeRevidere, "Review: Review Current Branch…", Review, Some(Action::AnalyzeRevidere), "revidere analyse analyze generate ai review sections coverage branch";
     ForceAnalyzeRevidere, "Review: Re-analyse Current Branch", Review, Some(Action::ForceAnalyzeRevidere), "revidere reanalyse regenerate force ignore cache rebuild ai review";

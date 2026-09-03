@@ -131,6 +131,14 @@ impl Highlighter {
         &self.id
     }
 
+    pub fn syntax_set(&self) -> &SyntaxSet {
+        &self.syntax_set
+    }
+
+    pub fn theme(&self) -> &SyntectTheme {
+        &self.theme
+    }
+
     /// 1 行 = スタイル付きの断片列。行数は入力と同じ。
     pub fn highlight(&self, path: Option<&str>, lines: &[String]) -> Vec<Vec<(Style, String)>> {
         let syntax = find_syntax(&self.syntax_set, path, lines.first().map(String::as_str));

@@ -15,6 +15,7 @@ pub mod index;
 pub mod layout;
 pub mod list;
 pub mod liveness;
+pub mod markdown;
 pub mod menu;
 pub mod modal;
 pub mod panels;

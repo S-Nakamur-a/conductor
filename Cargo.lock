@@ -557,6 +557,7 @@ dependencies = [
 name = "conductor-tui"
 version = "0.1.0"
 dependencies = [
+ "aa-media",
  "anyhow",
  "chrono",
  "conductor-core",
@@ -566,6 +567,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "git2",
+ "image",
  "log",
  "open",
  "ratatui",
@@ -576,6 +578,7 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "tree-sitter",
  "two-face",
+ "unicode-segmentation",
  "unicode-width 0.2.0",
  "vt100",
 ]

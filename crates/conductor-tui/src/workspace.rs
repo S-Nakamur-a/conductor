@@ -354,7 +354,9 @@ impl Workspace {
     pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
             TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
-            TaskResult::FileLoaded { .. } => self.panels.viewer.apply_result(result),
+            TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
+                self.panels.viewer.apply_result(result)
+            }
             TaskResult::IndexLoaded(_) | TaskResult::SymbolsBuilt(_) => {
                 crate::index::accept(self, result);
                 Vec::new()

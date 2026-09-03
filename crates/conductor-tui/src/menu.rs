@@ -118,7 +118,6 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::ShowRevidere, "Show Review"),
             SEP,
             cmd(CommandId::ShowReviewComments, "Show Comments"),
-            cmd(CommandId::ShowReviewTemplates, "Show Templates"),
             SEP,
             cmd(
                 CommandId::PublishReview,

@@ -308,6 +308,23 @@ impl TerminalPanel {
         })]
     }
 
+    /// 見えているシェルがあるか。
+    pub fn has_shell(&self) -> bool {
+        self.index_of(self.shell.session.as_ref()).is_some()
+    }
+
+    /// 見えているシェルへ 1 行流す。スクロールを最新へ戻すのは、送った行が
+    /// 遡って読んでいる位置の外で流れると押しても何も起きなく見えるため。
+    pub fn send_line(&mut self, line: &str) -> Result<()> {
+        let index = self
+            .index_of(self.shell.session.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("no shell session to run this in"))?;
+        self.pty
+            .write_to_session(index, format!("{line}\n").as_bytes())?;
+        self.shell.scroll = 0;
+        Ok(())
+    }
+
     /// フォーカス中のパネルの PTY へキーを流す。
     pub fn forward_key(&self, key: KeyEvent, focus: Focus) {
         let Some(pane) = (match focus {
@@ -498,6 +515,27 @@ mod tests {
         let sessions = ws.panels.terminal.sessions(SessionKind::Shell);
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[1].2, "SH:2", "ラベルの番号が空きを埋めていない");
+    }
+
+    /// シェルが無い状態から起こして、実際に出力が返るまで。
+    #[test]
+    fn テストのコマンドはシェルが無くても起こして流れる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let dir = tempfile::tempdir().unwrap();
+        ws.config.general.shell = "/bin/sh".into();
+        ws.repo.root = dir.path().to_path_buf();
+        assert!(!ws.panels.terminal.has_shell());
+
+        crate::effect::apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::SendToShell("echo conductor-ran-a-test".into())],
+        );
+        assert!(ws.panels.terminal.has_shell(), "無ければ起こす");
+        assert_eq!(ws.focus, Focus::TerminalShell);
+        let text = wait_for(&ws, "conductor-ran-a-test");
+        assert!(text.contains("conductor-ran-a-test"), "{text}");
     }
 
     #[test]

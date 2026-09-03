@@ -19,7 +19,7 @@ use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
-use crate::panels::viewer::content;
+use crate::panels::viewer::{content, media};
 use crate::review::Snapshot;
 
 /// Task が git を触るのに要るもの。Workspace が持っているので、Task 自身は運ばない。
@@ -57,6 +57,13 @@ pub enum Task {
         root: PathBuf,
         path: String,
         seq: u64,
+    },
+    /// 画像を升目に描く。鍵は (パス, 桁, 行) で、区画の大きさが変われば描き直す。
+    RenderMedia {
+        root: PathBuf,
+        path: String,
+        cols: u16,
+        rows: u16,
     },
     LoadReview,
     /// 書いたあとは必ず読み直して返す。
@@ -250,6 +257,10 @@ pub enum TaskResult {
         seq: u64,
         loaded: Result<content::Loaded, String>,
     },
+    MediaRendered {
+        key: media::Key,
+        rendered: Result<Box<media::Rendered>, String>,
+    },
     Review(Result<Box<Snapshot>, String>),
     Grep {
         seq: u64,
@@ -320,6 +331,23 @@ impl Task {
                 svc.spawn(
                     move || (seq, content::read(&root, &path, env.tab_width)),
                     |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
+                );
+            }
+            Task::RenderMedia {
+                root,
+                path,
+                cols,
+                rows,
+            } => {
+                svc.spawn(
+                    move || {
+                        let rendered = media::render(&root.join(&path), cols, rows);
+                        TaskResult::MediaRendered {
+                            key: (path, cols, rows),
+                            rendered: rendered.map(Box::new),
+                        }
+                    },
+                    |result| result,
                 );
             }
             Task::LoadReview => {

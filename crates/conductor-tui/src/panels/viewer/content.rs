@@ -3,12 +3,16 @@
 //! git を一切経由しないので、`.git` の無いディレクトリでも未追跡のファイルでも
 //! 同じように開ける。
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use conductor_core::symbol_index::CodeMask;
+use conductor_core::test_run::{TestRun, scan_go_test_runs, scan_rust_test_runs};
 use ratatui::style::Style;
+use ratatui::text::Line;
 
 use super::fold::{self, FoldRange};
+use super::media;
 
 /// 画面に出さないファイルの上限。
 const MAX_BYTES: u64 = 5 * 1024 * 1024;
@@ -16,11 +20,10 @@ const MAX_BYTES: u64 = 5 * 1024 * 1024;
 /// バイナリ判定のために覗く先頭バイト数。
 const SNIFF_BYTES: usize = 8192;
 
-/// 素のテキストとして開かない拡張子。
+/// 素のテキストとして開かない拡張子。画像は [media] が持つので重ねない。
 const OPAQUE_EXTS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "mp4", "mov", "webm", "avi", "mp3",
-    "wav", "flac", "pdf", "zip", "gz", "tar", "xz", "zst", "woff", "woff2", "ttf", "otf", "so",
-    "dylib", "wasm",
+    "ico", "tiff", "mp4", "mov", "webm", "avi", "mp3", "wav", "flac", "pdf", "zip", "gz", "tar",
+    "xz", "zst", "woff", "woff2", "ttf", "otf", "so", "dylib", "wasm",
 ];
 
 /// アクティブなタブの本文。
@@ -35,6 +38,16 @@ pub struct Content {
     /// syntect の結果。空ならハイライト無しで描く。
     pub highlighted: Vec<Vec<(Style, String)>>,
     pub(super) highlight_key: Option<u64>,
+    /// 実行できるテストの行 (1 始まり)。行頭の \u{25b8} と、押したときに送る
+    /// コマンドの両方がここを引く。
+    pub tests: HashMap<usize, TestRun>,
+    /// レンダリング済み markdown。折り返し済みで本文の行とは対応しないので、
+    /// [Content::lines] とは別に持つ。
+    pub(super) rendered: Vec<Line<'static>>,
+    pub(super) rendered_key: Option<u64>,
+    /// 画像のプレビュー。素のテキストを持たないファイルはこちらだけが埋まる。
+    pub media: Option<media::Preview>,
+    pub(super) media_key: Option<media::Key>,
 }
 
 /// ワーカーが 1 回の読み込みで作るもの。
@@ -45,6 +58,7 @@ pub struct Loaded {
     pub folds: Vec<FoldRange>,
     /// どの語がコードでどれが地の文か。ジャンプもホバーもここを最初に通る。
     pub mask: CodeMask,
+    pub tests: HashMap<usize, TestRun>,
 }
 
 /// root/relative を読む。折りたたみ範囲とコードマスクも同じ場所で求める
@@ -62,17 +76,23 @@ pub fn read(root: &Path, relative: &str, tab_width: usize) -> Result<Loaded, Str
     // 折りたたみは展開前のテキストから求める。tree-sitter もインデント幅も、
     // 書かれたままのファイルを前提にしている。
     let folds = fold::compute(&text, relative);
+    let tests = if relative.ends_with(".rs") {
+        scan_rust_test_runs(&lines, relative)
+    } else {
+        scan_go_test_runs(&lines, relative)
+    };
     Ok(Loaded {
         lines,
         folds,
         mask: CodeMask::compute(&text, relative),
+        tests,
     })
 }
 
 /// 素のテキストとして開けないなら、その理由。
 fn unsupported(full: &Path, relative: &str) -> Option<String> {
     if let Some(ext) = extension(relative)
-        && OPAQUE_EXTS.contains(&ext.as_str())
+        && (OPAQUE_EXTS.contains(&ext.as_str()) || media::is_image_path(relative))
     {
         return Some(format!("{ext} files are not shown here"));
     }
@@ -155,6 +175,31 @@ mod tests {
             let err = read(dir.path(), path, 4).unwrap_err();
             assert!(err.contains(needle), "{path}: {err}");
         }
+    }
+
+    /// 読み込みと同時に走査する。開いた後で別に走らせると、ボタンの出る 1 フレームが遅れる。
+    #[test]
+    fn 実行できるテストは読み込みと同時に見つかる() {
+        let dir = dir("tests");
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn works() {}\n}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/plain.rs"), "fn main() {}\n").unwrap();
+
+        let runs = read(dir.path(), "src/lib.rs", 4).unwrap().tests;
+        assert_eq!(runs[&4].label, "works");
+        assert!(runs[&4].command.starts_with("cargo test"), "{:?}", runs[&4]);
+        assert!(runs.contains_key(&1), "ファイル全体のボタンも出る");
+
+        assert!(
+            read(dir.path(), "src/plain.rs", 4)
+                .unwrap()
+                .tests
+                .is_empty()
+        );
     }
 
     #[test]

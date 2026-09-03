@@ -8,6 +8,7 @@ pub mod content;
 pub mod diff;
 pub mod fold;
 pub mod hover;
+pub mod media;
 pub mod render;
 pub mod search;
 pub mod syntax;
@@ -50,6 +51,8 @@ const H_STEP: usize = 4;
 enum Zone {
     Comment,
     Fold,
+    /// テスト実行ボタン。
+    Test,
     Text,
 }
 
@@ -101,6 +104,8 @@ pub struct Scroll {
     pub column: usize,
     /// diff のエントリ列への添字。
     pub diff: usize,
+    /// レンダリング済み markdown の最上行。折り返し後の行なので line とは別。
+    pub md: usize,
 }
 
 /// 読み込みを投げてから結果が返るまでの覚え書き。
@@ -127,6 +132,9 @@ pub struct ViewerPanel {
     pub scroll: Scroll,
     pub threads: ThreadFolds,
     pub nav: CodeNav,
+    /// 素のソースではなく文章として描く。ファイルをまたいで持続する — 読み物を
+    /// 続けて開くたびに押し直させない。
+    md_rendered: bool,
     /// 構築が重いので最初に必要になるまで作らない。
     highlighter: Option<Highlighter>,
     load: Option<Load>,
@@ -158,6 +166,7 @@ impl ViewerPanel {
             scroll: Scroll::default(),
             threads: ThreadFolds::default(),
             nav: CodeNav::default(),
+            md_rendered: false,
             highlighter: None,
             load: None,
             seq: 0,
@@ -200,7 +209,7 @@ impl ViewerPanel {
             height: inner.height.saturating_sub(render::TAB_ROW),
             ..inner
         };
-        self.reveal_tab(self.tab_row.width);
+        self.reveal_tab(self.tab_strip_width(self.tab_row.width));
     }
 
     /// 画面上の 1 点のクリック。shift 付きは起点から範囲を伸ばす。
@@ -208,7 +217,7 @@ impl ViewerPanel {
         if y < self.body.y {
             return self.click_tab_row(x.saturating_sub(self.tab_row.x), self.tab_row.width);
         }
-        if self.diff.active {
+        if self.diff.active || self.is_showing_rendered_markdown() {
             return Vec::new();
         }
         let offset = (y - self.body.y) as usize;
@@ -235,9 +244,21 @@ impl ViewerPanel {
                 self.fold.toggle(line);
                 self.scroll.line = self.fold.visible_anchor(line) - 1;
             }
+            Zone::Test => return self.run_test_at(line),
             Zone::Text => self.selection.click(line, extend),
         }
         Vec::new()
+    }
+
+    /// その行のテストをシェルへ流す。
+    fn run_test_at(&self, line_1: usize) -> Vec<Effect> {
+        let Some(run) = self.content.tests.get(&line_1) else {
+            return Vec::new();
+        };
+        vec![
+            Effect::Status(StatusLevel::Info, format!("Running {}", run.label)),
+            Effect::SendToShell(run.command.clone()),
+        ]
     }
 
     /// ガターの桁割り。render の組み方と 1 対 1 で、印の下を押せば印の意味になる。
@@ -255,7 +276,46 @@ impl ViewerPanel {
         if column == mark + digits {
             return Zone::Fold;
         }
+        let badge = render::badge_width(self);
+        if badge > 0 && (mark + digits + 1..mark + digits + 1 + badge).contains(&column) {
+            return Zone::Test;
+        }
         Zone::Text
+    }
+
+    /// Raw と Rendered のトグルが意味を持つか。素の markdown ファイルを開いている
+    /// ときだけ — unified diff は本文を組み直すと +/- の構造が壊れる。
+    pub fn markdown_toggle_available(&self) -> bool {
+        !self.diff.active
+            && self.content.error.is_none()
+            && self
+                .content
+                .path
+                .as_deref()
+                .is_some_and(crate::markdown::is_markdown_path)
+    }
+
+    /// レンダリング済み markdown を描いているか。行に紐づく機能は全てこれで判定する。
+    pub fn is_showing_rendered_markdown(&self) -> bool {
+        self.md_rendered && self.markdown_toggle_available()
+    }
+
+    /// 素のソースとレンダリング表示を切り替える。切り替えたら必ず先頭に着地し、
+    /// 行に紐づいた途中の操作 (選択、ホバー、ジャンプ先の札) は畳む。
+    pub fn toggle_markdown(&mut self) -> Vec<Effect> {
+        if !self.markdown_toggle_available() {
+            return vec![Effect::Status(
+                StatusLevel::Info,
+                "only a markdown file can be rendered".into(),
+            )];
+        }
+        self.md_rendered = !self.md_rendered;
+        self.scroll.md = 0;
+        self.selection.clear();
+        self.nav.hover = None;
+        self.nav.labels = None;
+        self.pending_fold = false;
+        Vec::new()
     }
 
     /// worktree が変わった。相対パスは根が変わると別のファイルを指すので、
@@ -288,7 +348,7 @@ impl ViewerPanel {
             TabStatus::Persistent
         };
         let fresh = self.activate_tab_for(&relative, status);
-        vec![self.request(relative, file_diff, line, !fresh)]
+        self.request(relative, file_diff, line, !fresh)
     }
 
     /// 根の外のパスは開かない。絶対パスは端末のリンクから来る。
@@ -307,7 +367,11 @@ impl ViewerPanel {
         file_diff: Option<Box<FileDiff>>,
         line: Option<usize>,
         keep_scroll: bool,
-    ) -> Effect {
+    ) -> Vec<Effect> {
+        if media::is_image_path(&path) {
+            self.show_image(path);
+            return Vec::new();
+        }
         self.seq += 1;
         let task = Task::LoadFile {
             root: self.root.clone(),
@@ -321,35 +385,79 @@ impl ViewerPanel {
             line,
             keep_scroll,
         });
-        Effect::Spawn(task)
+        vec![Effect::Spawn(task)]
+    }
+
+    /// 画像へ切り替える。描くのは区画の大きさが分かってからなので、ここでは
+    /// 空けるだけ ([ViewerPanel::prepare] が実際の描画を頼む)。
+    fn show_image(&mut self, path: String) {
+        self.load = None;
+        self.clear_for_new_file();
+        self.content.path = Some(path);
+        self.content.media = Some(media::Preview::Loading);
+        self.content.media_key = None;
+        self.scroll = Scroll::default();
+    }
+
+    /// 前のファイルの残りを落とす。読み込みの成否によらず先に通る。
+    fn clear_for_new_file(&mut self) {
+        self.content.lines.clear();
+        self.content.error = None;
+        self.content.highlighted.clear();
+        self.content.highlight_key = None;
+        self.content.rendered.clear();
+        self.content.rendered_key = None;
+        self.content.tests.clear();
+        self.content.media = None;
+        self.search.matches.clear();
+        self.selection.clear();
+        self.diff.clear();
+        self.threads.clear();
+        self.fold.clear();
     }
 
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
-        let TaskResult::FileLoaded { seq, loaded } = result else {
+        match result {
+            TaskResult::FileLoaded { seq, loaded } => self.accept_file(seq, loaded),
+            TaskResult::MediaRendered { key, rendered } => self.accept_media(key, rendered),
+            _ => Vec::new(),
+        }
+    }
+
+    /// 描き終えた絵を受け取る。頼んだときと鍵が違えば (別のファイルへ移った、
+    /// 区画の大きさが変わった) 捨てる。
+    fn accept_media(
+        &mut self,
+        key: media::Key,
+        rendered: Result<Box<media::Rendered>, String>,
+    ) -> Vec<Effect> {
+        if self.content.media_key.as_ref() != Some(&key) {
             return Vec::new();
-        };
+        }
+        self.content.media = Some(match rendered {
+            Ok(rendered) => media::Preview::Ready(rendered),
+            Err(reason) => media::Preview::Failed(reason),
+        });
+        Vec::new()
+    }
+
+    fn accept_file(&mut self, seq: u64, loaded: Result<content::Loaded, String>) -> Vec<Effect> {
         let Some(load) = self.load.take_if(|load| load.seq == seq) else {
             return Vec::new();
         };
 
+        self.clear_for_new_file();
         self.content.path = Some(load.path.clone());
-        self.content.highlighted.clear();
-        self.content.highlight_key = None;
-        self.search.matches.clear();
-        self.diff.clear();
-        self.threads.clear();
 
         match loaded {
             Ok(file) => {
                 self.content.lines = file.lines;
-                self.content.error = None;
+                self.content.tests = file.tests;
                 self.fold.install(file.folds, &load.path);
                 self.nav.reset_for_file(file.mask);
             }
             Err(reason) => {
-                self.content.lines.clear();
                 self.content.error = Some(reason);
-                self.fold.clear();
                 self.nav.reset_for_file(Default::default());
             }
         }
@@ -361,6 +469,7 @@ impl ViewerPanel {
             0
         };
         self.scroll.diff = 0;
+        self.scroll.md = 0;
         if let Some(file_diff) = load.diff {
             self.diff.build(&file_diff, self.content.lines.len());
         }
@@ -371,7 +480,12 @@ impl ViewerPanel {
     }
 
     /// 1 始まりの行へ寄せる。畳んで隠れていれば開いてから。
+    ///
+    /// レンダリング表示にはソースの行が無いので、ここで素のソースへ抜ける。
+    /// 行を指す経路 (ジャンプ、検索、コメント送り、file:line) は全部ここを通るので、
+    /// 抜け忘れると要求された行が黙って無視される。
     fn goto_line(&mut self, line_1: usize) {
+        self.md_rendered = false;
         self.fold.reveal(line_1);
         self.scroll.line = line_1.saturating_sub(1).min(self.last_line());
         if self.diff.active
@@ -385,26 +499,54 @@ impl ViewerPanel {
         self.content.lines.len().saturating_sub(1)
     }
 
-    /// 描く直前に構文ハイライトを整える。render は状態を書けないのでここでやる。
-    pub fn refresh_highlight(&mut self, config: &conductor_core::config::Config) {
-        if self.content.lines.is_empty() {
-            return;
+    /// 描く直前に、本文から導かれる重い成果物を整える。render は状態を書けないので
+    /// ここでやる。画像だけは戻り値の Task に載る (デコードは UI スレッドで走らせない)。
+    pub fn prepare(
+        &mut self,
+        config: &conductor_core::config::Config,
+        theme: &conductor_core::theme::Theme,
+    ) -> Vec<Effect> {
+        if self.content.media.is_some() {
+            return self.request_image();
         }
+        if self.content.lines.is_empty() {
+            return Vec::new();
+        }
+        let rendered = self.is_showing_rendered_markdown();
+        let width = render::md_width(self.body);
         let highlighter = self
             .highlighter
             .get_or_insert_with(|| Highlighter::new(config));
         highlighter.adopt(config);
-        let key = syntax::cache_key(
-            highlighter.id(),
-            self.content.path.as_deref(),
-            &self.content.lines,
-        );
-        if self.content.highlight_key == Some(key) {
-            return;
+        if rendered {
+            refresh_markdown(&mut self.content, highlighter, theme, width);
+        } else {
+            refresh_highlight(&mut self.content, highlighter);
         }
-        self.content.highlighted =
-            highlighter.highlight(self.content.path.as_deref(), &self.content.lines);
-        self.content.highlight_key = Some(key);
+        Vec::new()
+    }
+
+    /// 区画の大きさが変わっていれば描き直しを頼む。同じ鍵なら何もしない。
+    fn request_image(&mut self) -> Vec<Effect> {
+        let Some(path) = self.content.path.clone() else {
+            return Vec::new();
+        };
+        let (cols, rows) = render::media_area(self.body);
+        if cols == 0 || rows == 0 {
+            return Vec::new();
+        }
+        let key = (path.clone(), cols, rows);
+        if self.content.media_key.as_ref() == Some(&key) {
+            return Vec::new();
+        }
+        self.content.media_key = Some(key);
+        self.content.media = Some(media::Preview::Loading);
+        vec![Effect::Spawn(Task::RenderMedia {
+            root: self.root.clone(),
+            path,
+            cols,
+            rows,
+        })]
     }
 
     pub fn awaiting_chord(&self) -> bool {
@@ -461,6 +603,14 @@ impl ViewerPanel {
     }
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if action == Action::ToggleMarkdownRender {
+            return Some(self.toggle_markdown());
+        }
+        // 行に紐づくキーは素通しして global へ落ち、そこから戻ってもまたここへ来る
+        // ので何も起きない。畳む対象を並べた表を持たずに済む。
+        if self.is_showing_rendered_markdown() {
+            return self.rendered_key(action);
+        }
         if let Some(effects) = self.comment_key(action, ctx.review) {
             return Some(effects);
         }
@@ -504,6 +654,29 @@ impl ViewerPanel {
         } else {
             self.file_key(action)
         }
+    }
+
+    /// レンダリング表示のキー。
+    fn rendered_key(&mut self, action: Action) -> Option<Vec<Effect>> {
+        let last = self.content.rendered.len().saturating_sub(1);
+        match action {
+            Action::NavigateDown => self.scroll.md = (self.scroll.md + 1).min(last),
+            Action::NavigateUp => self.scroll.md = self.scroll.md.saturating_sub(1),
+            Action::ScrollHalfPageDown => {
+                self.scroll.md = (self.scroll.md + HALF_PAGE as usize).min(last);
+            }
+            Action::ScrollHalfPageUp => {
+                self.scroll.md = self.scroll.md.saturating_sub(HALF_PAGE as usize);
+            }
+            Action::GoToTop => self.scroll.md = 0,
+            Action::GoToBottom => self.scroll.md = last,
+            Action::ExitToExplorer => return Some(vec![Effect::Focus(Focus::Explorer)]),
+            Action::NextViewerTab => return Some(self.step_tab(1)),
+            Action::PrevViewerTab => return Some(self.step_tab(-1)),
+            Action::CloseViewerTab => return Some(self.close_tab(self.active)),
+            _ => return None,
+        }
+        Some(Vec::new())
     }
 
     /// レビューコメントのキー。素の本文と diff のどちらでも同じ意味になる。
@@ -721,6 +894,38 @@ impl ViewerPanel {
     }
 }
 
+fn refresh_highlight(content: &mut Content, highlighter: &Highlighter) {
+    let key = syntax::cache_key(highlighter.id(), content.path.as_deref(), &content.lines);
+    if content.highlight_key == Some(key) {
+        return;
+    }
+    content.highlighted = highlighter.highlight(content.path.as_deref(), &content.lines);
+    content.highlight_key = Some(key);
+}
+
+/// 折り返し幅も配色も描画のたびに変わりうるので、指紋に畳んで比べる。
+fn refresh_markdown(
+    content: &mut Content,
+    highlighter: &Highlighter,
+    theme: &conductor_core::theme::Theme,
+    width: usize,
+) {
+    let id = format!("{}|{}|{width}", highlighter.id(), theme.name);
+    let key = syntax::cache_key(&id, content.path.as_deref(), &content.lines);
+    if content.rendered_key == Some(key) {
+        return;
+    }
+    content.rendered = crate::markdown::render(
+        &content.lines.join("\n"),
+        width,
+        theme,
+        highlighter.syntax_set(),
+        highlighter.theme(),
+        crate::markdown::Flavor::Rich,
+    );
+    content.rendered_key = Some(key);
+}
+
 fn no_comment_here() -> Vec<Effect> {
     vec![Effect::Status(
         StatusLevel::Info,
@@ -815,6 +1020,31 @@ mod tests {
                 comments,
                 ..crate::review::Snapshot::default()
             }));
+        }
+
+        /// 描く直前の前処理を実際の経路で回す。
+        fn prepare(&mut self) {
+            let Workspace {
+                panels,
+                config,
+                theme,
+                ..
+            } = &mut self.ws;
+            let effects = panels.viewer.prepare(config, theme);
+            self.run(effects);
+        }
+
+        /// レンダリング済み markdown の見えている行。
+        fn rendered(&self) -> Vec<String> {
+            self.ws
+                .panels
+                .viewer
+                .content
+                .rendered
+                .iter()
+                .skip(self.ws.panels.viewer.scroll.md)
+                .map(|l| l.to_string())
+                .collect()
         }
 
         fn body(&self) -> &[String] {
@@ -973,6 +1203,7 @@ mod tests {
                 lines: vec!["STALE".into()],
                 folds: Vec::new(),
                 mask: Default::default(),
+                tests: Default::default(),
             }),
         };
         h.viewer().apply_result(stale);
@@ -1285,6 +1516,177 @@ mod tests {
         assert_eq!(line, 4, "末尾では動かない");
         assert!(matches!(effects.as_slice(), [Effect::Status(..)]));
         assert_eq!(step(&mut h, Action::PrevComment).0, 1);
+    }
+
+    const NOTES: &str = "# Title\n\nsome **bold** prose.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+
+    /// レンダリング表示に着地してから、行を指す操作 (ここではコードジャンプ) で
+    /// 素のソースへ戻るまで。行番号の無い表示に行を要求されたら抜けるしかない。
+    #[test]
+    fn mでレンダリング表示に入り行を指す操作で素のソースへ戻る() {
+        let dir = fixture(&[("notes.md", NOTES)]);
+        let mut h = Harness::at(dir.path());
+        h.viewer().body = ratatui::layout::Rect::new(0, 1, 60, 20);
+        h.open("notes.md");
+        h.prepare();
+        assert!(h.body()[0].starts_with("# Title"), "まずは素のソース");
+
+        h.act(Action::ToggleMarkdownRender);
+        h.prepare();
+        assert!(h.ws.panels.viewer.is_showing_rendered_markdown());
+        let rendered = h.rendered();
+        assert!(
+            rendered.iter().any(|l| l.contains("\u{2503} Title")),
+            "見出しは色の帯付きで描く: {rendered:?}"
+        );
+        assert!(
+            !rendered.iter().any(|l| l.contains("**bold**")),
+            "記法は消えている: {rendered:?}"
+        );
+
+        h.act(Action::NavigateDown);
+        assert_eq!(h.ws.panels.viewer.scroll.md, 1, "j は文書を送る");
+
+        h.run(vec![Effect::JumpTo {
+            path: PathBuf::from("notes.md"),
+            line: 3,
+        }]);
+        assert!(!h.ws.panels.viewer.is_showing_rendered_markdown());
+        assert_eq!(h.ws.panels.viewer.scroll.line, 2, "要求された行に着く");
+    }
+
+    /// 切り替えは常に文書の先頭に着地し、行に紐づいたままの操作を畳む。残すと
+    /// 画面に無い行の選択が生き続ける。
+    #[test]
+    fn 切り替えはスクロールを戻し行の選択を畳む() {
+        let dir = fixture(&[("notes.md", NOTES)]);
+        let mut h = Harness::at(dir.path());
+        h.open("notes.md");
+        h.prepare();
+        h.viewer().selection.click(2, false);
+
+        h.act(Action::ToggleMarkdownRender);
+        assert_eq!(h.ws.panels.viewer.scroll.md, 0);
+        assert!(h.ws.panels.viewer.selection.is_empty());
+
+        h.prepare();
+        h.act(Action::GoToBottom);
+        assert!(h.ws.panels.viewer.scroll.md > 0);
+        h.act(Action::ToggleMarkdownRender);
+        assert_eq!(h.ws.panels.viewer.scroll.md, 0, "戻るときも先頭から");
+    }
+
+    /// unified diff は本文を組み直すと +/- の構造が壊れ、markdown でないファイルには
+    /// そもそも意味が無い。描画のトグルとキーの両方がこの 1 つの述語を読む。
+    #[test]
+    fn レンダリング表示は素のmarkdownファイルに限る() {
+        let dir = fixture(&[("notes.md", NOTES), ("a.txt", "plain\n")]);
+        let mut h = Harness::at(dir.path());
+
+        h.open("a.txt");
+        assert!(!h.ws.panels.viewer.markdown_toggle_available());
+        let effects = h.viewer().toggle_markdown();
+        assert!(matches!(effects.as_slice(), [Effect::Status(..)]));
+        assert!(!h.ws.panels.viewer.is_showing_rendered_markdown());
+
+        h.open("notes.md");
+        h.act(Action::ToggleMarkdownRender);
+        assert!(h.ws.panels.viewer.is_showing_rendered_markdown());
+
+        let file_diff = FileDiff {
+            path: "notes.md".into(),
+            added_lines: 1,
+            deleted_lines: 0,
+            hunks: vec![conductor_core::diff_state::DiffHunk {
+                lines: vec![conductor_core::diff_state::DiffLine {
+                    tag: conductor_core::diff_state::DiffLineTag::Insert,
+                    old_line_no: None,
+                    new_line_no: Some(1),
+                    inline_segments: Vec::new(),
+                    content: "# Title".into(),
+                }],
+                func_header: None,
+            }],
+        };
+        let effects = h.viewer().open(
+            Path::new("notes.md"),
+            None,
+            Some(Box::new(file_diff)),
+            false,
+        );
+        h.run(effects);
+        assert!(
+            !h.ws.panels.viewer.is_showing_rendered_markdown(),
+            "差分では畳む"
+        );
+    }
+
+    /// 押した行のテストだけを走らせる。コマンドはシェルへ送るので、Viewer は
+    /// PTY を知らないまま済む。
+    #[test]
+    fn 実行ボタンを押すとテストのコマンドがシェルへ行く() {
+        let dir = fixture(&[]);
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn works() {}\n}\n",
+        )
+        .unwrap();
+        let mut h = Harness::at(dir.path());
+        h.open("src/lib.rs");
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 60, 20);
+
+        // 桁は 行番号(1) + 折りたたみ(1) の右。4 行目が fn works。
+        let effects = h.click(2, 13, false);
+        let [Effect::Status(_, text), Effect::SendToShell(command)] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(text, "Running works");
+        assert!(command.starts_with("cargo test"), "{command}");
+        assert!(command.contains("works"), "{command}");
+
+        assert!(
+            h.click(20, 13, false).is_empty(),
+            "本文の桁はテストを走らせない"
+        );
+    }
+
+    /// デコードは svc のワーカー。鍵は (パス, 桁, 行) なので、区画が同じ間は
+    /// 描き直しを頼まない。
+    #[test]
+    fn 画像は区画の大きさごとに一度だけ描く() {
+        let dir = fixture(&[]);
+        let image = image::RgbImage::from_fn(8, 8, |x, _| image::Rgb([(x * 32) as u8, 0, 0]));
+        image.save(dir.path().join("logo.png")).unwrap();
+        let mut h = Harness::at(dir.path());
+
+        h.open("logo.png");
+        h.viewer().body = ratatui::layout::Rect::new(0, 1, 40, 12);
+        assert!(
+            matches!(
+                h.ws.panels.viewer.content.media,
+                Some(media::Preview::Loading)
+            ),
+            "描き上がるまでは Loading"
+        );
+
+        h.prepare();
+        let Some(media::Preview::Ready(rendered)) = &h.ws.panels.viewer.content.media else {
+            panic!("{:?}", h.ws.panels.viewer.content.media);
+        };
+        assert_eq!(rendered.dimensions, (8, 8));
+        assert!(!rendered.lines.is_empty());
+
+        let effects = {
+            let Workspace {
+                panels,
+                config,
+                theme,
+                ..
+            } = &mut h.ws;
+            panels.viewer.prepare(config, theme)
+        };
+        assert!(effects.is_empty(), "同じ大きさなら描き直さない");
     }
 
     #[test]

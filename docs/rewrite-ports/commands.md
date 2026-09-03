@@ -85,6 +85,10 @@ CommandId は旧 61 → 新 61。除いたものは無い。
 
 ## 旧との挙動差
 
+- `ShowReviewTemplates` (Review: Show Templates) は `CommandId` ごと落とした。フェーズ 3b で
+  「レビューのテンプレートは持ち込まない」と決めたので、コマンドだけ残すと押せない行が
+  メニューに居座る。旧 `src/review_templates/` と `templates` テーブルは新に無い
+
 - 自己更新の 2 コマンド (`CheckForUpdate` / `UpdateAndRestart`) はメニューの位置も
   パレットの表も旧のままで、中身だけが後続フェーズ待ちのスタブ。更新情報を持たないので
   `enabled` は今は常に灰色にする

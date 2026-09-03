@@ -35,6 +35,75 @@ const SUMMARY_ROWS: usize = 6;
 /// コメントの印の桁。コメントのあるファイルでだけ確保する。
 pub const MARK: usize = 2;
 
+/// テスト実行ボタンの桁。実行できるテストのあるファイルでだけ確保する。
+const BADGE: usize = 2;
+
+/// 実行ボタンの桁を開けるか。当たり判定 (gutter_zone) も同じ答えを読む。
+pub fn badge_width(panel: &ViewerPanel) -> usize {
+    if panel.diff.active || panel.content.tests.is_empty() {
+        0
+    } else {
+        BADGE
+    }
+}
+
+/// markdown を折り返す幅。右端 1 桁はスクロールバーの軌道に譲る。
+pub fn md_width(body: Rect) -> usize {
+    (body.width as usize).saturating_sub(1).max(1)
+}
+
+/// 絵に使える升目。最終行は寸法とファイルサイズの情報行に譲る。
+pub fn media_area(body: Rect) -> (u16, u16) {
+    (body.width, body.height.saturating_sub(1))
+}
+
+const RAW: &str = "Raw";
+const RENDERED: &str = "Rendered";
+
+/// [Raw|Rendered] チップの桁数。
+const CHIP: u16 = 1 + RAW.len() as u16 + 1 + RENDERED.len() as u16 + 1;
+
+/// チップを出すのに要るタブ帯の幅。これより狭いとタブの余地が無くなるので出さない
+/// (キーボードとパレットからは引き続き切り替えられる)。
+const MIN_TAB_ROW: u16 = CHIP + 8;
+
+/// タブ帯の右端に置く Raw / Rendered トグルの桁。
+pub struct Toggle {
+    /// 生ソースを選ぶ側 ([Raw)。
+    pub raw: std::ops::Range<u16>,
+    /// レンダリング表示を選ぶ側 (|Rendered])。
+    pub rendered: std::ops::Range<u16>,
+}
+
+/// トグルの位置。描画も当たり判定もここだけを読むので、出ていないチップが
+/// 押せることはない。
+pub fn toggle(width: u16, available: bool) -> Option<Toggle> {
+    if !available || width < MIN_TAB_ROW {
+        return None;
+    }
+    let start = width - CHIP;
+    let split = start + 1 + RAW.len() as u16;
+    Some(Toggle {
+        raw: start..split,
+        rendered: split..width,
+    })
+}
+
+fn toggle_spans(rendered: bool, theme: &Theme) -> Vec<Span<'static>> {
+    let chrome = Style::default().fg(theme.muted);
+    let on = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let pick = |active: bool| if active { on } else { chrome };
+    vec![
+        Span::styled("[", chrome),
+        Span::styled(RAW, pick(!rendered)),
+        Span::styled("|", chrome),
+        Span::styled(RENDERED, pick(rendered)),
+        Span::styled("]", chrome),
+    ]
+}
+
 pub fn render(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = crate::list::inner(rect);
     if inner.width == 0 || inner.height == 0 {
@@ -90,8 +159,13 @@ fn popup(frame: &mut Frame, popup: super::hover::Popup, theme: &Theme) {
 
 /// 畳んだぶんを除いた尺で出す。畳んだまま端まで送ったのにつまみが半分、が起きない。
 fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
+    if panel.content.media.is_some() {
+        return;
+    }
     let (total, at) = if panel.diff.active {
         (panel.diff.entries.len(), panel.scroll.diff)
+    } else if panel.is_showing_rendered_markdown() {
+        (panel.content.rendered.len(), panel.scroll.md)
     } else {
         let total = panel.content.lines.len();
         (
@@ -114,10 +188,12 @@ fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
 
 /// タブ帯。開いていなければ未選択の案内を出す。
 pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> {
+    let chip = toggle(width, panel.markdown_toggle_available());
     if panel.tabs().is_empty() {
         return Line::styled("no file open", Style::default().fg(theme.muted));
     }
-    let strip = tabs::strip(panel.tabs(), panel.tab_scroll(), width);
+    let strip_width = panel.tab_strip_width(width);
+    let strip = tabs::strip(panel.tabs(), panel.tab_scroll(), strip_width);
     let overflow = Style::default().fg(theme.accent);
     let mut spans = Vec::new();
     if strip.left {
@@ -141,10 +217,24 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
     if strip.right {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         spans.push(Span::raw(
-            " ".repeat((width as usize).saturating_sub(used + 1)),
+            " ".repeat((strip_width as usize).saturating_sub(used + 1)),
         ));
         spans.push(Span::styled(tabs::OVERFLOW_RIGHT.to_string(), overflow));
     }
+    let Some(chip) = chip else {
+        return Line::from(spans);
+    };
+    // タブはチップの桁へはみ出せない。1 枚も入らない幅では帯が溢れて描かれるので、
+    // 切ってから並べないとチップが画面の外へ押し出される。
+    let room = chip.raw.start as usize;
+    let pieces = spans
+        .into_iter()
+        .map(|s| (s.style, s.content.into_owned()))
+        .collect();
+    let mut spans = clip(pieces, 0, room);
+    let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    spans.push(Span::raw(" ".repeat(room - used)));
+    spans.extend(toggle_spans(panel.is_showing_rendered_markdown(), theme));
     Line::from(spans)
 }
 
@@ -169,6 +259,19 @@ pub fn body(
             Style::default().fg(theme.muted),
         )];
     }
+    if let Some(preview) = &panel.content.media {
+        return media_body(preview, theme, height);
+    }
+    if panel.is_showing_rendered_markdown() {
+        return panel
+            .content
+            .rendered
+            .iter()
+            .skip(panel.scroll.md)
+            .take(height)
+            .cloned()
+            .collect();
+    }
     let comments = panel
         .content
         .path
@@ -182,6 +285,34 @@ pub fn body(
         file_body(panel, review, &comments, theme, icons, width, rest)
     });
     lines
+}
+
+/// 絵と、その下の寸法・ファイルサイズの行。
+fn media_body(preview: &super::media::Preview, theme: &Theme, height: usize) -> Vec<Line<'static>> {
+    use super::media::Preview;
+    match preview {
+        Preview::Loading => vec![Line::styled(
+            "  rendering the image\u{2026}",
+            Style::default().fg(theme.muted),
+        )],
+        Preview::Failed(reason) => vec![Line::styled(
+            format!("  \u{26a0} {reason}"),
+            Style::default().fg(theme.error),
+        )],
+        Preview::Ready(rendered) => {
+            let mut lines: Vec<Line<'static>> = rendered
+                .lines
+                .iter()
+                .take(height.saturating_sub(1))
+                .cloned()
+                .collect();
+            lines.push(Line::styled(
+                super::media::caption(rendered),
+                Style::default().fg(theme.muted),
+            ));
+            lines
+        }
+    }
 }
 
 /// このブランチの変更サマリ。差分のときだけ出す — 素のファイルを開くたびに
@@ -239,7 +370,8 @@ fn file_body(
     let total = panel.content.lines.len();
     let digits = digit_count(total);
     let mark = if comments.is_empty() { 0 } else { MARK };
-    let text_width = (width as usize).saturating_sub(digits + GUTTER_FIXED + mark);
+    let badge = badge_width(panel);
+    let text_width = (width as usize).saturating_sub(digits + GUTTER_FIXED + mark + badge);
 
     let mut out = Vec::with_capacity(height);
     for line_1 in panel.fold.visible_from(panel.scroll.line + 1, total) {
@@ -250,7 +382,7 @@ fn file_body(
         if mark > 0 {
             spans.push(thread::marker(comments, line_1, theme, icons));
         }
-        spans.extend(gutter_spans(panel, theme, line_1, digits));
+        spans.extend(gutter_spans(panel, theme, icons, line_1, digits, badge));
         match panel.nav.labels.as_ref().filter(|l| l.line == line_1) {
             Some(labels) => spans.extend(
                 super::code_nav::label_line(
@@ -318,12 +450,14 @@ fn thread_rows(
     )
 }
 
-/// 行番号と折りたたみマーカーと仕切り。
+/// 行番号、折りたたみマーカー、テスト実行ボタン、仕切り。
 fn gutter_spans(
     panel: &ViewerPanel,
     theme: &Theme,
+    icons: IconSet,
     line_1: usize,
     digits: usize,
+    badge: usize,
 ) -> Vec<Span<'static>> {
     let marker = if panel.fold.is_collapsed(line_1) {
         '\u{25b8}'
@@ -332,10 +466,21 @@ fn gutter_spans(
     } else {
         ' '
     };
-    vec![Span::styled(
-        format!("{line_1:>digits$}{marker} \u{2502} "),
-        Style::default().fg(theme.muted),
-    )]
+    let muted = Style::default().fg(theme.muted);
+    let mut spans = vec![Span::styled(format!("{line_1:>digits$}{marker}"), muted)];
+    if badge > 0 {
+        spans.push(match panel.content.tests.contains_key(&line_1) {
+            true => Span::styled(
+                conductor_core::icons::RUN_TEST.labeled(icons),
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            false => Span::raw(" ".repeat(badge)),
+        });
+    }
+    spans.push(Span::styled(" \u{2502} ", muted));
+    spans
 }
 
 /// ハイライト済みの断片から、横スクロールぶんを飛ばして幅に収める。
@@ -891,6 +1036,70 @@ mod tests {
             tab_row(&empty, &Theme::default(), 40).to_string(),
             "no file open"
         );
+    }
+
+    /// 桁はテストのあるファイルでだけ開ける。全ファイルで 2 桁譲ると、テストの無い
+    /// ファイルを読むときに理由の無い余白になる。
+    #[test]
+    fn 実行できる行だけが実行ボタンの桁を開く() {
+        let plain = panel(&["fn a() {}", "fn b() {}"]);
+        assert_eq!(
+            texts(&body(
+                &plain,
+                &ReviewState::default(),
+                &Theme::default(),
+                IconSet::Unicode,
+                40,
+                1
+            )),
+            ["1  \u{2502} fn a() {}"]
+        );
+
+        let mut with_tests = panel(&["fn a() {}", "fn b() {}"]);
+        with_tests.content.tests.insert(
+            2,
+            conductor_core::test_run::TestRun {
+                kind: conductor_core::test_run::TestRunKind::Func,
+                label: "b".into(),
+                command: "cargo test b".into(),
+            },
+        );
+        let lines = texts(&body(
+            &with_tests,
+            &ReviewState::default(),
+            &Theme::default(),
+            IconSet::Unicode,
+            40,
+            2,
+        ));
+        assert_eq!(lines[0], "1    \u{2502} fn a() {}", "桁は開くが印は無い");
+        assert!(lines[1].starts_with("2 \u{25b8}"), "{:?}", lines[1]);
+    }
+
+    /// 描いた列と当たり判定が同じ 1 つの計算を読む。ずれると出ていないチップが
+    /// 押せたり、押しても切り替わらない列ができる。
+    #[test]
+    fn トグルは右端に出て描いた列と当たり判定が一致する() {
+        let mut panel = panel(&["# Title"]);
+        panel.activate_tab_for("notes.md", super::super::tabs::TabStatus::Persistent);
+        panel.content.path = Some("notes.md".into());
+
+        for width in [MIN_TAB_ROW, MIN_TAB_ROW + 1, 40, 120] {
+            let chip = toggle(width, true).expect("MIN_TAB_ROW 以上なら出る");
+            let drawn: Vec<char> = tab_row(&panel, &Theme::default(), width)
+                .to_string()
+                .chars()
+                .collect();
+            let at = |x: u16| drawn[x as usize];
+            assert_eq!(at(chip.raw.start), '[', "w={width}");
+            assert_eq!(at(chip.rendered.start), '|', "w={width}");
+            assert_eq!(at(chip.rendered.end - 1), ']', "w={width}");
+            assert_eq!(chip.rendered.end, width, "右端まで使う");
+            assert_eq!(drawn.len(), width as usize, "行はちょうど幅ぶん");
+        }
+
+        assert!(toggle(MIN_TAB_ROW - 1, true).is_none(), "狭ければ出さない");
+        assert!(toggle(80, false).is_none(), "markdown でなければ出さない");
     }
 
     #[test]

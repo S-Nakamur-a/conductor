@@ -115,7 +115,7 @@ impl ViewerPanel {
             self.restore(idx);
         }
         let path = self.tabs[self.active].path.clone();
-        vec![self.request(path, None, None, true)]
+        self.request(path, None, None, true)
     }
 
     /// idx のタブを閉じる。アクティブなら右隣 (無ければ左隣) へ移り、最後の 1 枚を
@@ -141,7 +141,7 @@ impl ViewerPanel {
         self.active = idx.min(self.tabs.len() - 1);
         self.restore(self.active);
         let path = self.tabs[self.active].path.clone();
-        vec![self.request(path, None, None, true)]
+        self.request(path, None, None, true)
     }
 
     /// 新しい根に無いファイルのタブを閉じる。
@@ -165,7 +165,7 @@ impl ViewerPanel {
         // 別の根で溜めた状態は捨て、新しい根のファイルとして開き直す。
         tab.stashed = None;
         let path = tab.path.clone();
-        vec![self.request(path, None, None, false)]
+        self.request(path, None, None, false)
     }
 
     /// preview は必ずアクティブなので、呼ぶのはフォーカスが他へ移る直前だけ。閉じたタブ
@@ -312,7 +312,22 @@ impl ViewerPanel {
         self.tab_scroll
     }
 
+    /// タブ帯のうちタブが使える幅。Raw/Rendered のトグルを出す間はその桁を譲る。
+    pub(super) fn tab_strip_width(&self, width: u16) -> u16 {
+        match super::render::toggle(width, self.markdown_toggle_available()) {
+            Some(chip) => chip.raw.start,
+            None => width,
+        }
+    }
+
     pub(super) fn click_tab_row(&mut self, x: u16, width: u16) -> Vec<Effect> {
+        if let Some(chip) = super::render::toggle(width, self.markdown_toggle_available())
+            && (chip.raw.contains(&x) || chip.rendered.contains(&x))
+            && chip.rendered.contains(&x) != self.is_showing_rendered_markdown()
+        {
+            return self.toggle_markdown();
+        }
+        let width = self.tab_strip_width(width);
         let strip = strip(&self.tabs, self.tab_scroll, width);
         match strip.hit(x, width) {
             Some(StripHit::Tab(idx)) => self.focus_tab(idx),

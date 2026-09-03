@@ -22,6 +22,7 @@ anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
 unicode-width = "0.2"
+unicode-segmentation = "1"
 # PTY 画面の読み出し。PtyStore が渡す Parser を描画時に直接ロックする。
 vt100 = "0.15"
 # panic ログの置き場と時刻。
@@ -37,6 +38,9 @@ tree-sitter = "0.26"
 git2 = { version = "0.20", features = ["vendored-openssl"] }
 # PR ページを既定のブラウザで開く。
 open = "5"
+# 画像プレビュー。aa-media が吐く ANSI を vt100 に通して行にする。
+aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 
 [dev-dependencies]
 tempfile = "3"
