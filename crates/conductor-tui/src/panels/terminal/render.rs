@@ -12,10 +12,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use conductor_svc::pty::{PtyStore, SessionKind};
+use conductor_svc::pty::PtyStore;
 
+use super::tabs::SlotKind;
 use crate::layout::Region;
-use crate::strip::visible_window;
 use crate::workspace::Workspace;
 
 #[cfg(test)]
@@ -24,6 +24,15 @@ use super::TerminalPanel;
 /// 枠だけを除いた PTY のグリッド。エディタはセッションタブを持たない。
 pub fn editor_area(panel: Rect) -> Rect {
     panel.inner(Margin::new(1, 1))
+}
+
+/// セッションタブの 1 行。
+pub fn tab_area(panel: Rect) -> Rect {
+    let inner = panel.inner(Margin::new(1, 1));
+    Rect {
+        height: inner.height.min(1),
+        ..inner
+    }
 }
 
 /// 枠とタブ行を除いた PTY のグリッド。リサイズと描画が同じ計算を見る。
@@ -143,43 +152,23 @@ fn cell_style(cell: &vt100::Cell) -> Style {
 /// セッションタブ。枠の内側の 1 行目に置く。
 fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
     let theme = &ws.theme;
-    let panel = &ws.panels.terminal;
-    let pane = panel.pane(region);
-    let sessions = panel.sessions(pane.kind);
-    if sessions.is_empty() {
-        let hint = match pane.kind {
-            SessionKind::Shell => " no shell — ctrl+t to start one ",
-            _ => " no Claude Code — ctrl+n to start one ",
-        };
-        return Line::styled(hint, Style::default().fg(theme.muted));
-    }
-
-    let selected = sessions
-        .iter()
-        .position(|(_, id, _)| Some(*id) == pane.session.as_deref())
-        .unwrap_or(0);
-    let labels: Vec<String> = sessions
-        .iter()
-        .map(|(_, _, label)| format!(" {label} "))
-        .collect();
-    let slots: Vec<u16> = labels
-        .iter()
-        .map(|l| UnicodeWidthStr::width(l.as_str()) as u16)
-        .collect();
-    let (start, end) = visible_window(&slots, 1, width, 0, selected, true);
-
-    let mut spans = Vec::new();
-    for (i, label) in labels.iter().enumerate().take(end).skip(start) {
-        let style = if i == selected {
-            Style::default()
-                .fg(theme.selected_fg)
-                .bg(theme.selected_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.muted)
-        };
-        spans.push(Span::styled(label.clone(), style));
-    }
+    let spans = ws
+        .panels
+        .terminal
+        .tab_slots(region, width)
+        .into_iter()
+        .map(|slot| {
+            let style = match slot.kind {
+                SlotKind::Tab { selected: true, .. } => Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.selected_bg)
+                    .add_modifier(Modifier::BOLD),
+                SlotKind::Tab { .. } | SlotKind::Hint => Style::default().fg(theme.muted),
+                SlotKind::Add => Style::default().fg(theme.accent),
+            };
+            Span::styled(slot.label, style)
+        })
+        .collect::<Vec<_>>();
     Line::from(spans)
 }
 

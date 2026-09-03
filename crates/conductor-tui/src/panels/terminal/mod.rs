@@ -6,6 +6,7 @@
 pub mod ansi;
 pub(crate) mod reflow;
 pub mod render;
+pub(crate) mod tabs;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -127,6 +128,45 @@ impl TerminalPanel {
             Focus::TerminalClaude => Some(&mut self.claude),
             Focus::TerminalShell => Some(&mut self.shell),
             _ => None,
+        }
+    }
+
+    /// タブ行に並ぶ区画。
+    pub(crate) fn tab_slots(&self, region: Region, width: u16) -> Vec<tabs::Slot> {
+        let pane = self.pane(region);
+        let sessions = self.sessions(pane.kind);
+        let labelled: Vec<(&str, &str)> = sessions
+            .iter()
+            .map(|(_, id, label)| (*id, *label))
+            .collect();
+        tabs::row(pane.kind, &labelled, pane.session.as_deref(), width)
+    }
+
+    /// タブ行のクリック。x は枠の内側からの相対列。押せる区画に当たらなければ
+    /// None を返して、空の区画のダブルクリック起動へ渡す。
+    pub fn tab_click(&mut self, focus: Focus, x: u16, width: u16) -> Option<Vec<Effect>> {
+        let region = match focus {
+            Focus::TerminalClaude => Region::TerminalClaude,
+            Focus::TerminalShell => Region::TerminalShell,
+            _ => return None,
+        };
+        let slot = self
+            .tab_slots(region, width)
+            .into_iter()
+            .find(|slot| slot.contains(x))?;
+        match slot.kind {
+            tabs::SlotKind::Tab { session, .. } => {
+                // 今映しているタブを押しただけならスクロール位置を捨てない。
+                if let Some(pane) = self.pane_mut(focus)
+                    && pane.session.as_deref() != Some(session.as_str())
+                {
+                    pane.show(Some(session));
+                }
+                self.activate_visible();
+                Some(Vec::new())
+            }
+            tabs::SlotKind::Add => Some(vec![Effect::NewSession(self.pane(region).kind)]),
+            tabs::SlotKind::Hint => None,
         }
     }
 
@@ -817,6 +857,60 @@ mod tests {
         let _dir = spawn_shell(&mut ws, "echo conductor-hello\n");
         let text = wait_for(&ws, "conductor-hello");
         assert!(text.contains("conductor-hello"), "{text}");
+    }
+
+    /// タブ行の当たり判定が描画と同じ並びを見ていることを、実セッションで通す。
+    #[test]
+    fn タブのクリックで映すセッションが変わりチップは新しい1本を頼む() {
+        const WIDTH: u16 = 40;
+        let mut ws = Workspace::for_test();
+        let dir = tempfile::tempdir().unwrap();
+        let panel = &mut ws.panels.terminal;
+        panel.worktree = Some(dir.path().to_path_buf());
+        for label in ["SH:1", "SH:2"] {
+            panel
+                .pty
+                .spawn(Spawn {
+                    launch: Launch::Shell { program: "/bin/sh" },
+                    worktree: "t",
+                    label,
+                    working_dir: dir.path(),
+                    rows: 10,
+                    cols: 40,
+                })
+                .unwrap();
+        }
+        let ids: Vec<String> = panel
+            .sessions(SessionKind::Shell)
+            .iter()
+            .map(|(_, id, _)| (*id).to_string())
+            .collect();
+        panel.shell.show(Some(ids[0].clone()));
+
+        let slots = panel.tab_slots(Region::TerminalShell, WIDTH);
+        let x_of = |wanted: &tabs::SlotKind| {
+            slots
+                .iter()
+                .find(|slot| slot.kind == *wanted)
+                .unwrap_or_else(|| panic!("{slots:?}"))
+                .start
+        };
+        let second = x_of(&tabs::SlotKind::Tab {
+            session: ids[1].clone(),
+            selected: false,
+        });
+        let add = x_of(&tabs::SlotKind::Add);
+
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, second, WIDTH),
+            Some(Vec::new()),
+            "タブを選ぶのに Effect は要らない"
+        );
+        assert_eq!(panel.shell.session.as_deref(), Some(ids[1].as_str()));
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, add, WIDTH),
+            Some(vec![Effect::NewSession(SessionKind::Shell)])
+        );
     }
 
     /// キーが spawn まで届くことを見る。claude の在否に依らないよう shell で確かめる。

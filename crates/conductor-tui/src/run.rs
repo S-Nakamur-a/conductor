@@ -9,7 +9,7 @@ use crossterm::event::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 
 use conductor_svc::{EventKind, Services};
 
@@ -320,6 +320,20 @@ fn on_mouse(
                 apply(ws, svc, effects);
                 return;
             }
+            // タブ行は PTY のグリッドの外なので、中身を見る経路より先に捌く。
+            if matches!(focus, Focus::TerminalClaude | Focus::TerminalShell)
+                && let Some(tabs) = layout
+                    .rect(region)
+                    .map(crate::panels::terminal::render::tab_area)
+                && tabs.contains(Position::new(mouse.column, mouse.row))
+                && let Some(effects) =
+                    ws.panels
+                        .terminal
+                        .tab_click(focus, mouse.column - tabs.x, tabs.width)
+            {
+                apply(ws, svc, effects);
+                return;
+            }
             // 「最新へ」チップは PTY の中身より上にある。
             if focus == Focus::TerminalClaude
                 && let Some(rect) = layout.rect(Region::TerminalClaude)
@@ -442,6 +456,44 @@ mod tests {
             panic!("{:?}", ws.modals);
         };
         assert_eq!(prompt.input.text(), "日本語");
+    }
+
+    /// タブ行のクリックが区画の座標からタブの列へ落ちるところまでを通す。
+    #[test]
+    fn タブ行のチップをクリックするとセッションが増える() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let dir = tempfile::tempdir().unwrap();
+        ws.config.general.shell = "/bin/sh".into();
+        ws.panels
+            .terminal
+            .follow_worktree(Some(dir.path().to_path_buf()));
+        ws.repo.root = dir.path().to_path_buf();
+
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let tabs =
+            crate::panels::terminal::render::tab_area(l.rect(Region::TerminalShell).unwrap());
+        let add = ws
+            .panels
+            .terminal
+            .tab_slots(Region::TerminalShell, tabs.width)
+            .into_iter()
+            .find(|slot| slot.kind == crate::panels::terminal::tabs::SlotKind::Add)
+            .expect("チップが無い");
+
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: tabs.x + add.start,
+                row: tabs.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(ws.panels.terminal.sessions(SessionKind::Shell).len(), 1);
+        assert_eq!(ws.focus, Focus::TerminalShell);
     }
 
     #[test]
