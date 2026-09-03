@@ -571,6 +571,7 @@ dependencies = [
  "log",
  "open",
  "ratatui",
+ "serde_json",
  "sheaf-core",
  "syntect",
  "syntect-tui",

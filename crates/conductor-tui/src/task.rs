@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, LayoutConfig};
 use conductor_core::diff_state::DiffState;
@@ -75,6 +76,11 @@ pub enum Task {
         regex: bool,
         case_sensitive: bool,
         seq: u64,
+    },
+    /// パネルが pin している Claude セッションの .jsonl。数 MB になるので UI では読まない。
+    ReadTranscript {
+        working_dir: PathBuf,
+        session_id: String,
     },
     /// resume できる Claude セッション。`all` ならこのリポジトリの外も含める。
     ListSessions {
@@ -267,6 +273,11 @@ pub enum TaskResult {
         found: Result<Vec<GrepMatch>, String>,
     },
     Sessions(Result<Vec<ResumableSession>, String>),
+    /// `session_id` は照合用。読んでいる間に /clear でローテーションしていたら捨てる。
+    Transcript {
+        session_id: String,
+        entries: Result<Vec<LogEntry>, String>,
+    },
     Persisted(Result<(), String>),
     History {
         /// 直前に保存したかどうか。ステータスに出す。
@@ -325,6 +336,21 @@ impl Task {
                 svc.spawn(
                     move || Box::new(compute_diff(&env, &worktree)),
                     TaskResult::Diff,
+                );
+            }
+            Task::ReadTranscript {
+                working_dir,
+                session_id,
+            } => {
+                svc.spawn(
+                    move || {
+                        let entries = read_transcript(&working_dir, &session_id);
+                        (session_id, entries)
+                    },
+                    |(session_id, entries)| TaskResult::Transcript {
+                        session_id,
+                        entries,
+                    },
                 );
             }
             Task::LoadFile { root, path, seq } => {
@@ -813,6 +839,16 @@ fn persist(what: &Persist) -> Result<(), String> {
         Persist::Layout(layout) => config::persist_layout_proportions(layout),
     }
     .map_err(|e| e.to_string())
+}
+
+/// pin した session id のログだけを開く。兄弟の .jsonl は同じワークツリーで走った
+/// 別の会話なので、mtime などで選び直すと他人の履歴を見せることになる。
+fn read_transcript(working_dir: &Path, session_id: &str) -> Result<Vec<LogEntry>, String> {
+    let home = ClaudeHome::detect().ok_or("could not find ~/.claude")?;
+    let path = home
+        .session_log(working_dir, session_id)
+        .ok_or_else(|| format!("no session log on disk for {session_id}"))?;
+    Ok(claude_log::load_session(&path))
 }
 
 fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, String> {

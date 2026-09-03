@@ -41,6 +41,8 @@ pub enum Effect {
         id: String,
         worktree: Option<PathBuf>,
     },
+    /// 開いているファイルを埋め込みエディタで開く。パスは絶対。
+    OpenInEditor(PathBuf),
     Command(CommandId),
     /// メニューバーにキーボードフォーカスを移す。開くのはそこから。
     FocusMenuBar,
@@ -117,6 +119,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::ResumeSession { id, worktree } => {
                 new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree)
             }
+            Effect::OpenInEditor(path) => queue.extend(open_in_editor(ws, &path)),
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
             Effect::SwitchRepo(path) => queue.extend(switch_repo(ws, svc, &path)),
@@ -191,6 +194,29 @@ fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
     match ws.panels.terminal.send_line(command) {
         Ok(()) => vec![Effect::Focus(Focus::TerminalShell)],
         Err(e) => vec![Effect::Status(StatusLevel::Error, format!("{e:#}"))],
+    }
+}
+
+/// $EDITOR を PTY で起こし、Explorer と Viewer を併合した区画に映す。
+fn open_in_editor(ws: &mut Workspace, path: &std::path::Path) -> Vec<Effect> {
+    let worktree = ws
+        .panels
+        .worktree
+        .selected()
+        .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone());
+    let argv = crate::panels::terminal::editor_argv();
+    match ws.panels.terminal.open_editor(path, &worktree, &argv) {
+        Ok(name) => vec![
+            Effect::Focus(Focus::Editor),
+            Effect::Status(
+                StatusLevel::Info,
+                format!("editing {name} \u{2014} :q to close"),
+            ),
+        ],
+        Err(e) => vec![Effect::Status(
+            StatusLevel::Error,
+            format!("could not launch the editor: {e:#}"),
+        )],
     }
 }
 

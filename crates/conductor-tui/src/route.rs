@@ -40,6 +40,10 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
     if ws.focus.is_pty() {
         return match action {
             Some(action) if action.fires_in_terminal() => Routed::Action(action),
+            // トランスクリプトは読み取り専用なので、PTY へ流さず全部ここで飲む。
+            _ if ws.panels.terminal.reading(ws.focus) => {
+                Routed::Effects(ws.panels.terminal.transcript_key(key))
+            }
             _ => Routed::ForwardToPty(key),
         };
     }

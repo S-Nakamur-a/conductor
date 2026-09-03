@@ -64,12 +64,17 @@ pub fn run(
         let size = terminal.size()?;
         let last_layout = layout(ws, Rect::new(0, 0, size.width, size.height));
         ws.sync_layout(&last_layout);
-        let prepared = ws.panels.viewer.prepare(&ws.config, &ws.theme);
+        let prepared = ws.prepare();
         apply(ws, svc, prepared);
 
         // 描くのが先。起動直後に既にキーが溜まっていると、捌いてから描く並びでは
         // 1 フレームも出さないまま終了しうる。
         if dirty {
+            // 未書き込みで残したセルは ratatui の diff では決して塗り直されないので、
+            // トランスクリプトの行が動いたフレームだけは端末ごと消す。
+            if ws.panels.terminal.take_clear_request() {
+                terminal.clear()?;
+            }
             ws.entrance.start_if_pending();
             terminal.draw(|frame| render(frame, ws, &last_layout))?;
             dirty = false;
@@ -97,6 +102,7 @@ pub fn run(
         dirty |= tick_modals(ws, svc);
         dirty |= tick_index(ws, svc);
         dirty |= ws.tick_viewer();
+        dirty |= tick_editor(ws, svc);
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
         dirty |= run_timers(
@@ -112,6 +118,24 @@ pub fn run(
             return Ok(());
         }
     }
+}
+
+/// エディタが終わっていたら Viewer へ戻し、編集直後のファイルを読み直す。
+/// ファイルウォッチャーのデバウンスを待たせない。
+fn tick_editor(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
+    let Some(path) = ws.panels.terminal.poll_editor_exit() else {
+        return false;
+    };
+    // 編集で差分も動くので、本文と一緒に変更ファイル一覧も取り直す。
+    let mut effects = ws.panels.explorer.refresh();
+    effects.push(Effect::OpenFile {
+        path,
+        line: None,
+        diff: None,
+        preview: false,
+    });
+    apply(ws, svc, effects);
+    true
 }
 
 /// 締切を持つモーダルを一押しする。何か動いたら true。
@@ -279,6 +303,16 @@ fn on_mouse(
                 apply(ws, svc, effects);
                 return;
             }
+            // 「最新へ」チップは PTY の中身より上にある。
+            if focus == Focus::TerminalClaude
+                && let Some(rect) = layout.rect(Region::TerminalClaude)
+                && ws
+                    .panels
+                    .terminal
+                    .transcript_click(rect, mouse.column, mouse.row)
+            {
+                return;
+            }
             let effects = match focus {
                 Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
                 Focus::Viewer => {
@@ -320,6 +354,7 @@ fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {
             panels.explorer.scroll(region, delta, review)
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
+        Region::TerminalClaude => ws.panels.terminal.transcript_scroll(delta),
         _ => {}
     }
 }
@@ -329,6 +364,7 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::WorktreeStrip => Some(Focus::Worktree),
         Region::ExplorerTree | Region::ExplorerChanges => Some(Focus::Explorer),
         Region::Viewer => Some(Focus::Viewer),
+        Region::Editor => Some(Focus::Editor),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
@@ -366,6 +402,71 @@ mod tests {
         for k in keys {
             on_key(ws, &mut svc, *k);
         }
+    }
+
+    /// Viewer の e から埋め込みエディタを起こし、プロセスが終わったら Viewer に戻って
+    /// 読み直すまでを 1 本で通す。どのエディタかは環境が決めるので、ここは即座に
+    /// 終わるコマンドを直接渡す。
+    #[test]
+    fn eでエディタを起こし終了したらviewerへ戻って読み直す() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "ALPHA\n").unwrap();
+
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::OpenFile {
+                path: dir.path().join("a.txt"),
+                line: None,
+                diff: None,
+                preview: false,
+            }],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+
+        // Viewer の e は「このファイルをエディタで」だけを言う。
+        let effects = ws
+            .dispatch(conductor_core::keymap::Action::OpenInEditor)
+            .unwrap();
+        assert_eq!(
+            effects,
+            vec![Effect::OpenInEditor(dir.path().join("a.txt"))],
+            "{effects:?}"
+        );
+
+        let argv: Vec<String> = ["/bin/sh", "-c", "exit 0"].map(String::from).to_vec();
+        ws.panels
+            .terminal
+            .open_editor(&dir.path().join("a.txt"), dir.path(), &argv)
+            .unwrap();
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::Editor)]);
+
+        // エディタは Explorer と Viewer の列を併合した 1 区画を占める。
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        assert!(l.rect(Region::Editor).is_some());
+        assert!(l.rect(Region::Viewer).is_none() && l.rect(Region::ExplorerTree).is_none());
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !tick_editor(&mut ws, &mut svc) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(ws.focus, Focus::Viewer, "終了したら Viewer へ戻る");
+        crate::testing::pump(&mut ws, &mut svc);
+        assert_eq!(
+            ws.panels.viewer.content.lines,
+            ["ALPHA"],
+            "読み直していない"
+        );
+        assert!(
+            layout(&ws, Rect::new(0, 0, 120, 40))
+                .rect(Region::Editor)
+                .is_none(),
+            "区画が残っている"
+        );
     }
 
     /// Explorer で Enter を押してから Viewer に中身が出るまでを、実キーと svc の

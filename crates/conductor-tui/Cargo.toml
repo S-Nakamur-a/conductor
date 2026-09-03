@@ -32,6 +32,8 @@ chrono = "0.4"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 syntect-tui = "3.0.6"
+# トランスクリプトの tool_use は生の JSON を持つ。分類はそれを見て決める。
+serde_json = "1"
 # 折りたたみ範囲の算出。
 tree-sitter = "0.26"
 # 変更ファイル一覧の色分けが status のビットを直接読む。

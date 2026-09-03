@@ -21,6 +21,11 @@ use crate::workspace::Workspace;
 #[cfg(test)]
 use super::TerminalPanel;
 
+/// 枠だけを除いた PTY のグリッド。エディタはセッションタブを持たない。
+pub fn editor_area(panel: Rect) -> Rect {
+    panel.inner(Margin::new(1, 1))
+}
+
 /// 枠とタブ行を除いた PTY のグリッド。リサイズと描画が同じ計算を見る。
 pub fn content_area(panel: Rect) -> Rect {
     let inner = panel.inner(Margin::new(1, 1));
@@ -178,6 +183,26 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
+/// 埋め込みエディタの中身。タブ行もスクロールバックも無く、PTY のグリッドだけ。
+pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let panel = &ws.panels.terminal;
+    let content = editor_area(rect);
+    if content.width == 0 || content.height == 0 {
+        return;
+    }
+    let Some(index) = panel.index_of(panel.editor.as_ref().map(|e| &e.session)) else {
+        return;
+    };
+    let Some(screen) = panel.pty.screen(index) else {
+        return;
+    };
+    let (lines, _) = screen_lines(&screen, 0, content.height, content.width);
+    let buffer = frame.buffer_mut();
+    for (row, line) in lines.iter().enumerate() {
+        buffer.set_line(content.x, content.y + row as u16, line, content.width);
+    }
+}
+
 /// 枠の内側 (タブ行 + PTY のグリッド) を描く。枠そのものは [crate::render] が描く。
 pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     let inner = rect.inner(Margin::new(1, 1));
@@ -190,6 +215,16 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     );
 
     let panel = &ws.panels.terminal;
+    // トランスクリプトは Claude 区画の中身を置き換える。タブ行は残す —
+    // どのセッションの履歴を読んでいるのかが分からなくなる。
+    if let Some(reflow) = panel
+        .transcript()
+        .filter(|_| region == Region::TerminalClaude)
+    {
+        super::reflow::render(frame, content_area(rect), reflow);
+        return;
+    }
+
     let pane = panel.pane(region);
     let Some(index) = panel.index_of(pane.session.as_ref()) else {
         return;

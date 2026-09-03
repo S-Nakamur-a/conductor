@@ -361,6 +361,13 @@ impl Workspace {
                 crate::index::accept(self, result);
                 Vec::new()
             }
+            TaskResult::Transcript {
+                session_id,
+                entries,
+            } => self
+                .panels
+                .terminal
+                .install_transcript(&session_id, entries),
             TaskResult::Grep { .. }
             | TaskResult::Sessions(_)
             | TaskResult::History { .. }
@@ -540,6 +547,27 @@ impl Workspace {
         vec![Effect::PushModal(Modal::Publish(
             crate::modal::publish::Publish::new(request),
         ))]
+    }
+
+    /// 描く直前に、本文から導かれる重い成果物を整える。
+    pub fn prepare(&mut self) -> Vec<Effect> {
+        let effects = self.panels.viewer.prepare(&self.config, &self.theme);
+        // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
+        if self.panels.terminal.transcript().is_none() {
+            return effects;
+        }
+        let overlay_open = !self.modals.is_empty();
+        let Self {
+            panels,
+            theme,
+            config,
+            ..
+        } = self;
+        let Panels {
+            viewer, terminal, ..
+        } = panels;
+        terminal.prepare(theme, viewer.highlighter(config), overlay_open);
+        effects
     }
 
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。

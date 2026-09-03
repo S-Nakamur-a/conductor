@@ -40,6 +40,7 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     Region::TerminalClaude | Region::TerminalShell => {
                         crate::panels::terminal::render::pane(frame, rect, ws, *panel)
                     }
+                    Region::Editor => crate::panels::terminal::render::editor(frame, rect, ws),
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
                     _ => {}
                 }
@@ -138,10 +139,16 @@ pub(crate) fn title_line(ws: &Workspace, width: u16) -> Line<'_> {
 
 fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
     let focused = focused_region(ws) == region;
-    let border = if focused {
-        Style::default().fg(ws.theme.border_focused)
-    } else {
-        Style::default().fg(ws.theme.border_unfocused)
+    // 読みモードに入ると枠がアクセント色から補色へ移る。色そのものが「ここは
+    // 過去を読んでいる」という常時の合図になる。
+    let reading = (region == Region::TerminalClaude)
+        .then(|| ws.panels.terminal.transcript())
+        .flatten()
+        .filter(|_| focused);
+    let border = match reading {
+        Some(reflow) => Style::default().fg(reflow.border_color(&ws.theme)),
+        None if focused => Style::default().fg(ws.theme.border_focused),
+        None => Style::default().fg(ws.theme.border_unfocused),
     };
     let explorer = &ws.panels.explorer;
     let title = match region {
@@ -150,6 +157,10 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         }
         Region::ExplorerChanges => crate::panels::explorer::render::bottom_title(explorer, ws),
         Region::Viewer => " Viewer ".to_string(),
+        Region::Editor => match ws.panels.terminal.editor_name() {
+            Some(name) => format!(" Editor \u{2014} {name} "),
+            None => " Editor ".to_string(),
+        },
         Region::TerminalClaude => " Claude Code ".to_string(),
         Region::TerminalShell => " Shell ".to_string(),
         _ => String::new(),
@@ -175,7 +186,8 @@ fn focused_region(ws: &Workspace) -> Region {
             crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
             crate::panels::explorer::Pane::Bottom => Region::ExplorerChanges,
         },
-        Focus::Viewer | Focus::Editor | Focus::Revidere => Region::Viewer,
+        Focus::Editor => Region::Editor,
+        Focus::Viewer | Focus::Revidere => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
     }

@@ -13,6 +13,8 @@ pub enum Region {
     ExplorerTree,
     ExplorerChanges,
     Viewer,
+    /// 埋め込み $EDITOR。Explorer と Viewer の列を併合して占める。
+    Editor,
     TerminalClaude,
     TerminalShell,
     StatusBar,
@@ -84,7 +86,8 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     if ws.chrome.maximized {
         match ws.focus {
             Focus::Worktree | Focus::Explorer => push_explorer(&mut regions, main),
-            Focus::Viewer | Focus::Editor | Focus::Revidere => regions.push((Region::Viewer, main)),
+            Focus::Editor => regions.push((Region::Editor, main)),
+            Focus::Viewer | Focus::Revidere => regions.push((Region::Viewer, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
             Focus::TerminalShell => regions.push((Region::TerminalShell, main)),
         }
@@ -93,14 +96,22 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         let viewer_w = main.width * cfg.viewer_width_pct / 100;
         let terminal_w = main.width.saturating_sub(explorer_w + viewer_w);
         let claude_h = main.height * cfg.terminal_split_pct / 100;
-        push_explorer(
-            &mut regions,
-            Rect::new(main.x, main.y, explorer_w, main.height),
-        );
-        regions.push((
-            Region::Viewer,
-            Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
-        ));
+        // エディタは Explorer と Viewer の 2 列を併合して 1 区画になる。
+        if ws.focus == Focus::Editor {
+            regions.push((
+                Region::Editor,
+                Rect::new(main.x, main.y, explorer_w + viewer_w, main.height),
+            ));
+        } else {
+            push_explorer(
+                &mut regions,
+                Rect::new(main.x, main.y, explorer_w, main.height),
+            );
+            regions.push((
+                Region::Viewer,
+                Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
+            ));
+        }
         let tx = main.x + explorer_w + viewer_w;
         regions.push((
             Region::TerminalClaude,
@@ -125,8 +136,14 @@ mod tests {
     #[test]
     fn 全ての区画は_hitで自分に戻る() {
         let mut ws = Workspace::for_test();
-        for maximized in [false, true] {
+        for (maximized, focus) in [
+            (false, Focus::Explorer),
+            (true, Focus::Explorer),
+            (false, Focus::Editor),
+            (true, Focus::Editor),
+        ] {
             ws.chrome.maximized = maximized;
+            ws.focus = focus;
             let l = layout(&ws, Rect::new(0, 0, 120, 40));
             for (region, rect) in &l.regions {
                 for (x, y) in [
@@ -141,10 +158,13 @@ mod tests {
 
     #[test]
     fn 区画は重ならず画面を埋める() {
-        let ws = Workspace::for_test();
-        let l = layout(&ws, Rect::new(0, 0, 120, 40));
-        let total: u32 = l.regions.iter().map(|(_, r)| r.area()).sum();
-        assert_eq!(total, 120 * 40);
+        let mut ws = Workspace::for_test();
+        for focus in [Focus::Explorer, Focus::Editor] {
+            ws.focus = focus;
+            let l = layout(&ws, Rect::new(0, 0, 120, 40));
+            let total: u32 = l.regions.iter().map(|(_, r)| r.area()).sum();
+            assert_eq!(total, 120 * 40, "{focus:?}");
+        }
     }
 
     #[test]

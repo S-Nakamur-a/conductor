@@ -181,6 +181,16 @@ impl ViewerPanel {
         &self.root
     }
 
+    /// 構文定義とテーマ。トランスクリプトも markdown を描くので同じものを見る —
+    /// 別に持たせると SyntaxSet が 2 つ載る。
+    pub(crate) fn highlighter(&mut self, config: &conductor_core::config::Config) -> &Highlighter {
+        let highlighter = self
+            .highlighter
+            .get_or_insert_with(|| Highlighter::new(config));
+        highlighter.adopt(config);
+        highlighter
+    }
+
     pub fn is_loading(&self) -> bool {
         self.load.is_some()
     }
@@ -298,6 +308,17 @@ impl ViewerPanel {
     /// レンダリング済み markdown を描いているか。行に紐づく機能は全てこれで判定する。
     pub fn is_showing_rendered_markdown(&self) -> bool {
         self.md_rendered && self.markdown_toggle_available()
+    }
+
+    /// 開いているファイルを埋め込みエディタへ渡す。開いていなければ何も起こさない。
+    fn open_in_editor(&self) -> Vec<Effect> {
+        match self.active_path() {
+            Some(path) => vec![Effect::OpenInEditor(self.root.join(path))],
+            None => vec![Effect::Status(
+                StatusLevel::Warning,
+                "no file open to edit".into(),
+            )],
+        }
     }
 
     /// 素のソースとレンダリング表示を切り替える。切り替えたら必ず先頭に着地し、
@@ -605,6 +626,9 @@ impl ViewerPanel {
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         if action == Action::ToggleMarkdownRender {
             return Some(self.toggle_markdown());
+        }
+        if action == Action::OpenInEditor {
+            return Some(self.open_in_editor());
         }
         // 行に紐づくキーは素通しして global へ落ち、そこから戻ってもまたここへ来る
         // ので何も起きない。畳む対象を並べた表を持たずに済む。
