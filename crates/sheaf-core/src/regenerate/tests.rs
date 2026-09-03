@@ -5,7 +5,7 @@ use super::*;
 use crate::blob_hash;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// 本文どおりに振る舞う producer。出力先が引数の最後に付く。
@@ -19,15 +19,36 @@ impl Producer for Script {
     }
 }
 
-struct Harness {
-    dir: tempfile::TempDir,
+/// タイムアウトだけ差し替える包み。上限は 300 秒なので、そのままでは検査が書けない。
+struct Impatient(Arc<dyn Producer>, Duration);
+
+impl Producer for Impatient {
+    fn command(&self, out: &Path) -> Vec<String> {
+        self.0.command(out)
+    }
+    fn timeout(&self) -> Duration {
+        self.1
+    }
 }
 
-impl Harness {
-    /// ソースが変わったことを伝える。
-    fn touch(&self, regen: &mut Regenerator) {
-        regen.note_change(&self.dir.path().join("src/lib.rs"), self.dir.path());
+/// 検査が進める時計。
+#[derive(Clone)]
+struct Hand(Arc<Mutex<Instant>>);
+
+impl Hand {
+    fn advance(&self, by: Duration) {
+        *self.0.lock().unwrap() += by;
     }
+
+    fn clock(&self) -> Clock {
+        let at = Arc::clone(&self.0);
+        Clock::reading(move || *at.lock().unwrap())
+    }
+}
+
+struct Harness {
+    dir: tempfile::TempDir,
+    clock: Hand,
 }
 
 impl Harness {
@@ -35,7 +56,14 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join("src/lib.rs"), "pub fn a() {}\n").unwrap();
-        Harness { dir }
+        Harness {
+            dir,
+            clock: Hand(Arc::new(Mutex::new(Instant::now()))),
+        }
+    }
+
+    fn regenerator(&self, producer: Arc<dyn Producer>) -> Regenerator {
+        Regenerator::new(producer).with_clock(self.clock.clock())
     }
 
     fn script(&self, body: &str) -> Arc<dyn Producer> {
@@ -57,34 +85,29 @@ impl Harness {
             lock: self.dir.path().join("index.lock"),
         }
     }
+
+    /// ソースが変わったことを伝える。
+    fn touch(&self, regen: &mut Regenerator) {
+        regen.note_change(&self.dir.path().join("src/lib.rs"), self.dir.path());
+    }
+
+    fn make_due(&self, regen: &mut Regenerator) {
+        self.touch(regen);
+        self.quiesce();
+    }
+
+    fn quiesce(&self) {
+        self.clock.advance(QUIESCENCE);
+    }
 }
 
-/// 条件が成り立つまで待つ。
-///
-/// 固定の sleep で待つと、ほかのテストと並列に走ったときに producer の起動が
-/// 間に合わず、実装ではなく負荷で落ちる。
+/// 条件が成り立つまで待つ。子プロセスの起動だけは実時間でしか待てない。
 fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !cond() {
         assert!(Instant::now() < deadline, "{what} にならない");
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-/// 静穏時間を待たずに始められるよう、変更時刻を過去に倒す。
-///
-/// 変更を伝えないので、「編集が来なくてもやり直す」の検査に使える。
-fn backdate(regen: &mut Regenerator) {
-    if regen.is_pending() {
-        regen.state = State::Pending {
-            last_change: Instant::now() - QUIESCENCE - Duration::from_millis(1),
-        };
-    }
-}
-
-fn make_due(regen: &mut Regenerator, h: &Harness) {
-    h.touch(regen);
-    backdate(regen);
 }
 
 /// 走り終わるまで tick を回す。
@@ -111,18 +134,6 @@ fn reload(target: &Target, producer: &dyn Producer) -> Store {
     Store::load(std::slice::from_ref(&source), &target.root).expect("置いた索引を読めない")
 }
 
-/// タイムアウトだけ差し替える包み。上限は 300 秒なので、そのままでは検査が書けない。
-struct Impatient(Arc<dyn Producer>, Duration);
-
-impl Producer for Impatient {
-    fn command(&self, out: &Path) -> Vec<String> {
-        self.0.command(out)
-    }
-    fn timeout(&self) -> Duration {
-        self.1
-    }
-}
-
 /// 索引の置き場所に残っている、生成中の一時ファイル。
 ///
 /// 失敗の経路ごとに手で消していると、経路が増えたときに消し忘れる。残った一時ファイルは
@@ -139,42 +150,87 @@ fn leftover_temp_files(h: &Harness) -> Vec<String> {
     out
 }
 
-/// `src/lib.rs` の `a` に定義 occurrence を1つ持つ索引を書く。
-fn write_scip_defining_a(path: &Path) {
-    use protobuf::{EnumOrUnknown, Message, MessageField};
-    use scip::types::{Document, Index, Metadata, Occurrence, TextEncoding};
+/// 孫プロセスが刻んでいる印。
+struct Beat(PathBuf);
 
-    let index = Index {
-        metadata: MessageField::some(Metadata {
-            text_document_encoding: EnumOrUnknown::new(TextEncoding::UTF8),
+impl Beat {
+    fn at(&self) -> Option<std::time::SystemTime> {
+        std::fs::metadata(&self.0)
+            .ok()
+            .and_then(|m| m.modified().ok())
+    }
+
+    /// 孫が動き出し、さらに刻み続けているところまで見る。存在だけでは
+    /// 「1 回 touch して死んだ」と区別できず、このあとの停止の検査が無意味になる。
+    fn wait_until_running(&self) {
+        wait_until("孫が動き出した状態", || self.at().is_some());
+        let first = self.at();
+        wait_until("孫が触り続けている状態", || self.at() != first);
+    }
+
+    fn assert_stopped(&self) {
+        std::thread::sleep(Duration::from_millis(300));
+        let stopped_at = self.at();
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(self.at(), stopped_at, "止めたのに孫が触り続けている");
+    }
+}
+
+/// 検査用の SCIP を組み立てる。
+#[derive(Default)]
+struct Scip(Vec<scip::types::Document>);
+
+impl Scip {
+    /// 中身の無い Document。パスだけを主張する。
+    fn document(mut self, rel: &str) -> Self {
+        self.0.push(scip::types::Document {
+            relative_path: rel.to_string(),
+            language: "rust".to_string(),
             ..Default::default()
-        }),
-        documents: vec![Document {
-            relative_path: "src/lib.rs".to_string(),
-            // "pub fn a() {}" の a。
-            occurrences: vec![Occurrence {
+        });
+        self
+    }
+
+    /// `pub fn a() {}` の a に定義 occurrence を持つ Document。
+    fn defining_a(mut self, rel: &str) -> Self {
+        self.0.push(scip::types::Document {
+            relative_path: rel.to_string(),
+            occurrences: vec![scip::types::Occurrence {
                 range: vec![0, 7, 8],
                 symbol: "scip-test cargo demo 0.1.0 a().".to_string(),
                 symbol_roles: 1,
                 ..Default::default()
             }],
             ..Default::default()
-        }],
-        ..Default::default()
-    };
-    std::fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+        });
+        self
+    }
+
+    fn write(self, path: &Path) {
+        use protobuf::{EnumOrUnknown, Message, MessageField};
+        use scip::types::{Index, Metadata, TextEncoding};
+
+        let index = Index {
+            metadata: MessageField::some(Metadata {
+                text_document_encoding: EnumOrUnknown::new(TextEncoding::UTF8),
+                ..Default::default()
+            }),
+            documents: self.0,
+            ..Default::default()
+        };
+        std::fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+    }
 }
 
 #[test]
 fn 変更したファイルも再生成が終われば_exact_に戻る() {
-    // 「変更されたから恒久的に構文レベル」にならないことの検査。
-    // 鮮度の検査だけがあると、いちど編集したファイルが二度と索引に戻らない
-    // 実装でも緑のままになる。
+    // 鮮度の検査だけがあると、いちど編集したファイルが二度と索引に戻らない実装でも
+    // 緑のままになる。
     let h = Harness::new();
     let fixture = h.dir.path().join("fixture.scip");
-    write_scip_defining_a(&fixture);
+    Scip::default().defining_a("src/lib.rs").write(&fixture);
     let producer = h.script(&format!("cp \"{}\" \"$1\"", fixture.display()));
-    let mut regen = Regenerator::new(Arc::clone(&producer));
+    let mut regen = h.regenerator(Arc::clone(&producer));
     let target = h.target();
     let rel = Path::new("src/lib.rs");
     let span = crate::Span {
@@ -184,7 +240,7 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
         end_col: 8,
     };
 
-    make_due(&mut regen, &h);
+    h.make_due(&mut regen);
     let Regenerated::Ready { .. } = drive(&mut regen, &target) else {
         panic!("最初の生成が Ready にならなかった");
     };
@@ -206,7 +262,7 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
     );
     drop(store);
 
-    make_due(&mut regen, &h);
+    h.make_due(&mut regen);
     let Regenerated::Ready { .. } = drive(&mut regen, &target) else {
         panic!("作り直しが Ready にならなかった");
     };
@@ -226,12 +282,12 @@ fn 手で頼まれたぶんだけ静穏時間を待たない() {
     let producer = h.script(&format!("echo x >> {}", counter.display()));
     let target = h.target();
 
-    let mut waits = Regenerator::new(Arc::clone(&producer));
+    let mut waits = h.regenerator(Arc::clone(&producer));
     waits.request();
     waits.tick(&target);
     assert!(!waits.is_running(), "静穏時間を待たずに始めた");
 
-    let mut now = Regenerator::new(producer);
+    let mut now = h.regenerator(producer);
     now.request_now();
     now.tick(&target);
     assert!(now.is_running(), "手で頼んだのに次の周で始まらなかった");
@@ -245,14 +301,14 @@ fn ロックを取れなかったら待機に戻って編集を待たずにや�
     // 入るまで索引されないままになる。
     let h = Harness::new();
     let counter = h.dir.path().join("runs");
-    let mut regen = Regenerator::new(h.script(&format!("echo x >> {}", counter.display())));
+    let mut regen = h.regenerator(h.script(&format!("echo x >> {}", counter.display())));
     let target = h.target();
 
     let held = Lock::acquire(&target.lock)
         .expect("ロックを置けない")
         .expect("検査側がロックを取れない");
 
-    make_due(&mut regen, &h);
+    h.make_due(&mut regen);
     let outcome = drive(&mut regen, &target);
     assert!(
         matches!(outcome, Regenerated::Busy),
@@ -267,9 +323,9 @@ fn ロックを取れなかったら待機に戻って編集を待たずにや�
         "ロックを取れなかったあと待機に戻っていない"
     );
 
-    // ここが本題。h.touch を呼ばない。
+    // ここが本題。変更を伝えない。
     drop(held);
-    backdate(&mut regen);
+    h.quiesce();
     let _ = drive(&mut regen, &target);
     assert!(
         counter.exists(),
@@ -280,56 +336,45 @@ fn ロックを取れなかったら待機に戻って編集を待たずにや�
 #[test]
 fn 上限の時間で終わらない_producer_は孫ごと止める() {
     let h = Harness::new();
-    let beat = h.dir.path().join("beat");
+    let beat = Beat(h.dir.path().join("beat"));
     let slow = h.script(&format!(
         "( touch {beat}; while true; do sleep 0.05; touch {beat}; done ) &\nsleep 30",
-        beat = beat.display()
+        beat = beat.0.display()
     ));
-    // 上限そのものが「孫が動いているのを見られる窓」になる。孫は上限で殺されるので、
-    // ここが短いと、負荷で sh の起動が間に合わないだけで「動かなかった」と誤判定する。
-    let limit = Duration::from_secs(6);
-    let mut regen = Regenerator::new(Arc::new(Impatient(slow, limit)));
+    let limit = Duration::from_secs(60);
+    let mut regen = h.regenerator(Arc::new(Impatient(slow, limit)));
     let target = h.target();
 
-    make_due(&mut regen, &h);
-    let started = Instant::now();
+    h.make_due(&mut regen);
     let _ = regen.tick(&target);
+    beat.wait_until_running();
 
-    // 上限が来る前に孫が動いていることを見ておく。動いていないと、
-    // このあとの「止まった」が「そもそも動かなかった」と区別できない。
-    let beaten_at = || {
-        std::fs::metadata(&beat)
-            .ok()
-            .and_then(|m| m.modified().ok())
-    };
-    wait_until("孫が動き出した状態", || beaten_at().is_some());
-    let first = beaten_at();
-    wait_until("孫が触り続けている状態", || beaten_at() != first);
-
-    let outcome = drive(&mut regen, &target);
-    let took = started.elapsed();
-
-    let Regenerated::Failed(why) = outcome else {
+    h.clock.advance(limit);
+    let Regenerated::Failed(why) = drive(&mut regen, &target) else {
         panic!("上限を過ぎても Failed にならなかった");
     };
     assert!(why.contains("終わらない"), "別の理由で失敗した: {why}");
-    // producer 自身は 30 秒走る。上限で切っていなければここに来ない。
-    assert!(
-        took < Duration::from_secs(10),
-        "上限を待たなかった: {took:?}"
-    );
-
-    std::thread::sleep(Duration::from_millis(300));
-    let stopped_at = beaten_at();
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(
-        beaten_at(),
-        stopped_at,
-        "上限で止めたのに孫が触り続けている"
-    );
+    beat.assert_stopped();
 
     assert!(!target.index.exists());
     assert!(!target.hashes.exists());
+}
+
+#[test]
+fn 中止すると孫プロセスまで止まる() {
+    let h = Harness::new();
+    let beat = Beat(h.dir.path().join("beat"));
+    let mut regen = h.regenerator(h.script(&format!(
+        "( while true; do touch {}; sleep 0.05; done ) &\nsleep 30",
+        beat.0.display()
+    )));
+    let target = h.target();
+    h.make_due(&mut regen);
+    let _ = regen.tick(&target);
+    beat.wait_until_running();
+
+    regen.abort();
+    beat.assert_stopped();
 }
 
 #[test]
@@ -338,15 +383,13 @@ fn producer_を起動できなければ以後試みない() {
     let missing = h.dir.path().join("no-such-producer");
     let mut regen = Regenerator::new(Arc::new(Script(vec![
         missing.to_string_lossy().into_owned(),
-    ])));
-    make_due(&mut regen, &h);
-    let outcome = loop {
-        if let Some(o) = regen.tick(&h.target()) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(matches!(outcome, Regenerated::Unavailable(_)));
+    ])))
+    .with_clock(h.clock.clock());
+    h.make_due(&mut regen);
+    assert!(matches!(
+        drive(&mut regen, &h.target()),
+        Regenerated::Unavailable(_)
+    ));
 
     // 同じパスに動く producer を置いても、もう起動しない。
     let counter = h.dir.path().join("runs");
@@ -361,9 +404,8 @@ fn producer_を起動できなければ以後試みない() {
     std::fs::set_permissions(&missing, perms).unwrap();
 
     for _ in 0..30 {
-        make_due(&mut regen, &h);
+        h.make_due(&mut regen);
         let _ = regen.tick(&h.target());
-        std::thread::sleep(Duration::from_millis(10));
     }
     assert!(!counter.exists(), "諦めたはずの producer を起動した");
 }
@@ -372,13 +414,12 @@ fn producer_を起動できなければ以後試みない() {
 fn 編集が続いている間は生成を始めない() {
     let h = Harness::new();
     let counter = h.dir.path().join("runs");
-    let mut regen = Regenerator::new(h.script(&format!("echo x >> {}", counter.display())));
+    let mut regen = h.regenerator(h.script(&format!("echo x >> {}", counter.display())));
     let target = h.target();
-    make_due(&mut regen, &h);
     for _ in 0..20 {
         h.touch(&mut regen);
+        h.clock.advance(QUIESCENCE / 2);
         let _ = regen.tick(&target);
-        std::thread::sleep(Duration::from_millis(10));
     }
     assert!(!regen.is_running());
     assert!(!counter.exists(), "編集が続いているのに生成が始まった");
@@ -389,12 +430,25 @@ fn 索引に載らないファイルの変更は引き金にしない() {
     // ビルド成果物は数秒おきに書き換わる。数えると静穏時間が永久に来ない。
     let h = Harness::new();
     std::fs::write(h.dir.path().join(".gitignore"), "/target\n").unwrap();
-    let mut regen = Regenerator::new(h.script("true"));
+    let elsewhere = tempfile::tempdir().unwrap();
     let root = h.dir.path();
-    for rel in ["target/debug/x", ".git/index", ".sheaf/index.scip"] {
-        regen.note_change(&root.join(rel), root);
-        assert!(!regen.is_pending(), "{rel} が引き金になった");
+    let mut regen = h.regenerator(h.script("true"));
+
+    for changed in [
+        root.join("target/debug/x"),
+        root.join(".git/index"),
+        root.join(".sheaf/index.scip"),
+        // gitignore ではなく starts_with(root) が弾く唯一の形。
+        elsewhere.path().join("src/lib.rs"),
+    ] {
+        regen.note_change(&changed, root);
+        assert!(
+            !regen.is_pending(),
+            "{} が引き金になった",
+            changed.display()
+        );
     }
+
     regen.note_change(&root.join("src/lib.rs"), root);
     assert!(regen.is_pending(), "ソースの変更が引き金にならない");
 }
@@ -402,9 +456,9 @@ fn 索引に載らないファイルの変更は引き金にしない() {
 #[test]
 fn 生成中に来た変更は走り終えてから作り直す() {
     let h = Harness::new();
-    let mut regen = Regenerator::new(h.script("true"));
+    let mut regen = h.regenerator(h.script("true"));
     let target = h.target();
-    make_due(&mut regen, &h);
+    h.make_due(&mut regen);
     let _ = regen.tick(&target);
     assert!(regen.is_running());
     // この世代の索引には入らないので、覚えておいて次を回す必要がある。
@@ -420,8 +474,8 @@ fn 索引の置き場所が違っても生成は同時に走らない() {
     // 索引を言語やツリーごとに分けても本数の上限が残ることの検査。ロックを
     // 索引のパスから導いていると、分けた瞬間にこれが通らなくなる。
     let h = Harness::new();
-    let mut first = Regenerator::new(h.script("sleep 1"));
-    let mut second = Regenerator::new(h.script("sleep 1"));
+    let mut first = h.regenerator(h.script("sleep 1"));
+    let mut second = h.regenerator(h.script("sleep 1"));
     let a = h.target();
     let b = Target {
         index: h.dir.path().join("other.scip"),
@@ -429,20 +483,14 @@ fn 索引の置き場所が違っても生成は同時に走らない() {
         ..a.clone()
     };
 
-    make_due(&mut first, &h);
+    h.make_due(&mut first);
     let _ = first.tick(&a);
     wait_until("1 本目がロックを取った状態", || {
         a.lock.is_file()
     });
 
-    make_due(&mut second, &h);
-    let _ = second.tick(&b);
-    let outcome = loop {
-        if let Some(o) = second.tick(&b) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
+    h.make_due(&mut second);
+    let outcome = drive(&mut second, &b);
     // producer が索引を書かないので、ロック以外の理由でも生成は失敗する。
     // Busy はロックを取れなかったときにしか返らないので、これで区別できる。
     assert!(
@@ -459,10 +507,9 @@ fn 索引の置き場所が違っても生成は同時に走らない() {
 fn 引き金を連打しても子プロセスは一本しか立たない() {
     let h = Harness::new();
     let counter = h.dir.path().join("runs");
-    let mut regen =
-        Regenerator::new(h.script(&format!("echo x >> {}\nsleep 1", counter.display())));
+    let mut regen = h.regenerator(h.script(&format!("echo x >> {}\nsleep 1", counter.display())));
     let target = h.target();
-    make_due(&mut regen, &h);
+    h.make_due(&mut regen);
     let _ = regen.tick(&target);
     let runs = || std::fs::read_to_string(&counter).unwrap_or_default();
     wait_until("producer が起動した状態", || {
@@ -472,7 +519,6 @@ fn 引き金を連打しても子プロセスは一本しか立たない() {
     for _ in 0..50 {
         h.touch(&mut regen);
         let _ = regen.tick(&target);
-        std::thread::sleep(Duration::from_millis(10));
     }
     assert!(regen.is_running());
     assert_eq!(runs().lines().count(), 1, "起動回数: {:?}", runs());
@@ -480,119 +526,43 @@ fn 引き金を連打しても子プロセスは一本しか立たない() {
 }
 
 #[test]
-fn 中止すると孫プロセスまで止まる() {
+fn 生成に失敗したら索引も出自も一時ファイルも残さない() {
     let h = Harness::new();
-    let beat = h.dir.path().join("beat");
-    let mut regen = Regenerator::new(h.script(&format!(
-        "( while true; do touch {}; sleep 0.05; done ) &\nsleep 30",
-        beat.display()
-    )));
-    let target = h.target();
-    make_due(&mut regen, &h);
-    let _ = regen.tick(&target);
-    let beaten_at = || {
-        std::fs::metadata(&beat)
-            .ok()
-            .and_then(|m| m.modified().ok())
-    };
-    wait_until("孫が動き出した状態", || beaten_at().is_some());
-    // 存在だけでは「1 回 touch して死んだ」と区別できず、そのあとの停止の検査が
-    // 無意味になるので、更新時刻が進むところまで見る。
-    let first = beaten_at();
-    wait_until("孫が触り続けている状態", || beaten_at() != first);
+    let empty = h.dir.path().join("empty.scip");
+    Scip::default().write(&empty);
 
-    regen.abort();
-    std::thread::sleep(Duration::from_millis(300));
-    let stopped_at = beaten_at();
-    std::thread::sleep(Duration::from_millis(500));
-    assert_eq!(beaten_at(), stopped_at, "中止したのに孫が触り続けている");
-}
-
-/// `Store::load` が受け付ける最小の SCIP を書く。Document を 1 つも持たない。
-fn write_empty_scip(path: &Path) {
-    use protobuf::{EnumOrUnknown, Message, MessageField};
-    use scip::types::{Index, Metadata, TextEncoding};
-
-    let mut index = Index::new();
-    let mut metadata = Metadata::new();
-    metadata.text_document_encoding = EnumOrUnknown::new(TextEncoding::UTF8);
-    index.metadata = MessageField::some(metadata);
-    std::fs::write(path, index.write_to_bytes().unwrap()).unwrap();
-}
-
-#[test]
-fn producer_が_document_0件の索引を書いても_ready_にしない() {
-    // go.mod が見つからないなど、対象を認識できない producer は終了コード 0 で
-    // 空の索引を書くことがある。exit status しか見ないと、これが正常な索引として
-    // 古い索引を上書きしてしまう。
-    let h = Harness::new();
-    let fake_index = h.dir.path().join("empty.scip");
-    write_empty_scip(&fake_index);
-
-    let mut regen = Regenerator::new(h.script(&format!("cp \"{}\" \"$1\"", fake_index.display())));
-    make_due(&mut regen, &h);
-    let outcome = loop {
-        if let Some(o) = regen.tick(&h.target()) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(matches!(outcome, Regenerated::Failed(_)));
-    assert!(!h.target().hashes.exists());
-    assert!(!h.target().index.exists());
-    assert_eq!(leftover_temp_files(&h), Vec::<String>::new());
-}
-
-#[test]
-fn producer_が失敗しても索引も出自も置かない() {
-    let h = Harness::new();
-    let mut regen = Regenerator::new(h.script("exit 3"));
-    make_due(&mut regen, &h);
-    let outcome = loop {
-        if let Some(o) = regen.tick(&h.target()) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(matches!(outcome, Regenerated::Failed(_)));
-    assert!(!h.target().hashes.exists());
-    assert!(!h.target().index.exists());
-    assert_eq!(leftover_temp_files(&h), Vec::<String>::new());
-}
-
-#[test]
-fn ツリーの完全に外の変更は引き金にしない() {
-    // 「索引に載らないファイルの変更は引き金にしない」は root の中の
-    // gitignore 対象しか見ていない。root そのものが違う場合の
-    // starts_with(root) の側は、ここでしか検査していない。
-    let h = Harness::new();
-    let mut regen = Regenerator::new(h.script("true"));
-    let elsewhere = tempfile::tempdir().unwrap();
-    regen.note_change(&elsewhere.path().join("src/lib.rs"), h.dir.path());
-    assert!(!regen.is_pending(), "見ていないツリーの変更で時計が進んだ");
-}
-
-/// `Store::load` が受け付ける最小の SCIP を書く。中身は空で `relative_path` だけ持つ。
-fn write_minimal_scip(path: &Path, rel: &str) {
-    use protobuf::{EnumOrUnknown, Message, MessageField};
-    use scip::types::{Document, Index, Metadata, TextEncoding};
-
-    let mut index = Index::new();
-    let mut metadata = Metadata::new();
-    metadata.text_document_encoding = EnumOrUnknown::new(TextEncoding::UTF8);
-    index.metadata = MessageField::some(metadata);
-    let mut doc = Document::new();
-    doc.relative_path = rel.to_string();
-    doc.language = "rust".to_string();
-    index.documents.push(doc);
-    std::fs::write(path, index.write_to_bytes().unwrap()).unwrap();
+    for (how, body) in [
+        ("異常終了する", "exit 3".to_string()),
+        // go.mod が見つからないなど、対象を認識できない producer は終了コード 0 で
+        // Document 0 件の索引を書く。exit status しか見ないと、これが正常な索引として
+        // 古い索引を上書きしてしまう。
+        (
+            "Document 0 件の索引を書く",
+            format!("cp \"{}\" \"$1\"", empty.display()),
+        ),
+    ] {
+        let mut regen = h.regenerator(h.script(&body));
+        let target = h.target();
+        h.make_due(&mut regen);
+        assert!(
+            matches!(drive(&mut regen, &target), Regenerated::Failed(_)),
+            "{how} producer が Failed 以外を返した"
+        );
+        assert!(!target.hashes.exists(), "{how} のに出自を置いた");
+        assert!(!target.index.exists(), "{how} のに索引を置いた");
+        assert_eq!(
+            leftover_temp_files(&h),
+            Vec::<String>::new(),
+            "{how} と一時ファイルが残った"
+        );
+    }
 }
 
 #[test]
 fn producer_が成功すると索引を置いてから出自を書いて_ready_が返る() {
     let h = Harness::new();
     let fake_index = h.dir.path().join("fake.scip");
-    write_minimal_scip(&fake_index, "src/lib.rs");
+    Scip::default().document("src/lib.rs").write(&fake_index);
 
     let target = h.target();
     // index.hashes を FIFO にして、読み手が来るまで write_provenance を必ず
@@ -602,8 +572,8 @@ fn producer_が成功すると索引を置いてから出自を書いて_ready_�
     let status = Command::new("mkfifo").arg(&target.hashes).status().unwrap();
     assert!(status.success(), "mkfifo に失敗した");
 
-    let mut regen = Regenerator::new(h.script(&format!("cp \"{}\" \"$1\"", fake_index.display())));
-    make_due(&mut regen, &h);
+    let mut regen = h.regenerator(h.script(&format!("cp \"{}\" \"$1\"", fake_index.display())));
+    h.make_due(&mut regen);
     let _ = regen.tick(&target);
 
     wait_until("索引が rename で置かれた状態", || {
@@ -617,13 +587,10 @@ fn producer_が成功すると索引を置いてから出自を書いて_ready_�
     let hashes_path = target.hashes.clone();
     let read_hashes = std::thread::spawn(move || std::fs::read_to_string(&hashes_path));
 
-    let outcome = loop {
-        if let Some(o) = regen.tick(&target) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(matches!(outcome, Regenerated::Ready { .. }));
+    assert!(matches!(
+        drive(&mut regen, &target),
+        Regenerated::Ready { .. }
+    ));
 
     // 出自の表は root 以下で生成をまたいで動かなかった全ファイルが対象になる
     // (producer のスクリプト自身なども含む)。ここで確かめたいのは
@@ -640,23 +607,20 @@ fn 生成中に書き換えたファイルは出自から外れる() {
     // ソースを書き換えさせて、実プロセスを通した経路で確かめる。
     let h = Harness::new();
     let fake_index = h.dir.path().join("fake.scip");
-    write_minimal_scip(&fake_index, "src/lib.rs");
+    Scip::default().document("src/lib.rs").write(&fake_index);
     let src = h.dir.path().join("src/lib.rs");
 
-    let mut regen = Regenerator::new(h.script(&format!(
+    let mut regen = h.regenerator(h.script(&format!(
         "echo changed > {}\ncp \"{}\" \"$1\"",
         src.display(),
         fake_index.display()
     )));
     let target = h.target();
-    make_due(&mut regen, &h);
-    let outcome = loop {
-        if let Some(o) = regen.tick(&target) {
-            break o;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    assert!(matches!(outcome, Regenerated::Ready { .. }));
+    h.make_due(&mut regen);
+    assert!(matches!(
+        drive(&mut regen, &target),
+        Regenerated::Ready { .. }
+    ));
 
     let body = std::fs::read_to_string(&target.hashes).unwrap();
     assert!(
@@ -679,13 +643,10 @@ fn 本物の_rust_analyzer_で_ready_に到達する() {
         lock: out_dir.path().join("index.lock"),
     };
 
-    let mut regen = Regenerator::default();
+    let clock = Hand(Arc::new(Mutex::new(Instant::now())));
+    let mut regen = Regenerator::default().with_clock(clock.clock());
     regen.note_change(&target.root.join("src"), &target.root);
-    if regen.is_pending() {
-        regen.state = State::Pending {
-            last_change: Instant::now() - QUIESCENCE - Duration::from_millis(1),
-        };
-    }
+    clock.advance(QUIESCENCE);
     let outcome = loop {
         if let Some(o) = regen.tick(&target) {
             break o;
@@ -707,7 +668,7 @@ fn 置き場所がまだ無いだけならビジーにしない() {
     // 索引を作っている」で終わる。
     let h = Harness::new();
     let counter = h.dir.path().join("runs");
-    let mut regen = Regenerator::new(h.script(&format!("echo x >> {}", counter.display())));
+    let mut regen = h.regenerator(h.script(&format!("echo x >> {}", counter.display())));
     let mut target = h.target();
     let fresh = h.dir.path().join("never-made/.conductor");
     target.lock = fresh.join("generate.lock");
@@ -715,10 +676,9 @@ fn 置き場所がまだ無いだけならビジーにしない() {
     target.hashes = fresh.join("index.hashes");
     target.log = fresh.join("index.log");
 
-    make_due(&mut regen, &h);
-    let outcome = drive(&mut regen, &target);
+    h.make_due(&mut regen);
     assert!(
-        !matches!(outcome, Regenerated::Busy),
+        !matches!(drive(&mut regen, &target), Regenerated::Busy),
         "置き場所が無いだけなのに Busy を返した"
     );
     assert!(counter.exists(), "producer が走っていない");

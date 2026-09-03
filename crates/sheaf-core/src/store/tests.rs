@@ -7,124 +7,75 @@ use super::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-// ---- 参照クエリ：鮮度（合成フィクスチャ）----
+/// 定義 1 つと参照 2 つを別々のファイルに載せた索引。
+///
+/// 参照が 2 ファイルに散っていないと、片方を消したときに答えが空になってそのまま
+/// None が返るので、「残りだけを Exact で返す」不具合を素通りする。
+struct Fixture {
+    root: PathBuf,
+    index: PathBuf,
+    /// 定義側 (src/lib.rs) の greet の範囲。
+    definition: Span,
+    /// 参照側 (src/caller.rs) の greet の範囲。
+    reference: Span,
+}
 
-fn occurrence(range: Vec<i32>, symbol: &str, roles: i32) -> scip::types::Occurrence {
-    scip::types::Occurrence {
-        range,
-        symbol: symbol.to_string(),
-        symbol_roles: roles,
-        ..Default::default()
+impl Fixture {
+    fn new(root: &Path) -> Self {
+        use protobuf::{EnumOrUnknown, Message, MessageField};
+        use scip::types::{Document, Index, Metadata, Occurrence, TextEncoding};
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        for (rel, body) in [
+            ("src/lib.rs", "pub fn greet() {}\n"),
+            ("src/caller.rs", "fn caller() { greet(); }\n"),
+            ("src/other.rs", "fn other() { greet(); }\n"),
+        ] {
+            std::fs::write(root.join(rel), body).unwrap();
+        }
+
+        let symbol = "scip-test cargo demo 0.1.0 greet().";
+        let doc = |rel: &str, range: Vec<i32>, roles: i32| Document {
+            relative_path: rel.to_string(),
+            language: "rust".to_string(),
+            occurrences: vec![Occurrence {
+                range,
+                symbol: symbol.to_string(),
+                symbol_roles: roles,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        // position_encoding を宣言しない。scip-go と scip-typescript がこの形で、
+        // 列の数え方を索引から決められないので、Store は occurrence ごとにソースを読む。
+        let index = Index {
+            metadata: MessageField::some(Metadata {
+                project_root: format!("file://{}", root.display()),
+                text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
+                ..Default::default()
+            }),
+            documents: vec![
+                doc("src/lib.rs", vec![0, 7, 12], 1),
+                doc("src/caller.rs", vec![0, 14, 19], 0),
+                doc("src/other.rs", vec![0, 13, 18], 0),
+            ],
+            ..Default::default()
+        };
+        let index_path = root.join("index.scip");
+        std::fs::write(&index_path, index.write_to_bytes().unwrap()).unwrap();
+
+        Fixture {
+            root: root.to_path_buf(),
+            index: index_path,
+            definition: span(0, 7, 0, 12),
+            reference: span(0, 14, 0, 19),
+        }
     }
-}
 
-/// 定義を持つ src/lib.rs と、参照を持つ src/caller.rs の2ファイル索引を書き出す。
-/// 返り値は (index_path, 定義位置の span, 参照位置の span)。
-fn build_reference_fixture(root: &Path) -> (PathBuf, Span, Span) {
-    use protobuf::{EnumOrUnknown, Message, MessageField};
-    use scip::types::{Document, Index, Metadata, TextEncoding};
-
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src/lib.rs"), "pub fn greet() {}\n").unwrap();
-    std::fs::write(root.join("src/caller.rs"), "fn caller() { greet(); }\n").unwrap();
-
-    let symbol = "scip-test cargo demo 0.1.0 greet().";
-    let index = Index {
-        metadata: MessageField::some(Metadata {
-            project_root: format!("file://{}", root.display()),
-            text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
-            ..Default::default()
-        }),
-        documents: vec![
-            Document {
-                relative_path: "src/lib.rs".to_string(),
-                language: "rust".to_string(),
-                occurrences: vec![occurrence(vec![0, 7, 12], symbol, 1)],
-                ..Default::default()
-            },
-            Document {
-                relative_path: "src/caller.rs".to_string(),
-                language: "rust".to_string(),
-                occurrences: vec![occurrence(vec![0, 14, 19], symbol, 0)],
-                ..Default::default()
-            },
-        ],
-        ..Default::default()
-    };
-    let index_path = root.join("index.scip");
-    std::fs::write(&index_path, index.write_to_bytes().unwrap()).unwrap();
-
-    (index_path, span(0, 7, 0, 12), span(0, 14, 0, 19))
-}
-
-/// [`build_reference_fixture`] に参照をもう 1 本足したもの。
-///
-/// 参照が 2 ファイルに散っていないと、片方を消したときに答えが空になって
-/// そのまま None が返るので、「残りだけを Exact で返す」不具合を素通りする。
-fn build_two_caller_fixture(root: &Path) -> (PathBuf, Span) {
-    use protobuf::{EnumOrUnknown, Message, MessageField};
-    use scip::types::{Document, Index, Metadata, TextEncoding};
-
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src/lib.rs"), "pub fn greet() {}\n").unwrap();
-    std::fs::write(root.join("src/caller.rs"), "fn caller() { greet(); }\n").unwrap();
-    std::fs::write(root.join("src/other.rs"), "fn other() { greet(); }\n").unwrap();
-
-    let symbol = "scip-test cargo demo 0.1.0 greet().";
-    // position_encoding を宣言しない。scip-go と scip-typescript がこの形で、
-    // 列の数え方を索引から決められないので、Store は occurrence ごとにソースを読む。
-    let doc = |rel: &str, occ: scip::types::Occurrence| Document {
-        relative_path: rel.to_string(),
-        language: "rust".to_string(),
-        occurrences: vec![occ],
-        ..Default::default()
-    };
-    let index = Index {
-        metadata: MessageField::some(Metadata {
-            project_root: format!("file://{}", root.display()),
-            text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
-            ..Default::default()
-        }),
-        documents: vec![
-            doc("src/lib.rs", occurrence(vec![0, 7, 12], symbol, 1)),
-            doc("src/caller.rs", occurrence(vec![0, 14, 19], symbol, 0)),
-            doc("src/other.rs", occurrence(vec![0, 13, 18], symbol, 0)),
-        ],
-        ..Default::default()
-    };
-    let index_path = root.join("index.scip");
-    std::fs::write(&index_path, index.write_to_bytes().unwrap()).unwrap();
-
-    (index_path, span(0, 7, 0, 12))
-}
-
-/// 参照が載っているファイルが読めなくなったら、残りだけを Exact で返さない。
-///
-/// 列の数え方を宣言しない索引では、参照を数えるのに元のソースが要る。読めないと
-/// その Document の参照が 0 件になり、0 件の Document は鮮度の検査に載らないので、
-/// 黙って欠けた答えが Exact として通り抜けうる。ブランチ切替でファイルが消えるのは
-/// 日常なので、実際に踏める。
-#[test]
-fn 参照が載っているファイルが消えたらfoundを返さない() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let (index_path, def_span) = build_two_caller_fixture(root);
-    let expected = hashes_of(root, &["src/lib.rs", "src/caller.rs", "src/other.rs"]);
-    let store = load_single(&index_path, root, expected);
-
-    let before = store.references_in(Path::new("src/lib.rs"), def_span);
-    let Some(found) = &before else {
-        panic!("消す前から Found を返さない: {before:?}");
-    };
-    assert_eq!(found.direct.len(), 2, "参照 2 件が揃っていない: {found:?}");
-
-    std::fs::remove_file(root.join("src/caller.rs")).unwrap();
-
-    let after = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert!(
-        after.is_none(),
-        "参照ファイルが消えたのに、残りだけを Found で返した: {after:?}"
-    );
+    fn load(&self) -> Store {
+        let expected = hashes_of(&self.root, &["src/lib.rs", "src/caller.rs", "src/other.rs"]);
+        load_single(&self.index, &self.root, expected)
+    }
 }
 
 fn hashes_of(root: &Path, rels: &[&str]) -> HashMap<PathBuf, String> {
@@ -136,60 +87,97 @@ fn hashes_of(root: &Path, rels: &[&str]) -> HashMap<PathBuf, String> {
         .collect()
 }
 
+/// 参照の答えが依拠しているのは、参照が載っているファイル全部。1 つでも索引生成時と
+/// 違えば答えを丸ごと捨てる。飛び先 (定義) は依拠集合に入らない。
+///
+/// 消すだけでなく行を消す場合も見る。ファイルが読めても、列の数え方が確定していない
+/// 索引では使えない occurrence が落ちて、その Document の参照が 0 件になる。0 件の
+/// Document は鮮度の検査に載らない (検査は返ってきた位置ごとに回る) ので、欠けた答えが
+/// Exact として通り抜ける。ブランチ切替でファイルが消えるのも編集も日常なので実際に踏める。
 #[test]
-fn 参照が載っているファイルを書き換えるとfoundを返さない() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let (index_path, def_span, _ref_span) = build_reference_fixture(root);
-    let expected = hashes_of(root, &["src/lib.rs", "src/caller.rs"]);
-    let store = load_single(&index_path, root, expected);
+fn 参照が載っているファイルが動いたら答えを丸ごと捨てる() {
+    struct Case {
+        how: &'static str,
+        /// 参照側から聞くか。既定は定義側 (src/lib.rs) から聞く。
+        ask_from_reference: bool,
+        perturb: fn(&Path),
+        still_found: bool,
+    }
 
-    let before = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert!(before.is_some(), "{before:?}");
+    let cases = [
+        Case {
+            how: "参照が載っているファイルが消えた",
+            ask_from_reference: false,
+            perturb: |root| std::fs::remove_file(root.join("src/caller.rs")).unwrap(),
+            still_found: false,
+        },
+        Case {
+            how: "参照が載っているファイルを書き換えた",
+            ask_from_reference: false,
+            perturb: |root| {
+                std::fs::write(root.join("src/caller.rs"), "fn caller() { greet();  }\n").unwrap()
+            },
+            still_found: false,
+        },
+        Case {
+            how: "参照が載っていた行だけが消えた",
+            ask_from_reference: false,
+            perturb: |root| std::fs::write(root.join("src/other.rs"), "\n").unwrap(),
+            still_found: false,
+        },
+        Case {
+            how: "聞いた位置のファイルを書き換えた",
+            ask_from_reference: false,
+            perturb: |root| {
+                std::fs::write(root.join("src/lib.rs"), "// 変更\npub fn greet() {}\n").unwrap()
+            },
+            still_found: false,
+        },
+        Case {
+            how: "飛び先の定義だけが動いた",
+            ask_from_reference: true,
+            perturb: |root| {
+                std::fs::write(
+                    root.join("src/lib.rs"),
+                    "// 定義を動かした\npub fn greet() {}\n",
+                )
+                .unwrap()
+            },
+            still_found: true,
+        },
+    ];
 
-    std::fs::write(root.join("src/caller.rs"), "fn caller() { greet();  }\n").unwrap();
+    for case in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = Fixture::new(dir.path());
+        let store = fixture.load();
+        let (asked, span) = if case.ask_from_reference {
+            (Path::new("src/caller.rs"), fixture.reference)
+        } else {
+            (Path::new("src/lib.rs"), fixture.definition)
+        };
 
-    let after = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert!(after.is_none(), "参照ファイルを書き換えても Found を返した");
-}
+        let before = store.references_in(asked, span);
+        assert_eq!(
+            before.as_ref().map(|f| f.direct.len()),
+            Some(2),
+            "{}: 動かす前から参照 2 件が揃っていない",
+            case.how
+        );
 
-#[test]
-fn 聞いた位置のファイルを書き換えるとfoundを返さない() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let (index_path, def_span, _ref_span) = build_reference_fixture(root);
-    let expected = hashes_of(root, &["src/lib.rs", "src/caller.rs"]);
-    let store = load_single(&index_path, root, expected);
+        (case.perturb)(dir.path());
 
-    std::fs::write(root.join("src/lib.rs"), "// 変更\npub fn greet() {}\n").unwrap();
-
-    let after = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert!(
-        after.is_none(),
-        "聞いた位置のファイルを書き換えても Found を返した"
-    );
-}
-
-#[test]
-fn 定義先だけを書き換えてもfoundのまま() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let (index_path, _def_span, ref_span) = build_reference_fixture(root);
-    let expected = hashes_of(root, &["src/lib.rs", "src/caller.rs"]);
-    let store = load_single(&index_path, root, expected);
-
-    // 参照側 (caller.rs) から聞く。定義先 (lib.rs) は依拠集合に入らない。
-    let before = store.references_in(Path::new("src/caller.rs"), ref_span);
-    assert!(before.is_some(), "{before:?}");
-
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "// 定義を動かした\npub fn greet() {}\n",
-    )
-    .unwrap();
-
-    let after = store.references_in(Path::new("src/caller.rs"), ref_span);
-    assert_eq!(after, before, "定義先の変更で結果が変わった");
+        let after = store.references_in(asked, span);
+        if case.still_found {
+            assert_eq!(
+                after, before,
+                "{}: 依拠していないのに答えが変わった",
+                case.how
+            );
+        } else {
+            assert!(after.is_none(), "{}: 残りだけを Found で返した", case.how);
+        }
+    }
 }
 
 // ---- 参照クエリ：実索引が要る検査。SHEAF_TEST_INDEX と SHEAF_TEST_ROOT で場所を渡す。----
@@ -280,36 +268,21 @@ fn symbol_ending_with(store: &Store, suffix: &str) -> String {
 
 #[test]
 #[ignore = "実索引が要る"]
-fn 実索引_viewerの参照が全走査と一致する() {
+fn 実索引_転置から引いた参照が全走査と一致する() {
     let store = real_store();
-    let symbol = symbol_ending_with(&store, VIEWER_STATE);
-    let doc_ids = &store.references[0][symbol.as_str()];
+    for suffix in [VIEWER_STATE, OPTION_SOME] {
+        let symbol = symbol_ending_with(&store, suffix);
+        let doc_ids = &store.references[0][symbol.as_str()];
 
-    let path = store.doc_paths[doc_ids[0] as usize].clone();
-    let span = first_reference_span(&store, &symbol, &path);
-    let found = store
-        .references_in(&path, span)
-        .expect("Found を返さなかった");
+        let path = store.doc_paths[doc_ids[0] as usize].clone();
+        let span = first_reference_span(&store, &symbol, &path);
+        let found = store
+            .references_in(&path, span)
+            .expect("Found を返さなかった");
 
-    assert!(found.via_interface.is_empty());
-    assert_eq!(found.direct, scan_references(&store, &symbol));
-}
-
-#[test]
-#[ignore = "実索引が要る"]
-fn 実索引_option_someの参照が全走査と一致する() {
-    let store = real_store();
-    let symbol = symbol_ending_with(&store, OPTION_SOME);
-    let doc_ids = &store.references[0][symbol.as_str()];
-
-    let path = store.doc_paths[doc_ids[0] as usize].clone();
-    let span = first_reference_span(&store, &symbol, &path);
-    let found = store
-        .references_in(&path, span)
-        .expect("Found を返さなかった");
-
-    assert!(found.via_interface.is_empty());
-    assert_eq!(found.direct, scan_references(&store, &symbol));
+        assert!(found.via_interface.is_empty(), "{suffix}");
+        assert_eq!(found.direct, scan_references(&store, &symbol), "{suffix}");
+    }
 }
 
 /// 転置を使わずに、索引を頭から歩いてその語への参照を集める。
@@ -438,38 +411,6 @@ fn 実索引_参照クエリのレイテンシ() {
     assert!(p50 < std::time::Duration::from_millis(1), "p50={p50:?}");
     assert!(p99 < std::time::Duration::from_millis(10), "p99={p99:?}");
     assert!(max < std::time::Duration::from_millis(30), "max={max:?}");
-}
-
-/// 参照が載っていた行が消えても、残りだけを Exact で返さない。
-///
-/// ファイルが読めても、列の数え方が確定していない索引では occurrence ごとに
-/// 行の中身を見て使えるかを判定する。使えない occurrence は落ちるので、その Document の
-/// 参照が全部落ちると 0 件になる。0 件の Document は鮮度の検査に載らない
-/// （検査は返ってきた位置ごとに回る）ので、欠けた答えが Exact として通り抜ける。
-/// 削除より編集のほうが日常的なぶん、こちらのほうが踏みやすい。
-#[test]
-fn 参照が載っていた行が消えたらfoundを返さない() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    let (index_path, def_span) = build_two_caller_fixture(root);
-    let expected = hashes_of(root, &["src/lib.rs", "src/caller.rs", "src/other.rs"]);
-    let store = load_single(&index_path, root, expected);
-
-    let before = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert_eq!(
-        before.as_ref().map(|f| f.direct.len()),
-        Some(2),
-        "{before:?}"
-    );
-
-    // 参照が載っていた行を消す。ファイル自体は読める。
-    std::fs::write(root.join("src/other.rs"), "\n").unwrap();
-
-    let after = store.references_in(Path::new("src/lib.rs"), def_span);
-    assert!(
-        after.is_none(),
-        "参照が黙って消えたのに Found を返した: {after:?}"
-    );
 }
 
 // 囲みクエリ

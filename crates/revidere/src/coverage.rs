@@ -1,8 +1,7 @@
 // 説明もれ検査。ライブラリの存在理由はここにある。
 //
-// 「diff の全ての変更に何らかの色が付いている」を守るのはこの関数だけで、
-// 破れたときに黙って通さないことが唯一の仕事。ただし見つかるのは分類漏れまでで、
-// 誤分類は機械では見つからない（項目の理由を人が読んで見つける）。
+// 見つかるのは分類漏れまでで、誤分類は機械では見つからない (項目の理由を
+// 人が読んで見つける)。
 
 use crate::review::{Coverage, Position, Section};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,8 +53,6 @@ pub fn check(ledger: &BTreeSet<Position>, sections: &[Section]) -> Coverage {
 }
 
 /// 説明なしの位置だけを、モデルへ差し戻すための変更一覧へ畳む。
-///
-/// 全体をやり直させると、既に正しく分類できた部分まで揺れる。
 pub fn gap_summary(unclassified: &[Position]) -> String {
     let mut by_file: BTreeMap<(&str, crate::review::Side), Vec<u32>> = BTreeMap::new();
     let mut file_level: Vec<&str> = Vec::new();
@@ -90,23 +87,22 @@ mod tests {
     use super::*;
     use crate::review::{Importance, Range, Side};
 
-    fn section(title: &str, ranges: Vec<Range>) -> Section {
+    fn section(title: &str, ranges: &[(&str, Side, u32, u32)]) -> Section {
         Section {
             title: title.into(),
             body: "b".into(),
             importance: Importance::Core,
             reason: None,
-            ranges,
+            ranges: ranges
+                .iter()
+                .map(|&(path, side, start, end)| Range {
+                    path: path.into(),
+                    side,
+                    start: Some(start),
+                    end: Some(end),
+                })
+                .collect(),
             relations: Vec::new(),
-        }
-    }
-
-    fn range(path: &str, side: Side, start: u32, end: u32) -> Range {
-        Range {
-            path: path.into(),
-            side,
-            start: Some(start),
-            end: Some(end),
         }
     }
 
@@ -118,105 +114,96 @@ mod tests {
     }
 
     #[test]
-    fn 台帳の全位置がちょうど1項目に属せば完全() {
-        let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 5)]);
-        let c = check(
-            &l,
-            &[section("t", vec![range("src/x.rs", Side::New, 4, 5)])],
-        );
-        assert!(c.is_complete());
-        assert_eq!((c.total, c.classified), (2, 2));
-    }
-
-    #[test]
-    fn 誰も名乗らない位置は落とさず未分類にする() {
-        let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 40)]);
-        let c = check(
-            &l,
-            &[section("t", vec![range("src/x.rs", Side::New, 4, 4)])],
-        );
-        assert_eq!(
-            c.unclassified,
-            vec![Position::new("src/x.rs", Side::New, 40)]
-        );
-        assert_eq!(c.classified, 1);
-        assert!(!c.is_complete());
-    }
-
-    #[test]
-    fn 削除行は後像側の範囲では覆えない() {
-        // 後像行番号だけで塗ろうとすると削除行が残る、という一番効く検査。
-        let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::Old, 4)]);
-        let c = check(
-            &l,
-            &[section("t", vec![range("src/x.rs", Side::New, 1, 100)])],
-        );
-        assert_eq!(
-            c.unclassified,
-            vec![Position::new("src/x.rs", Side::Old, 4)]
-        );
-    }
-
-    #[test]
-    fn 同じ位置を2項目が名乗れば衝突であって分類済みではない() {
-        let l = ledger(&[("src/x.rs", Side::New, 4)]);
-        let c = check(
-            &l,
-            &[
-                section("片方", vec![range("src/x.rs", Side::New, 4, 4)]),
-                section("もう片方", vec![range("src/x.rs", Side::New, 4, 4)]),
-            ],
-        );
-        assert_eq!(c.conflicts, vec![Position::new("src/x.rs", Side::New, 4)]);
-        // 取り合った位置は classified 側からは除外される。
-        assert_eq!(c.classified, 0);
-        assert!(!c.is_complete());
-    }
-
-    #[test]
-    fn 同じ項目の中の範囲の重なりは衝突ではない() {
-        // 同じ項目が範囲を重ねて書いても、二重計上を conflicts に出さない。
-        // 出すと本当の取り合いと区別が付かなくなる。
-        let l = ledger(&[("src/x.rs", Side::New, 4), ("src/x.rs", Side::New, 5)]);
-        let c = check(
-            &l,
-            &[section(
-                "t",
+    fn 検査は3種類の破れを混ぜずに数える() {
+        let x = "src/x.rs";
+        let new4 = || Position::new(x, Side::New, 4);
+        let cases = vec![
+            (
+                "全ての位置がちょうど 1 項目に属せば完全",
+                vec![(x, Side::New, 4), (x, Side::New, 5)],
+                vec![section("t", &[(x, Side::New, 4, 5)])],
+                2,
+                vec![],
+                vec![],
+                vec![],
+            ),
+            (
+                "誰も名乗らない位置は未分類",
+                vec![(x, Side::New, 4), (x, Side::New, 40)],
+                vec![section("t", &[(x, Side::New, 4, 4)])],
+                1,
+                vec![Position::new(x, Side::New, 40)],
+                vec![],
+                vec![],
+            ),
+            (
+                // 後像行番号だけで塗ろうとすると削除行が残る、という一番効く検査。
+                "削除行は後像側の範囲では覆えない",
+                vec![(x, Side::New, 4), (x, Side::Old, 4)],
+                vec![section("t", &[(x, Side::New, 1, 6)])],
+                1,
+                vec![Position::new(x, Side::Old, 4)],
+                vec![],
+                [1, 2, 3, 5, 6]
+                    .map(|n| Position::new(x, Side::New, n))
+                    .to_vec(),
+            ),
+            (
+                "2 項目が名乗れば衝突で、分類済みには数えない",
+                vec![(x, Side::New, 4)],
                 vec![
-                    range("src/x.rs", Side::New, 4, 5),
-                    range("src/x.rs", Side::New, 5, 5),
+                    section("片方", &[(x, Side::New, 4, 4)]),
+                    section("もう片方", &[(x, Side::New, 4, 4)]),
                 ],
-            )],
-        );
-        assert!(c.conflicts.is_empty());
-        assert!(c.is_complete());
-    }
+                0,
+                vec![],
+                vec![new4()],
+                vec![],
+            ),
+            (
+                // 同じ項目の中の重なりを衝突に出すと、本当の取り合いと区別が付かない。
+                "同じ項目の中の範囲の重なりは衝突ではない",
+                vec![(x, Side::New, 4), (x, Side::New, 5)],
+                vec![section("t", &[(x, Side::New, 4, 5), (x, Side::New, 5, 5)])],
+                2,
+                vec![],
+                vec![],
+                vec![],
+            ),
+            (
+                "台帳の外を指す範囲は未知 (行番号の作り話を捕まえる)",
+                vec![(x, Side::New, 4)],
+                vec![section("t", &[(x, Side::New, 4, 6)])],
+                1,
+                vec![],
+                vec![],
+                vec![
+                    Position::new(x, Side::New, 5),
+                    Position::new(x, Side::New, 6),
+                ],
+            ),
+            (
+                "項目が無ければ台帳は丸ごと未分類",
+                vec![(x, Side::New, 4)],
+                vec![],
+                0,
+                vec![new4()],
+                vec![],
+                vec![],
+            ),
+        ];
 
-    #[test]
-    fn 台帳の外を指す範囲は未知として報告する() {
-        // 行番号を作られたときに気付けるようにする。
-        let l = ledger(&[("src/x.rs", Side::New, 4)]);
-        let c = check(
-            &l,
-            &[section("t", vec![range("src/x.rs", Side::New, 4, 6)])],
-        );
-        assert_eq!(
-            c.unknown,
-            vec![
-                Position::new("src/x.rs", Side::New, 5),
-                Position::new("src/x.rs", Side::New, 6),
-            ]
-        );
-        assert!(!c.is_complete());
-    }
-
-    #[test]
-    fn 項目が無ければ台帳は丸ごと未分類になる() {
-        let l = ledger(&[("src/x.rs", Side::New, 4)]);
-        let c = check(&l, &[]);
-        assert_eq!(c.unclassified.len(), 1);
-        assert_eq!(c.classified, 0);
-        assert!(!c.is_complete());
+        for (name, items, sections, classified, unclassified, conflicts, unknown) in cases {
+            let l = ledger(&items);
+            let c = check(&l, &sections);
+            assert_eq!(c.total, l.len(), "{name}: total");
+            assert_eq!(c.classified, classified, "{name}: classified");
+            assert_eq!(c.unclassified, unclassified, "{name}: unclassified");
+            assert_eq!(c.conflicts, conflicts, "{name}: conflicts");
+            assert_eq!(c.unknown, unknown, "{name}: unknown");
+            let complete = unclassified.is_empty() && conflicts.is_empty() && unknown.is_empty();
+            assert_eq!(c.is_complete(), complete, "{name}: is_complete");
+        }
     }
 
     #[test]

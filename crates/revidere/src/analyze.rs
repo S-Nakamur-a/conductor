@@ -1,8 +1,7 @@
-// 差分を解析して成果物にする。入口はここ 1 つ。
+// 差分を解析して成果物にする。
 //
-// AI をどう呼ぶかは持たない。ホストが [Ai] を実装して渡す。モデルの選択・
-// タイムアウト・キャンセルはホスト側の関心で、ここに二重に置くと設定が
-// 2 か所に散る。
+// モデルの選択・タイムアウト・キャンセルはホスト側の関心で、ここに二重に
+// 置くと設定が 2 か所に散る。だから AI は [Ai] として注入させる。
 
 use crate::cache::{self, Cache};
 use crate::{
@@ -17,16 +16,13 @@ pub trait Ai {
 
     /// 呼び先の見分け。貯めた応答の鍵に混ざる。
     ///
-    /// モデルを替えれば答えも変わるので、これが同じなら同じ答えでよい、と
-    /// 言える粒度で返すこと。ここが固定値だと、モデルを替えても前のモデルの
-    /// 答えが返り続ける。
+    /// ここが固定値だと、モデルを替えても前のモデルの答えが返り続ける。
     fn identity(&self) -> String;
 }
 
 #[derive(Debug)]
 pub enum AnalyzeError {
     Git(git::GitError),
-    /// 比較する差分が無い。
     NoDiff(String),
     /// AI の呼び出しそのものが失敗した。
     Ai(String),
@@ -71,9 +67,9 @@ impl From<serde_json::Error> for AnalyzeError {
 pub struct Options {
     /// 対象リポジトリ。ルートでなくてもよい（囲っているルートまで登る）。
     pub repo: PathBuf,
-    /// 比較のベース。None なら origin/HEAD → main → master の順に推定する。
+    /// 比較のベース。None なら [git::guess_base] に推定させる。
     pub base: Option<String>,
-    /// 貯めた応答を使うか。false なら AI に聞き直す（結果は貯め直す）。
+    /// 貯めた応答を使うか。false でも結果は貯め直す。
     pub cache: bool,
     /// どの成果物として残すか。区間そのものを決めるのは base の方なので、
     /// [Scope::SincePrevious] にするなら base に前回の起点コミットを渡すこと。
@@ -82,10 +78,9 @@ pub struct Options {
 
 /// 差分を解析して `<root>/.conductor/review.json` を書き、その内容を返す。
 ///
-/// 対象は毎回「ベースとの共通祖先から今の作業ツリーまで」で、成果物があっても
-/// 無くても同じ。前回の分類は一切引き継がない — コミットが進んでも、戻っても、
-/// force push で履歴ごと変わっても、今あるものだけで作り直せば正しい。
-/// 前回からの進みは [Review::since_previous] に別途持たせる。
+/// 対象は毎回「ベースとの共通祖先から今の作業ツリーまで」で、前回の分類は
+/// 引き継がない。コミットが進んでも戻っても force push されても、今あるもの
+/// だけで作り直せば正しい。
 ///
 /// 説明もれが残っていても成果物は書いて返す。読めるレビューを捨てないため。
 /// 呼ぶ側は `review.coverage.is_complete()` で見分ける。
@@ -97,12 +92,9 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     };
     let base_oid = git::short_oid(&root, &git::merge_base(&root, &base_ref)?)?;
     let head_oid = git::short_oid(&root, "HEAD")?;
-    // 前回からの進みを持つのはブランチ全体のレビューだけ。前回からの差分を
-    // 見ているレビューにとっては、それ自体が進みなので入れ子になる。
-    //
-    // 上書きする前に読む。前回の対象コミットはこの成果物にしか残っていない。
-    // git を引くのもここ — AI を待つ数分の間に HEAD が動くと、下で書き出す
-    // head と一覧が別々の時点を指すことになる。
+    // 前回の対象コミットは上書きする前の成果物にしか残っていない。git を引く
+    // のもここ — AI を待つ数分の間に HEAD が動くと、下で書き出す head と
+    // 一覧が別々の時点を指すことになる。
     let since_previous = (o.scope == Scope::Base)
         .then(|| previous_head(&crate::review::artifact_path(&root, Scope::Base), &head_oid))
         .flatten()
@@ -123,14 +115,11 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
         ledger.len()
     );
 
-    // 1 回の抽出に数分かかる。同じ差分を同じ AI に聞き直す理由は無い。
     let store = Cache::new(cache_dir(&root), o.cache);
     let identity = ai.identity();
     let ask = |user: &str| -> Result<String, AnalyzeError> {
         let key = cache::key(&identity, prompt::SYSTEM, user, &text);
         if let Some((raw, at)) = store.get(&key) {
-            // AI が動いていないことは必ず言う。黙って前の答えを返すのが
-            // 一番たちが悪い。
             log::info!(
                 "revidere: reusing a stored answer (no AI call): {}",
                 at.display()
@@ -146,15 +135,11 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
         Ok(raw)
     };
 
-    // プロンプトには解決済みの ID を入れる。同じ範囲を HEAD~2 と呼んでも
-    // コミット ID で呼んでも、同じ問いになって貯めた応答に当たる。
     let raw = ask(&prompt::user(&base_oid, &d.ledger_summary()))?;
 
     let mut r = parse::review(&raw, &base_oid, &head_oid)?;
     r.coverage = coverage::check(&ledger, &r.sections);
 
-    // 説明の無い変更が残ったら、残りだけを渡して差し戻す。全部やり直させると
-    // 正しく分類できていた部分まで揺れる。
     if !r.coverage.unclassified.is_empty() {
         log::info!(
             "revidere: {} changed positions are unexplained; asking again for those only",
@@ -189,15 +174,14 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
     Ok(r)
 }
 
-/// 比べる起点にする、前の HEAD コミット。無ければ（初回なら）None。
+/// 比べる起点にする、前の HEAD コミット。初回は None。
 ///
-/// スキーマ版が違うものは読まない。head の意味が版によって変わりうる以上、
-/// 読めた文字列をコミット ID として扱うのは推測になる。
+/// スキーマ版が違うものは読まない。読めた文字列をコミット ID として扱うのは
+/// 推測になる。
 ///
 /// HEAD が動いていなければ起点も動かさない。解析し直すだけで起点が今になると、
-/// 読む前に最新化した人から進みが消える。差分が動いていなければ AI を呼ばずに
-/// 即座に返る操作なので、ただの空振りに見えて実際には成果物を上書きしていて、
-/// 前の起点はもうどこにも残っていない。
+/// 読む前に最新化した人から進みが消える。差分が動いていなければ AI も呼ばない
+/// 空振りに見える操作なのに、成果物は上書きされていてもう戻せない。
 fn previous_head(artifact: &Path, head: &str) -> Option<String> {
     let text = std::fs::read_to_string(artifact).ok()?;
     let r = Review::from_json(&text).ok()?;
@@ -210,11 +194,10 @@ fn previous_head(artifact: &Path, head: &str) -> Option<String> {
     Some(r.head)
 }
 
-/// 前回の HEAD から今の作業ツリーまでの進み。
 fn since_previous(root: &Path, previous_head: String, head: &str) -> crate::review::SincePrevious {
-    // 辿れないコミットからでも diff は取れることが多い（rebase 直後のように
-    // オブジェクトがまだ残っている場合）。取れなければファイル一覧は None に
-    // して、履歴が変わったことだけを伝える。
+    // 履歴から消えたコミットからでも diff は取れることが多い (rebase 直後の
+    // ようにオブジェクトがまだ残っている場合)。取れたかどうかと、辿れるか
+    // どうかは別に伝える。
     let history_rewritten = !git::is_ancestor_of_head(root, &previous_head);
     let files = git::changed_files(root, &previous_head).ok();
     crate::review::SincePrevious {
@@ -225,7 +208,6 @@ fn since_previous(root: &Path, previous_head: String, head: &str) -> crate::revi
     }
 }
 
-/// 貯めた応答の置き場。成果物と同じディレクトリの下。
 fn cache_dir(root: &Path) -> PathBuf {
     root.join(crate::review::DIR).join("review-cache")
 }

@@ -1,9 +1,8 @@
 // 読む順。diff を 1 本の流れにして、重要度順に並べ替える。
 //
-// ループの主語は項目ではなく変更一覧（diff）。項目を回してその項目が触る行を出す形だと、
-// 項目が漏らした行は画面から消える。変更一覧を回して行の持ち主を引く形なら、成果物が
-// どれだけ壊れていても、ラベルの無い素の diff に退化するだけで行は消えない。
-// order_covers_every_changed_line_exactly_once がこれを固定している。
+// ループの主語は項目ではなく変更一覧。項目を回してその項目が触る行を出す形だと、
+// 項目が漏らした行は画面から消える。変更一覧を回して行の持ち主を引く形なら、
+// 成果物がどれだけ壊れていても素の diff に退化するだけで行は消えない。
 
 use crate::annotate::Annotations;
 use crate::diff::{Diff, DiffLine, Tag};
@@ -17,7 +16,6 @@ const PAD: usize = 2;
 /// 繋げたままにすると、間の関係ない行まで一緒に出ることになる。
 const GAP: usize = 4;
 
-/// 流れの中の 1 行。
 #[derive(Debug, Clone)]
 pub struct OrderedLine {
     pub line: DiffLine,
@@ -32,9 +30,8 @@ pub struct Block {
     pub path: String,
     /// @@ の後ろに付く関数コンテキスト。行を持たない変更では空。
     pub hunk: String,
-    /// 空なら「行を持たないファイル単位の変更」（バイナリ、モードのみ、rename）。
     pub lines: Vec<OrderedLine>,
-    /// 行を持たない変更か。
+    /// 行を持たない変更（バイナリ、モードのみ、rename）。lines は空になる。
     pub whole_file: bool,
 }
 
@@ -72,11 +69,9 @@ pub struct ReadingOrder {
 impl ReadingOrder {
     /// 変更一覧を歩いて束に切り、重要度順に並べる。持ち主の無い束は末尾。
     ///
-    /// 末尾に置くのは、置き場所が意味を持つのが「成果物が不完全なとき」
-    /// だけだから。そのとき要るのは知ることであって最初に読むことではなく、
-    /// 先頭に置くと失敗のたびにレビュー本体が下へ押し下げられる。
+    /// 末尾に置くのは、持ち主なしの束が要るのは「知るため」であって最初に
+    /// 読むためではないから。先頭に置くと失敗のたびにレビュー本体が沈む。
     pub fn build(diff: &Diff, ann: &Annotations) -> Self {
-        // 持ち主ごとの束。None は持ち主なし。
         let mut by_owner: Vec<(Option<usize>, Vec<Block>, usize)> = Vec::new();
         let mut index_of: std::collections::HashMap<Option<usize>, usize> = Default::default();
         let mut push = |owner: Option<usize>, block: Block, changed: usize| {
@@ -99,8 +94,6 @@ impl ReadingOrder {
                 }
             }
             if !had_lines {
-                // 行を持たない変更。ここで落とすと「変更が無かった」と
-                // 区別が付かなくなる（FileDiff::positions と同じ判断）。
                 let pos = Position::file(file.path.clone());
                 push(
                     ann.owner(&pos),
@@ -130,7 +123,6 @@ impl ReadingOrder {
             })
             .collect();
 
-        // 指している行が diff に 1 つも無かった項目も、空の項目として残す。
         for (i, c) in ann.sections().iter().enumerate() {
             if !sections.iter().any(|s| s.section == Some(i)) {
                 sections.push(PlacedSection {
@@ -143,9 +135,7 @@ impl ReadingOrder {
             }
         }
 
-        // 森を深さ優先で辿った順。根は重要度順に並び、子は自分の重要度に
-        // 関わらず親の直後に来る（中核の隣にそのテストが出る）。関係が 1 本も
-        // 無ければ全部が根なので、素の重要度順に退化する。持ち主なしは末尾。
+        // 持ち主なしは末尾、それ以外は森を辿った順。
         sections.sort_by_key(|s| match s.section {
             Some(i) => (0, forest.rank(i)),
             None => (1, 0),
@@ -177,8 +167,8 @@ impl ReadingOrder {
     }
 
     /// 成果物の項目の添字から、それを置いた PlacedSection の位置を引く。
-    /// 関係を辿って移動するのに使う。指す行が 1 つも無かった項目も空のまま
-    /// 置いてあるので、どの項目にも必ず対応する位置がある。
+    /// 指す行が 1 つも無かった項目も空のまま置いてあるので、どの項目にも
+    /// 必ず対応する位置がある。
     pub fn index_of(&self, section: usize) -> Option<usize> {
         self.sections
             .iter()
@@ -203,14 +193,12 @@ impl ReadingOrder {
     }
 }
 
-/// 1 ハンクを、持ち主ごとの束に切る。
 fn split_hunk(
     path: &str,
     header: &str,
     lines: &[DiffLine],
     ann: &Annotations,
 ) -> Vec<(Option<usize>, Block, usize)> {
-    // 変更行の位置と持ち主。文脈行は持ち主を持たない。
     let owners: Vec<Option<Option<usize>>> = lines
         .iter()
         .map(|l| {
@@ -222,12 +210,10 @@ fn split_hunk(
         })
         .collect();
 
-    // 持ち主が同じ変更行の連なりを [先頭, 末尾] で拾う。
     let mut runs: Vec<(Option<usize>, usize, usize, usize)> = Vec::new();
     for (i, o) in owners.iter().enumerate() {
         let Some(owner) = *o else { continue };
         match runs.last_mut() {
-            // 同じ持ち主で、間が GAP 行までなら同じ連なり。
             Some((prev, _, end, n)) if *prev == owner && i - *end <= GAP + 1 => {
                 *end = i;
                 *n += 1;
@@ -246,9 +232,6 @@ fn split_hunk(
                 lines: (from..=to)
                     .map(|i| OrderedLine {
                         line: lines[i].clone(),
-                        // 借りた行は「この束の持ち物ではない」。持ち主の
-                        // 違う変更行を借りることはある（実データでは稀）が、
-                        // そのときも持ち物として二重に数えない。
                         owned: owners[i] == Some(owner),
                     })
                     .collect(),
@@ -263,6 +246,7 @@ fn split_hunk(
 mod tests {
     use super::*;
     use crate::diff;
+    use revidere_fixtures::Section as S;
 
     const DIFF: &str = "\
 diff --git a/src/a.rs b/src/a.rs
@@ -277,17 +261,20 @@ diff --git a/src/a.rs b/src/a.rs
 +more
 ";
 
-    const REVIEW_SECTIONS: &str = r#"[
-        {"title":"追従","body":"b","importance":"follow","reason":"r",
-         "ranges":[{"path":"src/a.rs","side":"old","start":9,"end":9}]},
-        {"title":"中核","body":"b","importance":"core","reason":"r",
-         "ranges":[{"path":"src/a.rs","side":"new","start":9,"end":9},
-                   {"path":"src/a.rs","side":"new","start":11,"end":11},
-                   {"path":"src/a.rs","side":"old","start":11,"end":11}]}
-      ]"#;
+    /// 追従が old:9 を、中核が new:9 / new:11 / old:11 を持つ成果物。
+    fn follow() -> S {
+        S::new("追従", "follow").line("src/a.rs", "old", 9)
+    }
 
-    fn review() -> String {
-        revidere_fixtures::review(REVIEW_SECTIONS)
+    fn core() -> S {
+        S::new("中核", "core")
+            .line("src/a.rs", "new", 9)
+            .line("src/a.rs", "new", 11)
+            .line("src/a.rs", "old", 11)
+    }
+
+    fn review_of(items: &[S]) -> String {
+        revidere_fixtures::review(&revidere_fixtures::sections(items))
     }
 
     fn built(review: &str) -> (diff::Diff, Annotations, ReadingOrder) {
@@ -299,58 +286,47 @@ diff --git a/src/a.rs b/src/a.rs
 
     /// このモジュールの存在理由。成果物が何であれ、変更行はちょうど 1 回出る。
     #[test]
-    fn 読む順は変更行をちょうど1回ずつ出す() {
-        for review in [
-            &review(),
-            // 項目がゼロ
-            &review().replace(
-                r#""ranges":[{"path":"src/a.rs","side":"old","start":9,"end":9}]"#,
-                r#""ranges":[]"#,
+    fn 読む順は成果物が壊れていても変更行をちょうど1回ずつ出す() {
+        let nowhere = S::new("追従", "follow").line("src/a.rs", "old", 900);
+        for (name, sections) in [
+            ("素のまま", vec![follow(), core()]),
+            ("項目がゼロ", vec![]),
+            ("範囲を持たない項目", vec![S::new("追従", "follow"), core()]),
+            ("実在しない行を指す項目", vec![nowhere, core()]),
+            (
+                "関係が巡回している",
+                vec![
+                    follow().relation("中核", true),
+                    core().relation("追従", true),
+                ],
             ),
-            // 実在しない行を指している
-            &review().replace("\"start\":9,\"end\":9", "\"start\":900,\"end\":900"),
-            // 関係が巡回している
-            &review()
-                .replace(
-                    r#""title":"追従","body":"b","importance":"follow","reason":"r","#,
-                    r#""title":"追従","body":"b","importance":"follow","reason":"r",
-                     "relations":[{"to":"中核","reason":"r","primary":true}],"#,
-                )
-                .replace(
-                    r#""title":"中核","body":"b","importance":"core","reason":"r","#,
-                    r#""title":"中核","body":"b","importance":"core","reason":"r",
-                     "relations":[{"to":"追従","reason":"r","primary":true}],"#,
-                ),
-            // 関係が実在しない項目を指している
-            &review().replace(
-                r#""title":"追従","body":"b","importance":"follow","reason":"r","#,
-                r#""title":"追従","body":"b","importance":"follow","reason":"r",
-                 "relations":[{"to":"架空","reason":"r","primary":true}],"#,
+            (
+                "関係が実在しない項目を指す",
+                vec![follow().relation("架空", true), core()],
             ),
         ] {
-            let (d, _, o) = built(review);
+            let (d, _, o) = built(&review_of(&sections));
             let mut got = o.positions();
-            let mut want = d.positions().into_iter().collect::<Vec<_>>();
+            let mut want: Vec<_> = d.positions().into_iter().collect();
             got.sort();
             want.sort();
-            assert_eq!(got.len(), want.len(), "重複または取りこぼしがある: {got:?}");
-            assert_eq!(got, want, "変更一覧と一致していない");
+            assert_eq!(got.len(), want.len(), "{name}: 重複か取りこぼし: {got:?}");
+            assert_eq!(got, want, "{name}: 変更一覧と一致していない");
         }
     }
 
     #[test]
     fn 役に立たない成果物でも素のdiffには退化する() {
-        let empty = revidere_fixtures::review("[]");
-        let (d, _, o) = built(&empty);
+        let (d, _, o) = built(&review_of(&[]));
         assert_eq!(o.positions().len(), d.positions().len());
         assert_eq!(o.unowned(), d.positions().len(), "全部が持ち主なしのはず");
         assert!(o.sections.iter().all(|s| s.section.is_none()));
     }
 
+    /// 成果物の並びは 追従 → 中核 だが、読む順では中核が先に来る。
     #[test]
     fn 項目は重要度順に並ぶ() {
-        // 成果物の並びは 追従 → 中核 だが、読む順では中核が先に来る。
-        let (_, _, o) = built(&review());
+        let (_, _, o) = built(&review_of(&[follow(), core()]));
         let order: Vec<Option<Importance>> = o.sections.iter().map(|s| s.importance).collect();
         assert_eq!(
             order,
@@ -360,13 +336,8 @@ diff --git a/src/a.rs b/src/a.rs
 
     #[test]
     fn 持ち主の無い束は末尾に来る() {
-        // 追従が指していた old:9 を実在しない行へずらすと、その行は
-        // 持ち主を失う。持ち主なしの項目は末尾。
-        let review = review().replace(
-            r#"{"path":"src/a.rs","side":"old","start":9,"end":9}"#,
-            r#"{"path":"src/a.rs","side":"old","start":99,"end":99}"#,
-        );
-        let (_, _, o) = built(&review);
+        let strayed = S::new("追従", "follow").line("src/a.rs", "old", 99);
+        let (_, _, o) = built(&review_of(&[strayed, core()]));
         assert_eq!(
             o.sections.last().map(|s| s.importance),
             Some(None),
@@ -377,27 +348,22 @@ diff --git a/src/a.rs b/src/a.rs
 
     #[test]
     fn 借りた行は持ち物として数えない() {
-        let (_, _, o) = built(&review());
-        // 中核の項目には追従の行（-gone）が借り物として写り込むが、
-        // 持ち物としては数えない。
-        let core = &o.sections[0];
-        let borrowed: usize = core
+        let (_, _, o) = built(&review_of(&[follow(), core()]));
+        let core_block = &o.sections[0];
+        let borrowed = core_block
             .blocks
             .iter()
             .flat_map(|b| &b.lines)
             .filter(|l| !l.owned && l.line.tag != Tag::Context)
             .count();
-        assert!(borrowed > 0, "借り物の変更行が写り込んでいない");
-        assert_eq!(core.changed, 3, "持ち物は new:9 / new:11 / old:11 の 3 行");
+        assert!(borrowed > 0, "追従の -gone が借り物として写り込んでいない");
+        assert_eq!(core_block.changed, 3, "持ち物は new:9 / new:11 / old:11");
     }
 
     #[test]
     fn どこも指していない項目も空のまま残る() {
-        let review = review().replace(
-            r#"{"path":"src/a.rs","side":"old","start":9,"end":9}"#,
-            r#"{"path":"src/nowhere.rs","side":"new","start":1,"end":1}"#,
-        );
-        let (_, a, o) = built(&review);
+        let elsewhere = S::new("追従", "follow").line("src/nowhere.rs", "new", 1);
+        let (_, a, o) = built(&review_of(&[elsewhere, core()]));
         let empty: Vec<&str> = o
             .sections
             .iter()
@@ -413,7 +379,7 @@ diff --git a/src/a.rs b/src/a.rs
         let d = diff::parse(
             "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n",
         );
-        let a = Annotations::from_json(&review()).unwrap();
+        let a = Annotations::from_json(&review_of(&[follow(), core()])).unwrap();
         let o = ReadingOrder::build(&d, &a);
         assert_eq!(o.positions(), vec![Position::file("logo.png")]);
         let blocks: Vec<&Block> = o.sections.iter().flat_map(|s| &s.blocks).collect();
@@ -421,8 +387,8 @@ diff --git a/src/a.rs b/src/a.rs
         assert!(blocks[0].whole_file);
     }
 
-    // 以下は split_hunk を直接呼んで PAD と GAP の境界を見る。diff テキストで
-    // 行数を数えるより、行を直接組んだ方が境界がずれない。
+    // PAD と GAP の境界は split_hunk を直接呼んで見る。diff テキストで行数を
+    // 数えるより境界がずれない。
     fn changed(new_line: u32) -> DiffLine {
         DiffLine {
             tag: Tag::Add,
@@ -441,26 +407,11 @@ diff --git a/src/a.rs b/src/a.rs
         }
     }
 
-    /// 一色（1 つの項目）が new:1 と new:end を指す成果物。間の行はすべて文脈行。
-    fn single_owner_review(end: u32) -> String {
-        format!(
-            r#"{{
-              "schema": {schema}, "base": "a", "head": "b",
-              "overview": {{"problem":"p","change":"c","mechanism":"m","placement":"pl","scope":"s"}},
-              "sections": [{{"title":"t","body":"b","importance":"core","reason":"r",
-                "ranges":[{{"path":"a.rs","side":"new","start":1,"end":1}},
-                          {{"path":"a.rs","side":"new","start":{end},"end":{end}}}]}}],
-              "impacts": [],
-              "coverage": {{"total":0,"classified":0,"unclassified":[],"conflicts":[],"unknown":[]}}
-            }}"#,
-            schema = crate::review::SCHEMA_VERSION,
-        )
-    }
-
-    fn lines_up_to(last_new: u32) -> Vec<DiffLine> {
-        (1..=last_new)
+    /// 1 と last だけが変更行で、間は全部文脈行のハンク。
+    fn lines_up_to(last: u32) -> Vec<DiffLine> {
+        (1..=last)
             .map(|n| {
-                if n == 1 || n == last_new {
+                if n == 1 || n == last {
                     changed(n)
                 } else {
                     context(n)
@@ -470,37 +421,31 @@ diff --git a/src/a.rs b/src/a.rs
     }
 
     #[test]
-    fn 間隔の内側の連なりは1つの束にまとまる() {
-        // 間が 4 行の文脈行（index 差 5）までは同じ束にする。
-        let lines = lines_up_to(6);
-        let ann = Annotations::from_json(&single_owner_review(6)).unwrap();
-        let runs = split_hunk("a.rs", "", &lines, &ann);
-        assert_eq!(runs.len(), 1, "GAP の境界内なので 1 つの束のはず");
-    }
-
-    #[test]
-    fn 間隔より離れた連なりは別の束に分かれる() {
-        // 間が 5 行の文脈行（index 差 6）になると別の束にする。
-        let lines = lines_up_to(7);
-        let ann = Annotations::from_json(&single_owner_review(7)).unwrap();
-        let runs = split_hunk("a.rs", "", &lines, &ann);
-        assert_eq!(runs.len(), 2, "GAP を超えたので別の束のはず");
+    fn 同じ持ち主でも間隔を超えて離れれば別の束に分かれる() {
+        for (name, last, want) in [("間が 4 行なら 1 つ", 6, 1), ("間が 5 行なら 2 つ", 7, 2)]
+        {
+            let sections = [S::new("t", "core")
+                .line("a.rs", "new", 1)
+                .line("a.rs", "new", last)];
+            let ann = Annotations::from_json(&review_of(&sections)).unwrap();
+            let runs = split_hunk("a.rs", "", &lines_up_to(last), &ann);
+            assert_eq!(runs.len(), want, "{name}");
+        }
     }
 
     #[test]
     fn 束は前後に文脈行を2行ずつ添える() {
-        // 前後に十分な文脈行があれば、束は PAD=2 行ずつ両側に伸びる。
         let lines: Vec<DiffLine> = (0..10)
             .map(|n| if n == 5 { changed(n) } else { context(n) })
             .collect();
-        let review = revidere_fixtures::review(
-            r#"[{"title":"t","body":"b","importance":"core","reason":"r",
-                "ranges":[{"path":"a.rs","side":"new","start":5,"end":5}]}]"#,
-        );
-        let ann = Annotations::from_json(&review).unwrap();
+        let sections = [S::new("t", "core").line("a.rs", "new", 5)];
+        let ann = Annotations::from_json(&review_of(&sections)).unwrap();
         let runs = split_hunk("a.rs", "", &lines, &ann);
         assert_eq!(runs.len(), 1);
-        let (_, block, _) = &runs[0];
-        assert_eq!(block.lines.len(), 2 * PAD + 1, "変更行 1 つ + 両側 PAD 行");
+        assert_eq!(
+            runs[0].1.lines.len(),
+            2 * PAD + 1,
+            "変更行 1 つ + 両側 PAD 行"
+        );
     }
 }

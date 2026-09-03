@@ -1,5 +1,5 @@
-// 変更一覧。パースした Diff から変更箇所の集合を取り出し、プロンプトに載せる
-// 要約（ledger_summary）を作る。テキストは読まず、parser.rs が作った型だけを見る。
+// 変更一覧。パースした Diff から変更箇所の集合と、プロンプトに載せる要約を作る。
+// テキストは読まず、parser.rs が作った型だけを見る。
 
 use super::{DiffLine, FileDiff, FileKind, Tag};
 use crate::review::{Position, Side};
@@ -17,10 +17,8 @@ impl DiffLine {
 }
 
 impl FileDiff {
-    /// このファイルが持つ変更箇所。行を持たない変更はファイル単位の位置 1 つになる。
-    ///
-    /// ここで空を返すと「変更が無かった」と区別が付かなくなるので、
-    /// 行が無くても必ず 1 つは出す。
+    /// このファイルが持つ変更箇所。行が無くても必ず 1 つは出す。空を返すと
+    /// 「変更が無かった」と区別が付かなくなる。
     pub fn positions(&self) -> Vec<Position> {
         let from_lines: Vec<Position> = self
             .hunks
@@ -130,17 +128,20 @@ diff --git a/src/a.rs b/src/a.rs
 ",
         );
         let ps = d.positions();
-        assert!(ps.contains(&Position::new("src/a.rs", Side::Old, 11)));
-        assert!(ps.contains(&Position::new("src/a.rs", Side::New, 11)));
-        assert!(ps.contains(&Position::new("src/a.rs", Side::New, 12)));
-        // 文脈行は位置を持たない。
-        assert!(!ps.contains(&Position::new("src/a.rs", Side::New, 10)));
-        assert_eq!(ps.len(), 3);
+        assert_eq!(
+            ps.into_iter().collect::<Vec<_>>(),
+            vec![
+                Position::new("src/a.rs", Side::New, 11),
+                Position::new("src/a.rs", Side::New, 12),
+                Position::new("src/a.rs", Side::Old, 11),
+            ],
+            "文脈行 (new:10) が混ざるか、変更行が落ちている"
+        );
     }
 
+    /// ファイル全体の削除でも、後像の行番号を作らない。
     #[test]
     fn 削除されたファイルは前像側の位置だけを出す() {
-        // ファイル全体の削除でも、後像の行番号を作らない。
         let d = parse(
             "\
 diff --git a/src/gone.rs b/src/gone.rs
@@ -153,54 +154,51 @@ index 1111111..0000000
 -two
 ",
         );
-        let ps = d.files[0].positions();
         assert_eq!(
-            ps,
+            d.files[0].positions(),
             vec![
                 Position::new("src/gone.rs", Side::Old, 1),
                 Position::new("src/gone.rs", Side::Old, 2),
             ]
         );
-        assert!(ps.iter().all(|p| p.side == Side::Old));
     }
 
+    /// 行が無くても黙って消さない。消すと「変更が無かった」と区別が付かない。
     #[test]
-    fn バイナリはファイル単位の位置をちょうど1つ出す() {
-        // 行が無くても黙って消さない。消すと「変更が無かった」と区別が付かない。
-        let d = parse(
-            "\
+    fn 行を持たない変更はファイル単位の位置をちょうど1つ出す() {
+        for (name, text, path) in [
+            (
+                "バイナリ",
+                "\
 diff --git a/logo.png b/logo.png
 index 1111111..2222222 100644
 Binary files a/logo.png and b/logo.png differ
 ",
-        );
-        assert_eq!(d.files[0].positions(), vec![Position::file("logo.png")]);
-    }
-
-    #[test]
-    fn ハンクの無い純粋なリネームはファイル単位の位置になる() {
-        let d = parse(
-            "\
+                "logo.png",
+            ),
+            (
+                "ハンクの無い純粋なリネーム",
+                "\
 diff --git a/src/old.rs b/src/new.rs
 similarity index 100%
 rename from src/old.rs
 rename to src/new.rs
 ",
-        );
-        let f = &d.files[0];
-        assert_eq!(f.positions(), vec![Position::file(f.path.clone())]);
-    }
-
-    #[test]
-    fn モードだけの変更もファイル単位の位置になる() {
-        let d = parse(
-            "\
+                "src/new.rs",
+            ),
+            (
+                "モードだけの変更",
+                "\
 diff --git a/run.sh b/run.sh
 old mode 100644
 new mode 100755
 ",
-        );
-        assert_eq!(d.files[0].positions(), vec![Position::file("run.sh")]);
+                "run.sh",
+            ),
+        ] {
+            let d = parse(text);
+            assert_eq!(d.files[0].positions(), vec![Position::file(path)], "{name}");
+        }
     }
 
     #[test]
@@ -248,13 +246,15 @@ diff --git a/a.txt b/a.txt
 ",
         );
         let s = d.ledger_summary();
+        assert!(s.contains("a.txt [modified]"), "{s}");
         assert!(s.contains("new: 2-4"), "{s}");
-    }
 
-    #[test]
-    fn 範囲の畳みは間が空くと分かれる() {
-        assert_eq!(fold_ranges(&[1, 2, 3, 7, 10, 11]), "1-3, 7, 10-11");
-        assert_eq!(fold_ranges(&[]), "");
-        assert_eq!(fold_ranges(&[4]), "4");
+        for (sorted, want) in [
+            (&[1u32, 2, 3, 7, 10, 11][..], "1-3, 7, 10-11"),
+            (&[][..], ""),
+            (&[4][..], "4"),
+        ] {
+            assert_eq!(fold_ranges(sorted), want, "{sorted:?}");
+        }
     }
 }

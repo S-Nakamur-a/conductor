@@ -1,12 +1,8 @@
 // 項目の親子。primary の関係だけを辿ってできる森。
 //
-// 関係は複数書ける。結合テストが中核 2 つをまとめて検証していることは
-// 実際にあるし、それを 1 本に潰すのは嘘になる。ただし読む順が辿るのは
-// primary 1 本だけにしてある。多重グラフのまま並べようとすると深さ優先の
-// 順が一意に決まらず、「上から下まで読めば diff の全部」という背骨が作れない。
-//
-// 採取は多重、表示は森。primary 以外は項目が 2 か所に出る形ではなく、
-// 項目の脇の言及として出す。
+// 採取は多重、表示は森。結合テストが中核 2 つをまとめて検証していることは
+// 実際にあるので関係は複数書けるが、多重グラフのまま並べると深さ優先の順が
+// 一意に決まらず、「上から下まで読めば diff の全部」という背骨が作れない。
 
 use crate::review::Section;
 use std::collections::HashMap;
@@ -16,7 +12,7 @@ use std::collections::HashMap;
 pub struct Forest {
     /// 項目ごとの親。無い・解決できない・巡回するものは None。
     parent: Vec<Option<usize>>,
-    /// 深さ優先で辿った項目の並び。全ての項目がちょうど 1 回出る。
+    /// 深さ優先で辿った並び。全ての項目がちょうど 1 回出る。
     order: Vec<usize>,
     /// 項目ごとの深さ。根が 0。
     depth: Vec<usize>,
@@ -26,15 +22,16 @@ pub struct Forest {
     by_title: HashMap<String, usize>,
     /// 解決できなかった関係。(項目の添字, 指していた title)
     ///
-    /// 黙って捨てない。モデルが「在る」と言った相手が無かったことは、
-    /// 説明もれ検査の unknown と同じ種類の破れで、人が読んで気付ける必要がある。
+    /// 黙って捨てない。モデルが「在る」と言った相手が無かったことは、説明もれ
+    /// 検査の unknown と同じ種類の破れで、人が読んで気付ける必要がある。
     dangling: Vec<(usize, String)>,
 }
 
 impl Forest {
     pub fn build(sections: &[Section]) -> Self {
         let n = sections.len();
-        // title から添字。同じ title が 2 つあれば先着を採る。
+        // 同じ title が 2 つあるときに後着を採ると、関係の相手が成果物の
+        // 並び順で変わる。
         let mut by_title: HashMap<&str, usize> = HashMap::with_capacity(n);
         for (i, c) in sections.iter().enumerate() {
             by_title.entry(c.title.as_str()).or_insert(i);
@@ -53,7 +50,6 @@ impl Forest {
                 None => dangling.push((i, rel.to.clone())),
             }
         }
-        // primary 以外にも、指す先が無いものがある。
         for (i, c) in sections.iter().enumerate() {
             for r in c.relations.iter().filter(|r| !r.primary) {
                 if !by_title.contains_key(r.to.as_str()) {
@@ -77,7 +73,6 @@ impl Forest {
             }
         }
 
-        // 子の一覧。並びは重要度順、同じなら成果物の並び。
         let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
         let mut roots: Vec<usize> = Vec::new();
         for (i, p) in parent.iter().enumerate() {
@@ -92,8 +87,8 @@ impl Forest {
             c.sort_by_key(rank);
         }
 
-        // 深さ優先。子は自分の重要度に関わらず親の直後に来る。
-        // テストが minor でも、検証している中核の隣に出るのはこのため。
+        // 子は自分の重要度に関わらず親の直後に来る。テストが minor でも、
+        // 検証している中核の隣に出るのはこのため。
         let mut order = Vec::with_capacity(n);
         let mut depth = vec![0; n];
         let mut stack: Vec<usize> = roots.into_iter().rev().collect();
@@ -123,7 +118,6 @@ impl Forest {
         self.parent.get(i).copied().flatten()
     }
 
-    /// 深さ優先で辿った項目の並び。
     pub fn order(&self) -> &[usize] {
         &self.order
     }
@@ -141,12 +135,11 @@ impl Forest {
             .unwrap_or(self.order.len())
     }
 
-    /// この項目を親に持つ項目。並びは重要度順。
     pub fn children(&self, i: usize) -> &[usize] {
         self.children.get(i).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// title から項目の添字。関係の相手を引く。
+    /// 関係の相手を引く。
     pub fn resolve(&self, title: &str) -> Option<usize> {
         self.by_title.get(title).copied()
     }
@@ -161,8 +154,9 @@ impl Forest {
 mod tests {
     use super::*;
     use crate::review::{Importance, Relation};
+    use Importance::{Core, Follow, Minor, Ripple};
 
-    fn section(title: &str, imp: Importance, rels: Vec<(&str, bool)>) -> Section {
+    fn section(title: &str, imp: Importance, rels: &[(&str, bool)]) -> Section {
         Section {
             title: title.into(),
             body: String::new(),
@@ -170,8 +164,8 @@ mod tests {
             reason: None,
             ranges: Vec::new(),
             relations: rels
-                .into_iter()
-                .map(|(to, primary)| Relation {
+                .iter()
+                .map(|&(to, primary)| Relation {
                     to: to.into(),
                     reason: "r".into(),
                     primary,
@@ -180,7 +174,7 @@ mod tests {
         }
     }
 
-    /// 森の並びを、深さのインデント付きの見出し列にする。目視で確認しやすくする。
+    /// 森の並びを、深さのインデント付きの見出し列にする。
     fn outline(f: &Forest, sections: &[Section]) -> Vec<String> {
         f.order()
             .iter()
@@ -188,66 +182,95 @@ mod tests {
             .collect()
     }
 
-    /// 子は自分の重要度に関わらず親の直後。周辺のテストでも、検証している
-    /// 中核の隣に出る。これをやらないと重要度順で末尾へ沈む。
     #[test]
-    fn 子は重要度に関わらず親の直後に来る() {
-        let sections = vec![
-            section("実装A", Importance::Core, vec![]),
-            section("実装B", Importance::Core, vec![]),
-            section("実装Aのテスト", Importance::Minor, vec![("実装A", true)]),
-        ];
-        let f = Forest::build(&sections);
-        assert_eq!(
-            outline(&f, &sections),
-            ["実装A", "  実装Aのテスト", "実装B"]
-        );
-    }
-
-    /// 深さは制限しない。
-    #[test]
-    fn 親子の鎖は3段以上でも森として成り立つ() {
-        let sections = vec![
-            section("下位API", Importance::Core, vec![]),
-            section("呼び出し側", Importance::Follow, vec![("下位API", true)]),
-            section(
-                "呼び出し側のテスト",
-                Importance::Minor,
-                vec![("呼び出し側", true)],
+    fn 並びを決めるのは主の関係だけで子は親の直後に来る() {
+        struct Case {
+            name: &'static str,
+            sections: Vec<Section>,
+            outline: Vec<&'static str>,
+            parents: Vec<Option<usize>>,
+        }
+        let case = |name, sections, outline, parents| Case {
+            name,
+            sections,
+            outline,
+            parents,
+        };
+        let cases = vec![
+            case(
+                // これをやらないと、テストが重要度順で末尾へ沈む。
+                "子は重要度に関わらず親の直後",
+                vec![
+                    section("実装A", Core, &[]),
+                    section("実装B", Core, &[]),
+                    section("実装Aのテスト", Minor, &[("実装A", true)]),
+                ],
+                vec!["実装A", "  実装Aのテスト", "実装B"],
+                vec![None, None, Some(0)],
+            ),
+            case(
+                "親子の鎖は 3 段以上でも成り立つ",
+                vec![
+                    section("下位API", Core, &[]),
+                    section("呼び出し側", Follow, &[("下位API", true)]),
+                    section("呼び出し側のテスト", Minor, &[("呼び出し側", true)]),
+                ],
+                vec!["下位API", "  呼び出し側", "    呼び出し側のテスト"],
+                vec![None, Some(0), Some(1)],
+            ),
+            case(
+                // 結合テストが 2 つの中核をまとめて検証していても、背骨は 1 本。
+                "primary 以外の関係は並びに影響しない",
+                vec![
+                    section("実装A", Core, &[]),
+                    section("実装B", Core, &[]),
+                    section("結合テスト", Minor, &[("実装A", true), ("実装B", false)]),
+                ],
+                vec!["実装A", "  結合テスト", "実装B"],
+                vec![None, None, Some(0)],
+            ),
+            case(
+                "関係が無ければ素の重要度順に落ちる",
+                vec![
+                    section("周辺の変更", Minor, &[]),
+                    section("主目的", Core, &[]),
+                    section("その帰結", Ripple, &[]),
+                ],
+                vec!["主目的", "その帰結", "周辺の変更"],
+                vec![None, None, None],
+            ),
+            case(
+                "同じ題が 2 つあれば先の項目に解決する",
+                vec![
+                    section("同じ名前", Core, &[]),
+                    section("同じ名前", Core, &[]),
+                    section("子", Minor, &[("同じ名前", true)]),
+                ],
+                vec!["同じ名前", "  子", "同じ名前"],
+                vec![None, None, Some(0)],
+            ),
+            case(
+                "自分を主に指す項目には親が無い",
+                vec![section("A", Core, &[("A", true)])],
+                vec!["A"],
+                vec![None],
             ),
         ];
-        let f = Forest::build(&sections);
-        assert_eq!(
-            outline(&f, &sections),
-            ["下位API", "  呼び出し側", "    呼び出し側のテスト"]
-        );
+
+        for c in cases {
+            let f = Forest::build(&c.sections);
+            assert_eq!(outline(&f, &c.sections), c.outline, "{}", c.name);
+            let got: Vec<Option<usize>> = (0..c.sections.len()).map(|i| f.parent(i)).collect();
+            assert_eq!(got, c.parents, "{}: 親", c.name);
+        }
     }
 
-    /// primary 以外の関係は並びに影響しない。結合テストが 2 つの中核を
-    /// まとめて検証していても、背骨は primary の 1 本だけ。
-    #[test]
-    fn 並びを決めるのは主の関係だけ() {
-        let sections = vec![
-            section("実装A", Importance::Core, vec![]),
-            section("実装B", Importance::Core, vec![]),
-            section(
-                "結合テスト",
-                Importance::Minor,
-                vec![("実装A", true), ("実装B", false)],
-            ),
-        ];
-        let f = Forest::build(&sections);
-        assert_eq!(outline(&f, &sections), ["実装A", "  結合テスト", "実装B"]);
-        assert_eq!(f.parent(2), Some(0));
-    }
-
-    /// 親を辿って巡回しても、全ての項目がちょうど 1 回だけ並びに出る。
-    /// 出ない項目があると、その項目が持つ変更行が画面から消える。
+    /// 並びに出ない項目があると、その項目が持つ変更行が画面から消える。
     #[test]
     fn 循環しても項目を落とさず重複もしない() {
         let sections = vec![
-            section("A", Importance::Core, vec![("B", true)]),
-            section("B", Importance::Core, vec![("A", true)]),
+            section("A", Core, &[("B", true)]),
+            section("B", Core, &[("A", true)]),
         ];
         let f = Forest::build(&sections);
         let mut seen: Vec<usize> = f.order().to_vec();
@@ -256,44 +279,13 @@ mod tests {
     }
 
     #[test]
-    fn 自分を主に指す項目には親が無い() {
-        let sections = vec![section("A", Importance::Core, vec![("A", true)])];
+    fn 知らない題を指す関係は主でも脇でも宙ぶらりんとして報告する() {
+        let sections = vec![section("A", Core, &[("架空1", true), ("架空2", false)])];
         let f = Forest::build(&sections);
         assert_eq!(f.parent(0), None);
-        assert_eq!(f.order(), [0]);
-    }
-
-    /// 実在しない相手を指したことは黙って捨てず dangling に残す。
-    /// 捨てると、モデルが在ると言った項目が無かったことに気付けない。
-    #[test]
-    fn 知らない題を指す関係は宙ぶらりんとして報告する() {
-        let sections = vec![section("A", Importance::Core, vec![("架空の項目", true)])];
-        let f = Forest::build(&sections);
-        assert_eq!(f.parent(0), None);
-        assert_eq!(f.dangling(), [(0, "架空の項目".to_string())]);
-    }
-
-    /// 同じ title が 2 つあるときは先着で解決する。後着を採ると、関係の相手が
-    /// 成果物の並び順で変わる。
-    #[test]
-    fn 同じ題が2つあれば先の項目に解決する() {
-        let sections = vec![
-            section("同じ名前", Importance::Core, vec![]),
-            section("同じ名前", Importance::Core, vec![]),
-            section("子", Importance::Minor, vec![("同じ名前", true)]),
-        ];
-        let f = Forest::build(&sections);
-        assert_eq!(f.parent(2), Some(0));
-    }
-
-    #[test]
-    fn 関係が無ければ素の重要度順に落ちる() {
-        let sections = vec![
-            section("周辺の変更", Importance::Minor, vec![]),
-            section("主目的", Importance::Core, vec![]),
-            section("その帰結", Importance::Ripple, vec![]),
-        ];
-        let f = Forest::build(&sections);
-        assert_eq!(outline(&f, &sections), ["主目的", "その帰結", "周辺の変更"]);
+        assert_eq!(
+            f.dangling(),
+            [(0, "架空1".to_string()), (0, "架空2".to_string())]
+        );
     }
 }

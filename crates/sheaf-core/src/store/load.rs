@@ -13,6 +13,9 @@ use super::{
 use crate::{Location, Result};
 
 /// (trait の綴り, 型の綴り, ファイル) -> いちばん上の定義位置。投入中だけ使う。
+///
+/// ブロックの符号とメソッドの符号の両方が来るので、いちばん上を採ると
+/// ブロックがあれば impl の行に、無ければその中の最初のメソッドに落ちる。
 type ImplSites = HashMap<(Box<str>, Box<str>, PathBuf), Location>;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -28,7 +31,7 @@ pub struct IndexSource {
     pub index: PathBuf,
     /// リポジトリルートから見た索引ルートの相対パス。索引ルート自身がリポジトリルートなら空。
     pub subroot: PathBuf,
-    /// この索引での出自の表。鍵は**索引ルートからの相対パス**（索引の中の綴りに合わせる）。
+    /// この索引での出自の表。鍵は索引ルートからの相対パス（索引の中の綴りに合わせる）。
     pub expected: HashMap<PathBuf, String>,
 }
 
@@ -103,9 +106,6 @@ impl Store {
         let mut implements: Vec<Implements> = vec![HashMap::new(); sources.len()];
         let mut implementers: Vec<HashMap<Box<str>, HashSet<Box<str>>>> =
             vec![HashMap::new(); sources.len()];
-        // (trait の綴り, 型の綴り, ファイル) -> いちばん上の定義位置。
-        // ブロックの符号とメソッドの符号の両方が来るので、いちばん上を採ると
-        // ブロックがあれば impl の行に、無ければその中の最初のメソッドに落ちる。
         let mut impl_sites: Vec<ImplSites> = vec![HashMap::new(); sources.len()];
         let mut doc_paths: Vec<PathBuf> = Vec::with_capacity(owners.len());
         let mut missing_provenance = 0;

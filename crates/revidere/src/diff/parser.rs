@@ -1,7 +1,5 @@
-// unified diff（`git diff` の出力）のパース。
-//
-// ここの責務はテキストを Diff の型へ写すことだけ。行から変更箇所を取り出す
-// のは ledger.rs の仕事で、ここでは行番号の割り当てと種別の判定までしかしない。
+// unified diff（`git diff` の出力）のパース。テキストを Diff の型へ写すだけで、
+// 変更箇所を取り出すのは ledger.rs の仕事。
 
 use super::{Diff, DiffLine, FileDiff, FileKind, Hunk, Tag};
 
@@ -9,10 +7,8 @@ use super::{Diff, DiffLine, FileDiff, FileKind, Hunk, Tag};
 pub fn parse(text: &str) -> Diff {
     let mut diff = Diff::default();
     let mut cur: Option<FileDiff> = None;
-    // ハンク内で次に割り当てる行番号。
     let mut old_no: u32 = 0;
     let mut new_no: u32 = 0;
-    // ---/+++ から拾った暫定のパス。
     let mut hdr_old: Option<String> = None;
     let mut hdr_new: Option<String> = None;
     let mut saw_rename = false;
@@ -70,7 +66,7 @@ pub fn parse(text: &str) -> Diff {
             });
             continue;
         }
-        // ハンクの中でなければ index 行などなので読み飛ばす。
+        // ハンクの外は index 行などなので読み飛ばす。
         let Some(hunk) = f.hunks.last_mut() else {
             continue;
         };
@@ -82,10 +78,9 @@ pub fn parse(text: &str) -> Diff {
             Some(b'+') => (Tag::Add, &raw[1..]),
             Some(b'-') => (Tag::Del, &raw[1..]),
             Some(b' ') => (Tag::Context, &raw[1..]),
-            // 空行。git は空の文脈行を " " で出すが、途中で末尾空白を落とす経路が
-            // あるので、空行は文脈行として扱う。ここで捨てると以降の行番号が全部ずれる。
+            // git は空の文脈行を " " で出すが、途中で末尾空白を落とす経路がある。
+            // 空行を捨てると以降の行番号が全部ずれる。
             None => (Tag::Context, ""),
-            // ハンク内に現れる想定外の行。行番号を進めずに読み飛ばす。
             _ => continue,
         };
         let line = match tag {
@@ -160,7 +155,6 @@ fn flush(
         }
         (Some(o), None) => {
             f.kind = FileKind::Deleted;
-            // 削除ファイルは後像が無いので、前像のパスで呼べるようにする。
             f.path = o.clone();
         }
         (Some(o), Some(n)) => {
@@ -202,9 +196,9 @@ fn strip_side(s: &str) -> Option<String> {
 /// `diff --git a/X b/Y` の残りから両側のパスを取る。
 ///
 /// ---/+++ が続けばそちらで上書きされるので、ここは行を持たない変更
-/// （バイナリ・モードのみ・純粋な rename）のための後詰め。
+/// （バイナリ・モードのみ・純粋な rename）のための後詰め。パスが同一なら
+/// 真ん中で割れるが、rename ではそうならないので " b/" を探す。
 fn split_git_header(rest: &str) -> (Option<String>, Option<String>) {
-    // パスが同一なら真ん中で割れる。rename ではそうならないので " b/" を探す。
     let candidates: Vec<usize> = rest.match_indices(" b/").map(|(i, _)| i).collect();
     for &i in &candidates {
         let (l, r) = rest.split_at(i);
@@ -269,134 +263,54 @@ index 1111111..2222222 100644
  keep two
 ";
 
+    fn numbers(text: &str) -> Vec<(Tag, Option<u32>, Option<u32>)> {
+        parse(text).files[0].hunks[0]
+            .lines
+            .iter()
+            .map(|l| (l.tag, l.old_line, l.new_line))
+            .collect()
+    }
+
     #[test]
     fn 行番号は前像と後像を別々に追う() {
-        let d = parse(BASIC);
-        let f = &d.files[0];
-        assert_eq!(f.path, "src/a.rs");
-        let l = &f.hunks[0].lines;
-        // 文脈行は両側を進める。
-        assert_eq!((l[0].old_line, l[0].new_line), (Some(10), Some(10)));
-        // 削除行は前像だけ。
-        assert_eq!((l[1].old_line, l[1].new_line), (Some(11), None));
-        // 追加行は後像だけ。前像の 11 は消費済みなので追加は後像 11,12。
-        assert_eq!((l[2].old_line, l[2].new_line), (None, Some(11)));
-        assert_eq!((l[3].old_line, l[3].new_line), (None, Some(12)));
-        // 続く文脈行は前像 12 / 後像 13。
-        assert_eq!((l[4].old_line, l[4].new_line), (Some(12), Some(13)));
+        assert_eq!(
+            numbers(BASIC),
+            vec![
+                (Tag::Context, Some(10), Some(10)),
+                (Tag::Del, Some(11), None),
+                // 前像の 11 は削除で消費済みなので、追加は後像 11, 12。
+                (Tag::Add, None, Some(11)),
+                (Tag::Add, None, Some(12)),
+                (Tag::Context, Some(12), Some(13)),
+            ]
+        );
     }
 
     #[test]
     fn ハンクの見出しは関数の文脈を残す() {
-        let d = parse(BASIC);
-        assert_eq!(d.files[0].hunks[0].header, "fn outer()");
-    }
-
-    #[test]
-    fn 件数の無いハンクの見出しも受け入れる() {
-        let d = parse(
-            "\
+        assert_eq!(parse(BASIC).files[0].hunks[0].header, "fn outer()");
+        // 件数の無い見出しも受け入れる。
+        assert_eq!(
+            numbers(
+                "\
 diff --git a/a.txt b/a.txt
 --- a/a.txt
 +++ b/a.txt
 @@ -5 +5 @@
 -x
 +y
-",
+"
+            ),
+            vec![(Tag::Del, Some(5), None), (Tag::Add, None, Some(5))]
         );
-        let l = &d.files[0].hunks[0].lines;
-        assert_eq!(l[0].old_line, Some(5));
-        assert_eq!(l[1].new_line, Some(5));
     }
 
     #[test]
-    fn 追加されたファイルは追加種別で新しいパスの名前になる() {
-        let d = parse(
-            "\
-diff --git a/src/new.rs b/src/new.rs
-new file mode 100644
-index 0000000..1111111
---- /dev/null
-+++ b/src/new.rs
-@@ -0,0 +1,2 @@
-+one
-+two
-",
-        );
-        assert_eq!(d.files[0].kind, FileKind::Added);
-        assert_eq!(d.files[0].path, "src/new.rs");
-    }
-
-    #[test]
-    fn 削除されたファイルは元のパスを名前に残す() {
-        // 削除ファイルは後像が無いので、前像のパスで呼べるようにする。
-        let d = parse(
-            "\
-diff --git a/src/gone.rs b/src/gone.rs
-deleted file mode 100644
-index 1111111..0000000
---- a/src/gone.rs
-+++ /dev/null
-@@ -1,2 +0,0 @@
--one
--two
-",
-        );
-        let f = &d.files[0];
-        assert_eq!(f.kind, FileKind::Deleted);
-        assert_eq!(f.path, "src/gone.rs");
-    }
-
-    #[test]
-    fn ハンクの無い純粋なリネームはリネーム種別になる() {
-        let d = parse(
-            "\
-diff --git a/src/old.rs b/src/new.rs
-similarity index 100%
-rename from src/old.rs
-rename to src/new.rs
-",
-        );
-        let f = &d.files[0];
-        assert_eq!(f.kind, FileKind::Renamed);
-        assert_eq!(f.path, "src/new.rs");
-        assert_eq!(f.old_path.as_deref(), Some("src/old.rs"));
-    }
-
-    #[test]
-    fn ハンクの無いモードだけの変更はモード種別になる() {
-        let d = parse(
-            "\
-diff --git a/run.sh b/run.sh
-old mode 100644
-new mode 100755
-",
-        );
-        assert_eq!(d.files[0].kind, FileKind::ModeOnly);
-    }
-
-    #[test]
-    fn リネームの見出しの分割は最後のbスラッシュに落ちる() {
-        // old_path 自身が " b/" を含むと、真ん中で機械的に割ると別のパスに
-        // なる。候補が複数あるときは最後（本当の区切り）を採る。
-        let d = parse(
-            "\
-diff --git a/weird b/file.rs b/weird2.rs
-similarity index 90%
-rename from weird b/file.rs
-rename to weird2.rs
-",
-        );
-        let f = &d.files[0];
-        assert_eq!(f.kind, FileKind::Renamed);
-        assert_eq!(f.path, "weird2.rs");
-        assert_eq!(f.old_path.as_deref(), Some("weird b/file.rs"));
-    }
-
-    #[test]
-    fn 改行なしの印は行番号を進めない() {
-        let d = parse(
-            "\
+    fn ハンクの中の特殊な行は行番号を狂わせない() {
+        for (name, text, want) in [
+            (
+                "改行なしの印は行番号を進めない",
+                "\
 diff --git a/a.txt b/a.txt
 --- a/a.txt
 +++ b/a.txt
@@ -406,18 +320,24 @@ diff --git a/a.txt b/a.txt
 +new
 \\ No newline at end of file
 ",
-        );
-        let l = &d.files[0].hunks[0].lines;
-        assert_eq!(l.len(), 2);
-        assert_eq!(l[0].old_line, Some(1));
-        assert_eq!(l[1].new_line, Some(1));
-    }
-
-    #[test]
-    fn ハンクの中の空行は文脈として数える() {
-        // 空の文脈行を捨てると、それ以降の行番号が全部ずれる。
-        let d = parse(
-            "\
+                vec![(Tag::Del, Some(1), None), (Tag::Add, None, Some(1))],
+            ),
+            (
+                "想定外の行は進めずに飛ばす",
+                "\
+diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1,1 +1,1 @@
+%odd
+-old
++new
+",
+                vec![(Tag::Del, Some(1), None), (Tag::Add, None, Some(1))],
+            ),
+            (
+                "空行は文脈として数える",
+                "\
 diff --git a/a.txt b/a.txt
 --- a/a.txt
 +++ b/a.txt
@@ -427,30 +347,97 @@ diff --git a/a.txt b/a.txt
 -third
 +THIRD
 ",
-        );
-        let l = &d.files[0].hunks[0].lines;
-        assert_eq!(l[1].tag, Tag::Context);
-        assert_eq!(l[2].old_line, Some(3));
-        assert_eq!(l[3].new_line, Some(3));
+                vec![
+                    (Tag::Context, Some(1), Some(1)),
+                    (Tag::Context, Some(2), Some(2)),
+                    (Tag::Del, Some(3), None),
+                    (Tag::Add, None, Some(3)),
+                ],
+            ),
+        ] {
+            assert_eq!(numbers(text), want, "{name}");
+        }
     }
 
     #[test]
-    fn ハンクの中の想定外の行は進めずに飛ばす() {
-        let d = parse(
-            "\
-diff --git a/a.txt b/a.txt
---- a/a.txt
-+++ b/a.txt
-@@ -1,1 +1,1 @@
-%odd
--old
-+new
+    fn ファイルの種別と名前はヘッダから決まる() {
+        for (name, text, kind, path, old_path) in [
+            (
+                "追加は新しいパスの名前になる",
+                "\
+diff --git a/src/new.rs b/src/new.rs
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/new.rs
+@@ -0,0 +1,2 @@
++one
++two
 ",
-        );
-        let l = &d.files[0].hunks[0].lines;
-        assert_eq!(l.len(), 2);
-        assert_eq!(l[0].old_line, Some(1));
-        assert_eq!(l[1].new_line, Some(1));
+                FileKind::Added,
+                "src/new.rs",
+                None,
+            ),
+            (
+                // 後像が無いので、前像のパスで呼べるようにする。
+                "削除は元のパスを名前に残す",
+                "\
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+index 1111111..0000000
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+",
+                FileKind::Deleted,
+                "src/gone.rs",
+                None,
+            ),
+            (
+                "ハンクの無い純粋なリネーム",
+                "\
+diff --git a/src/old.rs b/src/new.rs
+similarity index 100%
+rename from src/old.rs
+rename to src/new.rs
+",
+                FileKind::Renamed,
+                "src/new.rs",
+                Some("src/old.rs"),
+            ),
+            (
+                // old_path 自身が " b/" を含むと、真ん中で機械的に割ると別のパスに
+                // なる。候補が複数あるときは最後 (本当の区切り) を採る。
+                "リネームの見出しは最後の b スラッシュで割る",
+                "\
+diff --git a/weird b/file.rs b/weird2.rs
+similarity index 90%
+rename from weird b/file.rs
+rename to weird2.rs
+",
+                FileKind::Renamed,
+                "weird2.rs",
+                Some("weird b/file.rs"),
+            ),
+            (
+                "ハンクの無いモードだけの変更",
+                "\
+diff --git a/run.sh b/run.sh
+old mode 100644
+new mode 100755
+",
+                FileKind::ModeOnly,
+                "run.sh",
+                None,
+            ),
+        ] {
+            let f = &parse(text).files[0];
+            assert_eq!(f.kind, kind, "{name}: 種別");
+            assert_eq!(f.path, path, "{name}: パス");
+            assert_eq!(f.old_path.as_deref(), old_path, "{name}: 前像のパス");
+        }
     }
 
     #[test]
@@ -467,6 +454,7 @@ diff --git a/src/b.rs b/src/b.rs
 "
         ));
         assert_eq!(d.files.len(), 2);
+        assert_eq!(d.files[0].path, "src/a.rs");
         assert_eq!(d.files[1].path, "src/b.rs");
     }
 }
