@@ -609,6 +609,27 @@ impl TerminalPanel {
         }
     }
 
+    /// フォーカス中の区画の PTY へ貼り付けを流す。スクロールを最新へ戻すのは、
+    /// 遡って読んでいる間だと入れた文字が見えないから。
+    pub fn paste(&mut self, text: &str, focus: Focus) {
+        let session = match focus {
+            Focus::TerminalClaude => self.claude.session.clone(),
+            Focus::TerminalShell => self.shell.session.clone(),
+            Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
+            _ => return,
+        };
+        let Some(index) = self.index_of(session.as_ref()) else {
+            return;
+        };
+        if let Err(e) = self.pty.write_paste_to_session(index, text) {
+            log::warn!("could not paste into the PTY session: {e:#}");
+            return;
+        }
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.scroll = 0;
+        }
+    }
+
     /// 区画の大きさが変わっていたら PTY へ伝える。同じ worktree の同じ種類は
     /// まとめて合わせる — タブを切り替えた先が別の幅のままだと絵が崩れる。
     pub fn sync_sizes(&mut self, layout: &Layout) {

@@ -97,6 +97,14 @@ impl Grep {
         self.due = Some(Instant::now() + DEBOUNCE);
     }
 
+    pub fn paste(&mut self, text: &str) {
+        if !self.input_focused {
+            return;
+        }
+        self.query.insert_str(text);
+        self.reschedule();
+    }
+
     pub fn update(&mut self, key: KeyEvent, ctx: &Ctx) -> Vec<Effect> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {

@@ -41,6 +41,13 @@ impl HistoryBrowser {
         self.records.get(self.cursor.selected)
     }
 
+    pub fn paste(&mut self, text: &str) {
+        if !self.searching {
+            return;
+        }
+        self.query.insert_str(text);
+    }
+
     pub fn update(&mut self, key: KeyEvent, ctx: &Ctx) -> Vec<Effect> {
         if self.searching {
             return self.search_key(key);

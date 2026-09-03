@@ -82,6 +82,12 @@ pub fn filtered_key(
     }
 }
 
+/// 絞り込み欄への貼り付け。絞り込みが変われば並びも変わるので選択を先頭へ戻す。
+pub fn filtered_paste(cursor: &mut Cursor, input: &mut TextInput, text: &str) {
+    input.insert_str(text);
+    cursor.selected = 0;
+}
+
 /// 一覧の一部が窓に入るよう、先頭に落とす行数を決める。
 pub fn scroll_for(selected: usize, len: usize, height: usize) -> usize {
     if height == 0 || len <= height {

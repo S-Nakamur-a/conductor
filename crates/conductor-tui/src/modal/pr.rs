@@ -51,6 +51,14 @@ impl PrInput {
         }
     }
 
+    pub fn paste(&mut self, text: &str) {
+        if self.loading {
+            return;
+        }
+        self.error = None;
+        self.input.insert_str(text);
+    }
+
     pub fn failed(&mut self, error: String) {
         self.loading = false;
         self.error = Some(error);

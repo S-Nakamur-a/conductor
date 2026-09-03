@@ -234,6 +234,7 @@ fn drain_input(
                 on_key(ws, svc, key);
             }
             Event::Mouse(mouse) => on_mouse(ws, svc, layout, mouse),
+            Event::Paste(data) => on_paste(ws, data),
             _ => {}
         }
         if ws.should_quit || Instant::now() >= deadline || !crossterm::event::poll(Duration::ZERO)?
@@ -257,6 +258,22 @@ pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent)
         Routed::Ignored => Vec::new(),
     };
     apply(ws, svc, effects);
+}
+
+/// 貼り付け 1 つ分。macOS の端末は IME で確定したマルチバイト文字をキーではなく
+/// bracketed paste で届けるので、これを捨てると日本語が 1 文字ずつしか入らない。
+/// キーと同じ順で最前面のモーダルに優先権を渡す (裏の PTY へ流れると入力欄から消える)。
+pub fn on_paste(ws: &mut Workspace, data: String) {
+    if let Some(modal) = ws.modals.last_mut() {
+        modal.paste(&data);
+        return;
+    }
+    if matches!(
+        ws.focus,
+        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
+    ) {
+        ws.panels.terminal.paste(&data, ws.focus);
+    }
 }
 
 /// クリックした区画へフォーカスを移し、その区画に行を渡す。ホイールは
@@ -409,6 +426,31 @@ mod tests {
         for k in keys {
             on_key(ws, &mut svc, *k);
         }
+    }
+
+    #[test]
+    fn 貼り付けはモーダルが最前面ならそちらへ行く() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::TerminalShell;
+        ws.modals.push(Modal::Prompt(crate::modal::Prompt {
+            title: "t".into(),
+            input: Default::default(),
+            on_submit: |_| Vec::new(),
+        }));
+        on_paste(&mut ws, "日本語".into());
+        let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
+            panic!("{:?}", ws.modals);
+        };
+        assert_eq!(prompt.input.text(), "日本語");
+    }
+
+    #[test]
+    fn 端末に映すセッションが無ければ貼り付けは捨てる() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::TerminalShell;
+        on_paste(&mut ws, "日本語".into());
+        assert!(ws.modals.is_empty());
+        assert!(ws.chrome.status.is_none());
     }
 
     /// Viewer の e から埋め込みエディタを起こし、プロセスが終わったら Viewer に戻って

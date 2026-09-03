@@ -233,6 +233,39 @@ impl Modal {
         }
     }
 
+    /// 貼り付けを入力欄へ入れる。改行を落とすかは TextInput が単一行かで決まる。
+    /// ワイルドカードで受けないのは、入力欄を持つバリアントが増えたときに
+    /// 黙って貼り付けを捨てるのを防ぐため。
+    pub fn paste(&mut self, text: &str) {
+        match self {
+            Modal::Prompt(prompt) => prompt.input.insert_str(text),
+            Modal::CommentEditor(editor) => editor.input.insert_str(text),
+            Modal::PrInput(prompt) => prompt.paste(text),
+            Modal::Grep(grep) => grep.paste(text),
+            Modal::History(browser) => browser.paste(text),
+            Modal::Palette(palette) => {
+                picker::filtered_paste(&mut palette.cursor, &mut palette.input, text)
+            }
+            Modal::BranchPicker(picker) => {
+                picker::filtered_paste(&mut picker.cursor, &mut picker.filter, text)
+            }
+            Modal::Resume(picker) => {
+                picker::filtered_paste(&mut picker.cursor, &mut picker.filter, text)
+            }
+            Modal::Help(_)
+            | Modal::Confirm(_)
+            | Modal::CommentList(_)
+            | Modal::ThemePicker(_)
+            | Modal::RepoPicker(_)
+            | Modal::CherryPick(_)
+            | Modal::Publish(_)
+            | Modal::Update(_)
+            | Modal::References(_)
+            | Modal::SymbolActions(_)
+            | Modal::RevidereConfirm(_) => {}
+        }
+    }
+
     pub fn update(&mut self, key: KeyEvent, ctx: &Ctx) -> Vec<Effect> {
         match self {
             Modal::Help(help) => help.update(key),
@@ -378,6 +411,27 @@ mod tests {
         let effects = press(&mut editor, &[ch('x'), KeyEvent::from(KeyCode::Esc)]);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], Effect::PopModal));
+    }
+
+    #[test]
+    fn 貼り付けは単一行では改行を落とし複数行では残す() {
+        let mut prompt = Modal::Prompt(Prompt {
+            title: "t".into(),
+            input: TextInput::new(),
+            on_submit: |_| Vec::new(),
+        });
+        prompt.paste("ab\ncd");
+        let Modal::Prompt(prompt) = &prompt else {
+            unreachable!()
+        };
+        assert_eq!(prompt.input.text(), "abcd");
+
+        let mut editor = Modal::CommentEditor(CommentEditor::new_comment("a.rs".into(), 1, None));
+        editor.paste("ab\ncd");
+        let Modal::CommentEditor(editor) = &editor else {
+            unreachable!()
+        };
+        assert_eq!(editor.input.text(), "ab\ncd");
     }
 
     #[test]
