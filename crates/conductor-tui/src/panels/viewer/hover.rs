@@ -338,18 +338,20 @@ pub struct Popup {
     pub footer: Vec<(Rect, Line<'static>)>,
 }
 
-/// ポップアップの中身と置き場所を決める。`host` は Viewer の矩形。
-pub fn popup(hover: &Hover, theme: &Theme, host: Rect) -> Popup {
+/// ポップアップの中身と置き場所を決める。`host` は Viewer の矩形。シグネチャは定義元の
+/// ファイルの言語で色を付けたいので、読んでいるファイルではなく `hover.path` を渡す。
+/// `highlighter` が無ければ (まだ構築されていなければ) 単色にフォールバックする。
+pub fn popup(
+    hover: &Hover,
+    theme: &Theme,
+    host: Rect,
+    highlighter: Option<&super::syntax::Highlighter>,
+) -> Popup {
     let def_label = def_label(hover);
     let refs_label = refs_label(hover);
     let mut body: Vec<Line<'static>> = Vec::new();
     if hover.signature_from_index || !hover.on_definition_line {
-        body.extend(hover.signature.iter().map(|text| {
-            Line::from(Span::styled(
-                text.clone(),
-                Style::default().fg(theme.accent),
-            ))
-        }));
+        body.extend(signature_lines(hover, theme, highlighter));
     }
     if !hover.doc.is_empty() {
         if !body.is_empty() {
@@ -438,6 +440,38 @@ pub fn popup(hover: &Hover, theme: &Theme, host: Rect) -> Popup {
         body,
         footer,
     }
+}
+
+/// シグネチャは宣言の断片なのでパーサの状態が続かず、1 行ずつ独立にハイライトする。
+fn signature_lines(
+    hover: &Hover,
+    theme: &Theme,
+    highlighter: Option<&super::syntax::Highlighter>,
+) -> Vec<Line<'static>> {
+    let Some(highlighter) = highlighter else {
+        return hover
+            .signature
+            .iter()
+            .map(|text| {
+                Line::from(Span::styled(
+                    text.clone(),
+                    Style::default().fg(theme.accent),
+                ))
+            })
+            .collect();
+    };
+    highlighter
+        .highlight(Some(hover.path.as_str()), &hover.signature)
+        .into_iter()
+        .map(|spans| {
+            Line::from(
+                spans
+                    .into_iter()
+                    .map(|(style, text)| Span::styled(text, style))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
 }
 
 fn def_label(hover: &Hover) -> String {
@@ -669,7 +703,7 @@ mod tests {
     #[test]
     fn フッターの2行はポップアップの中にあり互いに重ならない() {
         let host = Rect::new(0, 0, 80, 30);
-        let popup = popup(&hover_fixture(), &Theme::default(), host);
+        let popup = popup(&hover_fixture(), &Theme::default(), host, None);
         assert!(popup.rect.y >= host.y && popup.rect.y + popup.rect.height <= host.y + host.height);
         assert_eq!(popup.refs_row.y, popup.def_row.y + 1);
         assert!(popup.def_row.y >= popup.rect.y);
@@ -699,7 +733,7 @@ mod tests {
     fn 参照が無ければ参照の行そのものを出さない() {
         let mut hover = hover_fixture();
         hover.refs = 0;
-        let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 80, 30));
+        let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 80, 30), None);
         assert_eq!(popup.refs_row, Rect::default());
         assert_eq!(popup.footer.len(), 1);
     }

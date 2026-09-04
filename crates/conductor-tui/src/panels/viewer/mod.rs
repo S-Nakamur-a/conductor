@@ -191,6 +191,11 @@ impl ViewerPanel {
         highlighter
     }
 
+    /// 描画は `&Workspace` しか持てず [Self::highlighter] を呼べないので、構築済みのものだけを読む。
+    pub(crate) fn highlighter_ref(&self) -> Option<&Highlighter> {
+        self.highlighter.as_ref()
+    }
+
     pub fn is_loading(&self) -> bool {
         self.load.is_some()
     }

@@ -137,7 +137,7 @@ pub fn render(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     if let Some(hover) = &panel.nav.hover {
         popup(
             frame,
-            super::hover::popup(hover, &ws.theme, body_area),
+            super::hover::popup(hover, &ws.theme, body_area, panel.highlighter_ref()),
             &ws.theme,
         );
     }

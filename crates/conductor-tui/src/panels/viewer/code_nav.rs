@@ -684,7 +684,7 @@ impl ViewerPanel {
     /// ポップアップのフッター行を押した。定義位置なら飛び、参照数なら一覧を開く。
     pub fn click_hover(&mut self, col: u16, row: u16, ctx: &Ctx) -> Option<Vec<Effect>> {
         let hover = self.nav.hover.as_ref()?;
-        let popup = hover::popup(hover, ctx.theme, self.body);
+        let popup = hover::popup(hover, ctx.theme, self.body, self.highlighter_ref());
         let hit = |r: ratatui::layout::Rect| {
             r.height > 0 && row == r.y && col >= r.x && col < r.x + r.width
         };
