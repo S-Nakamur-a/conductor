@@ -3,7 +3,7 @@
 
 訂正 (フェーズ 4c): `[updates]` と `[ui] startup_animation` は捨てない。フェーズ 0 で
 「削除」に振り分けたのは、自己更新と起動演出を捨てる前提だったため。どちらも残すと
-決まった (docs/plans/rewrite-plan.md 6 章の訂正) ので、設定も読める側へ戻した。
+決まったので、設定も読める側へ戻した。
 下の表の該当行は取り消し線ではなく、この段落が上書きする。
 
 新の置き場: crates/conductor-core/src/config/{mod,sections,snapshot,persist,tests}.rs
