@@ -215,9 +215,9 @@ pub fn changes_lines(
                 // その内訳がコミット済みか手元の編集かはこの色でしか分からない。
                 let fg = stage_color(theme, panel.tree().status().status(&file.path));
                 let mark = if review.is_viewed(&file.path) {
-                    "\u{2713} "
+                    " \u{2713} "
                 } else {
-                    "  "
+                    "   "
                 };
                 vec![
                     Span::styled(
@@ -226,9 +226,14 @@ pub fn changes_lines(
                     ),
                     Span::styled(name.to_string(), Style::default().fg(fg)),
                     Span::styled(
-                        format!("  +{} -{} {mark}", file.added_lines, file.deleted_lines),
-                        Style::default().fg(theme.muted),
+                        format!("  +{}", file.added_lines),
+                        Style::default().fg(theme.diff_add),
                     ),
+                    Span::styled(
+                        format!(" -{}", file.deleted_lines),
+                        Style::default().fg(theme.diff_del),
+                    ),
+                    Span::styled(mark, Style::default().fg(theme.success)),
                 ]
             }
         };
