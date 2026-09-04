@@ -104,6 +104,8 @@ pub struct Chrome {
     pub status: Option<StatusMessage>,
     pub menu: crate::menu::MenuBar,
     pub maximized: bool,
+    /// つかんでいる境界。離すまで持つ。
+    pub drag: Option<crate::layout::Divider>,
     /// 走っているものより新しいリリース。タイトルバーのバッジが読む。
     pub update: Option<UpdateInfo>,
 }

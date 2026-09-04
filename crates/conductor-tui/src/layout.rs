@@ -26,6 +26,8 @@ pub enum Region {
 pub struct Layout {
     /// 画面全体。モーダルは区画の上に重なるので、区画からは引けない。
     pub area: Rect,
+    /// 帯を除いた中央の行。境界のドラッグは、この幅と高さに対する割合で比率を決める。
+    pub main: Rect,
     pub regions: Vec<(Region, Rect)>,
 }
 
@@ -45,6 +47,37 @@ impl Layout {
             })
             .map(|(region, _)| *region)
     }
+
+    /// マウスでつかんで動かせる境界。隣り合う 2 つの枠線のどちらを掴んでも同じ境界になる。
+    /// 動かす比率はキーボードのリサイズと同じなので、クランプは [crate::command::exec] が持つ。
+    pub fn divider_at(&self, x: u16, y: u16) -> Option<Divider> {
+        let touches = |edge: u16, v: u16| v == edge || v + 1 == edge;
+        // 境界は右側 (下側) の区画の始まりにある。左 (上) が無い配置では境界も無い。
+        let vertical = |right: Region, divider: Divider| {
+            let r = self.rect(right)?;
+            (r.x > self.main.x && touches(r.x, x) && y >= r.y && y < r.y + r.height)
+                .then_some(divider)
+        };
+        let horizontal = |bottom: Region, divider: Divider| {
+            let b = self.rect(bottom)?;
+            (b.y > self.main.y && touches(b.y, y) && x >= b.x && x < b.x + b.width)
+                .then_some(divider)
+        };
+        // 縦を先に見る。角では列の幅を動かす方が意図に近い。
+        vertical(Region::Viewer, Divider::ExplorerViewer)
+            .or_else(|| vertical(Region::TerminalClaude, Divider::ViewerTerminal))
+            .or_else(|| horizontal(Region::ExplorerChanges, Divider::ExplorerSplit))
+            .or_else(|| horizontal(Region::TerminalShell, Divider::TerminalSplit))
+    }
+}
+
+/// 動かせる境界。3 列の幅は 2 本の縦境界で、2 つの列の上下分割は横境界で決まる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Divider {
+    ExplorerViewer,
+    ViewerTerminal,
+    ExplorerSplit,
+    TerminalSplit,
 }
 
 /// レビューの左列 (読む順) が取る幅の割合。項目の見出しが 2〜3 行に収まりつつ、
@@ -149,7 +182,11 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         Region::StatusBar,
         Rect::new(area.x, status_y, area.width, 1),
     ));
-    Layout { area, regions }
+    Layout {
+        area,
+        main,
+        regions,
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +247,39 @@ mod tests {
             l.rect(Region::ExplorerTree).is_some() && l.rect(Region::ExplorerChanges).is_some(),
             "最大化しても Explorer の 2 区画は残る"
         );
+    }
+
+    #[test]
+    fn 境界は隣り合う枠線のどちらを掴んでも同じになる() {
+        let ws = Workspace::for_test();
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let viewer = l.rect(Region::Viewer).unwrap();
+        let claude = l.rect(Region::TerminalClaude).unwrap();
+        let shell = l.rect(Region::TerminalShell).unwrap();
+        let changes = l.rect(Region::ExplorerChanges).unwrap();
+        for (x, y, expected) in [
+            (viewer.x - 1, viewer.y, Some(Divider::ExplorerViewer)),
+            (viewer.x, viewer.y, Some(Divider::ExplorerViewer)),
+            (claude.x, claude.y + 3, Some(Divider::ViewerTerminal)),
+            (shell.x + 2, shell.y, Some(Divider::TerminalSplit)),
+            (shell.x + 2, shell.y - 1, Some(Divider::TerminalSplit)),
+            (changes.x + 1, changes.y, Some(Divider::ExplorerSplit)),
+            (viewer.x + 5, viewer.y + 5, None),
+            (0, 0, None),
+        ] {
+            assert_eq!(l.divider_at(x, y), expected, "({x},{y})");
+        }
+    }
+
+    #[test]
+    fn 最大化中と最上段の枠線は境界にならない() {
+        let mut ws = Workspace::for_test();
+        ws.chrome.maximized = true;
+        ws.focus = Focus::Viewer;
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let viewer = l.rect(Region::Viewer).unwrap();
+        assert_eq!(l.divider_at(viewer.x, viewer.y), None);
+        assert_eq!(l.divider_at(viewer.x + 5, viewer.y), None);
     }
 
     #[test]

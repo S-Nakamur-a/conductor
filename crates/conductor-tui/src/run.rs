@@ -289,6 +289,10 @@ fn on_mouse(
     layout: &Layout,
     mouse: MouseEvent,
 ) {
+    if let Some(effects) = drag_divider(ws, layout, mouse) {
+        apply(ws, svc, effects);
+        return;
+    }
     let Some(region) = layout.hit(mouse.column, mouse.row) else {
         return;
     };
@@ -385,6 +389,30 @@ fn on_mouse(
         }
         _ => {}
     }
+}
+
+/// つかんだ境界は区画に属さないので、区画の割り出しより先に捌く。
+fn drag_divider(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
+    if let Some(divider) = ws.chrome.drag {
+        return Some(match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                crate::command::drag_divider(ws, divider, layout.main, mouse.column, mouse.row);
+                Vec::new()
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                ws.chrome.drag = None;
+                vec![crate::command::persist_layout(ws)]
+            }
+            _ => Vec::new(),
+        });
+    }
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        && ws.chrome.menu.open_index().is_none()
+    {
+        ws.chrome.drag = layout.divider_at(mouse.column, mouse.row);
+        return ws.chrome.drag.map(|_| Vec::new());
+    }
+    None
 }
 
 /// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
@@ -710,12 +738,62 @@ mod tests {
             &l,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: viewer.x,
-                row: viewer.y,
+                column: viewer.x + 2,
+                row: viewer.y + 2,
                 modifiers: KeyModifiers::NONE,
             },
         );
         assert_eq!(ws.focus, Focus::Viewer);
+    }
+
+    #[test]
+    fn 境界をドラッグすると比率が追従し離したときに書き出す() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let l = layout(&ws, Rect::new(0, 0, 100, 40));
+        let viewer = l.rect(Region::Viewer).unwrap();
+        let before = ws.config.layout.explorer_width_pct;
+        let at = |kind, column| MouseEvent {
+            kind,
+            column,
+            row: viewer.y + 3,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::Down(MouseButton::Left), viewer.x),
+        );
+        assert_eq!(ws.chrome.drag, Some(crate::layout::Divider::ExplorerViewer));
+        assert_eq!(
+            ws.focus,
+            Focus::Explorer,
+            "枠線を掴んでもフォーカスは動かない"
+        );
+
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::Drag(MouseButton::Left), viewer.x + 10),
+        );
+        assert_eq!(ws.config.layout.explorer_width_pct, before + 10);
+
+        let released = drag_divider(
+            &mut ws,
+            &l,
+            at(MouseEventKind::Up(MouseButton::Left), viewer.x + 10),
+        );
+        assert_eq!(ws.chrome.drag, None);
+        assert!(
+            matches!(
+                released.as_deref(),
+                Some([Effect::Spawn(Task::PersistConfig(_))])
+            ),
+            "離したときに 1 回書き出す: {released:?}"
+        );
     }
 
     #[test]

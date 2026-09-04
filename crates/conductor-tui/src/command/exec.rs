@@ -5,9 +5,11 @@
 
 use conductor_core::keymap::Action;
 use conductor_svc::pty::SessionKind;
+use ratatui::layout::Rect;
 
 use super::CommandId;
 use crate::effect::Effect;
+use crate::layout::Divider;
 use crate::modal::revidere as revidere_modal;
 use crate::modal::{
     Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme, update,
@@ -426,13 +428,6 @@ enum Resize {
     Down,
 }
 
-/// 動かせる境界。3 列の幅は 2 本の縦境界で決まる。
-#[derive(Clone, Copy)]
-enum Divider {
-    ExplorerViewer,
-    ViewerTerminal,
-}
-
 /// 1 回で動かす割合と、どの区画も消えないための上下限。
 const STEP: i32 = 5;
 const MIN_PCT: i32 = 10;
@@ -440,74 +435,96 @@ const SPLIT_MIN: i32 = 20;
 const SPLIT_MAX: i32 = 80;
 
 fn resize(ws: &mut Workspace, dir: Resize) -> Vec<Effect> {
-    let right = matches!(dir, Resize::Right);
-    let moved = match (dir, ws.focus) {
-        (Resize::Left | Resize::Right, Focus::Worktree | Focus::Revidere) => false,
-        // 最左の列が持つ境界は 1 本だけ。
-        (Resize::Left | Resize::Right, Focus::Explorer) => {
-            move_divider(ws, Divider::ExplorerViewer, right)
-        }
-        // 中央の列は向いた側の境界を押すので、縮むだけの窮屈な列にならない。
-        (Resize::Left | Resize::Right, Focus::Viewer) => move_divider(
-            ws,
-            if right {
-                Divider::ViewerTerminal
-            } else {
-                Divider::ExplorerViewer
-            },
-            right,
-        ),
-        // 最右の列は右キーで縮む。動くのは同じ境界で、広がる側が逆になるだけ。
-        (Resize::Left | Resize::Right, _) => move_divider(ws, Divider::ViewerTerminal, right),
-        // 上下の分割を持つのはターミナル列と Explorer 列。Down で上側が広がる。
-        (dir, focus) => {
-            let step = if matches!(dir, Resize::Down) {
-                STEP
-            } else {
-                -STEP
-            };
-            let split = match focus {
-                Focus::TerminalClaude | Focus::TerminalShell => {
-                    &mut ws.config.layout.terminal_split_pct
-                }
-                Focus::Explorer => &mut ws.config.layout.explorer_split_pct,
-                _ => return Vec::new(),
-            };
-            let next = (i32::from(*split) + step).clamp(SPLIT_MIN, SPLIT_MAX) as u16;
-            let moved = next != *split;
-            *split = next;
-            moved
-        }
+    let step = if matches!(dir, Resize::Right | Resize::Down) {
+        STEP
+    } else {
+        -STEP
     };
-    if !moved {
+    let divider = match (dir, ws.focus) {
+        (Resize::Left | Resize::Right, Focus::Worktree | Focus::Revidere) => return Vec::new(),
+        // 最左の列が持つ境界は 1 本だけ。
+        (Resize::Left | Resize::Right, Focus::Explorer) => Divider::ExplorerViewer,
+        // 中央の列は向いた側の境界を押すので、縮むだけの窮屈な列にならない。
+        (Resize::Right, Focus::Viewer) => Divider::ViewerTerminal,
+        (Resize::Left, Focus::Viewer) => Divider::ExplorerViewer,
+        // 最右の列は右キーで縮む。動くのは同じ境界で、広がる側が逆になるだけ。
+        (Resize::Left | Resize::Right, _) => Divider::ViewerTerminal,
+        // 上下の分割を持つのはターミナル列と Explorer 列。Down で上側が広がる。
+        (_, Focus::TerminalClaude | Focus::TerminalShell) => Divider::TerminalSplit,
+        (_, Focus::Explorer) => Divider::ExplorerSplit,
+        _ => return Vec::new(),
+    };
+    if !move_divider(ws, divider, step) {
         return Vec::new();
     }
-    vec![Effect::Spawn(Task::PersistConfig(Persist::Layout(
-        Box::new(ws.config.layout.clone()),
-    )))]
+    vec![persist_layout(ws)]
 }
 
-/// 境界を右へ (`right`) か左へ動かす。両側が下限を保てるときだけ動いて true。
+/// ドラッグ中の境界をポインタへ寄せる。比率が実際に動いたときだけ true。
+/// 永続化はしない — 動くたびに書くと、1 回のドラッグで何十回も config を書き直す。
+pub fn drag_divider(ws: &mut Workspace, divider: Divider, main: Rect, x: u16, y: u16) -> bool {
+    let pct = |pos: u16, origin: u16, extent: u16| -> i32 {
+        if extent == 0 {
+            return 0;
+        }
+        i32::from(pos.saturating_sub(origin)) * 100 / i32::from(extent)
+    };
+    let layout = &ws.config.layout;
+    let target = match divider {
+        Divider::ExplorerViewer => pct(x, main.x, main.width),
+        // 境界は Explorer と Viewer の合計の右端にある。
+        Divider::ViewerTerminal => {
+            pct(x, main.x, main.width) - i32::from(layout.explorer_width_pct)
+        }
+        Divider::ExplorerSplit | Divider::TerminalSplit => pct(y, main.y, main.height),
+    };
+    let current = match divider {
+        Divider::ExplorerViewer => layout.explorer_width_pct,
+        Divider::ViewerTerminal => layout.viewer_width_pct,
+        Divider::ExplorerSplit => layout.explorer_split_pct,
+        Divider::TerminalSplit => layout.terminal_split_pct,
+    };
+    move_divider(ws, divider, target - i32::from(current))
+}
+
+pub fn persist_layout(ws: &Workspace) -> Effect {
+    Effect::Spawn(Task::PersistConfig(Persist::Layout(Box::new(
+        ws.config.layout.clone(),
+    ))))
+}
+
+/// 境界を delta だけ右 (下) へ動かす。両側が下限を保てるときだけ動いて true。
 ///
 /// terminal の幅は残りなので明示的には持たない。境界を動かすと勝手に増減する。
-fn move_divider(ws: &mut Workspace, divider: Divider, right: bool) -> bool {
+fn move_divider(ws: &mut Workspace, divider: Divider, delta: i32) -> bool {
     let layout = &mut ws.config.layout;
+    let split = match divider {
+        Divider::ExplorerSplit => Some(&mut layout.explorer_split_pct),
+        Divider::TerminalSplit => Some(&mut layout.terminal_split_pct),
+        _ => None,
+    };
+    if let Some(split) = split {
+        let next = (i32::from(*split) + delta).clamp(SPLIT_MIN, SPLIT_MAX) as u16;
+        let moved = next != *split;
+        *split = next;
+        return moved;
+    }
     let (mut explorer, mut viewer) = (
         i32::from(layout.explorer_width_pct),
         i32::from(layout.viewer_width_pct),
     );
-    let step = if right { STEP } else { -STEP };
     match divider {
         Divider::ExplorerViewer => {
-            explorer += step;
-            viewer -= step;
+            explorer += delta;
+            viewer -= delta;
         }
-        Divider::ViewerTerminal => viewer += step,
+        _ => viewer += delta,
     }
     if explorer < MIN_PCT || viewer < MIN_PCT || 100 - explorer - viewer < MIN_PCT {
         return false;
     }
+    let moved = delta != 0;
     layout.explorer_width_pct = explorer as u16;
     layout.viewer_width_pct = viewer as u16;
-    true
+    moved
 }
