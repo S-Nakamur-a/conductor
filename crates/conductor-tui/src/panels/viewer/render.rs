@@ -199,7 +199,7 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
     if strip.left {
         spans.push(Span::styled(tabs::OVERFLOW_LEFT.to_string(), overflow));
     }
-    for (i, _) in &strip.cells {
+    for (i, _, close) in &strip.cells {
         let tab = &panel.tabs()[*i];
         let mut style = if *i == panel.active_tab() {
             Style::default()
@@ -213,6 +213,9 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
             style = style.add_modifier(Modifier::ITALIC);
         }
         spans.push(Span::styled(tabs::label(&tab.path), style));
+        if !close.is_empty() {
+            spans.push(Span::styled(tabs::CLOSE, Style::default().fg(theme.error)));
+        }
     }
     if strip.right {
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();

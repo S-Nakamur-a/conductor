@@ -220,8 +220,8 @@ impl ViewerPanel {
 /// タブ帯の 1 行ぶんの割り付け。描画と当たり判定が同じ 1 回の計算を読む。
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Strip {
-    /// (タブの添字, 列の範囲)。
-    pub cells: Vec<(usize, std::ops::Range<u16>)>,
+    /// (タブの添字, タブ本体の列範囲, 閉じるチップの列範囲)。
+    pub cells: Vec<(usize, std::ops::Range<u16>, std::ops::Range<u16>)>,
     /// 左右に隠れているタブがあるか。
     pub left: bool,
     pub right: bool,
@@ -229,6 +229,7 @@ pub struct Strip {
 
 pub const OVERFLOW_LEFT: char = '\u{2039}';
 pub const OVERFLOW_RIGHT: char = '\u{203a}';
+pub const CLOSE: &str = " [x]";
 
 /// タブ 1 枚の表示文字列。長ければ先頭を省いてファイル名を残す。
 pub fn label(path: &str) -> String {
@@ -247,8 +248,10 @@ pub fn strip(tabs: &[Tab], scroll: usize, width: u16) -> Strip {
     let left = scroll > 0;
     let mut x = u16::from(left);
     let mut cells = Vec::new();
+    let close_w = CLOSE.chars().count() as u16;
     for (i, tab) in tabs.iter().enumerate().skip(scroll) {
-        let w = label(&tab.path).chars().count() as u16;
+        let label_w = label(&tab.path).chars().count() as u16;
+        let w = label_w + close_w;
         // 最後の 1 桁は次の印のために空ける。1 枚も入らないときだけ削ってでも出す。
         if x + w > width.saturating_sub(1) && !cells.is_empty() {
             return Strip {
@@ -257,7 +260,9 @@ pub fn strip(tabs: &[Tab], scroll: usize, width: u16) -> Strip {
                 right: true,
             };
         }
-        cells.push((i, x..(x + w).min(width)));
+        let tab_end = (x + label_w).min(width);
+        let close_end = (x + w).min(width);
+        cells.push((i, x..tab_end, tab_end..close_end));
         x += w;
     }
     Strip {
@@ -271,6 +276,7 @@ pub fn strip(tabs: &[Tab], scroll: usize, width: u16) -> Strip {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StripHit {
     Tab(usize),
+    Close(usize),
     ScrollLeft,
     ScrollRight,
 }
@@ -283,10 +289,15 @@ impl Strip {
         if self.right && x + 1 >= width {
             return Some(StripHit::ScrollRight);
         }
-        self.cells
-            .iter()
-            .find(|(_, range)| range.contains(&x))
-            .map(|(i, _)| StripHit::Tab(*i))
+        for (i, tab, close) in &self.cells {
+            if close.contains(&x) {
+                return Some(StripHit::Close(*i));
+            }
+            if tab.contains(&x) {
+                return Some(StripHit::Tab(*i));
+            }
+        }
+        None
     }
 }
 
@@ -301,7 +312,7 @@ impl ViewerPanel {
         while !strip(&self.tabs, self.tab_scroll, width)
             .cells
             .iter()
-            .any(|(i, _)| *i == self.active)
+            .any(|(i, _, _)| *i == self.active)
             && self.tab_scroll < self.active
         {
             self.tab_scroll += 1;
@@ -331,6 +342,7 @@ impl ViewerPanel {
         let strip = strip(&self.tabs, self.tab_scroll, width);
         match strip.hit(x, width) {
             Some(StripHit::Tab(idx)) => self.focus_tab(idx),
+            Some(StripHit::Close(idx)) => self.close_tab(idx),
             Some(StripHit::ScrollLeft) => {
                 self.tab_scroll = self.tab_scroll.saturating_sub(1);
                 Vec::new()
@@ -357,8 +369,9 @@ mod tests {
         panel
     }
 
-    /// ラベルはどれも " name " の 6 桁。窓 20 桁は右端 1 桁を印に取るので 3 枚まで。
-    const W: u16 = 20;
+    /// ラベルはどれも " name " の 6 桁、閉じるチップは " [x]" の 4 桁で計 10 桁。
+    /// 窓 34 桁は右端 1 桁を印に取るので 3 枚まで。
+    const W: u16 = 34;
 
     #[test]
     fn 溢れると印が出て押した向きへ1枚ずつ送る() {
@@ -382,10 +395,36 @@ mod tests {
     fn 見えているタブは押した位置のものが選ばれる() {
         let mut panel = panel(&["a.rs", "b.rs", "c.rs"]);
         let strip = strip(panel.tabs(), 0, W);
-        let (_, range) = strip.cells[1].clone();
+        let (_, range, _) = strip.cells[1].clone();
         assert_eq!(strip.hit(range.start, W), Some(StripHit::Tab(1)));
         panel.click_tab_row(range.start, W);
         assert_eq!(panel.active_tab(), 1);
+    }
+
+    #[test]
+    fn 閉じるチップを押すとそのタブが閉じる() {
+        let mut panel = panel(&["a.rs", "b.rs", "c.rs"]);
+        panel.focus_tab(0);
+        let strip = strip(panel.tabs(), 0, W);
+        let (_, _, close) = strip.cells[1].clone();
+        panel.click_tab_row(close.start, W);
+        assert!(
+            !panel.tabs().iter().any(|t| t.path == "b.rs"),
+            "{:?}",
+            panel.tabs()
+        );
+        assert_eq!(panel.active_tab(), 0, "閉じたのはアクティブでないタブ");
+    }
+
+    #[test]
+    fn 閉じるチップとタブ本体の当たり判定が重ならない() {
+        let panel = panel(&["a.rs", "b.rs"]);
+        let strip = strip(panel.tabs(), 0, W);
+        for (i, tab, close) in &strip.cells {
+            assert_eq!(tab.end, close.start, "タブ {i} の本体と閉じるチップの間");
+            assert_eq!(strip.hit(tab.start, W), Some(StripHit::Tab(*i)));
+            assert_eq!(strip.hit(close.start, W), Some(StripHit::Close(*i)));
+        }
     }
 
     #[test]
