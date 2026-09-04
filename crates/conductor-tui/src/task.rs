@@ -19,6 +19,7 @@ use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
 };
 use conductor_core::semantic_index::{self, IndexRoot};
+use conductor_core::smart_worktree;
 use conductor_core::symbol_index::SymbolIndex;
 use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
@@ -52,6 +53,12 @@ pub enum Task {
     ListWorktrees,
     CreateWorktree {
         branch: String,
+    },
+    /// 自由記述のタスクから worktree を組み立てる。ブランチ名と Claude へ流す
+    /// プロンプトは AI が決める。
+    SmartWorktree {
+        description: String,
+        api: ApiConfig,
     },
     DeleteWorktree {
         path: PathBuf,
@@ -210,6 +217,15 @@ pub enum AnalyzeOutcome {
     Failed(String),
 }
 
+/// Smart Worktree が作ったものと、そこで起こす Claude に渡すもの。
+#[derive(Debug)]
+pub struct SmartWorktree {
+    pub path: PathBuf,
+    pub branch: String,
+    pub prompt: String,
+    pub session_name: Option<String>,
+}
+
 /// 公開の確認と実行に要るもの。
 #[derive(Debug, Clone)]
 pub struct Publishable {
@@ -298,6 +314,7 @@ pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
     /// 作成できた worktree のパスと、そのブランチ。
     WorktreeCreated(Result<(PathBuf, String), String>),
+    SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
     Tree(Box<tree::Snapshot>),
     /// DiffState は失敗の理由を自分の中に持つので Result にしない。
@@ -372,6 +389,12 @@ impl Task {
                 svc.spawn(
                     move || create_worktree(&env, &branch),
                     TaskResult::WorktreeCreated,
+                );
+            }
+            Task::SmartWorktree { description, api } => {
+                svc.spawn(
+                    move || smart_worktree(&env, &description, &api),
+                    TaskResult::SmartWorktreeCreated,
                 );
             }
             Task::DeleteWorktree { path, branch } => {
@@ -1173,6 +1196,30 @@ fn create_worktree(env: &TaskEnv, branch: &str) -> Result<(PathBuf, String), Str
     git.create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
         .map(|path| (path, branch.to_string()))
         .map_err(|e| e.to_string())
+}
+
+fn smart_worktree(
+    env: &TaskEnv,
+    description: &str,
+    api: &ApiConfig,
+) -> Result<SmartWorktree, String> {
+    let plan = smart_worktree::generate(description, api, &env.root)?;
+    if plan.branch.trim().is_empty() {
+        return Err("the model answered with an empty branch name".into());
+    }
+    let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
+    // リモートを持たないリポジトリで origin/main を掴んで作成ごと失敗しないよう、
+    // 実在する ref へ解決してから渡す。
+    let base = git.resolve_base_ref(&env.main_branch);
+    let path = git
+        .create_worktree_from_base(&plan.branch, &base, env.worktree_dir.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(SmartWorktree {
+        path,
+        branch: plan.branch,
+        prompt: plan.prompt,
+        session_name: plan.session_name,
+    })
 }
 
 fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, String> {

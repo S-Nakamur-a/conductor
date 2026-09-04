@@ -706,6 +706,7 @@ impl ViewerPanel {
                     title: "Search in file".into(),
                     input: Default::default(),
                     on_submit: |q| vec![Effect::SearchInFile(q)],
+                    alternate: None,
                 }))]);
             }
             _ => {}

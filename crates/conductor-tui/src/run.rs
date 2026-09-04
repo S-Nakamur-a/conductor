@@ -516,6 +516,7 @@ mod tests {
             title: "t".into(),
             input: Default::default(),
             on_submit: |_| Vec::new(),
+            alternate: None,
         }));
         on_paste(&mut ws, "日本語".into());
         let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
@@ -1280,7 +1281,11 @@ mod tests {
         let [Modal::Prompt(prompt)] = ws.modals.as_slice() else {
             panic!("{:?}", ws.modals);
         };
-        assert_eq!(prompt.title, "New worktree branch");
+        assert!(
+            prompt.title.starts_with("New worktree branch"),
+            "{}",
+            prompt.title
+        );
     }
 
     /// パレットで打ってから Enter するまで。メニューと同じ Effect::Command に落ちる。

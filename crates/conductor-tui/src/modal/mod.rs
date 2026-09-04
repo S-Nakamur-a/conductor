@@ -58,6 +58,27 @@ pub struct Prompt {
     pub title: String,
     pub input: TextInput,
     pub on_submit: fn(String) -> Vec<Effect>,
+    /// Tab で入れ替わるもう一つの宛先。打ちかけの本文は持ち越す。
+    pub alternate: Option<Alternate>,
+}
+
+/// [Prompt] のもう一つの面。
+#[derive(Debug)]
+pub struct Alternate {
+    pub title: String,
+    pub on_submit: fn(String) -> Vec<Effect>,
+}
+
+impl Prompt {
+    fn flip(&mut self) {
+        let Some(alternate) = self.alternate.take() else {
+            return;
+        };
+        self.alternate = Some(Alternate {
+            title: std::mem::replace(&mut self.title, alternate.title),
+            on_submit: std::mem::replace(&mut self.on_submit, alternate.on_submit),
+        });
+    }
 }
 
 /// y で発火する Effect を積んだ確認。開いた側が対象を捕まえたまま作れるよう、
@@ -284,6 +305,10 @@ impl Modal {
             Modal::SymbolActions(actions) => actions.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
+                KeyCode::Tab if prompt.alternate.is_some() => {
+                    prompt.flip();
+                    vec![]
+                }
                 KeyCode::Enter => {
                     let mut effects = vec![Effect::PopModal];
                     effects.extend((prompt.on_submit)(prompt.input.text().to_string()));
@@ -419,6 +444,7 @@ mod tests {
             title: "t".into(),
             input: TextInput::new(),
             on_submit: |_| Vec::new(),
+            alternate: None,
         });
         prompt.paste("ab\ncd");
         let Modal::Prompt(prompt) = &prompt else {
@@ -432,6 +458,39 @@ mod tests {
             unreachable!()
         };
         assert_eq!(editor.input.text(), "ab\ncd");
+    }
+
+    #[test]
+    fn tabは宛先を入れ替え打ちかけの本文を残す() {
+        let ws = Workspace::for_test();
+        let mut modal = Modal::Prompt(Prompt {
+            title: "branch".into(),
+            input: TextInput::new(),
+            on_submit: |_| vec![Effect::PopModal],
+            alternate: Some(Alternate {
+                title: "task".into(),
+                on_submit: |_| vec![Effect::Quit],
+            }),
+        });
+        modal.paste("wip");
+        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+
+        let Modal::Prompt(prompt) = &modal else {
+            unreachable!()
+        };
+        assert_eq!(prompt.title, "task");
+        assert_eq!(prompt.input.text(), "wip");
+        assert!(matches!(
+            (prompt.on_submit)("wip".into()).as_slice(),
+            [Effect::Quit]
+        ));
+
+        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        let Modal::Prompt(prompt) = &modal else {
+            unreachable!()
+        };
+        assert_eq!(prompt.title, "branch");
+        assert_eq!(prompt.input.text(), "wip");
     }
 
     #[test]

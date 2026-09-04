@@ -426,6 +426,7 @@ pub(crate) fn find_file_modal() -> Effect {
             "" => Vec::new(),
             query => vec![Effect::FindFile(query.to_string())],
         },
+        alternate: None,
     }))
 }
 

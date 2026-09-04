@@ -157,6 +157,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
                 "" => Vec::new(),
                 path => vec![Effect::SwitchRepo(repo::expand_home(path))],
             },
+            alternate: None,
         }))],
         CommandId::SwitchRepo => vec![Effect::PushModal(Modal::RepoPicker(
             repo::RepoPicker::open(ws.repo.known_index()),

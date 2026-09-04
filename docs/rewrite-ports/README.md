@@ -13,5 +13,5 @@
   (watchers.md の「未移植」が解消)
 - `src/widget/click.rs` の `ClickTracker` 4 本 — 切替時に落ちていたのを移植し直した。click.md
 
-Smart Worktree (`src/worktree/worktree_smart.rs`) は機能ごと未移植のまま。テスト 6 本の
-一覧は git_modals.md に残してある。
+Smart Worktree (`src/worktree/worktree_smart.rs`) はその後に移植した。テスト 6 本の
+移植先と、落とした挙動 (生成中の Esc キャンセル) は git_modals.md にある。

@@ -40,6 +40,16 @@ pub enum Effect {
     StepChangedFile(isize),
     SelectWorktree(usize),
     NewSession(SessionKind),
+    /// 自由記述のタスクを Smart Worktree に渡す。Prompt の on_submit は関数
+    /// ポインタで設定もリポジトリも掴めないので、Task を組むのは apply の側。
+    SmartWorktree(String),
+    /// 作ったばかりの worktree で Claude を起こし、入力を受けられるようになったら
+    /// prompt を流し込む。今映しているものは動かさない。
+    SmartSession {
+        worktree: PathBuf,
+        name: Option<String>,
+        prompt: String,
+    },
     /// シェルへ 1 行流して実行させる。テスト実行ボタンの行き先。
     SendToShell(String),
     /// 既存の Claude セッションを `--resume` で開き直す。`worktree` を指すと
@@ -132,6 +142,21 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
             Effect::NewSession(kind) => new_session(ws, kind, None, None),
+            Effect::SmartWorktree(description) => {
+                queue.push_back(Effect::Spawn(Task::SmartWorktree {
+                    description,
+                    api: ws.config.api.clone(),
+                }));
+                queue.push_back(Effect::Status(
+                    StatusLevel::Info,
+                    "Smart worktree: generating\u{2026}".into(),
+                ));
+            }
+            Effect::SmartSession {
+                worktree,
+                name,
+                prompt,
+            } => queue.extend(smart_session(ws, &worktree, name.as_deref(), prompt)),
             Effect::SendToShell(command) => queue.extend(send_to_shell(ws, &command)),
             Effect::ResumeSession { id, worktree } => {
                 new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree)
@@ -237,6 +262,26 @@ fn open_in_editor(ws: &mut Workspace, path: &std::path::Path) -> Vec<Effect> {
         Err(e) => vec![Effect::Status(
             StatusLevel::Error,
             format!("could not launch the editor: {e:#}"),
+        )],
+    }
+}
+
+fn smart_session(
+    ws: &mut Workspace,
+    worktree: &std::path::Path,
+    name: Option<&str>,
+    prompt: String,
+) -> Vec<Effect> {
+    let repo_root = ws.repo.root.clone();
+    match ws
+        .panels
+        .terminal
+        .launch_claude_at(worktree, &repo_root, &ws.config, name, prompt)
+    {
+        Ok(()) => Vec::new(),
+        Err(e) => vec![Effect::Status(
+            StatusLevel::Warning,
+            format!("worktree is ready but Claude did not start: {e:#}"),
         )],
     }
 }

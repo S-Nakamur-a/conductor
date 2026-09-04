@@ -10,7 +10,7 @@ use conductor_core::keymap::Action;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
-use crate::modal::{Confirm, Modal, Prompt};
+use crate::modal::{Alternate, Confirm, Modal, Prompt};
 use crate::task::{GrabDone, Task, TaskResult};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
@@ -195,6 +195,29 @@ impl WorktreePanel {
                     Err(e) => vec![Effect::Status(StatusLevel::Error, format!("create: {e}"))],
                 }
             }
+            TaskResult::SmartWorktreeCreated(result) => {
+                self.pending = self.pending.saturating_sub(1);
+                match result {
+                    // 作った worktree へは移らない。書いた人は今見ているものを
+                    // 見続けたいので、Claude だけを裏で起こす。
+                    Ok(smart) => vec![
+                        Effect::Status(
+                            StatusLevel::Success,
+                            format!("created '{}' and started Claude", smart.branch),
+                        ),
+                        Effect::SmartSession {
+                            worktree: smart.path,
+                            name: smart.session_name,
+                            prompt: smart.prompt,
+                        },
+                        Effect::Spawn(Task::ListWorktrees),
+                    ],
+                    Err(e) => vec![Effect::Status(
+                        StatusLevel::Error,
+                        format!("smart worktree: {e}"),
+                    )],
+                }
+            }
             TaskResult::WorktreeDeleted(result) => {
                 self.pending = self.pending.saturating_sub(1);
                 match result {
@@ -263,6 +286,7 @@ impl WorktreePanel {
         if matches!(
             task,
             Task::CreateWorktree { .. }
+                | Task::SmartWorktree { .. }
                 | Task::DeleteWorktree { .. }
                 | Task::CreateWorktreeFromRemote { .. }
         ) {
@@ -273,7 +297,7 @@ impl WorktreePanel {
 
 fn create_modal() -> Effect {
     Effect::PushModal(Modal::Prompt(Prompt {
-        title: "New worktree branch".into(),
+        title: "New worktree branch (Tab: describe the task)".into(),
         input: Default::default(),
         on_submit: |branch| match branch.trim() {
             "" => vec![Effect::Status(
@@ -284,6 +308,16 @@ fn create_modal() -> Effect {
                 branch: branch.to_string(),
             })],
         },
+        alternate: Some(Alternate {
+            title: "Describe the task (Tab: branch name)".into(),
+            on_submit: |description| match description.trim() {
+                "" => vec![Effect::Status(
+                    StatusLevel::Warning,
+                    "no task description".into(),
+                )],
+                description => vec![Effect::SmartWorktree(description.to_string())],
+            },
+        }),
     }))
 }
 

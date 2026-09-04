@@ -8,7 +8,7 @@ pub(crate) mod reflow;
 pub mod render;
 pub(crate) mod tabs;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -83,6 +83,8 @@ pub struct TerminalPanel {
     worktree: Option<PathBuf>,
     waiting: HashSet<PathBuf>,
     active: HashSet<PathBuf>,
+    /// 起こしたセッションの id と、受け取れるようになったら送るプロンプト。
+    deferred: HashMap<String, String>,
 }
 
 impl TerminalPanel {
@@ -100,6 +102,7 @@ impl TerminalPanel {
             worktree: None,
             waiting: HashSet::new(),
             active: HashSet::new(),
+            deferred: HashMap::new(),
         }
     }
 
@@ -633,8 +636,9 @@ impl TerminalPanel {
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
+        session_name: Option<&str>,
     ) -> Result<String> {
-        let name = worktree
+        let worktree_name = worktree
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let label = self.next_label(kind, worktree);
@@ -649,12 +653,12 @@ impl TerminalPanel {
             _ => Launch::ClaudeCode {
                 repo_root,
                 resume_session_id: resume,
-                session_name: None,
+                session_name,
             },
         };
         let index = self.pty.spawn(Spawn {
             launch,
-            worktree: &name,
+            worktree: &worktree_name,
             label: &label,
             working_dir: worktree,
             rows,
@@ -672,7 +676,7 @@ impl TerminalPanel {
         repo_root: &Path,
         config: &Config,
     ) -> Result<()> {
-        let id = self.launch(kind, resume, worktree, repo_root, config)?;
+        let id = self.launch(kind, resume, worktree, repo_root, config, None)?;
         // spawn した先の worktree を映していないと、そのセッションはどこにも出ない。
         self.worktree = Some(worktree.to_path_buf());
         match kind {
@@ -698,12 +702,57 @@ impl TerminalPanel {
             worktree,
             repo_root,
             config,
+            None,
         )?;
         if self.worktree.as_deref() == Some(worktree) && self.claude.session.is_none() {
             self.claude.show(Some(id));
             self.activate_visible();
         }
         Ok(())
+    }
+
+    /// 作ったばかりの worktree で Claude を起こす。今映しているものは動かさない。
+    pub fn launch_claude_at(
+        &mut self,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+        name: Option<&str>,
+        prompt: String,
+    ) -> Result<()> {
+        let id = self.launch(
+            SessionKind::ClaudeCode,
+            None,
+            worktree,
+            repo_root,
+            config,
+            name,
+        )?;
+        self.deferred.insert(id, prompt);
+        Ok(())
+    }
+
+    /// 起動待ちのプロンプトを、受け取れる状態になったものから流し込む。
+    ///
+    /// 普段は is_waiting_for_input で足りるが、起動直後はまだアイドルに達しないので、
+    /// 画面に何か出た時点で送る方が速い。
+    pub fn flush_deferred(&mut self) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        let pty = &self.pty;
+        self.deferred.retain(|id, prompt| {
+            let Some(index) = pty.sessions().iter().position(|s| s.id == *id) else {
+                return false;
+            };
+            if !pty.is_waiting_for_input(index) && !pty.has_visible_output(index) {
+                return true;
+            }
+            if let Err(e) = pty.write_chunked_to_session(index, prompt) {
+                log::warn!("could not hand the smart worktree prompt to Claude: {e:#}");
+            }
+            false
+        });
     }
 
     /// 同じ worktree で空いている一番小さい番号。閉じた番号は空くので詰め直る。
@@ -904,6 +953,7 @@ impl TerminalPanel {
     /// オルタネート画面へ入った直後のセッションを突く。fzf はこれを待っている。
     pub fn nudge(&mut self) {
         self.pty.nudge_alt_screen_sessions();
+        self.flush_deferred();
     }
 }
 

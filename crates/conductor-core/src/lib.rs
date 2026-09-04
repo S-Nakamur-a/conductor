@@ -22,6 +22,7 @@ pub mod instance_lock;
 pub mod pr_intake;
 pub mod review_publish;
 pub mod semantic_index;
+pub mod smart_worktree;
 pub mod term_caps;
 pub mod test_run;
 #[cfg(test)]
