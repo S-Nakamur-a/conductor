@@ -375,14 +375,17 @@ impl ExplorerPanel {
         })
     }
 
-    /// あいまい検索で最も近いファイルを開き、ツリー上でも選択する。
+    /// あいまい検索で最も近いファイルを開く。
     pub fn find_file(&mut self, query: &str) -> Option<Effect> {
         let path = best_match(self.tree.all_files(), query)?.to_string();
-        if let Some(at) = self.tree.reveal(&path) {
+        Some(self.open(&path, false))
+    }
+
+    pub fn reveal_in_tree(&mut self, path: &str) {
+        if let Some(at) = self.tree.reveal(path) {
             self.tree_cursor
                 .select(at, self.tree.visible().len(), self.tree_view);
         }
-        Some(self.open(&path, false))
     }
 
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {

@@ -32,6 +32,8 @@ pub enum Effect {
         path: String,
         line: Option<usize>,
     },
+    /// Explorer のツリーを開いて選択する。相対パスは Viewer の根から。
+    RevealInTree(String),
     SearchInFile(String),
     /// レビュー済みの印。持ち主は Explorer。
     ToggleViewed(String),
@@ -111,6 +113,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     ),
                 });
             }
+            Effect::RevealInTree(path) => ws.panels.explorer.reveal_in_tree(&path),
             Effect::SearchInFile(query) => {
                 let follow_up = ws.panels.viewer.search_for(&query);
                 queue.extend(follow_up);

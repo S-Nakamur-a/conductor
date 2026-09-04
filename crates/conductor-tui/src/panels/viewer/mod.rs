@@ -389,9 +389,10 @@ impl ViewerPanel {
         line: Option<usize>,
         keep_scroll: bool,
     ) -> Vec<Effect> {
+        let reveal = Effect::RevealInTree(path.clone());
         if media::is_image_path(&path) {
             self.show_image(path);
-            return Vec::new();
+            return vec![reveal];
         }
         self.seq += 1;
         let task = Task::LoadFile {
@@ -406,7 +407,7 @@ impl ViewerPanel {
             line,
             keep_scroll,
         });
-        vec![Effect::Spawn(task)]
+        vec![reveal, Effect::Spawn(task)]
     }
 
     /// 画像へ切り替える。描くのは区画の大きさが分かってからなので、ここでは
@@ -1099,6 +1100,20 @@ mod tests {
         assert_eq!(h.tabs(), ["a.txt", "b.txt"], "既に開いているファイル");
         assert_eq!(h.ws.panels.viewer.active_path(), Some("a.txt"));
         assert_eq!(h.body(), ["A"]);
+    }
+
+    /// ツリーが畳まれたままだと、開いたファイルがどこにあるか分からない。
+    #[test]
+    fn ファイルを開くとツリーを追従させるeffectが出る() {
+        let dir = fixture(&[("a.txt", "A\n")]);
+        let mut h = Harness::at(dir.path());
+
+        let effects = h.viewer().open(Path::new("a.txt"), None, None, false);
+        let reveal = effects.iter().find_map(|e| match e {
+            Effect::RevealInTree(path) => Some(path.as_str()),
+            _ => None,
+        });
+        assert_eq!(reveal, Some("a.txt"), "{effects:?}");
     }
 
     /// タブごとに読んでいた位置を持つ。戻ったときに先頭へ巻き戻ると、差分レビュー中に
