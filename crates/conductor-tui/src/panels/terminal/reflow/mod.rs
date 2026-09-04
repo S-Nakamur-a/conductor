@@ -213,6 +213,16 @@ impl Reflow {
         self.wants_clear |= self.scroll != before;
     }
 
+    /// 最下部でさらに下へ回したらライブ PTY へ戻す。j/Down と同じ出口。
+    pub(super) fn wheel(&mut self, delta: isize) -> Handled {
+        let (inner, total) = (self.size.0 as usize, self.lines.len());
+        if delta > 0 && at_bottom(self.scroll, total, inner) {
+            return Handled::Close;
+        }
+        self.scroll_by(delta);
+        Handled::Consumed
+    }
+
     /// 最新ターンへ飛んで追従を再開する。G/End とチップのクリックが共有する唯一の入口。
     pub(super) fn jump_to_latest(&mut self) {
         self.scroll = bottom_scroll(self.lines.len(), self.size.0 as usize);

@@ -7,6 +7,8 @@ use anyhow::Result;
 use crossterm::event::{
     Event, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use crossterm::execute;
+use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Position, Rect};
@@ -71,12 +73,15 @@ pub fn run(
         // 1 フレームも出さないまま終了しうる。
         if dirty {
             // 未書き込みで残したセルは ratatui の diff では決して塗り直されないので、
-            // トランスクリプトの行が動いたフレームだけは端末ごと消す。
+            // トランスクリプトの行が動いたフレームだけは端末ごと消す。消してから描くまでを
+            // 同期出力で囲むのは、消えた瞬間を見せないため。非対応の端末は無視するだけ。
+            let _ = execute!(io::stdout(), BeginSynchronizedUpdate);
             if ws.panels.terminal.take_clear_request() {
                 terminal.clear()?;
             }
             ws.entrance.start_if_pending();
             terminal.draw(|frame| render(frame, ws, &last_layout))?;
+            let _ = execute!(io::stdout(), EndSynchronizedUpdate);
             dirty = false;
         }
 

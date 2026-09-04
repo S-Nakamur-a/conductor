@@ -392,9 +392,13 @@ impl TerminalPanel {
         }
     }
 
-    pub fn transcript_scroll(&mut self, delta: isize) {
-        if let Some(reflow) = self.transcript.as_mut() {
-            reflow.scroll_by(delta);
+    fn transcript_wheel(&mut self, delta: isize) -> Vec<Effect> {
+        let Some(reflow) = self.transcript.as_mut() else {
+            return Vec::new();
+        };
+        match reflow.wheel(delta) {
+            Handled::Consumed => Vec::new(),
+            Handled::Close => self.close_transcript(),
         }
     }
 
@@ -454,8 +458,7 @@ impl TerminalPanel {
             return Vec::new();
         }
         if region == Region::TerminalClaude && self.transcript.is_some() {
-            self.transcript_scroll(delta);
-            return Vec::new();
+            return self.transcript_wheel(delta);
         }
         if !up {
             self.scroll_lines(focus, lines, false);
@@ -1241,6 +1244,41 @@ mod tests {
             effects[0],
             Effect::Status(StatusLevel::Warning, _)
         ));
+    }
+
+    /// トラックパッドの慣性で入ったビューから、同じ慣性で戻れないと閉じ込められる。
+    #[test]
+    fn トランスクリプトの最下部でさらに下へ回すとライブへ戻る() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        panel.claude.size = (5, 40);
+        panel.transcript = Some(Reflow::opening("session-a".into()));
+        let entries = (0..30)
+            .map(|i| LogEntry {
+                role: conductor_core::claude_log::Role::User,
+                blocks: vec![conductor_core::claude_log::DisplayBlock::Text(format!(
+                    "turn {i}"
+                ))],
+            })
+            .collect();
+        assert!(
+            panel
+                .install_transcript("session-a", Ok(entries))
+                .is_empty()
+        );
+        panel.prepare(
+            &Theme::default(),
+            &Highlighter::new(&Config::default()),
+            false,
+        );
+        let rect = Rect::new(0, 0, 42, 7);
+
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, -3);
+        assert!(panel.transcript.is_some(), "遡っている間は開いたまま");
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        assert!(panel.transcript.is_some(), "最下部に戻っただけでは畳まない");
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        assert!(panel.transcript.is_none(), "最下部でさらに下へ回したら畳む");
+        assert_eq!(panel.claude.scroll, 0);
     }
 
     /// /clear のローテーション中に届いた、開いているのとは別のセッションの結果は捨てる。

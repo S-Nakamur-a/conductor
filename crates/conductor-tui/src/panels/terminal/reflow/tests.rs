@@ -1315,6 +1315,21 @@ fn 最下部でさらに下へ押すとライブへ戻る() {
 }
 
 #[test]
+fn 最下部でさらに下へ回すとライブへ戻る() {
+    let mut reflow = opened(long_log());
+    assert!(matches!(reflow.wheel(3), Handled::Close));
+
+    assert!(matches!(reflow.wheel(-3), Handled::Consumed));
+    assert!(!reflow.follow, "遡ったら追従は外れる");
+    assert!(
+        matches!(reflow.wheel(3), Handled::Consumed),
+        "最下部に戻るまでは畳まない"
+    );
+    assert!(reflow.follow);
+    assert!(matches!(reflow.wheel(3), Handled::Close));
+}
+
+#[test]
 fn 知らないキーも消費する() {
     let mut reflow = opened(long_log());
     press(&mut reflow, KeyCode::Home);
