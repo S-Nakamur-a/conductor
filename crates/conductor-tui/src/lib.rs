@@ -19,6 +19,7 @@ pub mod menu;
 pub mod modal;
 pub mod panels;
 pub mod render;
+pub mod resume;
 pub mod review;
 pub mod route;
 pub mod run;

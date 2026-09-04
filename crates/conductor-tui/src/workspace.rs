@@ -16,7 +16,7 @@ use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
 use crate::review::ReviewState;
-use crate::task::{TaskEnv, TaskResult, UpdateCheck, UpdateStage};
+use crate::task::{Task, TaskEnv, TaskResult, UpdateCheck, UpdateStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
@@ -209,6 +209,9 @@ pub struct Workspace {
     /// 更新を入れ終えた。抜けたあと main が同じ引数で自分を exec し直す。
     pub relaunch: bool,
     pub index: Index,
+    /// まだ前回のセッションを探しに行っていない。worktree の一覧が要るので、
+    /// 起動時ではなくそれが最初に届いたときに落とす。
+    pending_auto_resume: bool,
     pub theme: Theme,
     pub appearance: Appearance,
     pub keymap: KeyMap,
@@ -242,6 +245,7 @@ impl Workspace {
             should_quit: false,
             relaunch: false,
             index: Index::default(),
+            pending_auto_resume: config.general.auto_resume,
             appearance: Appearance {
                 name: theme.name.to_string(),
                 high_contrast: config.ui.high_contrast,
@@ -420,12 +424,41 @@ impl Workspace {
                     None => Vec::new(),
                 }
             }
-            _ => {
-                let root = self.panels.viewer.root().to_path_buf();
-                let (panels, _, ctx) = self.split(&root);
-                panels.worktree.apply_result(result, &ctx)
+            TaskResult::Resumable {
+                sessions,
+                main_grabbed,
+            } => crate::resume::accept(self, sessions, main_grabbed),
+            result @ TaskResult::Worktrees(Ok(_)) => {
+                let mut effects = self.in_worktree_panel(result);
+                effects.extend(self.start_auto_resume());
+                effects
             }
+            _ => self.in_worktree_panel(result),
         }
+    }
+
+    fn in_worktree_panel(&mut self, result: TaskResult) -> Vec<Effect> {
+        let root = self.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = self.split(&root);
+        panels.worktree.apply_result(result, &ctx)
+    }
+
+    fn start_auto_resume(&mut self) -> Vec<Effect> {
+        if !self.pending_auto_resume {
+            return Vec::new();
+        }
+        let paths: Vec<PathBuf> = self
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .map(|w| w.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return Vec::new();
+        }
+        self.pending_auto_resume = false;
+        vec![Effect::Spawn(Task::FindResumable { paths })]
     }
 
     fn accept_update_check(&mut self, outcome: UpdateCheck, announce: bool) -> Vec<Effect> {
@@ -622,6 +655,11 @@ impl Workspace {
 
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
+        Self::for_test_with(Config::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_with(mut config: Config) -> Self {
         let repo = RepoState {
             root: PathBuf::from("/tmp/repo"),
             name: "repo".into(),
@@ -630,7 +668,6 @@ impl Workspace {
         };
         let (keymap, _) = KeyMap::with_warnings(&toml::Table::new());
         // 起動演出は画面を伏せるので、描画とフレームの理由を見るテストでは切っておく。
-        let mut config = Config::default();
         config.ui.startup_animation = false;
         Self::new(repo, config, keymap, Theme::default(), "0.0.0-test")
     }

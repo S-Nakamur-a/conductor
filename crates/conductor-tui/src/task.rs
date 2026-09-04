@@ -1,5 +1,6 @@
 //! svc に投げる仕事と、その結果の語彙。svc は中身を知らない。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -96,6 +97,10 @@ pub enum Task {
     /// resume できる Claude セッション。`all` ならこのリポジトリの外も含める。
     ListSessions {
         all: bool,
+    },
+    /// 起動時の復帰のために、worktree ごとの最新セッションを探す。
+    FindResumable {
+        paths: Vec<PathBuf>,
     },
     /// 保存済みのターミナル出力。query が空なら新しい順に一覧する。
     ListHistory {
@@ -311,6 +316,12 @@ pub enum TaskResult {
         found: Result<Vec<GrepMatch>, String>,
     },
     Sessions(Result<Vec<ResumableSession>, String>),
+    /// worktree ごとの最新セッション (キーは canonicalize したパス) と、main に
+    /// 使う grab 済みのセッション id。
+    Resumable {
+        sessions: HashMap<PathBuf, ResumableSession>,
+        main_grabbed: Option<String>,
+    },
     /// `session_id` は照合用。読んでいる間に /clear でローテーションしていたら捨てる。
     Transcript {
         session_id: String,
@@ -442,6 +453,9 @@ impl Task {
             }
             Task::ListSessions { all } => {
                 svc.spawn(move || list_sessions(&env, all), TaskResult::Sessions);
+            }
+            Task::FindResumable { paths } => {
+                svc.spawn(move || find_resumable(&env, &paths), |result| result);
             }
             Task::ListHistory { query } => {
                 svc.spawn(
@@ -1023,6 +1037,29 @@ fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, Stri
     let home = ClaudeHome::detect().ok_or("could not find ~/.claude")?;
     home.load_resumable_sessions((!all).then_some(env.root.as_path()))
         .map_err(|e| e.to_string())
+}
+
+/// 復帰の判断に要るものを 1 回で揃える。grab 状態をここでも読むのは、起動時に
+/// Task::LoadGrabState が先に着いている保証が無いため。どちらが欠けても
+/// 残りは復帰できるので、失敗は警告に落として空で返す。
+fn find_resumable(env: &TaskEnv, paths: &[PathBuf]) -> TaskResult {
+    let sessions = ClaudeHome::detect()
+        .and_then(|home| {
+            home.find_latest_sessions_for_paths(paths)
+                .inspect_err(|e| log::warn!("could not look for resumable sessions: {e:#}"))
+                .ok()
+        })
+        .unwrap_or_default();
+    let main_grabbed = git(env, |git| git.load_grab_state())
+        .unwrap_or_else(|e| {
+            log::warn!("could not read the grab state: {e}");
+            None
+        })
+        .and_then(|state| state.claude_session_id);
+    TaskResult::Resumable {
+        sessions,
+        main_grabbed,
+    }
 }
 
 /// 一覧に出す上限。ここを超えると保存の古い順に落ちる。

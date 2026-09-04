@@ -522,15 +522,15 @@ impl TerminalPanel {
         }
     }
 
-    /// 起動したセッションを、その種類のパネルに映す。
-    pub fn spawn(
+    /// セッションを起こして id を返す。どこに映すかは呼び出し側が決める。
+    fn launch(
         &mut self,
         kind: SessionKind,
         resume: Option<&str>,
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let name = worktree
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -557,7 +557,19 @@ impl TerminalPanel {
             rows,
             cols,
         })?;
-        let id = self.pty.sessions()[index].id.clone();
+        Ok(self.pty.sessions()[index].id.clone())
+    }
+
+    /// 起動したセッションを、その種類のパネルに映す。
+    pub fn spawn(
+        &mut self,
+        kind: SessionKind,
+        resume: Option<&str>,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+    ) -> Result<()> {
+        let id = self.launch(kind, resume, worktree, repo_root, config)?;
         // spawn した先の worktree を映していないと、そのセッションはどこにも出ない。
         self.worktree = Some(worktree.to_path_buf());
         match kind {
@@ -565,6 +577,29 @@ impl TerminalPanel {
             _ => self.claude.show(Some(id)),
         }
         self.activate_visible();
+        Ok(())
+    }
+
+    /// 起動時の復帰。追従中の worktree もフォーカスも動かさない — 画面に出すのは
+    /// いま映している worktree で、その区画がまだ空のときだけ。
+    pub fn resume(
+        &mut self,
+        session_id: &str,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+    ) -> Result<()> {
+        let id = self.launch(
+            SessionKind::ClaudeCode,
+            Some(session_id),
+            worktree,
+            repo_root,
+            config,
+        )?;
+        if self.worktree.as_deref() == Some(worktree) && self.claude.session.is_none() {
+            self.claude.show(Some(id));
+            self.activate_visible();
+        }
         Ok(())
     }
 
