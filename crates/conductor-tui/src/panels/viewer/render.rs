@@ -559,7 +559,19 @@ fn diff_body(
         side_by_side(&panel.diff.entries)
             .iter()
             .skip(panel.scroll.diff)
-            .map(|row| (side_line(row, theme, digits, width, panel.scroll), None))
+            .map(|row| {
+                (
+                    side_line(
+                        row,
+                        theme,
+                        digits,
+                        width,
+                        panel.scroll,
+                        &panel.content.highlighted,
+                    ),
+                    None,
+                )
+            })
             .collect()
     } else {
         panel
@@ -579,6 +591,7 @@ fn diff_body(
                     digits,
                     (width as usize).saturating_sub(mark),
                     panel.scroll.column,
+                    syntax_for(&panel.content.highlighted, entry.new_line_no()),
                 );
                 let style = body.style;
                 spans.extend(body.spans);
@@ -608,6 +621,7 @@ pub(crate) fn unified_line(
     digits: usize,
     width: usize,
     skip: usize,
+    syntax: Option<&[(Style, String)]>,
 ) -> Line<'static> {
     match entry {
         Entry::HunkSeparator { func_header } => separator(theme, func_header.as_deref(), width),
@@ -642,7 +656,7 @@ pub(crate) fn unified_line(
             )];
             let text_width = width.saturating_sub(digits + DIFF_SIGN + GUTTER_FIXED);
             spans.extend(clip(
-                inline_pieces(content, inline_segments, tag, theme, fg),
+                inline_pieces(content, inline_segments, tag, theme, fg, syntax),
                 skip,
                 text_width,
             ));
@@ -654,6 +668,16 @@ pub(crate) fn unified_line(
     }
 }
 
+/// 構文トークンは新ファイル本文から取ったものなので、削除行には無い。
+fn syntax_for(
+    highlighted: &[Vec<(Style, String)>],
+    new_line_no: Option<usize>,
+) -> Option<&[(Style, String)]> {
+    highlighted
+        .get(new_line_no?.checked_sub(1)?)
+        .map(Vec::as_slice)
+}
+
 /// 行内で実際に変わった箇所だけ背景を濃くする。単語 diff が無ければ 1 断片。
 fn inline_pieces(
     content: &str,
@@ -661,14 +685,20 @@ fn inline_pieces(
     tag: &DiffLineTag,
     theme: &Theme,
     fg: ratatui::style::Color,
+    syntax: Option<&[(Style, String)]>,
 ) -> Vec<(Style, String)> {
-    if segments.is_empty() {
-        return vec![(Style::default().fg(fg), content.to_string())];
-    }
     let emphasis = match tag {
         DiffLineTag::Insert => theme.diff_add_bg_emphasis,
         _ => theme.diff_del_bg_emphasis,
     };
+    if let Some(tokens) = syntax
+        && let Some(pieces) = merge_syntax(content, segments, tokens, emphasis)
+    {
+        return pieces;
+    }
+    if segments.is_empty() {
+        return vec![(Style::default().fg(fg), content.to_string())];
+    }
     segments
         .iter()
         .map(|segment| {
@@ -681,6 +711,58 @@ fn inline_pieces(
             (style, segment.text.clone())
         })
         .collect()
+}
+
+/// 前景は構文トークン、背景は強調と言われたバイトだけ。トークンの綴りが本文と
+/// 食い違ったら諦めて単色に返す (行がずれた索引で塗ると嘘の色になる)。
+fn merge_syntax(
+    content: &str,
+    segments: &[conductor_core::diff_state::InlineSegment],
+    syntax: &[(Style, String)],
+    emphasis: ratatui::style::Color,
+) -> Option<Vec<(Style, String)>> {
+    let mut spelled = String::with_capacity(content.len());
+    let mut styles: Vec<Style> = Vec::with_capacity(content.len());
+    for (style, text) in syntax {
+        // 行の背景は Line 側が塗るので、トークンが持つ背景は落とす。
+        styles.resize(styles.len() + text.len(), Style { bg: None, ..*style });
+        spelled.push_str(text);
+    }
+    if spelled != content {
+        return None;
+    }
+    let emphasized = byte_emphasis(content, segments)?;
+
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < content.len() {
+        let start = at;
+        let (style, emph) = (styles[at], emphasized[at]);
+        while at < content.len() && styles[at] == style && emphasized[at] == emph {
+            at += 1;
+        }
+        let style = if emph {
+            style.bg(emphasis).add_modifier(Modifier::BOLD)
+        } else {
+            style
+        };
+        out.push((style, content[start..at].to_string()));
+    }
+    Some(out)
+}
+
+fn byte_emphasis(
+    content: &str,
+    segments: &[conductor_core::diff_state::InlineSegment],
+) -> Option<Vec<bool>> {
+    if segments.is_empty() {
+        return Some(vec![false; content.len()]);
+    }
+    let mut flags = Vec::with_capacity(content.len());
+    for segment in segments {
+        flags.resize(flags.len() + segment.text.len(), segment.emphasized);
+    }
+    (flags.len() == content.len()).then_some(flags)
 }
 
 fn separator(theme: &Theme, label: Option<&str>, width: usize) -> Line<'static> {
@@ -704,13 +786,21 @@ fn side_line(
     digits: usize,
     width: u16,
     scroll: Scroll,
+    highlighted: &[Vec<(Style, String)>],
 ) -> Line<'static> {
     let width = width as usize;
     match row {
-        SideRow::Span(entry) => unified_line(entry, theme, digits, width, scroll.column),
+        SideRow::Span(entry) => unified_line(
+            entry,
+            theme,
+            digits,
+            width,
+            scroll.column,
+            syntax_for(highlighted, entry.new_line_no()),
+        ),
         SideRow::Split { left, right } => {
             let half = width / 2;
-            let mut spans = half_line(*left, theme, digits, half, scroll.column, true);
+            let mut spans = half_line(*left, theme, digits, half, scroll.column, true, highlighted);
             spans.push(Span::styled(
                 "\u{2502}",
                 Style::default().fg(theme.border_secondary),
@@ -722,6 +812,7 @@ fn side_line(
                 width - half - 1,
                 scroll.column,
                 false,
+                highlighted,
             ));
             Line::from(spans)
         }
@@ -735,6 +826,7 @@ fn half_line(
     width: usize,
     skip: usize,
     old_side: bool,
+    highlighted: &[Vec<(Style, String)>],
 ) -> Vec<Span<'static>> {
     let Some(Entry::Line {
         tag,
@@ -758,7 +850,14 @@ fn half_line(
         Style::default().fg(theme.muted),
     )];
     let text_width = width.saturating_sub(digits + 1);
-    let pieces = inline_pieces(content, inline_segments, tag, theme, fg);
+    let pieces = inline_pieces(
+        content,
+        inline_segments,
+        tag,
+        theme,
+        fg,
+        syntax_for(highlighted, *new_line_no),
+    );
     let body = clip(pieces, skip, text_width);
     let used: usize = body.iter().map(|s| s.content.chars().count()).sum();
     spans.extend(body);
@@ -775,6 +874,7 @@ mod tests {
     use super::*;
     use conductor_core::config::Config;
     use conductor_core::diff_state::{DiffHunk, DiffLine, FileDiff, InlineSegment};
+    use ratatui::style::Color;
 
     fn panel(lines: &[&str]) -> ViewerPanel {
         let mut panel = ViewerPanel::new(&Config::default());
@@ -932,6 +1032,70 @@ mod tests {
             "{:?}",
             wide[1]
         );
+    }
+
+    fn insert_only(content: &str, segments: Vec<InlineSegment>) -> FileDiff {
+        FileDiff {
+            path: "a.rs".into(),
+            added_lines: 1,
+            deleted_lines: 0,
+            hunks: vec![DiffHunk {
+                lines: vec![DiffLine {
+                    tag: DiffLineTag::Insert,
+                    old_line_no: None,
+                    new_line_no: Some(1),
+                    inline_segments: segments,
+                    content: content.into(),
+                }],
+                func_header: None,
+            }],
+        }
+    }
+
+    fn diff_spans(panel: &ViewerPanel) -> Vec<Span<'static>> {
+        let entry = panel
+            .diff
+            .entries
+            .iter()
+            .find(|e| e.new_line_no().is_some())
+            .expect("追加行");
+        unified_line(
+            entry,
+            &Theme::default(),
+            1,
+            40,
+            0,
+            syntax_for(&panel.content.highlighted, entry.new_line_no()),
+        )
+        .spans
+    }
+
+    #[test]
+    fn 構文トークンがあれば追加行は単色にならない() {
+        let mut panel = panel(&["let x = 1;"]);
+        panel.content.highlighted = vec![vec![
+            (Style::default().fg(Color::Red), "let ".to_string()),
+            (Style::default().fg(Color::Blue), "x = 1;".to_string()),
+        ]];
+        panel.diff.build(&insert_only("let x = 1;", Vec::new()), 1);
+
+        let body: Vec<_> = diff_spans(&panel).into_iter().skip(1).collect();
+        assert_eq!(
+            body.iter().map(|s| s.style.fg).collect::<Vec<_>>(),
+            [Some(Color::Red), Some(Color::Blue)]
+        );
+    }
+
+    #[test]
+    fn 本文が食い違えば単色に落ちる() {
+        let mut panel = panel(&["let x = 1;"]);
+        panel.content.highlighted =
+            vec![vec![(Style::default().fg(Color::Red), "other".to_string())]];
+        panel.diff.build(&insert_only("let x = 1;", Vec::new()), 1);
+
+        let body: Vec<_> = diff_spans(&panel).into_iter().skip(1).collect();
+        assert_eq!(body.len(), 1);
+        assert_eq!(body[0].style.fg, Some(Theme::default().diff_add));
     }
 
     fn review_with(comments: Vec<conductor_core::review_store::ReviewComment>) -> ReviewState {

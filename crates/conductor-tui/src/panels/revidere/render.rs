@@ -372,7 +372,7 @@ fn diff_line(
         content: expand_tabs(&line.text, tab_width),
         inline_segments: Vec::new(),
     };
-    let mut rendered = unified_line(&entry, theme, digits, inner_w.saturating_sub(1), 0);
+    let mut rendered = unified_line(&entry, theme, digits, inner_w.saturating_sub(1), 0, None);
     let band = if owned { "\u{258c}" } else { " " };
     let style = Style::default().fg(if owned { band_color } else { theme.muted });
     rendered.spans.insert(0, Span::styled(band, style));
