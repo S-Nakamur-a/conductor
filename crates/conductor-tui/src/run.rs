@@ -315,6 +315,20 @@ fn on_mouse(
             panels.viewer.note_pointer(over);
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の
+            // 代わりに中央の一覧が開く。
+            if region == Region::WorktreeStrip {
+                let Some(rect) = layout.rect(region) else {
+                    return;
+                };
+                let slots = crate::panels::worktree::strip::slots(ws, rect.width);
+                let effects = ws
+                    .panels
+                    .worktree
+                    .strip_click(&slots, mouse.column - rect.x);
+                apply(ws, svc, effects);
+                return;
+            }
             let Some(focus) = focus_for(region) else {
                 return;
             };

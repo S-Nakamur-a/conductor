@@ -1,16 +1,18 @@
 //! worktree の一覧と、そこへの選択。
 
 pub mod render;
+pub mod strip;
 
 use std::path::{Path, PathBuf};
 
 use conductor_core::git_engine::{GrabState, WorktreeInfo};
 use conductor_core::keymap::Action;
 
+use crate::click::ClickTracker;
 use crate::effect::Effect;
 use crate::modal::{Confirm, Modal, Prompt};
 use crate::task::{GrabDone, Task, TaskResult};
-use crate::workspace::{Ctx, StatusLevel};
+use crate::workspace::{Ctx, Focus, StatusLevel};
 
 #[derive(Debug, Default)]
 pub struct WorktreePanel {
@@ -24,6 +26,8 @@ pub struct WorktreePanel {
     pending_select: Option<PathBuf>,
     /// main worktree へ持ってきているブランチ。wt-grab の中身。
     grabbed: Option<GrabState>,
+    /// ストリップの空白へのクリック。
+    blank_clicks: ClickTracker,
 }
 
 impl WorktreePanel {
@@ -91,28 +95,31 @@ impl WorktreePanel {
                 Effect::Focus(ctx.focus.next()),
             ],
             Action::RefreshWorktrees => vec![Effect::Spawn(Task::ListWorktrees)],
-            Action::CreateWorktree => vec![Effect::PushModal(Modal::Prompt(Prompt {
-                title: "New worktree branch".into(),
-                input: Default::default(),
-                on_submit: |branch| match branch.trim() {
-                    "" => vec![Effect::Status(
-                        StatusLevel::Warning,
-                        "no branch name".into(),
-                    )],
-                    branch => vec![Effect::Spawn(Task::CreateWorktree {
-                        branch: branch.to_string(),
-                    })],
-                },
-            }))],
-            Action::DeleteWorktree => vec![self.delete_modal()],
+            Action::CreateWorktree => vec![create_modal()],
+            Action::DeleteWorktree => vec![self.delete_modal(index)],
             _ => return None,
         })
     }
 
+    /// ストリップの 1 クリック。区画の割り出しは呼び手が済ませている。
+    pub fn strip_click(&mut self, slots: &[strip::Slot], x: u16) -> Vec<Effect> {
+        match slots.iter().find(|slot| slot.contains(x)).map(|s| &s.kind) {
+            Some(strip::SlotKind::Select(i)) => vec![
+                Effect::SelectWorktree(*i),
+                Effect::Focus(Focus::TerminalClaude),
+            ],
+            Some(strip::SlotKind::Delete(i)) => vec![self.delete_modal(*i)],
+            Some(strip::SlotKind::Add) => vec![create_modal()],
+            // 帯そのものはフォーカスを持たないので、空白のシングルには行き先が無い。
+            None if self.blank_clicks.is_double(0) => vec![create_modal()],
+            _ => Vec::new(),
+        }
+    }
+
     /// 消えるもの (未コミットの変更、main へ入っていないコミット) を確認文に出す。
     /// 反射的な y で黙って失わせないため。
-    fn delete_modal(&self) -> Effect {
-        let Some(worktree) = self.selected() else {
+    fn delete_modal(&self, index: usize) -> Effect {
+        let Some(worktree) = self.list.get(index) else {
             return Effect::Status(StatusLevel::Warning, "no worktree selected".into());
         };
         if worktree.is_main {
@@ -264,6 +271,22 @@ impl WorktreePanel {
     }
 }
 
+fn create_modal() -> Effect {
+    Effect::PushModal(Modal::Prompt(Prompt {
+        title: "New worktree branch".into(),
+        input: Default::default(),
+        on_submit: |branch| match branch.trim() {
+            "" => vec![Effect::Status(
+                StatusLevel::Warning,
+                "no branch name".into(),
+            )],
+            branch => vec![Effect::Spawn(Task::CreateWorktree {
+                branch: branch.to_string(),
+            })],
+        },
+    }))
+}
+
 /// pull だけは「動かなかった」も成功なので、文言から段を決める。
 fn level_of(message: &str) -> StatusLevel {
     if message.contains("up-to-date") {
@@ -400,5 +423,83 @@ mod tests {
             (prompt.on_submit)("feature/c".into()).as_slice(),
             [Effect::Spawn(Task::CreateWorktree { branch })] if branch == "feature/c"
         ));
+    }
+
+    /// 一覧を流し込んだ Workspace で帯の割り付けを取り、その中の 1 区画を押す。
+    fn strip_hit(kind: &strip::SlotKind) -> (Workspace, Vec<Effect>) {
+        let mut ws = drive(&[]);
+        let slots = strip::slots(&ws, 120);
+        let x = slots
+            .iter()
+            .find(|s| s.kind == *kind)
+            .unwrap_or_else(|| panic!("{kind:?} が帯に無い: {slots:?}"))
+            .start;
+        let effects = ws.panels.worktree.strip_click(&slots, x);
+        (ws, effects)
+    }
+
+    #[test]
+    fn チップを押すとその添字を選んでclaude端末へ移る() {
+        let (mut ws, effects) = strip_hit(&strip::SlotKind::Select(2));
+        assert_eq!(
+            effects,
+            vec![
+                Effect::SelectWorktree(2),
+                Effect::Focus(crate::workspace::Focus::TerminalClaude)
+            ]
+        );
+        let mut svc = conductor_svc::Services::new();
+        crate::effect::apply(&mut ws, &mut svc, effects);
+        assert_eq!(ws.panels.worktree.selected().unwrap().branch, "feature/b");
+    }
+
+    #[test]
+    fn 作成のチップは一覧ではなく入力を出す() {
+        let (_, effects) = strip_hit(&strip::SlotKind::Add);
+        assert!(
+            matches!(effects.as_slice(), [Effect::PushModal(Modal::Prompt(_))]),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 削除のチップは押した添字の確認を出す() {
+        let (_, effects) = strip_hit(&strip::SlotKind::Delete(2));
+        let [Effect::PushModal(Modal::Confirm(confirm))] = effects.as_slice() else {
+            panic!("確認が出ていない: {effects:?}");
+        };
+        assert!(confirm.question.contains("feature/b"), "選択中は main");
+    }
+
+    #[test]
+    fn mainのチップには削除の区画が無い() {
+        let ws = drive(&[]);
+        let slots = strip::slots(&ws, 120);
+        assert!(
+            !slots.iter().any(|s| s.kind == strip::SlotKind::Delete(0)),
+            "{slots:?}"
+        );
+    }
+
+    #[test]
+    fn 空白はダブルクリックだけが作成になる() {
+        let mut ws = drive(&[]);
+        let slots = strip::slots(&ws, 120);
+        let blank = slots.last().unwrap().end + 1;
+        assert!(ws.panels.worktree.strip_click(&slots, blank).is_empty());
+        assert!(matches!(
+            ws.panels.worktree.strip_click(&slots, blank).as_slice(),
+            [Effect::PushModal(Modal::Prompt(_))]
+        ));
+    }
+
+    #[test]
+    fn 描いた帯の幅と区画の列範囲が一致する() {
+        let ws = drive(&[]);
+        let area = ratatui::layout::Rect::new(0, 0, 120, 1);
+        let line = render::strip(&ws, area);
+        let slots = strip::slots(&ws, area.width);
+        assert_eq!(line.width() as u16, slots.last().unwrap().end);
+        assert_eq!(line.spans.len(), slots.len());
     }
 }
