@@ -50,6 +50,7 @@ const H_STEP: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Zone {
     Comment,
+    Number,
     Fold,
     /// テスト実行ボタン。
     Test,
@@ -228,41 +229,66 @@ impl ViewerPanel {
     }
 
     /// 画面上の 1 点のクリック。shift 付きは起点から範囲を伸ばす。
-    pub fn click(&mut self, x: u16, y: u16, extend: bool, review: &ReviewState) -> Vec<Effect> {
+    pub fn click(&mut self, x: u16, y: u16, extend: bool, ctx: &Ctx) -> Vec<Effect> {
         if y < self.body.y {
             return self.click_tab_row(x.saturating_sub(self.tab_row.x), self.tab_row.width);
         }
-        if self.diff.active || self.is_showing_rendered_markdown() {
+        if self.is_showing_rendered_markdown() {
             return Vec::new();
         }
-        let offset = (y - self.body.y) as usize;
-        let total = self.content.lines.len();
-        let Some(line) = self
-            .fold
-            .visible_from(self.scroll.line + 1, total)
-            .nth(offset)
-        else {
-            return Vec::new();
-        };
         let comments = self
             .content
             .path
             .as_deref()
-            .map_or_else(Vec::new, |path| review.for_file(path));
-        match self.gutter_zone(x.saturating_sub(self.body.x), total, comments.is_empty()) {
-            Zone::Comment => {
-                if let Some(anchor) = anchor_for(&comments, line) {
-                    self.threads.flip(anchor);
-                }
-            }
+            .map_or_else(Vec::new, |path| ctx.review.for_file(path));
+        let zone = self.gutter_zone(
+            x.saturating_sub(self.body.x),
+            self.content.lines.len(),
+            comments.is_empty(),
+        );
+        let line = match render::origin_at(
+            self,
+            ctx.review,
+            ctx.theme,
+            ctx.config.ui.icon_set(),
+            self.body.width,
+            self.body.height as usize,
+            (y - self.body.y) as usize,
+        ) {
+            render::Origin::Line(line) => line,
+            render::Origin::Deleted if zone != Zone::Text => return no_place_to_comment(),
+            _ => return Vec::new(),
+        };
+        match zone {
+            Zone::Comment => match anchor_for(&comments, line) {
+                Some(anchor) => self.threads.flip(anchor),
+                None => return self.click_comment(line),
+            },
+            Zone::Number => return self.click_comment(line),
             Zone::Fold => {
                 self.fold.toggle(line);
                 self.scroll.line = self.fold.visible_anchor(line) - 1;
             }
-            Zone::Test => return self.run_test_at(line),
-            Zone::Text => self.selection.click(line, extend),
+            Zone::Test => {
+                return match self.content.tests.contains_key(&line) {
+                    true => self.run_test_at(line),
+                    false => self.click_comment(line),
+                };
+            }
+            // 選択の帯は素の本文にしか描かないので、diff では見えない選択を残さない。
+            Zone::Text => {
+                if !self.diff.active {
+                    self.selection.click(line, extend);
+                }
+            }
         }
         Vec::new()
+    }
+
+    /// ガターを押しての作成。狙いは押した行なので、残っている選択には引きずられない。
+    fn click_comment(&mut self, line_1: usize) -> Vec<Effect> {
+        self.selection.clear();
+        self.start_comment(line_1)
     }
 
     /// その行のテストをシェルへ流す。
@@ -283,11 +309,19 @@ impl ViewerPanel {
         if column < mark {
             return Zone::Comment;
         }
-        let digits = render::digit_count(if self.diff.active {
-            self.diff.max_line_no
-        } else {
-            total
-        });
+        if self.diff.active {
+            let digits = render::digit_count(self.diff.max_line_no);
+            // 畳みも実行ボタンも diff には出ないので、左マージンは符号と行番号だけ。
+            return if column < mark + render::DIFF_SIGN + digits {
+                Zone::Number
+            } else {
+                Zone::Text
+            };
+        }
+        let digits = render::digit_count(total);
+        if column < mark + digits {
+            return Zone::Number;
+        }
         if column == mark + digits {
             return Zone::Fold;
         }
@@ -725,19 +759,10 @@ impl ViewerPanel {
         let path = self.content.path.clone()?;
         let comments = review.for_file(&path);
         let Some(line) = self.comment_line() else {
-            return Some(vec![Effect::Status(
-                StatusLevel::Warning,
-                "a deleted line has no place to hang a comment".into(),
-            )]);
+            return Some(no_place_to_comment());
         };
         let effects = match action {
-            Action::AddComment => {
-                let (start, end) = self.comment_range(line);
-                self.selection.clear();
-                vec![Effect::PushModal(Modal::CommentEditor(
-                    CommentEditor::new_comment(path, start, end),
-                ))]
-            }
+            Action::AddComment => self.start_comment(line),
             Action::ToggleInlineThread => {
                 if let Some(anchor) = anchor_for(&comments, line) {
                     self.threads.flip(anchor);
@@ -767,6 +792,17 @@ impl ViewerPanel {
             }
         };
         Some(effects)
+    }
+
+    fn start_comment(&mut self, line_1: usize) -> Vec<Effect> {
+        let Some(path) = self.content.path.clone() else {
+            return Vec::new();
+        };
+        let (start, end) = self.comment_range(line_1);
+        self.selection.clear();
+        vec![Effect::PushModal(Modal::CommentEditor(
+            CommentEditor::new_comment(path, start, end),
+        ))]
     }
 
     /// コメントを付ける行 (1 始まり)。削除行のように新ファイル側の行番号を持たない
@@ -956,6 +992,13 @@ fn refresh_markdown(
     content.rendered_key = Some(key);
 }
 
+fn no_place_to_comment() -> Vec<Effect> {
+    vec![Effect::Status(
+        StatusLevel::Warning,
+        "a deleted line has no place to hang a comment".into(),
+    )]
+}
+
 fn no_comment_here() -> Vec<Effect> {
     vec![Effect::Status(
         StatusLevel::Info,
@@ -1039,8 +1082,9 @@ mod tests {
         }
 
         fn click(&mut self, x: u16, y: u16, extend: bool) -> Vec<Effect> {
-            let Workspace { panels, review, .. } = &mut self.ws;
-            panels.viewer.click(x, y, extend, review)
+            let root = self.ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = self.ws.split(&root);
+            panels.viewer.click(x, y, extend, &ctx)
         }
 
         fn install(&mut self, comments: Vec<conductor_core::review_store::ReviewComment>) {
@@ -1333,13 +1377,13 @@ mod tests {
         h.open("a.rs");
         h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
 
-        h.viewer().click(20, 11, false, &ReviewState::default());
+        h.click(20, 11, false);
         assert_eq!(h.ws.panels.viewer.selection.range(), Some((2, 2)));
-        h.viewer().click(20, 13, true, &ReviewState::default());
+        h.click(20, 13, true);
         assert_eq!(h.ws.panels.viewer.selection.range(), Some((2, 4)));
 
         h.viewer().fold.close(1);
-        h.viewer().click(20, 11, false, &ReviewState::default());
+        h.click(20, 11, false);
         assert_eq!(
             h.ws.panels.viewer.selection.range(),
             Some((5, 5)),
@@ -1373,6 +1417,152 @@ mod tests {
 
         h.click(20, 10, false);
         assert_eq!(h.ws.panels.viewer.selection.range(), Some((1, 1)));
+    }
+
+    /// キーの c を知らなくてもコメントを始められる経路。
+    #[test]
+    fn ガターを押すとコメントの作成欄が開く() {
+        let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+        let effects = h.click(0, 11, false);
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(
+            matches!(
+                editor.target,
+                crate::modal::EditTarget::New {
+                    line_start: 2,
+                    line_end: None,
+                    ..
+                }
+            ),
+            "{:?}",
+            editor.target
+        );
+    }
+
+    /// 行番号の桁は既にコメントのある行でも作成を始めるので、重なった範囲も作れる。
+    #[test]
+    fn コメントのある行の印はスレッドを開閉し行番号の桁は作成を始める() {
+        let comments = vec![crate::review::tests::comment("a", "a.txt", 2, None)];
+        let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.install(comments.clone());
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+        let all: Vec<&ReviewComment> = comments.iter().collect();
+
+        assert!(h.ws.panels.viewer.threads.is_open(&all, 2));
+        assert!(h.click(0, 11, false).is_empty(), "作成へは行かない");
+        assert!(!h.ws.panels.viewer.threads.is_open(&all, 2));
+
+        let effects = h.click(2, 11, false);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::PushModal(Modal::CommentEditor(_))]
+            ),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 開いたスレッドの下の行を押すとその行が対象になる() {
+        let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
+        let mut h = Harness::at(dir.path());
+        h.open("a.txt");
+        h.install(vec![crate::review::tests::comment("a", "a.txt", 1, None)]);
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+        let drawn = render::body(
+            &h.ws.panels.viewer,
+            &h.ws.review,
+            &h.ws.theme,
+            h.ws.config.ui.icon_set(),
+            40,
+            20,
+        );
+        let offset = drawn
+            .iter()
+            .position(|line| line.to_string().contains("two"))
+            .expect("2 行目");
+        assert!(offset > 1, "スレッドが割り込んでいる: {offset}");
+
+        let effects = h.click(2, 10 + offset as u16, false);
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(
+            matches!(
+                editor.target,
+                crate::modal::EditTarget::New { line_start: 2, .. }
+            ),
+            "{:?}",
+            editor.target
+        );
+    }
+
+    /// 差分を読みながらコメントを付けるのが主な使い方。
+    #[test]
+    fn 差分表示でもガターから作成でき削除行では断る() {
+        let dir = fixture(&[("a.txt", "one\n")]);
+        let mut h = Harness::at(dir.path());
+        let file_diff = FileDiff {
+            path: "a.txt".into(),
+            added_lines: 1,
+            deleted_lines: 1,
+            hunks: vec![conductor_core::diff_state::DiffHunk {
+                lines: vec![
+                    conductor_core::diff_state::DiffLine {
+                        tag: conductor_core::diff_state::DiffLineTag::Delete,
+                        old_line_no: Some(1),
+                        new_line_no: None,
+                        inline_segments: Vec::new(),
+                        content: "gone".into(),
+                    },
+                    conductor_core::diff_state::DiffLine {
+                        tag: conductor_core::diff_state::DiffLineTag::Insert,
+                        old_line_no: None,
+                        new_line_no: Some(1),
+                        inline_segments: Vec::new(),
+                        content: "one".into(),
+                    },
+                ],
+                func_header: None,
+            }],
+        };
+        let effects = h
+            .viewer()
+            .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+        h.run(effects);
+        h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+        let effects = h.click(2, 11, false);
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(
+            matches!(
+                editor.target,
+                crate::modal::EditTarget::New { line_start: 1, .. }
+            ),
+            "{:?}",
+            editor.target
+        );
+
+        let effects = h.click(2, 10, false);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Status(StatusLevel::Warning, _)]
+            ),
+            "{effects:?}"
+        );
+        assert!(h.click(20, 10, false).is_empty(), "本文の桁は断らない");
     }
 
     #[test]

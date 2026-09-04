@@ -24,7 +24,7 @@ use crate::workspace::Workspace;
 /// ガターのうち行番号が使わない列: 折りたたみマーカー(1) + 空白(1) + '│'(1) + 空白(1)。
 /// diff 表示ではさらに +/- の 1 列と空白 1 列。
 pub const GUTTER_FIXED: usize = 4;
-const DIFF_SIGN: usize = 2;
+pub const DIFF_SIGN: usize = 2;
 
 /// 本文の上に載るタブ帯の高さ。[super::ViewerPanel::sync_layout] も同じ値を引く。
 pub const TAB_ROW: u16 = 1;
@@ -241,6 +241,16 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
     Line::from(spans)
 }
 
+/// 描いた 1 行が指している本文の行 (1 始まり)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Origin {
+    Line(usize),
+    /// 新ファイル側の行番号を持たない diff の行。
+    Deleted,
+    /// バナーや割り込んだスレッドなど、本文の行ではない行。
+    Other,
+}
+
 /// 本文。素の表示と diff で行の組み方が違うだけで、窓の切り方は同じ。
 pub fn body(
     panel: &ViewerPanel,
@@ -250,44 +260,85 @@ pub fn body(
     width: u16,
     height: usize,
 ) -> Vec<Line<'static>> {
-    if let Some(error) = &panel.content.error {
-        return vec![Line::styled(
+    rows(panel, review, theme, icons, width, height)
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect()
+}
+
+/// 画面の offset 行目が指している本文。本文の行だけを数えるとスレッドのぶんずれる。
+pub(super) fn origin_at(
+    panel: &ViewerPanel,
+    review: &ReviewState,
+    theme: &Theme,
+    icons: IconSet,
+    width: u16,
+    height: usize,
+    offset: usize,
+) -> Origin {
+    rows(panel, review, theme, icons, width, height)
+        .get(offset)
+        .map_or(Origin::Other, |(_, origin)| *origin)
+}
+
+fn rows(
+    panel: &ViewerPanel,
+    review: &ReviewState,
+    theme: &Theme,
+    icons: IconSet,
+    width: u16,
+    height: usize,
+) -> Vec<(Line<'static>, Origin)> {
+    // 削除されたファイルは作業ツリーに無いが、diff だけで読める。
+    if let Some(error) = &panel.content.error
+        && !panel.diff.active
+    {
+        return unnumbered(vec![Line::styled(
             format!("  \u{26a0} {error}"),
             Style::default().fg(theme.error),
-        )];
+        )]);
     }
     if panel.content.path.is_none() {
-        return vec![Line::styled(
+        return unnumbered(vec![Line::styled(
             "  select a file in the explorer",
             Style::default().fg(theme.muted),
-        )];
+        )]);
     }
     if let Some(preview) = &panel.content.media {
-        return media_body(preview, theme, height);
+        return unnumbered(media_body(preview, theme, height));
     }
     if panel.is_showing_rendered_markdown() {
-        return panel
-            .content
-            .rendered
-            .iter()
-            .skip(panel.scroll.md)
-            .take(height)
-            .cloned()
-            .collect();
+        return unnumbered(
+            panel
+                .content
+                .rendered
+                .iter()
+                .skip(panel.scroll.md)
+                .take(height)
+                .cloned()
+                .collect(),
+        );
     }
     let comments = panel
         .content
         .path
         .as_deref()
         .map_or_else(Vec::new, |path| review.for_file(path));
-    let mut lines = summary_banner(panel, review, theme, width as usize);
-    let rest = height.saturating_sub(lines.len());
-    lines.extend(if panel.diff.active {
+    let mut out = unnumbered(summary_banner(panel, review, theme, width as usize));
+    let rest = height.saturating_sub(out.len());
+    out.extend(if panel.diff.active {
         diff_body(panel, review, &comments, theme, icons, width, rest)
     } else {
         file_body(panel, review, &comments, theme, icons, width, rest)
     });
+    out
+}
+
+fn unnumbered(lines: Vec<Line<'static>>) -> Vec<(Line<'static>, Origin)> {
     lines
+        .into_iter()
+        .map(|line| (line, Origin::Other))
+        .collect()
 }
 
 /// 絵と、その下の寸法・ファイルサイズの行。
@@ -369,7 +420,7 @@ fn file_body(
     icons: IconSet,
     width: u16,
     height: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<(Line<'static>, Origin)> {
     let total = panel.content.lines.len();
     let digits = digit_count(total);
     let mark = if comments.is_empty() { 0 } else { MARK };
@@ -412,7 +463,7 @@ fn file_body(
             ));
         }
         let line = Line::from(spans);
-        out.push(if panel.selection.contains(line_1) {
+        let line = if panel.selection.contains(line_1) {
             line.style(
                 Style::default()
                     .bg(theme.line_selected_bg)
@@ -420,10 +471,11 @@ fn file_body(
             )
         } else {
             line
-        });
-        out.extend(thread_rows(
+        };
+        out.push((line, Origin::Line(line_1)));
+        out.extend(unnumbered(thread_rows(
             panel, review, comments, line_1, theme, icons, width,
-        ));
+        )));
     }
     out.truncate(height);
     out
@@ -554,11 +606,11 @@ fn diff_body(
     icons: IconSet,
     width: u16,
     height: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<(Line<'static>, Origin)> {
     let digits = digit_count(panel.diff.max_line_no);
     let mark = if comments.is_empty() { 0 } else { MARK };
     let mut out = Vec::with_capacity(height);
-    let rows: Vec<(Line<'static>, Option<usize>)> = if panel.diff.side_by_side {
+    let drawn: Vec<(Line<'static>, Origin)> = if panel.diff.side_by_side {
         side_by_side(&panel.diff.entries)
             .iter()
             .skip(panel.scroll.diff)
@@ -572,7 +624,7 @@ fn diff_body(
                         panel.scroll,
                         &panel.content.highlighted,
                     ),
-                    None,
+                    Origin::Other,
                 )
             })
             .collect()
@@ -598,23 +650,32 @@ fn diff_body(
                 );
                 let style = body.style;
                 spans.extend(body.spans);
-                (Line::from(spans).style(style), entry.new_line_no())
+                (Line::from(spans).style(style), origin_of(entry))
             })
             .collect()
     };
-    for (line, at) in rows {
+    for (line, origin) in drawn {
         if out.len() >= height {
             break;
         }
-        out.push(line);
-        if let Some(line_1) = at {
-            out.extend(thread_rows(
+        out.push((line, origin));
+        if let Origin::Line(line_1) = origin {
+            out.extend(unnumbered(thread_rows(
                 panel, review, comments, line_1, theme, icons, width,
-            ));
+            )));
         }
     }
     out.truncate(height);
     out
+}
+
+/// 展開できる塊のコメントの印とスレッドは先頭行に出るので、押した先も同じ行にする。
+fn origin_of(entry: &Entry) -> Origin {
+    match (entry.new_line_no(), entry) {
+        (Some(line_1), _) => Origin::Line(line_1),
+        (None, Entry::Line { .. }) => Origin::Deleted,
+        (None, _) => Origin::Other,
+    }
 }
 
 /// レビューの読み順ビューも同じ行を出すので共有する。
@@ -948,6 +1009,37 @@ mod tests {
             ))[0]
                 .contains("binary file")
         );
+    }
+
+    #[test]
+    fn 削除されたファイルは本文が読めなくても差分が出る() {
+        let mut panel = panel(&[]);
+        panel.content.error = Some("No such file or directory".into());
+        let file_diff = FileDiff {
+            path: "a.rs".into(),
+            added_lines: 0,
+            deleted_lines: 1,
+            hunks: vec![DiffHunk {
+                lines: vec![DiffLine {
+                    tag: DiffLineTag::Delete,
+                    old_line_no: Some(1),
+                    new_line_no: None,
+                    inline_segments: Vec::new(),
+                    content: "gone".into(),
+                }],
+                func_header: None,
+            }],
+        };
+        panel.diff.build(&file_diff, 0);
+        let lines = texts(&body(
+            &panel,
+            &ReviewState::default(),
+            &Theme::default(),
+            IconSet::Unicode,
+            40,
+            5,
+        ));
+        assert!(lines[0].contains("gone"), "{lines:?}");
     }
 
     #[test]

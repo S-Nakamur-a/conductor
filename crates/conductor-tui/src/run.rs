@@ -374,12 +374,13 @@ fn on_mouse(
                 }
                 Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
                 Focus::Viewer => {
-                    let Workspace { panels, review, .. } = ws;
+                    let root = ws.panels.viewer.root().to_path_buf();
+                    let (panels, _, ctx) = ws.split(&root);
                     panels.viewer.click(
                         mouse.column,
                         mouse.row,
                         mouse.modifiers.contains(KeyModifiers::SHIFT),
-                        review,
+                        &ctx,
                     )
                 }
                 Focus::TerminalClaude | Focus::TerminalShell => ws.panels.terminal.click(focus),
