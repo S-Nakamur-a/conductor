@@ -156,6 +156,13 @@ impl DiffPane {
         (scroll..end).find(|i| matches!(self.entries[*i], Entry::ExpandableContext { .. }))
     }
 
+    /// line_1 を先頭行に持つ展開できる塊の添字。
+    pub fn expandable_at(&self, line_1: usize) -> Option<usize> {
+        self.entries.iter().position(|e| {
+            matches!(e, Entry::ExpandableContext { new_line_start, .. } if *new_line_start == line_1)
+        })
+    }
+
     fn recalc_max_line_no(&mut self) {
         self.max_line_no = self
             .entries

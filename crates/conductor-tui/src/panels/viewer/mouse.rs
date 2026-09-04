@@ -89,6 +89,12 @@ impl ViewerPanel {
             render::Origin::Deleted if zone != Zone::Text => return no_place_to_comment(),
             _ => return Vec::new(),
         };
+        if self.diff.active
+            && let Some(idx) = self.diff.expandable_at(line)
+        {
+            self.diff.expand(idx, false, &self.content.lines);
+            return Vec::new();
+        }
         match zone {
             Zone::Comment => match anchor_for(&comments, line) {
                 Some(anchor) => self.threads.flip(anchor),

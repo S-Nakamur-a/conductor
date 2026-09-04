@@ -550,6 +550,57 @@ fn 差分表示でもガターから作成でき削除行では断る() {
 }
 
 #[test]
+fn 差分の隠れた塊を押すと展開される() {
+    let dir = fixture(&[("a.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")]);
+    let mut h = Harness::at(dir.path());
+    let line = |no| conductor_core::diff_state::DiffLine {
+        tag: conductor_core::diff_state::DiffLineTag::Equal,
+        old_line_no: Some(no),
+        new_line_no: Some(no),
+        inline_segments: Vec::new(),
+        content: "".into(),
+    };
+    let file_diff = FileDiff {
+        path: "a.txt".into(),
+        added_lines: 0,
+        deleted_lines: 0,
+        hunks: vec![
+            conductor_core::diff_state::DiffHunk {
+                lines: vec![line(1)],
+                func_header: None,
+            },
+            conductor_core::diff_state::DiffHunk {
+                lines: vec![line(7)],
+                func_header: None,
+            },
+        ],
+    };
+    let effects = h
+        .viewer()
+        .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+    h.run(effects);
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+    assert!(matches!(
+        h.ws.panels.viewer.diff.entries[1],
+        diff::Entry::ExpandableContext { .. }
+    ));
+
+    let effects = h.click(20, 11, false);
+    assert!(effects.is_empty(), "コメント作成には行かない: {effects:?}");
+    assert!(
+        !h.ws
+            .panels
+            .viewer
+            .diff
+            .entries
+            .iter()
+            .any(|e| matches!(e, diff::Entry::ExpandableContext { .. })),
+        "{:?}",
+        h.ws.panels.viewer.diff.entries
+    );
+}
+
+#[test]
 fn ホイールは畳みを跨いで送り差分では行ではなくエントリを送る() {
     let dir = fixture(&[("a.rs", "fn a() {\n    b();\n    c();\n}\nfn d() {}\n")]);
     let mut h = Harness::at(dir.path());
