@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 
 use ratatui::Frame;
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::{Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -14,9 +14,10 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_svc::pty::PtyStore;
 
+use super::focus_of;
 use super::tabs::SlotKind;
 use crate::layout::Region;
-use crate::workspace::Workspace;
+use crate::workspace::{Focus, Workspace};
 
 #[cfg(test)]
 use super::TerminalPanel;
@@ -61,16 +62,26 @@ pub(super) fn clamp_scrollback(pty: &PtyStore, index: usize, want: usize) -> usi
     effective
 }
 
-/// スクロールバックを当てた画面を行に写す。実際に効いたオフセットも返す。
+/// 画面 1 枚の写し。
+struct Snapshot {
+    lines: Vec<Line<'static>>,
+    /// 実際に効いたスクロールバックのオフセット。
+    effective: usize,
+    /// 内容領域からの相対で (行, 桁)。遡って読んでいる間は生きたカーソルの位置が
+    /// 画面の内容と合わないので入らない。
+    cursor: Option<(u16, u16)>,
+}
+
+/// スクロールバックを当てた画面を写す。
 ///
 /// オルタネート画面 (ページャやエディタ) は自分でスクロールバックを持つので、
 /// こちらのオフセットは当てない。
-fn screen_lines(
+fn snapshot_screen(
     screen: &Arc<Mutex<vt100::Parser>>,
     scroll: usize,
     max_rows: u16,
     max_cols: u16,
-) -> (Vec<Line<'static>>, usize) {
+) -> Snapshot {
     let mut parser = lock(screen);
     let wanted = if parser.screen().alternate_screen() {
         0
@@ -79,6 +90,7 @@ fn screen_lines(
     };
     parser.set_scrollback(wanted);
     let effective = parser.screen().scrollback();
+    let cursor = (effective == 0).then(|| parser.screen().cursor_position());
 
     let lines = {
         let screen = parser.screen();
@@ -119,7 +131,25 @@ fn screen_lines(
     };
 
     parser.set_scrollback(0);
-    (lines, effective)
+    Snapshot {
+        lines,
+        effective,
+        cursor,
+    }
+}
+
+/// 端末のカーソルをその区画へ置く。IME の変換窓はこれを見て出る場所を決めるので、
+/// キーを取っているのがモーダルやメニューのときは置かない。
+fn place_cursor(frame: &mut Frame, ws: &Workspace, content: Rect, snapshot: &Snapshot) {
+    if !ws.modals.is_empty() || ws.chrome.menu.open_index().is_some() {
+        return;
+    }
+    let Some((row, col)) = snapshot.cursor else {
+        return;
+    };
+    if row < content.height && col < content.width {
+        frame.set_cursor_position(Position::new(content.x + col, content.y + row));
+    }
 }
 
 fn color(c: vt100::Color) -> Color {
@@ -164,6 +194,9 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
                     .bg(theme.selected_bg)
                     .add_modifier(Modifier::BOLD),
                 SlotKind::Tab { .. } | SlotKind::Hint => Style::default().fg(theme.muted),
+                // 選んでいるタブの塗りつぶしの中には入れない。アクセント背景に赤を
+                // 乗せるとコントラストが落ちて、危険な操作が読めなくなる。
+                SlotKind::Close { .. } => Style::default().fg(theme.error),
                 SlotKind::Add => Style::default().fg(theme.accent),
             };
             Span::styled(slot.label, style)
@@ -179,16 +212,19 @@ pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     if content.width == 0 || content.height == 0 {
         return;
     }
-    let Some(index) = panel.index_of(panel.editor.as_ref().map(|e| &e.session)) else {
+    let Some(index) = panel.index_of(panel.editor.as_ref().map(|e| e.session.as_str())) else {
         return;
     };
     let Some(screen) = panel.pty.screen(index) else {
         return;
     };
-    let (lines, _) = screen_lines(&screen, 0, content.height, content.width);
+    let snapshot = snapshot_screen(&screen, 0, content.height, content.width);
     let buffer = frame.buffer_mut();
-    for (row, line) in lines.iter().enumerate() {
+    for (row, line) in snapshot.lines.iter().enumerate() {
         buffer.set_line(content.x, content.y + row as u16, line, content.width);
+    }
+    if ws.focus == Focus::Editor {
+        place_cursor(frame, ws, content, &snapshot);
     }
 }
 
@@ -215,7 +251,7 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     }
 
     let pane = panel.pane(region);
-    let Some(index) = panel.index_of(pane.session.as_ref()) else {
+    let Some(index) = panel.index_of(pane.session.as_deref()) else {
         return;
     };
     let Some(screen) = panel.pty.screen(index) else {
@@ -223,16 +259,27 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     };
 
     let content = content_area(rect);
-    let (lines, effective) = screen_lines(&screen, pane.scroll, content.height, content.width);
+    let snapshot = snapshot_screen(&screen, pane.scroll, content.height, content.width);
     let buffer = frame.buffer_mut();
-    for (row, line) in lines.iter().enumerate().take(content.height as usize) {
+    for (row, line) in snapshot
+        .lines
+        .iter()
+        .enumerate()
+        .take(content.height as usize)
+    {
         buffer.set_line(content.x, content.y + row as u16, line, content.width);
     }
+    if ws.focus == focus_of(region) {
+        place_cursor(frame, ws, content, &snapshot);
+    }
 
-    if effective > 0 {
+    if snapshot.effective > 0 {
         frame.render_widget(
             Paragraph::new(Line::styled(
-                format!(" \u{2191} scrollback ({effective} lines — shift+end to return) "),
+                format!(
+                    " \u{2191} scrollback ({} lines — shift+end to return) ",
+                    snapshot.effective
+                ),
                 Style::default()
                     .fg(ws.theme.selected_fg)
                     .bg(ws.theme.accent),
@@ -249,14 +296,15 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
 #[cfg(test)]
 pub(super) fn visible_text(panel: &TerminalPanel, region: Region) -> String {
     let pane = panel.pane(region);
-    let Some(index) = panel.index_of(pane.session.as_ref()) else {
+    let Some(index) = panel.index_of(pane.session.as_deref()) else {
         return String::new();
     };
     let Some(screen) = panel.pty.screen(index) else {
         return String::new();
     };
-    let (lines, _) = screen_lines(&screen, pane.scroll, pane.size.0, pane.size.1);
-    lines
+    let snapshot = snapshot_screen(&screen, pane.scroll, pane.size.0, pane.size.1);
+    snapshot
+        .lines
         .iter()
         .map(|l| l.to_string())
         .collect::<Vec<_>>()
@@ -274,12 +322,27 @@ mod tests {
         for i in 0..60 {
             lock(&screen).process(format!("line{i}\r\n").as_bytes());
         }
-        let (lines, effective) = screen_lines(&screen, 30, 5, 20);
-        assert_eq!(effective, 30);
-        assert!(lines[0].to_string().starts_with("line26"), "{lines:?}");
+        let snapshot = snapshot_screen(&screen, 30, 5, 20);
+        assert_eq!(snapshot.effective, 30);
+        assert!(
+            snapshot.lines[0].to_string().starts_with("line26"),
+            "{:?}",
+            snapshot.lines
+        );
+        assert_eq!(
+            snapshot.cursor, None,
+            "遡っている間は生きたカーソルを出さない"
+        );
 
         // 読んだあとはライブに戻っている。次に読む側が過去を見せられては困る。
         assert_eq!(lock(&screen).screen().scrollback(), 0);
+    }
+
+    #[test]
+    fn ライブ表示ではカーソルの位置を返す() {
+        let screen = Arc::new(Mutex::new(vt100::Parser::new(5, 20, 100)));
+        lock(&screen).process(b"line0\r\nab");
+        assert_eq!(snapshot_screen(&screen, 0, 5, 20).cursor, Some((1, 2)));
     }
 
     #[test]
@@ -289,8 +352,8 @@ mod tests {
             lock(&screen).process(format!("line{i}\r\n").as_bytes());
         }
         lock(&screen).process(b"\x1b[?1049h");
-        let (_, effective) = screen_lines(&screen, 30, 5, 20);
-        assert_eq!(effective, 0);
+        let snapshot = snapshot_screen(&screen, 30, 5, 20);
+        assert_eq!(snapshot.effective, 0);
     }
 
     #[test]

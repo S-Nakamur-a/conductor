@@ -295,8 +295,8 @@ fn on_mouse(
         return;
     }
     match mouse.kind {
-        MouseEventKind::ScrollDown => scroll_region(ws, region, 3),
-        MouseEventKind::ScrollUp => scroll_region(ws, region, -3),
+        MouseEventKind::ScrollDown => scroll_region(ws, svc, layout, region, mouse, 3),
+        MouseEventKind::ScrollUp => scroll_region(ws, svc, layout, region, mouse, -3),
         // 端末はポインタが窓の外に出たことを報せないので、区画の外に出た時点で降ろす。
         MouseEventKind::Moved => {
             let Workspace { panels, review, .. } = ws;
@@ -383,14 +383,32 @@ fn viewer_popup_click(ws: &mut Workspace, mouse: MouseEvent) -> Option<Vec<Effec
         .flatten()
 }
 
-fn scroll_region(ws: &mut Workspace, region: Region, delta: isize) {
+fn scroll_region(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    layout: &Layout,
+    region: Region,
+    mouse: MouseEvent,
+    delta: isize,
+) {
     match region {
         Region::ExplorerTree | Region::ExplorerChanges => {
             let Workspace { panels, review, .. } = ws;
             panels.explorer.scroll(region, delta, review)
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
-        Region::TerminalClaude => ws.panels.terminal.transcript_scroll(delta),
+        // 端末はホイールの行き先が中身次第 (子プロセス / トランスクリプト /
+        // スクロールバック) なので、判断はパネルが持つ。
+        Region::TerminalClaude | Region::TerminalShell | Region::Editor => {
+            let Some(rect) = layout.rect(region) else {
+                return;
+            };
+            let effects = ws
+                .panels
+                .terminal
+                .wheel(region, rect, mouse.column, mouse.row, delta);
+            apply(ws, svc, effects);
+        }
         Region::RevidereOrder | Region::RevidereDiff => ws.panels.revidere.scroll(region, delta),
         _ => {}
     }

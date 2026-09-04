@@ -8,12 +8,19 @@ use crate::strip::visible_window;
 /// 新しいセッションを起こすチップ。
 const ADD: &str = " + ";
 
+/// タブの後ろに置く、そのセッションを閉じるチップ。
+const CLOSE: &str = " [x] ";
+
 /// タブ行の 1 区画が何を指しているか。
 #[derive(Debug, PartialEq, Eq)]
 pub enum SlotKind {
     Tab {
         session: String,
         selected: bool,
+    },
+    /// 直前のタブのセッションを落とす。
+    Close {
+        session: String,
     },
     Add,
     /// セッションが 1 つも無いときの案内文。押しても何も起きない。
@@ -59,6 +66,7 @@ fn hint(kind: SessionKind) -> &'static str {
 
 /// `width` に収まるタブと、その後ろに置く `+` チップ。チップの幅を先に取り分ける
 /// のは、名前の長いセッションが並ぶほど新しいセッションを起こす口が要るため。
+/// 同じ理由で、入り切らなければ `[x]` の方を落とす。
 pub fn row(
     kind: SessionKind,
     sessions: &[(&str, &str)],
@@ -79,7 +87,8 @@ pub fn row(
             .iter()
             .map(|(_, label)| format!(" {label} "))
             .collect();
-        let widths: Vec<u16> = labels.iter().map(|l| width_of(l)).collect();
+        let close_w = width_of(CLOSE);
+        let widths: Vec<u16> = labels.iter().map(|l| width_of(l) + close_w).collect();
         let (start, end) =
             visible_window(&widths, 0, width.saturating_sub(add_w), 0, selected, true);
         for i in start..end {
@@ -91,6 +100,15 @@ pub fn row(
                     selected: i == selected,
                 },
             );
+            if slots.last().map_or(0, |s| s.end) + close_w + add_w <= width {
+                push(
+                    &mut slots,
+                    CLOSE.into(),
+                    SlotKind::Close {
+                        session: sessions[i].0.into(),
+                    },
+                );
+            }
         }
     }
 
@@ -109,13 +127,13 @@ mod tests {
     }
 
     #[test]
-    fn タブは左から並びチップは最後に来る() {
+    fn タブの後ろに閉じる区画が並びチップは最後に来る() {
         let sessions = [("a", "CC:1"), ("b", "CC:2")];
         let slots = row(SessionKind::ClaudeCode, &sessions, Some("b"), 40);
 
         assert_eq!(
             slots.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(),
-            [(0, 6), (6, 12), (12, 15)]
+            [(0, 6), (6, 11), (11, 17), (17, 22), (22, 25)]
         );
         assert_eq!(
             hit(&slots, 0),
@@ -126,23 +144,46 @@ mod tests {
         );
         assert_eq!(
             hit(&slots, 7),
+            Some(&SlotKind::Close {
+                session: "a".into()
+            }),
+            "閉じるのは直前のタブのセッション"
+        );
+        assert_eq!(
+            hit(&slots, 12),
             Some(&SlotKind::Tab {
                 session: "b".into(),
                 selected: true
             })
         );
-        assert_eq!(hit(&slots, 13), Some(&SlotKind::Add));
-        assert_eq!(hit(&slots, 15), None, "チップの外は何も指さない");
+        assert_eq!(
+            hit(&slots, 18),
+            Some(&SlotKind::Close {
+                session: "b".into()
+            })
+        );
+        assert_eq!(hit(&slots, 23), Some(&SlotKind::Add));
+        assert_eq!(hit(&slots, 25), None, "チップの外は何も指さない");
     }
 
     #[test]
     fn 幅が足りなければ選んでいるタブを見せチップは残す() {
         let sessions = [("a", "CC:1"), ("b", "CC:2"), ("c", "CC:3")];
+        let slots = row(SessionKind::ClaudeCode, &sessions, Some("c"), 16);
+
+        let labels: Vec<&str> = slots.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, [" CC:3 ", CLOSE, ADD]);
+        assert_eq!(hit(&slots, 12), Some(&SlotKind::Add));
+    }
+
+    /// 削れる順は [x] → + の順。新しいセッションを起こす口が先に消えては困る。
+    #[test]
+    fn 閉じる区画が入らなければそれだけ落としてチップを残す() {
+        let sessions = [("a", "CC:1"), ("b", "CC:2"), ("c", "CC:3")];
         let slots = row(SessionKind::ClaudeCode, &sessions, Some("c"), 12);
 
         let labels: Vec<&str> = slots.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(labels, [" CC:3 ", ADD]);
-        assert_eq!(hit(&slots, 8), Some(&SlotKind::Add));
     }
 
     #[test]

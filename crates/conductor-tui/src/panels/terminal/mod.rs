@@ -165,9 +165,39 @@ impl TerminalPanel {
                 self.activate_visible();
                 Some(Vec::new())
             }
+            tabs::SlotKind::Close { session } => {
+                self.close_session(focus, &session);
+                Some(Vec::new())
+            }
             tabs::SlotKind::Add => Some(vec![Effect::NewSession(self.pane(region).kind)]),
             tabs::SlotKind::Hint => None,
         }
+    }
+
+    /// タブを閉じる。映していたセッションだったら同じ種類の残りへ移す。
+    fn close_session(&mut self, focus: Focus, id: &str) {
+        let Some(index) = self.index_of(Some(id)) else {
+            return;
+        };
+        let _ = self.pty.kill_session(index);
+        self.pty.remove_session(index);
+        if self.pane(region_of(focus)).session.as_deref() != Some(id) {
+            return;
+        }
+        // 落としたセッションのログを読んだままにはできない。
+        if focus == Focus::TerminalClaude {
+            self.transcript = None;
+            self.wants_clear = true;
+        }
+        let kind = self.pane(region_of(focus)).kind;
+        let next = self
+            .sessions(kind)
+            .first()
+            .map(|(_, id, _)| (*id).to_string());
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.show(next);
+        }
+        self.activate_visible();
     }
 
     /// 選択中の worktree にある kind のセッション。PtyStore 全体の添字を添える。
@@ -182,9 +212,9 @@ impl TerminalPanel {
             .collect()
     }
 
-    fn index_of(&self, session: Option<&String>) -> Option<usize> {
+    fn index_of(&self, session: Option<&str>) -> Option<usize> {
         let id = session?;
-        self.pty.sessions().iter().position(|s| s.id == *id)
+        self.pty.sessions().iter().position(|s| s.id == id)
     }
 
     /// 選択中の worktree が変わったとき、両パネルの表示をその worktree のものへ移す。
@@ -211,8 +241,8 @@ impl TerminalPanel {
     /// 見えているセッションの行バッファ上限を前面用へ上げる。
     fn activate_visible(&self) {
         for index in [
-            self.index_of(self.claude.session.as_ref()),
-            self.index_of(self.shell.session.as_ref()),
+            self.index_of(self.claude.session.as_deref()),
+            self.index_of(self.shell.session.as_deref()),
         ]
         .into_iter()
         .flatten()
@@ -229,20 +259,14 @@ impl TerminalPanel {
             Action::LeaveTerminal => return Some(vec![Effect::Focus(Focus::Explorer)]),
             Action::NextSession => self.cycle(ctx.focus, true),
             Action::PrevSession => self.cycle(ctx.focus, false),
-            // ライブ表示の一番上でさらに上へ押したら、vt100 の行数で頭打ちになる
-            // スクロールバックではなく .jsonl そのものを読むビューへ入る。
-            Action::ScrollbackUp | Action::ScrollbackTop
-                if ctx.focus == Focus::TerminalClaude && self.claude.scroll == 0 =>
-            {
-                let (opened, effects) = self.open_transcript();
+            Action::ScrollbackUp | Action::ScrollbackTop => {
+                let (opened, effects) = self.enter_transcript(ctx.focus);
                 if !opened {
                     self.scroll(ctx.focus, action);
                 }
                 return Some(effects);
             }
-            Action::ScrollbackUp | Action::ScrollbackDown | Action::ScrollbackTop => {
-                self.scroll(ctx.focus, action)
-            }
+            Action::ScrollbackDown => self.scroll(ctx.focus, action),
             Action::SnapToLive => {
                 if let Some(pane) = self.pane_mut(ctx.focus) {
                     pane.scroll = 0;
@@ -280,6 +304,16 @@ impl TerminalPanel {
         Some(Vec::new())
     }
 
+    /// ライブ表示の一番上でさらに上へ動かしたときだけ、vt100 の行数で頭打ちになる
+    /// スクロールバックではなく .jsonl そのものを読むビューへ入る。キーとホイールが
+    /// 同じ判断を通る唯一の場所。
+    fn enter_transcript(&mut self, focus: Focus) -> (bool, Vec<Effect>) {
+        if focus != Focus::TerminalClaude || self.claude.scroll != 0 {
+            return (false, Vec::new());
+        }
+        self.open_transcript()
+    }
+
     /// 開けたかどうかも返す — 開けなければ呼び出し側は通常のスクロールバックに落ちる。
     fn open_transcript(&mut self) -> (bool, Vec<Effect>) {
         let unavailable = |message: &str| {
@@ -288,7 +322,7 @@ impl TerminalPanel {
                 vec![Effect::Status(StatusLevel::Warning, message.to_string())],
             )
         };
-        let Some(index) = self.index_of(self.claude.session.as_ref()) else {
+        let Some(index) = self.index_of(self.claude.session.as_deref()) else {
             return unavailable("no Claude Code session in this panel");
         };
         let Some((working_dir, session_id, _)) = self.pty.claude_session_ref(index) else {
@@ -380,6 +414,60 @@ impl TerminalPanel {
         hit
     }
 
+    /// 端末区画のホイール。子プロセスへ渡す座標が要るので区画ごと受け取る。
+    pub fn wheel(
+        &mut self,
+        region: Region,
+        rect: Rect,
+        col: u16,
+        row: u16,
+        delta: isize,
+    ) -> Vec<Effect> {
+        let focus = focus_of(region);
+        let (content, session) = match focus {
+            Focus::Editor => (
+                render::editor_area(rect),
+                self.editor.as_ref().map(|e| e.session.as_str()),
+            ),
+            _ => (
+                render::content_area(rect),
+                self.pane(region).session.as_deref(),
+            ),
+        };
+        let lines = delta.unsigned_abs();
+        let up = delta < 0;
+
+        // マウスを要求している子 (vim, less --mouse) と自前のスクロールバックを持たない
+        // ページャは自分で捌く。こちらのオフセットも動かすと画面が二重に流れる。
+        if let Some(index) = self.index_of(session) {
+            let pty_col = col.saturating_sub(content.x) + 1;
+            let pty_row = row.saturating_sub(content.y) + 1;
+            if self
+                .pty
+                .forward_scroll_to_session(index, lines, up, pty_col, pty_row)
+            {
+                return Vec::new();
+            }
+        }
+
+        if focus == Focus::Editor {
+            return Vec::new();
+        }
+        if region == Region::TerminalClaude && self.transcript.is_some() {
+            self.transcript_scroll(delta);
+            return Vec::new();
+        }
+        if !up {
+            self.scroll_lines(focus, lines, false);
+            return Vec::new();
+        }
+        let (opened, effects) = self.enter_transcript(focus);
+        if !opened {
+            self.scroll_lines(focus, lines, true);
+        }
+        effects
+    }
+
     /// 空の区画のクリック。2 回目で新しいセッションを起こす。1 回で起こすと、
     /// 区画へフォーカスを移すだけのつもりのクリックがそのままプロセスを増やす。
     pub fn click(&mut self, focus: Focus) -> Vec<Effect> {
@@ -438,7 +526,7 @@ impl TerminalPanel {
         let Some(editor) = self.editor.take() else {
             return;
         };
-        if let Some(index) = self.index_of(Some(&editor.session)) {
+        if let Some(index) = self.index_of(Some(editor.session.as_str())) {
             let _ = self.pty.kill_session(index);
             self.pty.remove_session(index);
         }
@@ -448,7 +536,7 @@ impl TerminalPanel {
     /// 停止セッションの掃除タイマーを待つと、閉じた後も区画が残って見える。
     pub fn poll_editor_exit(&mut self) -> Option<PathBuf> {
         let session = self.editor.as_ref()?.session.clone();
-        match self.index_of(Some(&session)) {
+        match self.index_of(Some(session.as_str())) {
             Some(index) if self.pty.is_session_alive(index) => return None,
             Some(index) => self.pty.remove_session(index),
             None => {}
@@ -507,12 +595,24 @@ impl TerminalPanel {
             return;
         };
         let page = (pane.size.0 as usize / 2).max(1);
-        let want = match action {
-            Action::ScrollbackUp => pane.scroll + page,
-            Action::ScrollbackDown => pane.scroll.saturating_sub(page),
-            _ => usize::MAX,
+        match action {
+            Action::ScrollbackUp => self.scroll_lines(focus, page, true),
+            Action::ScrollbackDown => self.scroll_lines(focus, page, false),
+            _ => self.scroll_lines(focus, usize::MAX, true),
+        }
+    }
+
+    /// スクロールバックを行数で動かす。実際に効く位置は vt100 しか知らない。
+    fn scroll_lines(&mut self, focus: Focus, lines: usize, up: bool) {
+        let Some(pane) = self.pane_mut(focus) else {
+            return;
         };
-        let index = self.index_of(self.pane(region_of(focus)).session.as_ref());
+        let want = if up {
+            pane.scroll.saturating_add(lines)
+        } else {
+            pane.scroll.saturating_sub(lines)
+        };
+        let index = self.index_of(self.pane(region_of(focus)).session.as_deref());
         let clamped = match index {
             Some(index) => render::clamp_scrollback(&self.pty, index, want),
             None => 0,
@@ -626,8 +726,8 @@ impl TerminalPanel {
     /// 残したくなるのはほぼそちらだから。
     pub fn save_history(&self) -> Vec<Effect> {
         let visible = self
-            .index_of(self.claude.session.as_ref())
-            .or_else(|| self.index_of(self.shell.session.as_ref()));
+            .index_of(self.claude.session.as_deref())
+            .or_else(|| self.index_of(self.shell.session.as_deref()));
         let Some(index) = visible else {
             return vec![Effect::Status(
                 StatusLevel::Warning,
@@ -650,14 +750,14 @@ impl TerminalPanel {
 
     /// 見えているシェルがあるか。
     pub fn has_shell(&self) -> bool {
-        self.index_of(self.shell.session.as_ref()).is_some()
+        self.index_of(self.shell.session.as_deref()).is_some()
     }
 
     /// 見えているシェルへ 1 行流す。スクロールを最新へ戻すのは、送った行が
     /// 遡って読んでいる位置の外で流れると押しても何も起きなく見えるため。
     pub fn send_line(&mut self, line: &str) -> Result<()> {
         let index = self
-            .index_of(self.shell.session.as_ref())
+            .index_of(self.shell.session.as_deref())
             .ok_or_else(|| anyhow::anyhow!("no shell session to run this in"))?;
         self.pty
             .write_to_session(index, format!("{line}\n").as_bytes())?;
@@ -668,9 +768,9 @@ impl TerminalPanel {
     /// フォーカス中の区画の PTY へキーを流す。
     pub fn forward_key(&self, key: KeyEvent, focus: Focus) {
         let session = match focus {
-            Focus::TerminalClaude => self.claude.session.as_ref(),
-            Focus::TerminalShell => self.shell.session.as_ref(),
-            Focus::Editor => self.editor.as_ref().map(|e| &e.session),
+            Focus::TerminalClaude => self.claude.session.as_deref(),
+            Focus::TerminalShell => self.shell.session.as_deref(),
+            Focus::Editor => self.editor.as_ref().map(|e| e.session.as_str()),
             _ => return,
         };
         let Some(index) = self.index_of(session) else {
@@ -693,7 +793,7 @@ impl TerminalPanel {
             Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
             _ => return,
         };
-        let Some(index) = self.index_of(session.as_ref()) else {
+        let Some(index) = self.index_of(session.as_deref()) else {
             return;
         };
         if let Err(e) = self.pty.write_paste_to_session(index, text) {
@@ -714,7 +814,7 @@ impl TerminalPanel {
             if editor.size != size {
                 editor.size = size;
                 let session = editor.session.clone();
-                if let Some(index) = self.index_of(Some(&session)) {
+                if let Some(index) = self.index_of(Some(session.as_str())) {
                     self.pty.resize_session(index, size.0, size.1);
                 }
             }
@@ -836,6 +936,16 @@ fn editor_command(visual: Option<&str>, editor: Option<&str>, fallback: &str) ->
     }
 }
 
+/// 端末の区画をその Focus に対応づける。呼び出し側は端末の区画しか渡さない。
+pub(super) fn focus_of(region: Region) -> Focus {
+    match region {
+        Region::TerminalClaude => Focus::TerminalClaude,
+        Region::TerminalShell => Focus::TerminalShell,
+        Region::Editor => Focus::Editor,
+        _ => unreachable!("focus_of: 端末以外の region {region:?}"),
+    }
+}
+
 fn region_of(focus: Focus) -> Region {
     match focus {
         Focus::TerminalShell => Region::TerminalShell,
@@ -946,6 +1056,85 @@ mod tests {
             panel.tab_click(Focus::TerminalShell, add, WIDTH),
             Some(vec![Effect::NewSession(SessionKind::Shell)])
         );
+
+        // 映しているセッションを閉じたら、残っている方へ移る。
+        let close = x_of(&tabs::SlotKind::Close {
+            session: ids[1].clone(),
+        });
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, close, WIDTH),
+            Some(Vec::new())
+        );
+        let left: Vec<String> = panel
+            .sessions(SessionKind::Shell)
+            .iter()
+            .map(|(_, id, _)| (*id).to_string())
+            .collect();
+        assert_eq!(left, [ids[0].clone()]);
+        assert_eq!(panel.shell.session.as_deref(), Some(ids[0].as_str()));
+
+        // 最後の 1 本を閉じたら区画は空になる。
+        let slots = panel.tab_slots(Region::TerminalShell, WIDTH);
+        let close = slots
+            .iter()
+            .find(|slot| matches!(slot.kind, tabs::SlotKind::Close { .. }))
+            .unwrap()
+            .start;
+        panel.tab_click(Focus::TerminalShell, close, WIDTH);
+        assert!(panel.sessions(SessionKind::Shell).is_empty());
+        assert_eq!(panel.shell.session, None);
+    }
+
+    /// ホイールは、子がマウスを要求していればそちらへ渡す。ローカルのスクロール
+    /// バックまで動かすと、ページャの中で画面が二重に流れる。
+    #[test]
+    fn ホイールは子が捌くならスクロールバックに触らない() {
+        const RECT: Rect = Rect {
+            x: 0,
+            y: 0,
+            width: 42,
+            height: 12,
+        };
+        let mut ws = Workspace::for_test();
+        let _dir = spawn_shell(
+            &mut ws,
+            "i=0; while [ $i -lt 60 ]; do echo line$i; i=$((i+1)); done\n",
+        );
+        // 画面 10 行ぶん全部を読む。既定の 6 行だと最後の行が窓の外に出る。
+        ws.panels.terminal.shell.size = (10, 40);
+        wait_for(&ws, "line59");
+
+        let panel = &mut ws.panels.terminal;
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        assert!(panel.shell.scroll > 0, "素の子なら遡れる");
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, 3);
+        assert_eq!(panel.shell.scroll, 0);
+
+        let index = panel.index_of(panel.shell.session.as_deref()).unwrap();
+        panel
+            .pty
+            .write_to_session(index, b"printf '\\033[?1000h'; printf 'mouse%s\\n' on\n")
+            .unwrap();
+        // 入力そのものがエコーされるので、出力にしか現れない綴りで待つ。
+        wait_for(&ws, "mouseon");
+
+        let panel = &mut ws.panels.terminal;
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        assert_eq!(panel.shell.scroll, 0, "子に渡したらこちらは動かさない");
+    }
+
+    /// ホイールでの入場はキーと同じ経路を通る。セッションが無ければ理由が出る。
+    #[test]
+    fn ホイールの上スクロールもトランスクリプトの入口を通る() {
+        let mut ws = Workspace::for_test();
+        let effects =
+            ws.panels
+                .terminal
+                .wheel(Region::TerminalClaude, Rect::new(0, 0, 42, 12), 5, 5, -3);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Warning, _)]
+        ));
     }
 
     /// キーが spawn まで届くことを見る。claude の在否に依らないよう shell で確かめる。
