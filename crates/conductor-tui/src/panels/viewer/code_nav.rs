@@ -309,7 +309,7 @@ impl ViewerPanel {
                 occurrence,
                 word,
                 ctx,
-                self.word_anchor(line_idx, occurrence, ctx.review),
+                self.word_anchor(line_idx, occurrence, ctx),
             ),
             Jump::Actions => self.open_actions(word, ctx),
         }
@@ -777,14 +777,12 @@ impl ViewerPanel {
 
     // ── 画面の 1 点を本文の座標へ ────────────────────────────────────────
 
-    /// 折りたたみは飛ばして数えるが、開いているスレッドの行はまだ数に入れていない。
-    /// [ViewerPanel::click] と同じ数え方なので、ずれ方も同じになる。
-    pub fn word_at_screen(&self, col: u16, row: u16, review: &ReviewState) -> Option<Spotted> {
+    pub fn word_at_screen(&self, col: u16, row: u16, ctx: &Ctx) -> Option<Spotted> {
         if self.diff.active || row < self.body.y {
             return None;
         }
-        let line_1 = self.line_at_screen(row)?;
-        let text_col = self.text_col_at(col, review)?;
+        let line_1 = self.line_at_screen(row, ctx)?;
+        let text_col = self.text_col_at(col, ctx.review)?;
         let line = self.content.lines.get(line_1 - 1)?;
         let (occurrence, (start, _, word)) = identifier_occurrences(line)
             .enumerate()
@@ -803,7 +801,7 @@ impl ViewerPanel {
 
     /// Cmd/Ctrl + クリック。桁を運んでいるので語を選ばせる必要がない。
     pub fn jump_at_screen(&mut self, col: u16, row: u16, ctx: &Ctx) -> Option<Vec<Effect>> {
-        let spot = self.word_at_screen(col, row, ctx.review)?;
+        let spot = self.word_at_screen(col, row, ctx)?;
         Some(self.run_jump(
             Jump::Definition,
             spot.line - 1,
@@ -814,11 +812,20 @@ impl ViewerPanel {
     }
 
     /// 画面行が指している本文の行 (1 始まり)。
-    fn line_at_screen(&self, row: u16) -> Option<usize> {
+    fn line_at_screen(&self, row: u16, ctx: &Ctx) -> Option<usize> {
         let offset = row.checked_sub(self.body.y)? as usize;
-        self.fold
-            .visible_from(self.scroll.line + 1, self.content.lines.len())
-            .nth(offset)
+        match render::origin_at(
+            self,
+            ctx.review,
+            ctx.theme,
+            ctx.config.ui.icon_set(),
+            self.body.width,
+            self.body.height as usize,
+            offset,
+        ) {
+            render::Origin::Line(line_1) => Some(line_1),
+            _ => None,
+        }
     }
 
     /// 画面の桁を本文の桁へ直す。ガターの上なら `None`。
@@ -842,7 +849,7 @@ impl ViewerPanel {
     }
 
     /// 語を選んでいる最中の位置。ポップアップはそこへ寄せる。
-    fn word_anchor(&self, line_idx: usize, occurrence: usize, review: &ReviewState) -> (u16, u16) {
+    fn word_anchor(&self, line_idx: usize, occurrence: usize, ctx: &Ctx) -> (u16, u16) {
         let start = self
             .content
             .lines
@@ -850,15 +857,18 @@ impl ViewerPanel {
             .and_then(|line| identifier_occurrences(line).nth(occurrence))
             .map_or(0, |(start, _, _)| start);
         let col = self.body.x as usize
-            + self.gutter_width(review)
+            + self.gutter_width(ctx.review)
             + start.saturating_sub(self.scroll.column);
-        let row = self
-            .fold
-            .visible_index(line_idx + 1, self.content.lines.len())
-            .saturating_sub(
-                self.fold
-                    .visible_index(self.scroll.line + 1, self.content.lines.len()),
-            );
+        let row = render::offset_of(
+            self,
+            ctx.review,
+            ctx.theme,
+            ctx.config.ui.icon_set(),
+            self.body.width,
+            self.body.height as usize,
+            line_idx + 1,
+        )
+        .unwrap_or(0);
         (
             (col as u16).min(self.body.x + self.body.width.saturating_sub(1)),
             self.body.y + (row as u16).min(self.body.height.saturating_sub(1)),
@@ -1079,6 +1089,20 @@ pub fn caller() { target(); }
         fn viewer(&self) -> &ViewerPanel {
             &self.ws.panels.viewer
         }
+
+        fn word_at(&mut self, col: u16, row: u16) -> Option<Spotted> {
+            let root = self.ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = self.ws.split(&root);
+            panels.viewer.word_at_screen(col, row, &ctx)
+        }
+
+        fn install(&mut self, comments: Vec<conductor_core::review_store::ReviewComment>) {
+            self.ws.review.install(Ok(crate::review::Snapshot {
+                branch: "main".into(),
+                comments,
+                ..crate::review::Snapshot::default()
+            }));
+        }
     }
 
     fn at(path: &str, line: u32) -> Location {
@@ -1260,18 +1284,38 @@ pub fn caller() { target(); }
     fn 画面の桁は本文の語に解決する() {
         let mut h = Harness::new();
         h.ws.panels.viewer.body = ratatui::layout::Rect::new(0, 5, 80, 20);
-        let review = crate::review::ReviewState::default();
         // 行番号 1 桁 + GUTTER_FIXED 4 = 5 桁ぶんがガター。
         let gutter = 1 + render::GUTTER_FIXED as u16;
-        let spot = h
-            .viewer()
-            .word_at_screen(gutter + 7, 6, &review)
-            .expect("caller の上");
+        let spot = h.word_at(gutter + 7, 6).expect("caller の上");
         assert_eq!((spot.word.as_str(), spot.line), ("caller", 2));
 
-        assert!(
-            h.viewer().word_at_screen(gutter - 1, 6, &review).is_none(),
-            "ガターの上は語ではない"
-        );
+        assert!(h.word_at(gutter - 1, 6).is_none(), "ガターの上は語ではない");
+    }
+
+    #[test]
+    fn 開いたスレッドの下の語を指せる() {
+        let mut h = Harness::new();
+        h.ws.panels.viewer.body = ratatui::layout::Rect::new(0, 5, 80, 20);
+        h.install(vec![crate::review::tests::comment("a", "lib.rs", 1, None)]);
+        let gutter = (render::MARK + 1 + render::GUTTER_FIXED) as u16;
+
+        assert!(h.word_at(gutter + 7, 6).is_none(), "6 行目はスレッドの本文");
+        let rows = {
+            let root = h.ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = h.ws.split(&root);
+            render::offset_of(
+                &panels.viewer,
+                ctx.review,
+                ctx.theme,
+                ctx.config.ui.icon_set(),
+                80,
+                20,
+                2,
+            )
+            .expect("2 行目は窓の中")
+        };
+        assert!(rows > 1, "スレッドが割り込んでいる: {rows}");
+        let spot = h.word_at(gutter + 7, 5 + rows as u16).expect("caller の上");
+        assert_eq!((spot.word.as_str(), spot.line), ("caller", 2));
     }
 }

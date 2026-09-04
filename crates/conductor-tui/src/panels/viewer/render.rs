@@ -281,6 +281,21 @@ pub(super) fn origin_at(
         .map_or(Origin::Other, |(_, origin)| *origin)
 }
 
+/// 本文の行が描かれている画面の offset。折りたたみの中と窓の外は None。
+pub(super) fn offset_of(
+    panel: &ViewerPanel,
+    review: &ReviewState,
+    theme: &Theme,
+    icons: IconSet,
+    width: u16,
+    height: usize,
+    line_1: usize,
+) -> Option<usize> {
+    rows(panel, review, theme, icons, width, height)
+        .iter()
+        .position(|(_, origin)| *origin == Origin::Line(line_1))
+}
+
 fn rows(
     panel: &ViewerPanel,
     review: &ReviewState,

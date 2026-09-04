@@ -308,13 +308,10 @@ fn on_mouse(
         MouseEventKind::ScrollUp => scroll_region(ws, svc, layout, region, mouse, -3),
         // 端末はポインタが窓の外に出たことを報せないので、区画の外に出た時点で降ろす。
         MouseEventKind::Moved => {
-            let Workspace { panels, review, .. } = ws;
+            let root = ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = ws.split(&root);
             let over = (region == Region::Viewer)
-                .then(|| {
-                    panels
-                        .viewer
-                        .word_at_screen(mouse.column, mouse.row, review)
-                })
+                .then(|| panels.viewer.word_at_screen(mouse.column, mouse.row, &ctx))
                 .flatten();
             panels.viewer.note_pointer(over);
         }
