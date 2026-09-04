@@ -1,4 +1,4 @@
-//! 旧 src/reflow/ のテストの移植。振り分けは docs/rewrite-ports/reflow.md。
+//! 旧 src/reflow/ (v0.122.0) のテストの移植。
 
 use conductor_core::claude_log::{CountedBucket, DisplayBlock, LogEntry, ResultKind, Role};
 use conductor_core::config::Config;
