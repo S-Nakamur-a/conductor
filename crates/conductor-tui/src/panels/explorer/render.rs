@@ -4,7 +4,8 @@
 use conductor_core::config::Config;
 use conductor_core::diff_state::DiffListEntry;
 use conductor_core::git_engine::status_map::TreeGitState;
-use conductor_core::icons::{IconSet, dir_icon, expand_arrow, file_icon};
+use conductor_core::icons::{COMMENT, IconSet, dir_icon, expand_arrow, file_icon};
+use conductor_core::review_store::CommentStatus;
 use conductor_core::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -214,15 +215,17 @@ pub fn changes_lines(
                 // ファイル名の色は git のステージ状態。行数はベースからの合計なので、
                 // その内訳がコミット済みか手元の編集かはこの色でしか分からない。
                 let fg = stage_color(theme, panel.tree().status().status(&file.path));
+                let icon = file_icon(name);
                 let mark = if review.is_viewed(&file.path) {
                     " \u{2713} "
                 } else {
                     "   "
                 };
-                vec![
+                let mut spans = vec![
+                    Span::raw(format!("  {indent}")),
                     Span::styled(
-                        format!("  {indent}{} ", file_icon(name).glyph(icons)),
-                        Style::default().fg(theme.muted),
+                        format!("{} ", icon.glyph(icons)),
+                        Style::default().fg(icon.role.color(theme)),
                     ),
                     Span::styled(name.to_string(), Style::default().fg(fg)),
                     Span::styled(
@@ -233,13 +236,36 @@ pub fn changes_lines(
                         format!(" -{}", file.deleted_lines),
                         Style::default().fg(theme.diff_del),
                     ),
-                    Span::styled(mark, Style::default().fg(theme.success)),
-                ]
+                ];
+                if let Some(badge) = comment_badge(review, &file.path, theme, icons) {
+                    spans.push(badge);
+                }
+                spans.push(Span::styled(mark, Style::default().fg(theme.success)));
+                spans
             }
         };
         lines.push(row_line(spans, theme, row == cursor.selected(), focused));
     }
     lines
+}
+
+/// 解決済みが muted でなく hint なのは、muted が一部のテーマで背景と同化するため。
+fn comment_badge(
+    review: &ReviewState,
+    path: &str,
+    theme: &Theme,
+    icons: IconSet,
+) -> Option<Span<'static>> {
+    let comments = review.for_file(path);
+    if comments.is_empty() {
+        return None;
+    }
+    let unresolved = comments.iter().any(|c| c.status == CommentStatus::Pending);
+    let color = if unresolved { theme.accent } else { theme.hint };
+    Some(Span::styled(
+        format!("  {}{}", COMMENT.get(icons), comments.len()),
+        Style::default().fg(color),
+    ))
 }
 
 /// None は status のエントリが無い、つまり HEAD に対してクリーン。編集 → add → さらに
