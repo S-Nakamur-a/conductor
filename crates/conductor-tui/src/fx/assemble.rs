@@ -1,21 +1,17 @@
-//! 起動の演出。四隅を置き、辺を伸ばして枠を組み上げ、閉じきってから中身を見せる。
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! 四隅を置き、辺を伸ばして枠を組み上げ、閉じきってから中身を見せる。
 
 use conductor_core::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 
+use super::stagger::Stagger;
 use super::{ease, on_edge};
 
-/// ゆらぎを作るパネル数。
-const PANELS: usize = 5;
-
 pub(super) const DURATION_MS: u64 = 640;
-/// パネルごとの開始のずらしと、そこに乗せるゆらぎの幅。
-const PANEL_STAGGER: f64 = 0.08;
-const JITTER_MS: i64 = 40;
+/// パネルごとの開始のずらしと、そこに乗せるゆらぎの幅 (進捗の割合)。
+pub(super) const STAGGER_STEP: f64 = 0.08;
+pub(super) const JITTER: f64 = 40.0 / DURATION_MS as f64;
 
 /// 四隅を置いてから辺が伸び始めるまでの割合。
 const HOLD_RATIO: f64 = 0.25;
@@ -26,49 +22,23 @@ const GLOW_PEAK: f64 = 0.40;
 /// 1 枚のパネルが持ち時間のうち枠を描くのに使う割合。
 const FRAME_SHARE: f64 = 0.55;
 
-/// パネルごとの開始のゆらぎ。順序は [offsets] が保つので、ここは幅だけ決める。
-pub(super) fn jitter() -> Vec<f64> {
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let span = JITTER_MS as f64 / DURATION_MS as f64;
-    (0..PANELS as u32)
-        // 起動ごとに違えばよいだけなので、質のよい乱数は要らない。
-        .map(|i| (f64::from(seed.rotate_left(i * 8) % 1000) / 1000.0 * 2.0 - 1.0) * span)
-        .collect()
-}
-
-/// パネルごとの開始時点。ずらしにゆらぎを乗せたうえで、前のパネルより早く始まらない
-/// よう押し出す。ゆらぎ幅がずらしより広いと素朴な加算では順序が入れ替わる。
-pub(super) fn offsets(jitter: &[f64]) -> Vec<f64> {
-    let mut out = Vec::with_capacity(jitter.len());
-    let mut prev = f64::NEG_INFINITY;
-    for (i, j) in jitter.iter().enumerate() {
-        let v = (PANEL_STAGGER * i as f64 + j).max(prev);
-        out.push(v);
-        prev = v;
-    }
-    out
-}
-
 pub(super) fn paint(
     buf: &mut Buffer,
     area: Rect,
     panels: &[Rect],
     progress: f64,
-    offsets: &[f64],
+    stagger: &Stagger,
     theme: &Theme,
 ) {
     if progress >= 1.0 {
         return;
     }
-    let closed = frames_closed_at(offsets);
+    let closed = frames_closed_at(stagger);
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             match locate(panels, x, y) {
                 Part::Edge(i) => {
-                    let p = staggered(progress, i, offsets) / FRAME_SHARE;
+                    let p = stagger.local(progress, i) / FRAME_SHARE;
                     paint_edge(buf, panels[i], x, y, p.min(1.0), progress, theme);
                 }
                 // 枠が閉じきるまで中身は伏せる。まだ辺が伸びている横で本文が読めると、
@@ -86,10 +56,10 @@ pub(super) fn paint(
     apply_glow(buf, area, progress, closed, theme);
 }
 
-/// 最後のパネルの枠が閉じきる時点。ずらしが大きいほど後ろへ動くので offsets から導く。
+/// 最後のパネルの枠が閉じきる時点。ずらしが大きいほど後ろへ動くのでずらしから導く。
 /// 固定値にすると、ずらしを増やしたときに中身が枠より先に出る。
-fn frames_closed_at(offsets: &[f64]) -> f64 {
-    let last = offsets.last().copied().unwrap_or(0.0);
+fn frames_closed_at(stagger: &Stagger) -> f64 {
+    let last = stagger.last();
     last + FRAME_SHARE * (1.0 - last)
 }
 
@@ -148,13 +118,6 @@ fn locate(panels: &[Rect], x: u16, y: u16) -> Part {
 
 fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.right() && y >= r.y && y < r.bottom()
-}
-
-/// パネル i にとっての進捗。offsets のぶん遅れて始まる。
-fn staggered(progress: f64, i: usize, offsets: &[f64]) -> f64 {
-    let offset = offsets.get(i).copied().unwrap_or(0.0);
-    let last = offsets.last().copied().unwrap_or(0.0);
-    ((progress - offset) / (1.0 - last).max(0.1)).clamp(0.0, 1.0)
 }
 
 /// 枠セルの、四隅からの距離と辺の半分の長さ。
@@ -230,36 +193,6 @@ mod tests {
         ]
     }
 
-    #[test]
-    fn ゆらぎは指定した幅に収まる() {
-        let span = JITTER_MS as f64 / DURATION_MS as f64;
-        let got = jitter();
-        assert_eq!(got.len(), PANELS);
-        for j in got {
-            assert!(j.abs() <= span, "{j} が ±{span} を超えた");
-        }
-    }
-
-    /// ゆらぎがずらしより広くても左から順のまま。入れ替わると「毎回違う順で開く」
-    /// ことになり、固定順を選んだ意図と食い違う。
-    #[test]
-    fn ゆらぎが広くてもパネルの順序は入れ替わらない() {
-        let wide = PANEL_STAGGER * 4.0;
-        for case in [
-            vec![wide, -wide, wide, -wide],
-            vec![-wide, wide, -wide, wide],
-            vec![0.0, 0.0, 0.0, 0.0],
-        ] {
-            let got = offsets(&case);
-            for pair in got.windows(2) {
-                assert!(
-                    pair[0] <= pair[1],
-                    "順序が入れ替わった: {got:?} (jitter={case:?})"
-                );
-            }
-        }
-    }
-
     /// 四隅は進捗によらず同じ位置に居続ける。ここが動くと枠が「組み上がる」ではなく
     /// 「泳ぐ」ように見える。
     #[test]
@@ -279,7 +212,7 @@ mod tests {
         for step in 0..=20 {
             let p = f64::from(step) / 20.0;
             let mut buf = filled(AREA);
-            paint(&mut buf, AREA, &panels(), p, &[0.0; PANELS], &theme());
+            paint(&mut buf, AREA, &panels(), p, &Stagger::uniform(5), &theme());
             for &(x, y) in &corners {
                 assert_eq!(
                     buf.cell((x, y)).unwrap().symbol(),
@@ -293,7 +226,14 @@ mod tests {
     #[test]
     fn 完了時は一切伏せない() {
         let mut buf = filled(AREA);
-        paint(&mut buf, AREA, &panels(), 1.0, &[0.0; PANELS], &theme());
+        paint(
+            &mut buf,
+            AREA,
+            &panels(),
+            1.0,
+            &Stagger::uniform(5),
+            &theme(),
+        );
         for y in 0..AREA.height {
             for x in 0..AREA.width {
                 assert_eq!(buf.cell((x, y)).unwrap().symbol(), "x");
@@ -304,7 +244,14 @@ mod tests {
     #[test]
     fn 開始時はパネルの内側が伏せられる() {
         let mut buf = filled(AREA);
-        paint(&mut buf, AREA, &panels(), 0.0, &[0.0; PANELS], &theme());
+        paint(
+            &mut buf,
+            AREA,
+            &panels(),
+            0.0,
+            &Stagger::uniform(5),
+            &theme(),
+        );
         assert_eq!(buf.cell((5, 6)).unwrap().symbol(), " ");
         assert_eq!(buf.cell((25, 8)).unwrap().symbol(), " ");
     }
@@ -313,7 +260,7 @@ mod tests {
     /// 増やしたときに枠より先に本文が読める。
     #[test]
     fn 中身はずらしを増やしても枠の完成を待つ() {
-        let wide = vec![0.0, 0.2, 0.4, 0.6];
+        let wide = Stagger::from_jitter(0.2, &[0.0; 4]);
         let closed = frames_closed_at(&wide);
         assert!(closed > FRAME_SHARE, "ずらしを増やしても待ち時間が伸びない");
 

@@ -2,11 +2,16 @@
 //! (呼ぶ側の [Fx::play]) を分けてある。新しい演出は [Kind] に variant を足して
 //! その impl に振る舞いを書くだけでよい。
 //!
+//! [Kind] の名前は描くものであって用途ではない。起動時に何を出すかは
+//! [crate::workspace::Workspace::new] が、索引の完了に何を出すかは [crate::index] が
+//! 決めていて、終了時に同じ演出を出したければそこで play するだけでよい。
+//!
 //! レイアウトには触らない。各パネルが最終的な矩形へ描き切ったあとのセルを加工する
 //! だけなので、列幅も PTY のサイズも動かない。幅を動かすと [crate::panels::terminal]
 //! がフレームごとに PTY を resize してしまう。
 
-mod boot;
+mod assemble;
+mod stagger;
 
 use std::time::{Duration, Instant};
 
@@ -15,6 +20,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::layout::Region;
+
+pub use stagger::Stagger;
 
 const FLASH_MS: u64 = 260;
 /// 不定バーが 1 周する時間。
@@ -27,8 +34,8 @@ const EIGHTH: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 /// 演出の種類。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
-    /// 起動。四隅から枠を組み上げ、閉じきってから中身を見せる。
-    Boot { offsets: Vec<f64> },
+    /// 四隅から枠を組み上げ、閉じきってから中身を見せる。矩形ごとにずらして始まる。
+    Assemble { stagger: Stagger },
     /// 終わりの見えない作業中。上辺を流れ続ける光で、止めるまで続く。
     Busy,
     /// 枠を一度 accent へ沸かせて元の色へ落とす。完了や切替の合図。
@@ -45,16 +52,17 @@ pub enum Target {
 }
 
 impl Kind {
-    pub fn boot() -> Self {
-        Self::Boot {
-            offsets: boot::offsets(&boot::jitter()),
+    /// アコーディオンの 5 枚を左から順に組み上げる。
+    pub fn assemble() -> Self {
+        Self::Assemble {
+            stagger: Stagger::jittered(5, assemble::STAGGER_STEP, assemble::JITTER),
         }
     }
 
     /// 経過時間を進捗へ。None なら終わり。Busy は終わらないので位相を返す。
     fn progress(&self, elapsed: Duration) -> Option<f64> {
         match self {
-            Kind::Boot { .. } => finite(elapsed, boot::DURATION_MS),
+            Kind::Assemble { .. } => finite(elapsed, assemble::DURATION_MS),
             Kind::Busy => Some(elapsed.as_millis() as f64 / BAR_CYCLE_MS % 1.0),
             Kind::Flash => finite(elapsed, FLASH_MS),
         }
@@ -62,17 +70,17 @@ impl Kind {
 
     /// 走っているあいだ他の演出を出さない。2 つの光が同時に走るとどちらも読めない。
     fn exclusive(&self) -> bool {
-        matches!(self, Kind::Boot { .. })
+        matches!(self, Kind::Assemble { .. })
     }
 
     /// 入力があったら完成状態へ飛ばす。押した人を待たせる理由はない。
     fn skip_on_input(&self) -> bool {
-        matches!(self, Kind::Boot { .. })
+        matches!(self, Kind::Assemble { .. })
     }
 
     fn paint(&self, buf: &mut Buffer, screen: Rect, rects: &[Rect], p: f64, theme: &Theme) {
         match self {
-            Kind::Boot { offsets } => boot::paint(buf, screen, rects, p, offsets, theme),
+            Kind::Assemble { stagger } => assemble::paint(buf, screen, rects, p, stagger, theme),
             Kind::Busy => rects.iter().for_each(|r| paint_bar(buf, *r, p, theme)),
             Kind::Flash => rects.iter().for_each(|r| paint_flash(buf, *r, p, theme)),
         }
@@ -299,7 +307,7 @@ mod tests {
     #[test]
     fn 時計は最初のフレームまで動かない() {
         let mut fx = Fx::default();
-        fx.play(Kind::boot(), Target::Panels);
+        fx.play(Kind::assemble(), Target::Panels);
         std::thread::sleep(Duration::from_millis(30));
         assert_eq!(fx.running[0].progress(), Some(0.0), "描く前に進んでいる");
 
@@ -314,7 +322,7 @@ mod tests {
     #[test]
     fn 時計は一度始めたら打ち直さない() {
         let mut fx = Fx::default();
-        fx.play(Kind::boot(), Target::Panels);
+        fx.play(Kind::assemble(), Target::Panels);
         fx.start_pending();
         std::thread::sleep(Duration::from_millis(30));
         let p = fx.running[0].progress().unwrap();
@@ -329,11 +337,11 @@ mod tests {
     #[test]
     fn 入力で飛ぶのは起動演出だけ() {
         let mut fx = Fx::default();
-        fx.play(Kind::boot(), Target::Panels);
+        fx.play(Kind::assemble(), Target::Panels);
         fx.play(Kind::Flash, VIEWER);
         assert!(fx.is_animating());
         fx.skip();
-        assert!(!fx.is_playing(&Kind::boot(), Target::Panels));
+        assert!(!fx.is_playing(&Kind::assemble(), Target::Panels));
         assert!(fx.is_playing(&Kind::Flash, VIEWER));
     }
 
@@ -391,7 +399,7 @@ mod tests {
     #[test]
     fn 起動演出中は他の演出を重ねない() {
         let mut fx = Fx::default();
-        fx.play(Kind::boot(), Target::Panels);
+        fx.play(Kind::assemble(), Target::Panels);
         fx.play(Kind::Busy, VIEWER);
         fx.start_pending();
         fx.running[1].started = Some(Instant::now() - Duration::from_millis(300));

@@ -237,7 +237,7 @@ impl Workspace {
         };
         let mut fx = crate::fx::Fx::default();
         if config.ui.startup_animation {
-            fx.play(crate::fx::Kind::boot(), crate::fx::Target::Panels);
+            fx.play(crate::fx::Kind::assemble(), crate::fx::Target::Panels);
         }
         Self {
             repo,

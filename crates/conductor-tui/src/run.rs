@@ -1054,7 +1054,7 @@ mod tests {
         assert_eq!(liveness(&ws, false), Liveness::Idle, "切ってあるのに動く");
 
         ws.fx
-            .play(crate::fx::Kind::boot(), crate::fx::Target::Panels);
+            .play(crate::fx::Kind::assemble(), crate::fx::Target::Panels);
         assert_eq!(liveness(&ws, false), Liveness::Active);
         ws.fx.skip();
         assert_eq!(liveness(&ws, false), Liveness::Idle);
