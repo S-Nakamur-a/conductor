@@ -388,7 +388,9 @@ impl Workspace {
     /// svc から届いた結果を持ち主のパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
     pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
-            TaskResult::Tree(_) | TaskResult::Diff(_) => self.panels.explorer.apply_result(result),
+            TaskResult::Tree(_) | TaskResult::Diff(_) | TaskResult::HeadLog { .. } => {
+                self.panels.explorer.apply_result(result)
+            }
             TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
                 self.panels.viewer.apply_result(result)
             }

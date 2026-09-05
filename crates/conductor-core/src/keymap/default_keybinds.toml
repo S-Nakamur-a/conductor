@@ -139,6 +139,7 @@
 "g" = "go_to_top"
 "G" = "go_to_bottom"
 "d" = "show_diff_list"
+"L" = "show_commit_log"
 "c" = "show_comment_list"
 "C" = "open_comment_list"
 "w" = "show_revidere"
@@ -170,6 +171,24 @@
 "v" = "toggle_viewed"
 # 下区画の 2 つの一覧は互いに行き来できる。ツリーまで戻らないと切り替えられないと、
 # コメントを見てから変更一覧へ戻る往復が毎回 2 手増える。
+"c" = "show_comment_list"
+"L" = "show_commit_log"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Explorer: commit log ────────────────────────────────────────────────────────
+[layers.explorer_commit_log]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"d" = "show_diff_list"
 "c" = "show_comment_list"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"

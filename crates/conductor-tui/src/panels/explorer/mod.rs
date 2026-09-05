@@ -88,7 +88,7 @@ impl ExplorerPanel {
     pub fn key_context(&self) -> KeyContext {
         match (self.pane, self.bottom) {
             (Pane::Tree, _) => KeyContext::Explorer,
-            (Pane::Bottom, BottomView::GitChanges) => KeyContext::ExplorerDiffList,
+            (Pane::Bottom, BottomView::GitChanges) => self.changes.key_context(),
             (Pane::Bottom, BottomView::Comments) => KeyContext::ExplorerCommentList,
         }
     }
@@ -109,9 +109,9 @@ impl ExplorerPanel {
         if self.tree.root() == root {
             return Vec::new();
         }
-        self.tree.set_root(root);
+        self.tree.set_root(root.clone());
         self.tree_cursor = ListCursor::default();
-        self.changes.reset(base);
+        self.changes.reset(root, base);
         self.refresh()
     }
 
@@ -123,7 +123,7 @@ impl ExplorerPanel {
                 root: self.tree.root().to_path_buf(),
                 expanded: self.tree.expanded_dirs(),
             }),
-            self.changes.reload(self.tree.root()),
+            self.changes.reload(),
         ]
     }
 
@@ -131,10 +131,16 @@ impl ExplorerPanel {
         self.clamp();
         self.comments.clamp(ctx.review);
         match action {
-            Action::ShowDiffList => return Some(self.show(BottomView::GitChanges)),
+            Action::ShowDiffList => {
+                self.changes.show_files();
+                return Some(self.show(BottomView::GitChanges));
+            }
+            Action::ShowCommitLog => return Some(self.show_commit_log()),
             Action::ShowCommentList => return Some(self.show(BottomView::Comments)),
             Action::ExitSubPanel if self.pane == Pane::Bottom => {
-                self.pane = Pane::Tree;
+                if self.bottom != BottomView::GitChanges || !self.changes.leave_log() {
+                    self.pane = Pane::Tree;
+                }
                 return Some(Vec::new());
             }
             _ => {}
@@ -151,6 +157,11 @@ impl ExplorerPanel {
         self.bottom = view;
         self.pane = Pane::Bottom;
         Vec::new()
+    }
+
+    pub fn show_commit_log(&mut self) -> Vec<Effect> {
+        self.show(BottomView::GitChanges);
+        self.changes.show_log()
     }
 
     /// 中身が入れ替わっていることがあるので、窓の高さを知っているここで収め直す。
@@ -278,6 +289,7 @@ impl ExplorerPanel {
                 Vec::new()
             }
             TaskResult::Diff(diff) => self.changes.install(*diff),
+            TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
             _ => Vec::new(),
         }
     }
@@ -504,11 +516,10 @@ mod tests {
     #[test]
     fn 頼んだ出どころと違うdiffは捨てる() {
         let mut ws = with_changes(&["a.rs"]);
-        let root = ws.panels.explorer.root().to_path_buf();
         ws.panels
             .explorer
             .changes
-            .set_source(DiffSource::commit("b"), &root);
+            .set_source(DiffSource::commit("b"));
 
         let mut stale = DiffState::new(DiffSource::commit("a"));
         stale.files = vec![file("stale.rs")];
@@ -527,17 +538,106 @@ mod tests {
     #[test]
     fn worktreeを替えると出どころは作業ツリーに戻る() {
         let mut ws = with_changes(&["a.rs"]);
-        let root = ws.panels.explorer.root().to_path_buf();
         ws.panels
             .explorer
             .changes
-            .set_source(DiffSource::commit("b"), &root);
+            .set_source(DiffSource::commit("b"));
         ws.panels
             .explorer
             .set_root(PathBuf::from("/tmp/elsewhere"), "develop");
         assert_eq!(
             ws.panels.explorer.changes.source(),
             &DiffSource::working_tree("develop")
+        );
+    }
+
+    #[test]
+    fn コミット一覧で選んだコミットが出どころになり完全なハッシュが出る() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog]);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerCommitLog);
+
+        let oid = "0123456789abcdef0123456789abcdef01234567";
+        ws.panels.explorer.apply_result(TaskResult::HeadLog {
+            skip: 0,
+            commits: Ok(vec![git_changes::log::tests::commit(oid)]),
+        });
+        drive(&mut ws, &[Action::NavigateDown]);
+        assert_eq!(
+            ws.panels
+                .explorer
+                .changes
+                .log()
+                .selected_commit()
+                .map(|c| c.oid.as_str()),
+            Some(oid)
+        );
+
+        let effects = ws.dispatch(Action::Select).unwrap();
+        let [
+            Effect::Spawn(Task::ComputeDiff { source, .. }),
+            Effect::Status(StatusLevel::Info, text),
+        ] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(source, &DiffSource::commit(oid));
+        assert!(text.starts_with(oid), "{text}");
+        assert_eq!(
+            ws.panels.explorer.changes.source(),
+            &DiffSource::commit(oid)
+        );
+        assert_eq!(
+            ws.key_context(),
+            KeyContext::ExplorerDiffList,
+            "ファイル一覧へ移る"
+        );
+    }
+
+    /// ページが届く前に動かしたカーソルが、届いた瞬間に出どころの行へ戻ると、
+    /// そのまま Enter を押した人は違う行を選ぶ。
+    #[test]
+    fn ページが届く前に動かしたカーソルは戻さない() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog, Action::NavigateDown]);
+        let commits = (0..3)
+            .map(|i| git_changes::log::tests::commit(&format!("{i:040}")))
+            .collect();
+        ws.panels.explorer.apply_result(TaskResult::HeadLog {
+            skip: 0,
+            commits: Ok(commits),
+        });
+        assert_eq!(ws.panels.explorer.changes.log().cursor().selected(), 1);
+    }
+
+    #[test]
+    fn コミット一覧のescはファイル一覧へ戻りもう1回でツリーへ() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog, Action::ExitSubPanel]);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerDiffList);
+        drive(&mut ws, &[Action::ExitSubPanel]);
+        assert_eq!(ws.key_context(), KeyContext::Explorer);
+    }
+
+    #[test]
+    fn 作業ツリーの行を選ぶと出どころが戻る() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+        drive(&mut ws, &[Action::ShowCommitLog, Action::GoToTop]);
+        let effects = ws.dispatch(Action::Select).unwrap();
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Spawn(Task::ComputeDiff { .. })]
+            ),
+            "{effects:?}"
+        );
+        assert_eq!(
+            ws.panels.explorer.changes.source(),
+            &DiffSource::working_tree("main")
         );
     }
 

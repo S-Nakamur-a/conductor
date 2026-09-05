@@ -49,6 +49,7 @@ keymap_suite::actions! {
 
         // エクスプローラパネル
         ShowDiffList => "show_diff_list",
+        ShowCommitLog => "show_commit_log",
         ShowCommentList => "show_comment_list",
         OpenCommentList => "open_comment_list",
         SearchFilename => "search_filename",
@@ -195,6 +196,7 @@ impl Action {
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
             Action::ShowDiffList => "Show Git Changes",
+            Action::ShowCommitLog => "Show commit log in Git Changes",
             Action::ShowCommentList => "Show comment list",
             Action::OpenCommentList => "Open comment-list modal",
             Action::SearchFilename => "Search filenames",

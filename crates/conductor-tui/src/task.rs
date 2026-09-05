@@ -72,6 +72,11 @@ pub enum Task {
         worktree: PathBuf,
         source: DiffSource,
     },
+    HeadLog {
+        worktree: PathBuf,
+        skip: usize,
+        limit: usize,
+    },
     /// `seq` は結果の照合に使う。同じファイルを続けて開いても古い結果が新しい本文を
     /// 上書きしない。
     LoadFile {
@@ -321,6 +326,11 @@ pub enum TaskResult {
     Tree(Box<tree::Snapshot>),
     /// DiffState は失敗の理由を自分の中に持つので Result にしない。
     Diff(Box<DiffState>),
+    /// `skip` は log 側の照合用にそのまま返す。
+    HeadLog {
+        skip: usize,
+        commits: Result<Vec<CommitInfo>, String>,
+    },
     FileLoaded {
         seq: u64,
         loaded: Result<content::Loaded, String>,
@@ -419,6 +429,21 @@ impl Task {
                         Box::new(diff)
                     },
                     TaskResult::Diff,
+                );
+            }
+            Task::HeadLog {
+                worktree,
+                skip,
+                limit,
+            } => {
+                svc.spawn(
+                    move || {
+                        let commits = GitEngine::open(&worktree)
+                            .and_then(|git| git.head_log(skip, limit))
+                            .map_err(|e| format!("{e:#}"));
+                        (skip, commits)
+                    },
+                    |(skip, commits)| TaskResult::HeadLog { skip, commits },
                 );
             }
             Task::ReadTranscript {

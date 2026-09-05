@@ -69,6 +69,10 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
                 KeyContext::ExplorerDiffList,
             ),
             (
+                "Explorer \u{2014} commit log",
+                KeyContext::ExplorerCommitLog,
+            ),
+            (
                 "Explorer \u{2014} comment list",
                 KeyContext::ExplorerCommentList,
             ),

@@ -9,11 +9,15 @@ use conductor_core::theme::Theme;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use super::GitChanges;
+use super::log::Row;
+use super::{GitChanges, Listing};
 use crate::list::row_line;
 use crate::review::ReviewState;
 
 pub fn title(changes: &GitChanges) -> String {
+    if changes.listing() == Listing::Log {
+        return format!(" Git Changes: commits ({}) ", changes.log().commits().len());
+    }
     let source = match changes.source() {
         DiffSource::WorkingTree { .. } => String::new(),
         other => format!("{} ", other.label()),
@@ -34,6 +38,9 @@ pub fn lines(
     height: usize,
     focused: bool,
 ) -> Vec<Line<'static>> {
+    if changes.listing() == Listing::Log {
+        return log_lines(changes, theme, height, focused);
+    }
     let icons = config.ui.icon_set();
     let diff = changes.diff();
     let mut lines = Vec::with_capacity(height);
@@ -132,6 +139,60 @@ pub fn lines(
                 spans.push(Span::styled(mark, Style::default().fg(theme.success)));
                 spans
             }
+        };
+        lines.push(row_line(spans, theme, row == cursor.selected(), focused));
+    }
+    lines
+}
+
+fn log_lines(
+    changes: &GitChanges,
+    theme: &Theme,
+    height: usize,
+    focused: bool,
+) -> Vec<Line<'static>> {
+    let log = changes.log();
+    let cursor = log.cursor();
+    let current = changes.source();
+    let mut lines = Vec::with_capacity(height);
+    for row in cursor.visible(log.len(), log.viewport()).take(height) {
+        let spans = match log.row(row) {
+            Some(Row::WorkingTree) => {
+                let fg = match current {
+                    DiffSource::WorkingTree { .. } => theme.accent,
+                    DiffSource::Commit { .. } => theme.fg,
+                };
+                vec![Span::styled("  working tree", Style::default().fg(fg))]
+            }
+            Some(Row::Commit(i)) => {
+                let Some(commit) = log.commits().get(i) else {
+                    continue;
+                };
+                // 背景色が使えないテーマがあるので前景で示す。
+                let showing = matches!(current, DiffSource::Commit { oid } if *oid == commit.oid);
+                let hash_fg = if showing { theme.accent } else { theme.info };
+                vec![
+                    Span::styled(
+                        format!("  {} ", commit.short_oid),
+                        Style::default().fg(hash_fg),
+                    ),
+                    Span::styled(
+                        format!("{:<8}", commit.time_ago),
+                        Style::default().fg(theme.hint),
+                    ),
+                    Span::styled(commit.message.clone(), Style::default().fg(theme.fg)),
+                ]
+            }
+            Some(Row::LoadMore) => {
+                let text = if log.is_loading() {
+                    "  loading\u{2026}"
+                } else {
+                    "  load more\u{2026}"
+                };
+                // Enter で効く行なので、背景と同化しうる muted ではなく hint。
+                vec![Span::styled(text, Style::default().fg(theme.hint))]
+            }
+            None => continue,
         };
         lines.push(row_line(spans, theme, row == cursor.selected(), focused));
     }
@@ -237,9 +298,29 @@ mod tests {
     fn コミットの見出しには短縮ハッシュが付く() {
         let mut changes = GitChanges::default();
         let oid = "0123456789abcdef0123456789abcdef01234567";
-        changes.set_source(DiffSource::commit(oid), std::path::Path::new("/tmp"));
+        changes.set_source(DiffSource::commit(oid));
         changes.install(DiffState::new(DiffSource::commit(oid)));
         assert_eq!(title(&changes), " Git Changes 01234567 (0) ");
+    }
+
+    #[test]
+    fn コミット一覧は短縮ハッシュで出す() {
+        let mut changes = GitChanges::default();
+        changes.set_viewport(Viewport::new(0, 20));
+        changes.show_log();
+        let commits = vec![super::super::log::tests::commit(
+            "0123456789abcdef0123456789abcdef01234567",
+        )];
+        changes.install_log(0, Ok(commits));
+        let lines = texts(&changes, &ReviewState::default());
+        assert!(lines[0].contains("working tree"), "{lines:?}");
+        assert!(
+            lines[1].starts_with("  01234567 "),
+            "ハッシュの列は短縮形: {:?}",
+            lines[1]
+        );
+        assert_eq!(lines.len(), 2, "1 件で尽きたので読み足しの行は無い");
+        assert!(title(&changes).contains("commits (1)"));
     }
 
     #[test]
@@ -265,7 +346,7 @@ mod tests {
         assert!(lines[0].contains("no changes"));
 
         let mut loading = GitChanges::default();
-        loading.reload(std::path::Path::new("/tmp"));
+        loading.reload();
         let lines = texts(&loading, &ReviewState::default());
         assert!(lines[0].contains("loading"), "{lines:?}");
     }

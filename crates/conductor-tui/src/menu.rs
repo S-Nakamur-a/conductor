@@ -130,6 +130,7 @@ pub const MENUS: &[Menu] = &[
         icon: icons::MENU_VIEW,
         items: &[
             cmd(CommandId::ShowDiffList, "Git Changes"),
+            cmd(CommandId::ShowCommitLog, "Commit Log"),
             cmd(CommandId::ShowCommentList, "Comment List"),
             SEP,
             cmd(CommandId::ToggleMarkdownRender, "Markdown: Raw / Rendered"),
