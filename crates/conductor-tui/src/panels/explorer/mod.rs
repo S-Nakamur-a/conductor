@@ -98,8 +98,7 @@ impl ExplorerPanel {
             self.tree_view = Viewport::inside(rect, 0);
         }
         if let Some(rect) = layout.rect(Region::ExplorerChanges) {
-            self.changes
-                .set_viewport(Viewport::inside(rect, self.changes.banner_rows()));
+            self.changes.set_viewport(Viewport::inside(rect, 0));
             self.comments.set_viewport(Viewport::inside(rect, 0));
         }
     }

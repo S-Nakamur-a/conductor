@@ -103,8 +103,11 @@ impl GitChanges {
         self.view
     }
 
+    /// view は区画全体。バナーを出すのはファイル一覧だけなので、その分は
+    /// ここで食い、コミット一覧には区画をそのまま渡す。
     pub fn set_viewport(&mut self, view: Viewport) {
-        self.view = view;
+        let banner = self.banner_rows();
+        self.view = Viewport::new(view.top + banner as u16, view.height.saturating_sub(banner));
         self.log.set_viewport(view);
     }
 

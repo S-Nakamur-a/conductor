@@ -324,6 +324,14 @@ mod tests {
     }
 
     #[test]
+    fn バナーの分だけ窓がずれるのはファイル一覧だけ() {
+        let mut changes = with_diff(&["a"], Some("boom"));
+        changes.set_viewport(Viewport::new(5, 10));
+        assert_eq!(changes.viewport(), Viewport::new(6, 9));
+        assert_eq!(changes.log().viewport(), Viewport::new(5, 10));
+    }
+
+    #[test]
     fn バナーはエラー時にだけ1行使う() {
         assert_eq!(with_diff(&["a"], None).banner_rows(), 0);
         assert_eq!(with_diff(&["a"], Some("boom")).banner_rows(), 1);
