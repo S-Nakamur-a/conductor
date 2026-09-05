@@ -137,7 +137,7 @@ pub fn run(
             if ws.panels.terminal.take_clear_request() {
                 terminal.clear()?;
             }
-            ws.entrance.start_if_pending();
+            ws.fx.start_pending();
             terminal.draw(|frame| render(frame, ws, &last_layout))?;
             let _ = execute!(io::stdout(), EndSynchronizedUpdate);
             dirty = false;
@@ -178,7 +178,7 @@ pub fn run(
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
-        dirty |= ws.entrance.is_animating();
+        dirty |= ws.fx.tick();
 
         if ws.should_quit {
             return Ok(());
@@ -337,7 +337,7 @@ fn drain_input(
         return Ok(false);
     }
     let deadline = Instant::now() + MAX_DRAIN;
-    ws.entrance.skip();
+    ws.fx.skip();
     loop {
         match crossterm::event::read()? {
             // オートリピートは押下と同じに扱う。Repeat が届くのは kitty プロトコル下
@@ -1055,9 +1055,10 @@ mod tests {
         let mut ws = Workspace::for_test();
         assert_eq!(liveness(&ws, false), Liveness::Idle, "切ってあるのに動く");
 
-        ws.entrance = crate::entrance::Entrance::new(true);
+        ws.fx
+            .play(crate::fx::Kind::boot(), crate::fx::Target::Panels);
         assert_eq!(liveness(&ws, false), Liveness::Active);
-        ws.entrance.skip();
+        ws.fx.skip();
         assert_eq!(liveness(&ws, false), Liveness::Idle);
     }
 

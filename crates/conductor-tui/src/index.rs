@@ -11,6 +11,8 @@ use conductor_core::symbol_index::SymbolIndex;
 use sheaf_core::Store;
 
 use crate::effect::Effect;
+use crate::fx::{Kind, Target};
+use crate::layout::Region;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{StatusLevel, Workspace};
 
@@ -105,7 +107,16 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 
     if let Some(rel) = &reading {
         let answer = ws.index.semantic.note_open(rel, &repo, &tree);
-        ws.entrance.note_index_building(answer == Reading::Building);
+        let building = answer == Reading::Building;
+        let viewer = Target::Region(Region::Viewer);
+        if building != ws.fx.is_playing(&Kind::Busy, viewer) {
+            if building {
+                ws.fx.play(Kind::Busy, viewer);
+            } else {
+                ws.fx.stop(&Kind::Busy, viewer);
+                ws.fx.play(Kind::Flash, viewer);
+            }
+        }
         // 索引がこのファイルを説明できないと黙って構文層に落ちる。言わないと
         // 「ジャンプが甘い」としか見えないので、開いたときに 1 度だけ出す。
         if answer == Reading::Stale {

@@ -206,7 +206,7 @@ pub struct Workspace {
     pub modals: Vec<Modal>,
     pub review: ReviewState,
     pub chrome: Chrome,
-    pub entrance: crate::entrance::Entrance,
+    pub fx: crate::fx::Fx,
     pub should_quit: bool,
     /// 更新を入れ終えた。抜けたあと main が同じ引数で自分を exec し直す。
     pub relaunch: bool,
@@ -235,6 +235,10 @@ impl Workspace {
             terminal: TerminalPanel::new(&config),
             revidere: RevidereState::default(),
         };
+        let mut fx = crate::fx::Fx::default();
+        if config.ui.startup_animation {
+            fx.play(crate::fx::Kind::boot(), crate::fx::Target::Panels);
+        }
         Self {
             repo,
             version,
@@ -243,7 +247,7 @@ impl Workspace {
             modals: Vec::new(),
             review: ReviewState::default(),
             chrome: Chrome::default(),
-            entrance: crate::entrance::Entrance::new(config.ui.startup_animation),
+            fx,
             should_quit: false,
             relaunch: false,
             index: Index::default(),
