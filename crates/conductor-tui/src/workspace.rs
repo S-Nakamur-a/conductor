@@ -587,36 +587,27 @@ impl Workspace {
         }
     }
 
-    /// 差分の外に出たコメントを落としてから確認を出す。GitHub は 1 件でも
-    /// ハンク外が混ざると一括投稿を丸ごと拒む。
     fn accept_publishable(
         &mut self,
         loaded: Result<Box<crate::task::Publishable>, String>,
     ) -> Vec<Effect> {
-        let mut request = match loaded {
+        let request = match loaded {
             Ok(request) => request,
             Err(e) => return vec![Effect::Status(StatusLevel::Warning, e)],
         };
-        let total = request.comments.len();
-        if total == 0 {
-            return vec![Effect::Status(
-                StatusLevel::Info,
-                "No unpublished comments on this branch.".into(),
-            )];
-        }
-        let (comments, skipped) = conductor_core::review_publish::filter_publishable(
-            std::mem::take(&mut request.comments),
-            self.panels.explorer.diff(),
-        );
-        request.comments = comments;
-        request.skipped = skipped;
         if request.comments.is_empty() {
-            return vec![Effect::Status(
-                StatusLevel::Warning,
-                format!(
-                    "All {skipped} unpublished comment(s) are outside the current diff \u{2014} nothing to publish."
+            return vec![match request.skipped {
+                0 => Effect::Status(
+                    StatusLevel::Info,
+                    "No unpublished comments on this branch.".into(),
                 ),
-            )];
+                skipped => Effect::Status(
+                    StatusLevel::Warning,
+                    format!(
+                        "All {skipped} unpublished comment(s) are outside the current diff \u{2014} nothing to publish."
+                    ),
+                ),
+            }];
         }
         vec![Effect::PushModal(Modal::Publish(
             crate::modal::publish::Publish::new(request),

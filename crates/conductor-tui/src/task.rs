@@ -170,7 +170,11 @@ pub enum Task {
         input: String,
     },
     /// 未公開コメントと投稿先。
-    LoadPublishable,
+    /// 差分の外のコメントを落とすので、いまの worktree の差分をここで取る。
+    /// Explorer が見ている差分は出どころを替えられるので使えない。
+    LoadPublishable {
+        worktree: PathBuf,
+    },
     Publish(Box<Publishable>),
 
     /// GitHub の最新リリース。`max_age` 以内のキャッシュがあればそれで済ませる。
@@ -622,8 +626,11 @@ impl Task {
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
             }
-            Task::LoadPublishable => {
-                svc.spawn(move || publishable(&env), TaskResult::Publishable);
+            Task::LoadPublishable { worktree } => {
+                svc.spawn(
+                    move || publishable(&env, &worktree),
+                    TaskResult::Publishable,
+                );
             }
             Task::Publish(request) => {
                 svc.spawn(move || publish(&env, *request), TaskResult::Published);
@@ -1007,7 +1014,7 @@ fn body_with_replies(store: &ReviewStore, id: &str, body: &str) -> String {
     out
 }
 
-fn publishable(env: &TaskEnv) -> Result<Box<Publishable>, String> {
+fn publishable(env: &TaskEnv, worktree: &Path) -> Result<Box<Publishable>, String> {
     let store = open_store(env)?;
     let branch = env.branch.as_str();
     let meta = store
@@ -1031,12 +1038,15 @@ fn publishable(env: &TaskEnv) -> Result<Box<Publishable>, String> {
             line_end: c.line_end,
         })
         .collect();
+    let mut diff = DiffState::new(DiffSource::working_tree(&env.main_branch));
+    diff.load(worktree, env.word_diff, env.tab_width);
+    let (comments, skipped) = review_publish::filter_publishable(comments, &diff);
     Ok(Box::new(Publishable {
         owner,
         repo,
         pr_number: pr_number as u64,
         comments,
-        skipped: 0,
+        skipped,
     }))
 }
 
