@@ -16,7 +16,7 @@ use conductor_core::keymap::KeyMap;
 use conductor_core::theme::Theme;
 use conductor_core::{cc_hook, config, instance_lock, semantic_index, term_caps};
 use conductor_svc::Services;
-use conductor_svc::watch::{CcNotifyListener, RefreshPipe};
+use conductor_svc::watch::{CcNotifyListener, ConfigWatcher, RefreshPipe};
 use crossterm::execute;
 use crossterm::terminal::SetTitle;
 use ratatui::Terminal;
@@ -66,6 +66,14 @@ pub fn run(version: &'static str) -> Result<()> {
         Ok(pipe) => Some(pipe),
         Err(e) => {
             log::warn!("refresh pipe: {e:#}");
+            None
+        }
+    };
+    // 設定ファイルを外部のエディタで書き換えたら、外観をその場で入れ替える。
+    let _config_watch = match ConfigWatcher::new(&config::config_file_path(), svc.sender()) {
+        Ok(watcher) => Some(watcher),
+        Err(e) => {
+            log::warn!("config watcher: {e:#}");
             None
         }
     };

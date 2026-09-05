@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use conductor_core::config::Config;
+use conductor_core::config::{self, Config};
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 use conductor_core::theme::Theme;
 use conductor_core::update_checker::UpdateInfo;
@@ -655,6 +655,45 @@ impl Workspace {
         }
     }
 
+    /// 設定ファイルを読み直して外観を入れ替える。
+    pub fn reload_config(&mut self) -> Vec<Effect> {
+        // アトミック保存は remove を挟むので、無い瞬間に読むと Config::load が
+        // 既定のファイルを書き出して編集中の内容を潰す。
+        if !config::config_file_path().exists() {
+            return Vec::new();
+        }
+        match Config::load() {
+            Ok(new) => self.adopt_config(&new),
+            Err(e) => vec![Effect::Status(
+                StatusLevel::Error,
+                format!("Config error \u{2014} kept previous settings: {e}"),
+            )],
+        }
+    }
+
+    /// 差が無ければ何もしない。テーマピッカー自身の書き戻しもここへ届くため。
+    fn adopt_config(&mut self, new: &Config) -> Vec<Effect> {
+        let appearance_changed = new.appearance_snapshot() != self.config.appearance_snapshot();
+        let restart_changed = config::has_restart_changes(&self.config, new);
+        let mut effects = Vec::new();
+        if restart_changed {
+            effects.push(Effect::Status(
+                StatusLevel::Warning,
+                "Config updated \u{2014} some changes require a restart to take effect".into(),
+            ));
+        }
+        if appearance_changed {
+            self.config.adopt_appearance(new);
+            self.appearance.name = self.config.theme_name().to_string();
+            self.appearance.high_contrast = self.config.ui.high_contrast;
+            self.theme = self.appearance.build();
+            if !restart_changed {
+                effects.push(Effect::Status(StatusLevel::Info, "Config reloaded".into()));
+            }
+        }
+        effects
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test() -> Self {
         Self::for_test_with(Config::default())
@@ -709,4 +748,45 @@ fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Eff
         Effect::Status(level, message),
         Effect::Spawn(crate::task::Task::LoadReview),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 設定に差が無ければ何も起きない() {
+        let mut ws = Workspace::for_test();
+        let same = ws.config.clone();
+        assert!(ws.adopt_config(&same).is_empty());
+    }
+
+    #[test]
+    fn テーマの変更はその場で効く() {
+        let mut ws = Workspace::for_test();
+        let mut new = ws.config.clone();
+        new.ui.theme = Some("nord".into());
+
+        let effects = ws.adopt_config(&new);
+        assert_eq!(ws.theme.name, "nord");
+        assert_eq!(ws.appearance.name, "nord");
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Info, _)]
+        ));
+    }
+
+    #[test]
+    fn 再起動が要る設定は警告だけで写さない() {
+        let mut ws = Workspace::for_test();
+        let mut new = ws.config.clone();
+        new.general.main_branch = "trunk".into();
+
+        let effects = ws.adopt_config(&new);
+        assert_ne!(ws.config.general.main_branch, "trunk");
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Warning, _)]
+        ));
+    }
 }

@@ -1,6 +1,7 @@
 //! メインループ。待つ → 入力を捌く → svc の結果を消費 → 描く、の 1 周を回す。
 
 use std::io;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -13,6 +14,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Position, Rect};
 
+use conductor_svc::watch::FileWatcher;
 use conductor_svc::{EventKind, Services};
 
 use crate::effect::{Effect, apply};
@@ -21,8 +23,8 @@ use crate::liveness::{Liveness, liveness};
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
 use crate::task::{Task, TaskResult};
-use crate::timer::{PTY_CLEANUP, Timer, WORKTREE_POLL};
-use crate::workspace::{Focus, Workspace};
+use crate::timer::{CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL};
+use crate::workspace::{Focus, StatusLevel, Workspace};
 
 /// フレームを描く前にイベントを捌き続ける上限。高速スクロール中に中間フレームが
 /// 出なくなるのを防ぐ (トラックパッドの慣性は 100 個超のイベントを出しうる)。
@@ -31,9 +33,56 @@ const MAX_DRAIN: Duration = Duration::from_millis(8);
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 /// フラッシュメッセージが消えるまで。
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
-/// ファイルウォッチャーの通知をまとめる猶予。エディタ保存や git checkout は
-/// 短時間に何件も飛んでくるので、都度 Explorer を投げ直すと無駄が積み重なる。
-const FS_DEBOUNCE: Duration = Duration::from_millis(500);
+
+/// watcher の合図が静まるのを待つ締切。
+struct Debounces {
+    fs: Debounce,
+    config: Debounce,
+}
+
+/// 監視先は worktree 一覧が届いてから決まり、リポジトリ切り替えでも変わる。
+#[derive(Default)]
+struct FileWatch {
+    watcher: Option<FileWatcher>,
+    watching: Vec<PathBuf>,
+}
+
+impl FileWatch {
+    /// 監視先が変わっていたら作り直す。描き直しが要るなら true。
+    fn sync(&mut self, ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
+        let desired = watch_paths(ws);
+        if desired == self.watching {
+            return false;
+        }
+        match FileWatcher::new(&desired, svc.sender()) {
+            Ok(watcher) => {
+                self.watching = desired;
+                self.watcher = Some(watcher);
+                false
+            }
+            // 前の監視を残す。古いパス集合にはまだ効くので、丸ごと失うよりましなため。
+            Err(e) => {
+                log::warn!("file watcher rebuild failed: {e:#}");
+                let status = Effect::Status(
+                    StatusLevel::Warning,
+                    format!("File watcher rebuild failed ({e})"),
+                );
+                apply(ws, svc, vec![status]);
+                true
+            }
+        }
+    }
+}
+
+/// 監視するのは各 worktree。一覧が空のときリポジトリ自身にするのは、git でない
+/// ディレクトリでも Explorer が追随するため。
+fn watch_paths(ws: &Workspace) -> Vec<PathBuf> {
+    let worktrees = ws.panels.worktree.list();
+    if worktrees.is_empty() {
+        return vec![ws.repo.root.clone()];
+    }
+    worktrees.iter().map(|w| w.path.clone()).collect()
+}
 
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -50,7 +99,11 @@ pub fn run(
         .check_on_startup
         .then(|| Timer::new(update_interval, last_input));
     let mut dirty = true;
-    let mut fs_refresh_due: Option<Instant> = None;
+    let mut debounces = Debounces {
+        fs: Debounce::new(FS_DEBOUNCE),
+        config: Debounce::new(CONFIG_DEBOUNCE),
+    };
+    let mut file_watch = FileWatch::default();
 
     let mut startup = vec![
         Effect::Spawn(Task::ListWorktrees),
@@ -63,6 +116,7 @@ pub fn run(
         }));
     }
     apply(ws, svc, startup);
+    file_watch.sync(ws, svc);
 
     loop {
         // 区画は描く前に決める。PTY のリサイズが描画の副産物になると、
@@ -101,9 +155,7 @@ pub fn run(
         while let Some(event) = svc.try_recv() {
             let effects = match event.kind {
                 EventKind::Task(result) => ws.accept(result),
-                EventKind::Watch(watch) => {
-                    watch_effects(ws, watch, &mut fs_refresh_due, Instant::now())
-                }
+                EventKind::Watch(watch) => watch_effects(ws, watch, &mut debounces, Instant::now()),
             };
             apply(ws, svc, effects);
             dirty = true;
@@ -114,13 +166,15 @@ pub fn run(
         dirty |= tick_index(ws, svc);
         dirty |= ws.tick_viewer();
         dirty |= tick_editor(ws, svc);
-        dirty |= tick_fs_refresh(ws, svc, &mut fs_refresh_due, Instant::now());
+        dirty |= tick_fs_refresh(ws, svc, &mut debounces.fs, Instant::now());
+        dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
         dirty |= run_timers(
             ws,
             svc,
             &mut worktree_poll,
+            &mut file_watch,
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
@@ -178,7 +232,7 @@ fn tick_index(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
 fn watch_effects(
     ws: &mut Workspace,
     watch: conductor_svc::watch::WatchEvent,
-    fs_refresh_due: &mut Option<Instant>,
+    debounces: &mut Debounces,
     now: Instant,
 ) -> Vec<Effect> {
     use conductor_svc::watch::WatchEvent;
@@ -187,28 +241,46 @@ fn watch_effects(
         // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
         WatchEvent::FsChanged(path) => {
             crate::index::note_change(ws, &path);
-            *fs_refresh_due = Some(now + FS_DEBOUNCE);
+            debounces.fs.touch(now);
+            Vec::new()
+        }
+        WatchEvent::ConfigChanged => {
+            debounces.config.touch(now);
             Vec::new()
         }
         watch => ws.panels.terminal.on_watch(&watch),
     }
 }
 
-/// FS_DEBOUNCE が明けていたら Explorer を投げ直す。何か投げたら true。
+/// 猶予が明けていたら Explorer を投げ直す。何か投げたら true。
 fn tick_fs_refresh(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
-    fs_refresh_due: &mut Option<Instant>,
+    debounce: &mut Debounce,
     now: Instant,
 ) -> bool {
-    let Some(due) = *fs_refresh_due else {
-        return false;
-    };
-    if now < due {
+    if !debounce.fire(now) {
         return false;
     }
-    *fs_refresh_due = None;
     let effects = ws.panels.explorer.refresh();
+    apply(ws, svc, effects);
+    true
+}
+
+/// 猶予が明けていたら設定を読み直す。反映するものがあれば true。
+fn tick_config_reload(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    debounce: &mut Debounce,
+    now: Instant,
+) -> bool {
+    if !debounce.fire(now) {
+        return false;
+    }
+    let effects = ws.reload_config();
+    if effects.is_empty() {
+        return false;
+    }
     apply(ws, svc, effects);
     true
 }
@@ -217,6 +289,7 @@ fn run_timers(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
     worktree_poll: &mut Timer,
+    file_watch: &mut FileWatch,
     pty_cleanup: &mut Timer,
     update_poll: Option<(&mut Timer, Duration)>,
 ) -> bool {
@@ -224,6 +297,8 @@ fn run_timers(
     let mut dirty = false;
     if worktree_poll.due(now) {
         apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+        // 一覧と同じ周期で見直す。作り直しに失敗しても次の周回で試し直せる。
+        dirty |= file_watch.sync(ws, svc);
     }
     if pty_cleanup.due(now) {
         dirty |= ws.panels.terminal.cleanup_dead();
@@ -528,6 +603,13 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn test_debounces() -> Debounces {
+        Debounces {
+            fs: Debounce::new(FS_DEBOUNCE),
+            config: Debounce::new(CONFIG_DEBOUNCE),
+        }
     }
 
     fn press(ws: &mut Workspace, keys: &[KeyEvent]) {
@@ -1400,20 +1482,17 @@ needle here
     fn watchの行き先は種類で分かれる() {
         use conductor_svc::watch::WatchEvent;
         let mut ws = Workspace::for_test();
-        let mut fs_refresh_due = None;
+        let mut debounces = test_debounces();
         let now = Instant::now();
         assert!(matches!(
-            watch_effects(
-                &mut ws,
-                WatchEvent::RefreshRequested,
-                &mut fs_refresh_due,
-                now
-            )
-            .as_slice(),
+            watch_effects(&mut ws, WatchEvent::RefreshRequested, &mut debounces, now).as_slice(),
             [Effect::Spawn(Task::LoadReview)]
         ));
+
+        assert!(watch_effects(&mut ws, WatchEvent::ConfigChanged, &mut debounces, now).is_empty());
         assert!(
-            watch_effects(&mut ws, WatchEvent::ConfigChanged, &mut fs_refresh_due, now).is_empty()
+            debounces.config.fire(now + CONFIG_DEBOUNCE),
+            "ConfigChanged が設定の猶予を触っていない"
         );
     }
 
@@ -1426,24 +1505,34 @@ needle here
         crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
         crate::testing::pump(&mut ws, &mut svc);
 
-        let mut fs_refresh_due = None;
+        let mut debounces = test_debounces();
         let start = Instant::now();
         watch_effects(
             &mut ws,
             WatchEvent::FsChanged(dir.path().join("a.txt")),
-            &mut fs_refresh_due,
+            &mut debounces,
             start,
         );
         assert!(
-            !tick_fs_refresh(&mut ws, &mut svc, &mut fs_refresh_due, start),
+            !tick_fs_refresh(&mut ws, &mut svc, &mut debounces.fs, start),
             "猶予の前に投げた"
         );
 
         assert!(
-            tick_fs_refresh(&mut ws, &mut svc, &mut fs_refresh_due, start + FS_DEBOUNCE),
+            tick_fs_refresh(&mut ws, &mut svc, &mut debounces.fs, start + FS_DEBOUNCE),
             "猶予明けで投げていない"
         );
-        assert!(fs_refresh_due.is_none());
+    }
+
+    #[test]
+    fn 監視先はworktreeの一覧から決まる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        assert_eq!(watch_paths(&ws), vec![ws.repo.root.clone()]);
+
+        let dir = tempfile::TempDir::new().unwrap();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+        assert_eq!(watch_paths(&ws), vec![dir.path().to_path_buf()]);
     }
 
     /// パネルが消費しない Action が global の解釈へ落ちる配線。ターミナルの中では
