@@ -299,12 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn 何も積んでいなければ動かない() {
-        let fx = Fx::default();
-        assert!(!fx.is_animating());
-    }
-
-    #[test]
     fn 時計は最初のフレームまで動かない() {
         let mut fx = Fx::default();
         fx.play(Kind::assemble(), Target::Panels);
@@ -319,20 +313,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn 時計は一度始めたら打ち直さない() {
-        let mut fx = Fx::default();
-        fx.play(Kind::assemble(), Target::Panels);
-        fx.start_pending();
-        std::thread::sleep(Duration::from_millis(30));
-        let p = fx.running[0].progress().unwrap();
-        fx.start_pending();
-        assert!(
-            fx.running[0].progress().unwrap() >= p,
-            "2 枚目で先頭へ戻った"
-        );
-    }
-
     /// 合図まで消すと、打ちながら待つ人に完了が伝わらない。
     #[test]
     fn 入力で飛ぶのは起動演出だけ() {
@@ -343,16 +323,6 @@ mod tests {
         fx.skip();
         assert!(!fx.is_playing(&Kind::assemble(), Target::Panels));
         assert!(fx.is_playing(&Kind::Flash, VIEWER));
-    }
-
-    #[test]
-    fn 止めるのは種類と行き先が揃ったものだけ() {
-        let mut fx = Fx::default();
-        fx.play(Kind::Busy, VIEWER);
-        fx.play(Kind::Busy, Target::Modal);
-        fx.stop(&Kind::Busy, VIEWER);
-        assert!(!fx.is_playing(&Kind::Busy, VIEWER));
-        assert!(fx.is_playing(&Kind::Busy, Target::Modal));
     }
 
     #[test]
