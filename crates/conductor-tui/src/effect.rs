@@ -74,6 +74,7 @@ pub enum Effect {
     Status(StatusLevel, String),
     PushModal(Modal),
     PopModal,
+    Play(crate::fx::Kind, crate::fx::Target),
     Spawn(Task),
     Quit,
 }
@@ -182,6 +183,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 });
             }
             Effect::PushModal(modal) => ws.modals.push(modal),
+            Effect::Play(kind, target) => ws.fx.play(kind, target),
             Effect::PopModal => {
                 ws.modals.pop();
             }

@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 
+use crate::fx::Target;
 use crate::layout::{Layout, Region};
 use crate::modal::Modal;
 use crate::workspace::{Focus, StatusLevel, Workspace};
@@ -63,9 +64,10 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     if ws.focus == Focus::Worktree {
         crate::panels::worktree::render::list(frame, frame.area(), ws);
     }
-    if let Some(modal) = ws.modals.last() {
-        render_modal(frame, ws, modal, frame.area());
-    }
+    let modal = ws
+        .modals
+        .last()
+        .map(|modal| render_modal(frame, ws, modal, frame.area()));
     // メニューは全ての上。モーダルの上でもあるのは、開いたままモーダルへ
     // 進む経路がないので、見えているなら必ずそれが最前面だから。
     if let Some(index) = ws.chrome.menu.open_index() {
@@ -78,18 +80,20 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
         );
     }
 
-    crate::entrance::apply(
-        &ws.entrance,
+    ws.fx.apply(
         frame.buffer_mut(),
         layout.area,
-        &entrance_panels(layout),
-        layout.rect(Region::Viewer),
         &ws.theme,
+        |target| match target {
+            Target::Panels => accordion_panels(layout),
+            Target::Region(region) => layout.rect(region).into_iter().collect(),
+            Target::Modal => modal.into_iter().collect(),
+        },
     );
 }
 
 /// 演出が枠を組み上げる区画。左から順。
-fn entrance_panels(layout: &Layout) -> Vec<Rect> {
+fn accordion_panels(layout: &Layout) -> Vec<Rect> {
     [
         Region::ExplorerTree,
         Region::ExplorerChanges,
@@ -340,7 +344,8 @@ pub fn comment_list_rect(area: Rect) -> Rect {
     centered(area, 70, height)
 }
 
-fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
+/// 描いた矩形を返す。演出はここへ重なる。
+fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) -> Rect {
     let big = centered(area, 76, (area.height * 84 / 100).max(3));
     if let Modal::CommentList(list) = modal {
         let rect = comment_list_rect(area);
@@ -359,7 +364,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
         );
         frame.render_widget(Clear, rect);
         frame.render_widget(Paragraph::new(lines).block(block), rect);
-        return;
+        return rect;
     }
     let ctx = ws.ctx();
     let full = |body: Vec<Line<'static>>, title: String| (title, body);
@@ -422,10 +427,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
         ),
         Modal::Prompt(prompt) => (
             prompt.title.clone(),
-            crate::modal::input::with_caret(&prompt.input, area.width as usize * 60 / 100)
-                .into_iter()
-                .map(|line| Line::from(format!("> {line}")))
-                .collect(),
+            crate::modal::prompt_lines(prompt, &ws.theme, area.width as usize * 60 / 100),
         ),
         Modal::Confirm(confirm) => (
             "Confirm".to_string(),
@@ -455,6 +457,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) {
     };
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(body).block(modal_block(ws, &title)), rect);
+    rect
 }
 
 fn wide(modal: &Modal) -> bool {

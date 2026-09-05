@@ -137,7 +137,7 @@ pub fn run(
             if ws.panels.terminal.take_clear_request() {
                 terminal.clear()?;
             }
-            ws.entrance.start_if_pending();
+            ws.fx.start_pending();
             terminal.draw(|frame| render(frame, ws, &last_layout))?;
             let _ = execute!(io::stdout(), EndSynchronizedUpdate);
             dirty = false;
@@ -178,7 +178,7 @@ pub fn run(
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
-        dirty |= ws.entrance.is_animating();
+        dirty |= ws.fx.tick();
 
         if ws.should_quit {
             return Ok(());
@@ -337,7 +337,7 @@ fn drain_input(
         return Ok(false);
     }
     let deadline = Instant::now() + MAX_DRAIN;
-    ws.entrance.skip();
+    ws.fx.skip();
     loop {
         match crossterm::event::read()? {
             // オートリピートは押下と同じに扱う。Repeat が届くのは kitty プロトコル下
@@ -623,12 +623,10 @@ mod tests {
     fn 貼り付けはモーダルが最前面ならそちらへ行く() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::TerminalShell;
-        ws.modals.push(Modal::Prompt(crate::modal::Prompt {
-            title: "t".into(),
-            input: Default::default(),
-            on_submit: |_| Vec::new(),
-            alternate: None,
-        }));
+        ws.modals
+            .push(Modal::Prompt(crate::modal::Prompt::single("t", |_| {
+                Vec::new()
+            })));
         on_paste(&mut ws, "日本語".into());
         let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
             panic!("{:?}", ws.modals);
@@ -1055,9 +1053,10 @@ mod tests {
         let mut ws = Workspace::for_test();
         assert_eq!(liveness(&ws, false), Liveness::Idle, "切ってあるのに動く");
 
-        ws.entrance = crate::entrance::Entrance::new(true);
+        ws.fx
+            .play(crate::fx::Kind::assemble(), crate::fx::Target::Panels);
         assert_eq!(liveness(&ws, false), Liveness::Active);
-        ws.entrance.skip();
+        ws.fx.skip();
         assert_eq!(liveness(&ws, false), Liveness::Idle);
     }
 
@@ -1392,11 +1391,8 @@ mod tests {
         let [Modal::Prompt(prompt)] = ws.modals.as_slice() else {
             panic!("{:?}", ws.modals);
         };
-        assert!(
-            prompt.title.starts_with("New worktree branch"),
-            "{}",
-            prompt.title
-        );
+        assert_eq!(prompt.title, "New worktree");
+        assert_eq!(prompt.mode().label, "Branch name");
     }
 
     /// パレットで打ってから Enter するまで。メニューと同じ Effect::Command に落ちる。

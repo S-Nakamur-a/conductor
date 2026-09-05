@@ -13,7 +13,7 @@ pub fn liveness(ws: &Workspace, input_recent: bool) -> Liveness {
     if ws.focus.is_pty() {
         return Liveness::Terminal;
     }
-    if input_recent || ws.chrome.status.is_some() || ws.entrance.is_animating() {
+    if input_recent || ws.chrome.status.is_some() || ws.fx.is_animating() {
         return Liveness::Active;
     }
     Liveness::Idle
