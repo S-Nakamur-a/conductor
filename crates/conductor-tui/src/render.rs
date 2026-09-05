@@ -427,10 +427,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
         ),
         Modal::Prompt(prompt) => (
             prompt.title.clone(),
-            crate::modal::input::with_caret(&prompt.input, area.width as usize * 60 / 100)
-                .into_iter()
-                .map(|line| Line::from(format!("> {line}")))
-                .collect(),
+            crate::modal::prompt_lines(prompt, &ws.theme, area.width as usize * 60 / 100),
         ),
         Modal::Confirm(confirm) => (
             "Confirm".to_string(),

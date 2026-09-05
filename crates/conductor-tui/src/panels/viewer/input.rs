@@ -105,12 +105,10 @@ impl ViewerPanel {
                 return Some(vec![crate::panels::explorer::find_file_modal()]);
             }
             Action::SearchInFile => {
-                return Some(vec![Effect::PushModal(Modal::Prompt(Prompt {
-                    title: "Search in file".into(),
-                    input: Default::default(),
-                    on_submit: |q| vec![Effect::SearchInFile(q)],
-                    alternate: None,
-                }))]);
+                return Some(vec![Effect::PushModal(Modal::Prompt(Prompt::single(
+                    "Search in file",
+                    |q| vec![Effect::SearchInFile(q)],
+                )))]);
             }
             _ => {}
         }

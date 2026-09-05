@@ -623,12 +623,10 @@ mod tests {
     fn 貼り付けはモーダルが最前面ならそちらへ行く() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::TerminalShell;
-        ws.modals.push(Modal::Prompt(crate::modal::Prompt {
-            title: "t".into(),
-            input: Default::default(),
-            on_submit: |_| Vec::new(),
-            alternate: None,
-        }));
+        ws.modals
+            .push(Modal::Prompt(crate::modal::Prompt::single("t", |_| {
+                Vec::new()
+            })));
         on_paste(&mut ws, "日本語".into());
         let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
             panic!("{:?}", ws.modals);
@@ -1393,11 +1391,8 @@ mod tests {
         let [Modal::Prompt(prompt)] = ws.modals.as_slice() else {
             panic!("{:?}", ws.modals);
         };
-        assert!(
-            prompt.title.starts_with("New worktree branch"),
-            "{}",
-            prompt.title
-        );
+        assert_eq!(prompt.title, "New worktree");
+        assert_eq!(prompt.mode().label, "Branch name");
     }
 
     /// パレットで打ってから Enter するまで。メニューと同じ Effect::Command に落ちる。

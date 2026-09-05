@@ -10,7 +10,7 @@ use conductor_core::keymap::Action;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
-use crate::modal::{Alternate, Confirm, Modal, Prompt};
+use crate::modal::{Confirm, Modal, Mode, Prompt};
 use crate::task::{GrabDone, Task, TaskResult};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
@@ -296,29 +296,33 @@ impl WorktreePanel {
 }
 
 fn create_modal() -> Effect {
-    Effect::PushModal(Modal::Prompt(Prompt {
-        title: "New worktree branch (Tab: describe the task)".into(),
-        input: Default::default(),
-        on_submit: |branch| match branch.trim() {
-            "" => vec![Effect::Status(
-                StatusLevel::Warning,
-                "no branch name".into(),
-            )],
-            branch => vec![Effect::Spawn(Task::CreateWorktree {
-                branch: branch.to_string(),
-            })],
-        },
-        alternate: Some(Alternate {
-            title: "Describe the task (Tab: branch name)".into(),
-            on_submit: |description| match description.trim() {
-                "" => vec![Effect::Status(
-                    StatusLevel::Warning,
-                    "no task description".into(),
-                )],
-                description => vec![Effect::SmartWorktree(description.to_string())],
+    Effect::PushModal(Modal::Prompt(Prompt::with_modes(
+        "New worktree",
+        vec![
+            Mode {
+                label: "Branch name".into(),
+                on_submit: |branch| match branch.trim() {
+                    "" => vec![Effect::Status(
+                        StatusLevel::Warning,
+                        "no branch name".into(),
+                    )],
+                    branch => vec![Effect::Spawn(Task::CreateWorktree {
+                        branch: branch.to_string(),
+                    })],
+                },
             },
-        }),
-    }))
+            Mode {
+                label: "Describe the task".into(),
+                on_submit: |description| match description.trim() {
+                    "" => vec![Effect::Status(
+                        StatusLevel::Warning,
+                        "no task description".into(),
+                    )],
+                    description => vec![Effect::SmartWorktree(description.to_string())],
+                },
+            },
+        ],
+    )))
 }
 
 /// pull だけは「動かなかった」も成功なので、文言から段を決める。
@@ -450,11 +454,11 @@ mod tests {
             panic!("入力が出ていない");
         };
         assert!(matches!(
-            (prompt.on_submit)("  ".into()).as_slice(),
+            (prompt.mode().on_submit)("  ".into()).as_slice(),
             [Effect::Status(StatusLevel::Warning, _)]
         ));
         assert!(matches!(
-            (prompt.on_submit)("feature/c".into()).as_slice(),
+            (prompt.mode().on_submit)("feature/c".into()).as_slice(),
             [Effect::Spawn(Task::CreateWorktree { branch })] if branch == "feature/c"
         ));
     }

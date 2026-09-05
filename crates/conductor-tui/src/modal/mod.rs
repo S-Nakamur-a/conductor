@@ -4,10 +4,14 @@
 use conductor_core::keymap::KeyContext;
 use conductor_core::review_store::{CommentKind, ReviewComment, ReviewReply};
 use conductor_core::text_input::TextInput;
+use conductor_core::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
 
 use crate::comment_list::CommentList;
 use crate::effect::Effect;
+use crate::fx::{Kind, Target};
 use crate::task::{ReviewWrite, Task};
 use crate::workspace::{Ctx, StatusLevel};
 
@@ -52,33 +56,85 @@ pub enum Modal {
     RevidereConfirm(revidere::RevidereConfirm),
 }
 
-/// 1 行のテキスト入力。確定した文字列は `on_submit` が Effect に変える。
+/// 1 行のテキスト入力。確定した文字列は選択中の [Mode] が Effect に変える。
 #[derive(Debug)]
 pub struct Prompt {
     pub title: String,
     pub input: TextInput,
-    pub on_submit: fn(String) -> Vec<Effect>,
-    /// Tab で入れ替わるもう一つの宛先。打ちかけの本文は持ち越す。
-    pub alternate: Option<Alternate>,
+    /// Tab で巡る宛先。打ちかけの本文は持ち越す。
+    modes: Vec<Mode>,
+    selected: usize,
 }
 
-/// [Prompt] のもう一つの面。
 #[derive(Debug)]
-pub struct Alternate {
-    pub title: String,
+pub struct Mode {
+    pub label: String,
     pub on_submit: fn(String) -> Vec<Effect>,
 }
 
 impl Prompt {
-    fn flip(&mut self) {
-        let Some(alternate) = self.alternate.take() else {
-            return;
-        };
-        self.alternate = Some(Alternate {
-            title: std::mem::replace(&mut self.title, alternate.title),
-            on_submit: std::mem::replace(&mut self.on_submit, alternate.on_submit),
-        });
+    pub fn single(title: &str, on_submit: fn(String) -> Vec<Effect>) -> Self {
+        Self::with_modes(
+            title,
+            vec![Mode {
+                label: String::new(),
+                on_submit,
+            }],
+        )
     }
+
+    pub fn with_modes(title: &str, modes: Vec<Mode>) -> Self {
+        Self {
+            title: title.to_string(),
+            input: TextInput::new(),
+            modes,
+            selected: 0,
+        }
+    }
+
+    pub fn mode(&self) -> &Mode {
+        &self.modes[self.selected]
+    }
+
+    fn has_modes(&self) -> bool {
+        self.modes.len() > 1
+    }
+
+    fn next_mode(&mut self) {
+        self.selected = (self.selected + 1) % self.modes.len();
+    }
+}
+
+/// 宛先の切替タブと入力欄。
+pub fn prompt_lines(prompt: &Prompt, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    if prompt.has_modes() {
+        let mut spans = Vec::new();
+        for (i, mode) in prompt.modes.iter().enumerate() {
+            let style = if i == prompt.selected {
+                Style::default()
+                    .fg(theme.selected_fg)
+                    .bg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.hint)
+            };
+            spans.push(Span::styled(format!(" {} ", mode.label), style));
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            " Tab: switch",
+            Style::default().fg(theme.hint),
+        ));
+        lines.push(Line::from(spans));
+        lines.push(Line::from(""));
+    }
+    lines.extend(
+        input::with_caret(&prompt.input, width)
+            .into_iter()
+            .map(|line| Line::styled(format!("> {line}"), Style::default().fg(theme.fg))),
+    );
+    lines
 }
 
 /// y で発火する Effect を積んだ確認。開いた側が対象を捕まえたまま作れるよう、
@@ -305,13 +361,13 @@ impl Modal {
             Modal::SymbolActions(actions) => actions.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
-                KeyCode::Tab if prompt.alternate.is_some() => {
-                    prompt.flip();
-                    vec![]
+                KeyCode::Tab if prompt.has_modes() => {
+                    prompt.next_mode();
+                    vec![Effect::Play(Kind::Flash, Target::Modal)]
                 }
                 KeyCode::Enter => {
                     let mut effects = vec![Effect::PopModal];
-                    effects.extend((prompt.on_submit)(prompt.input.text().to_string()));
+                    effects.extend((prompt.mode().on_submit)(prompt.input.text().to_string()));
                     effects
                 }
                 _ => {
@@ -440,12 +496,7 @@ mod tests {
 
     #[test]
     fn 貼り付けは単一行では改行を落とし複数行では残す() {
-        let mut prompt = Modal::Prompt(Prompt {
-            title: "t".into(),
-            input: TextInput::new(),
-            on_submit: |_| Vec::new(),
-            alternate: None,
-        });
+        let mut prompt = Modal::Prompt(Prompt::single("t", |_| Vec::new()));
         prompt.paste("ab\ncd");
         let Modal::Prompt(prompt) = &prompt else {
             unreachable!()
@@ -461,27 +512,38 @@ mod tests {
     }
 
     #[test]
-    fn tabは宛先を入れ替え打ちかけの本文を残す() {
+    fn tabは宛先を巡り打ちかけの本文を残す() {
         let ws = Workspace::for_test();
-        let mut modal = Modal::Prompt(Prompt {
-            title: "branch".into(),
-            input: TextInput::new(),
-            on_submit: |_| vec![Effect::PopModal],
-            alternate: Some(Alternate {
-                title: "task".into(),
-                on_submit: |_| vec![Effect::Quit],
-            }),
-        });
+        let mut modal = Modal::Prompt(Prompt::with_modes(
+            "new",
+            vec![
+                Mode {
+                    label: "branch".into(),
+                    on_submit: |_| vec![Effect::PopModal],
+                },
+                Mode {
+                    label: "task".into(),
+                    on_submit: |_| vec![Effect::Quit],
+                },
+            ],
+        ));
         modal.paste("wip");
-        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        let effects = modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Play(Kind::Flash, Target::Modal)]
+            ),
+            "切替の合図が出ない: {effects:?}"
+        );
 
         let Modal::Prompt(prompt) = &modal else {
             unreachable!()
         };
-        assert_eq!(prompt.title, "task");
+        assert_eq!(prompt.mode().label, "task");
         assert_eq!(prompt.input.text(), "wip");
         assert!(matches!(
-            (prompt.on_submit)("wip".into()).as_slice(),
+            (prompt.mode().on_submit)("wip".into()).as_slice(),
             [Effect::Quit]
         ));
 
@@ -489,8 +551,53 @@ mod tests {
         let Modal::Prompt(prompt) = &modal else {
             unreachable!()
         };
-        assert_eq!(prompt.title, "branch");
+        assert_eq!(prompt.mode().label, "branch");
         assert_eq!(prompt.input.text(), "wip");
+    }
+
+    #[test]
+    fn 宛先が一つならtabは何もしない() {
+        let ws = Workspace::for_test();
+        let mut modal = Modal::Prompt(Prompt::single("t", |_| Vec::new()));
+        let effects = modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    /// 文言が変わるだけでは、どちらにいるか一目で分からない。
+    #[test]
+    fn 切替タブは選択中の宛先だけを塗る() {
+        let theme = Theme::from_name("dracula");
+        let mut prompt = Prompt::with_modes(
+            "new",
+            vec![
+                Mode {
+                    label: "branch".into(),
+                    on_submit: |_| Vec::new(),
+                },
+                Mode {
+                    label: "task".into(),
+                    on_submit: |_| Vec::new(),
+                },
+            ],
+        );
+        let painted = |prompt: &Prompt| -> Vec<String> {
+            prompt_lines(prompt, &theme, 40)[0]
+                .spans
+                .iter()
+                .filter(|s| s.style.bg == Some(theme.accent))
+                .map(|s| s.content.trim().to_string())
+                .collect()
+        };
+        assert_eq!(painted(&prompt), ["branch"]);
+        prompt.next_mode();
+        assert_eq!(painted(&prompt), ["task"]);
+
+        let single = Prompt::single("t", |_| Vec::new());
+        assert!(
+            prompt_lines(&single, &theme, 40)[0]
+                .to_string()
+                .starts_with("> ")
+        );
     }
 
     #[test]

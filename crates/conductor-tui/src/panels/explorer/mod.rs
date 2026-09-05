@@ -419,15 +419,13 @@ impl ExplorerPanel {
 }
 
 pub(crate) fn find_file_modal() -> Effect {
-    Effect::PushModal(Modal::Prompt(Prompt {
-        title: "Find file".into(),
-        input: Default::default(),
-        on_submit: |query| match query.trim() {
+    Effect::PushModal(Modal::Prompt(Prompt::single(
+        "Find file",
+        |query| match query.trim() {
             "" => Vec::new(),
             query => vec![Effect::FindFile(query.to_string())],
         },
-        alternate: None,
-    }))
+    )))
 }
 
 /// 部分列一致するもののうち最も点の高いパス。
