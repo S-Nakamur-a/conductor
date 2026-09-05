@@ -642,6 +642,29 @@ mod tests {
     }
 
     #[test]
+    fn コミットを見ている間の外からの開く要求は作業ツリーへ戻してから開く() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+        let effect = ws.panels.explorer.open_changed("a.rs", Some(3));
+        assert!(
+            matches!(&effect, Some(Effect::Spawn(Task::ComputeDiff { source, .. })) if source == &DiffSource::working_tree("main")),
+            "{effect:?}"
+        );
+
+        let effects = ws
+            .panels
+            .explorer
+            .apply_result(TaskResult::Diff(Box::new(working_tree(&["a.rs"]))));
+        let [Effect::OpenChangedFile { path, line }] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!((path.as_str(), *line), ("a.rs", Some(3)));
+    }
+
+    #[test]
     fn baseを解決できなければ理由をステータスに出す() {
         let mut ws = with_changes(&["a.rs"]);
         let mut broken = working_tree(&[]);

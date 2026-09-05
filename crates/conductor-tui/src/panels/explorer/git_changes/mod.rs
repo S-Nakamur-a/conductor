@@ -40,6 +40,8 @@ pub struct GitChanges {
     view: Viewport,
     clicks: ClickTracker,
     loading: bool,
+    /// 作業ツリー差分が届いたら開くパス。
+    pending_open: Option<(String, Option<usize>)>,
 }
 
 impl Default for GitChanges {
@@ -62,6 +64,7 @@ impl GitChanges {
             view: Viewport::default(),
             clicks: ClickTracker::default(),
             loading: false,
+            pending_open: None,
         }
     }
 
@@ -179,10 +182,14 @@ impl GitChanges {
             self.cursor.place(at, self.diff.display_list.len());
         }
         self.clamp();
-        match self.diff.error.clone() {
-            Some(e) => vec![Effect::Status(StatusLevel::Warning, e)],
-            None => Vec::new(),
+        let mut effects = Vec::new();
+        if let Some(e) = self.diff.error.clone() {
+            effects.push(Effect::Status(StatusLevel::Warning, e));
         }
+        if let Some((path, line)) = self.pending_open.take() {
+            effects.push(Effect::OpenChangedFile { path, line });
+        }
+        effects
     }
 
     /// 中身が入れ替わっていることがあるので、窓の高さを知っているここで収め直す。
@@ -320,6 +327,12 @@ impl GitChanges {
     /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
     /// — 展開するまで表示行が無く、一覧の選択が動かせない。
     pub fn open_path(&mut self, path: &str, line: Option<usize>) -> Option<Effect> {
+        // 外から来るパスはブランチの差分を指す。コミットを見ていれば作業ツリーへ戻し、
+        // 届いてから開き直す。
+        if !matches!(self.source, DiffSource::WorkingTree { .. }) {
+            self.pending_open = Some((path.to_string(), line));
+            return Some(self.set_source(DiffSource::working_tree(&self.base)));
+        }
         let path = self.diff.resolve_changed_path(path)?;
         let row = self.diff.reveal_path(&path)?;
         self.cursor
