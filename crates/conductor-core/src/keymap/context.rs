@@ -6,6 +6,7 @@ pub enum KeyContext {
     Worktree,
     Explorer,
     ExplorerDiffList,
+    ExplorerCommitLog,
     ExplorerCommentList,
     Viewer,
     ViewerDiffMode,
@@ -17,10 +18,11 @@ pub enum KeyContext {
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 10] = [
+    pub const PANELS: [KeyContext; 11] = [
         KeyContext::Worktree,
         KeyContext::Explorer,
         KeyContext::ExplorerDiffList,
+        KeyContext::ExplorerCommitLog,
         KeyContext::ExplorerCommentList,
         KeyContext::Viewer,
         KeyContext::ViewerDiffMode,
@@ -36,6 +38,7 @@ impl KeyContext {
             KeyContext::Worktree => "worktree",
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
+            KeyContext::ExplorerCommitLog => "explorer_commit_log",
             KeyContext::ExplorerCommentList => "explorer_comment_list",
             KeyContext::Viewer => "viewer",
             KeyContext::ViewerDiffMode => "viewer_diff_mode",

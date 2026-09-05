@@ -1,11 +1,12 @@
-//! ファイルツリーと変更ファイル一覧。上下 2 区画で、キーを受けるのはどちらか一方。
+//! ファイルツリーと Git Changes / コメント一覧。上下 2 区画で、キーを受けるのはどちらか一方。
 
+pub mod git_changes;
 pub mod render;
 pub mod tree;
 
 use std::path::{Path, PathBuf};
 
-use conductor_core::diff_state::{DiffListEntry, DiffState};
+use conductor_core::diff_state::DiffState;
 use conductor_core::keymap::{Action, KeyContext};
 
 use crate::click::ClickTracker;
@@ -16,8 +17,9 @@ use crate::list::{ListCursor, Viewport};
 use crate::modal::{Modal, Prompt};
 use crate::review::ReviewState;
 use crate::task::{Task, TaskResult};
-use crate::workspace::{Ctx, StatusLevel};
+use crate::workspace::Ctx;
 
+use git_changes::GitChanges;
 use tree::FileTree;
 
 /// キーを受け取っている区画。
@@ -32,46 +34,22 @@ pub enum Pane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BottomView {
     #[default]
-    Changes,
+    GitChanges,
     Comments,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ExplorerPanel {
     tree: FileTree,
-    diff: DiffState,
     pane: Pane,
     bottom: BottomView,
     tree_cursor: ListCursor,
-    changes_cursor: ListCursor,
+    pub changes: GitChanges,
     pub comments: CommentList,
     tree_view: Viewport,
-    changes_view: Viewport,
-    /// ダブルクリックの判定は区画ごとに持つ。ひとつにすると、ツリーと変更一覧を
-    /// 1 回ずつ押しただけで 2 回目になる。
     tree_clicks: ClickTracker,
-    changes_clicks: ClickTracker,
-    /// 投げたまま結果がまだ届いていない Task の数。
+    /// 投げたまま結果がまだ届いていないツリー読みの数。
     pending: usize,
-}
-
-impl Default for ExplorerPanel {
-    fn default() -> Self {
-        Self {
-            tree: FileTree::default(),
-            diff: DiffState::new("main"),
-            pane: Pane::default(),
-            bottom: BottomView::default(),
-            tree_cursor: ListCursor::default(),
-            changes_cursor: ListCursor::default(),
-            comments: CommentList::default(),
-            tree_view: Viewport::default(),
-            changes_view: Viewport::default(),
-            tree_clicks: ClickTracker::default(),
-            changes_clicks: ClickTracker::default(),
-            pending: 0,
-        }
-    }
 }
 
 impl ExplorerPanel {
@@ -84,7 +62,7 @@ impl ExplorerPanel {
     }
 
     pub fn diff(&self) -> &DiffState {
-        &self.diff
+        self.changes.diff()
     }
 
     pub fn pane(&self) -> Pane {
@@ -103,22 +81,14 @@ impl ExplorerPanel {
         self.tree_cursor
     }
 
-    pub fn changes_cursor(&self) -> ListCursor {
-        self.changes_cursor
-    }
-
     pub fn tree_viewport(&self) -> Viewport {
         self.tree_view
-    }
-
-    pub fn changes_viewport(&self) -> Viewport {
-        self.changes_view
     }
 
     pub fn key_context(&self) -> KeyContext {
         match (self.pane, self.bottom) {
             (Pane::Tree, _) => KeyContext::Explorer,
-            (Pane::Bottom, BottomView::Changes) => KeyContext::ExplorerDiffList,
+            (Pane::Bottom, BottomView::GitChanges) => self.changes.key_context(),
             (Pane::Bottom, BottomView::Comments) => KeyContext::ExplorerCommentList,
         }
     }
@@ -128,39 +98,31 @@ impl ExplorerPanel {
             self.tree_view = Viewport::inside(rect, 0);
         }
         if let Some(rect) = layout.rect(Region::ExplorerChanges) {
-            self.changes_view = Viewport::inside(rect, self.banner_rows());
+            self.changes.set_viewport(Viewport::inside(rect, 0));
             self.comments.set_viewport(Viewport::inside(rect, 0));
         }
     }
 
-    /// 一覧の先頭でバナーが使う行数。
-    pub fn banner_rows(&self) -> usize {
-        usize::from(self.diff.error.is_some())
-    }
-
-    /// worktree が変わった。
-    pub fn set_root(&mut self, root: PathBuf) -> Vec<Effect> {
+    /// worktree が変わった。base は作業ツリー差分の比較先。
+    pub fn set_root(&mut self, root: PathBuf, base: &str) -> Vec<Effect> {
         if self.tree.root() == root {
             return Vec::new();
         }
-        self.tree.set_root(root);
+        self.tree.set_root(root.clone());
         self.tree_cursor = ListCursor::default();
-        self.changes_cursor = ListCursor::default();
-        self.diff = DiffState::new(&self.diff.base_branch);
+        self.changes.reset(root, base);
         self.refresh()
     }
 
     /// ツリーと diff を投げ直す。
     pub fn refresh(&mut self) -> Vec<Effect> {
-        self.pending += 2;
+        self.pending += 1;
         vec![
             Effect::Spawn(Task::LoadTree {
                 root: self.tree.root().to_path_buf(),
                 expanded: self.tree.expanded_dirs(),
             }),
-            Effect::Spawn(Task::ComputeDiff {
-                worktree: self.tree.root().to_path_buf(),
-            }),
+            self.changes.reload(),
         ]
     }
 
@@ -168,20 +130,24 @@ impl ExplorerPanel {
         self.clamp();
         self.comments.clamp(ctx.review);
         match action {
-            Action::ShowDiffList => return Some(self.show(BottomView::Changes)),
+            Action::ShowDiffList => {
+                self.changes.show_files();
+                return Some(self.show(BottomView::GitChanges));
+            }
+            Action::ShowCommitLog => return Some(self.show_commit_log()),
             Action::ShowCommentList => return Some(self.show(BottomView::Comments)),
+            Action::ExitSubPanel if self.pane == Pane::Bottom => {
+                if self.bottom != BottomView::GitChanges || !self.changes.leave_log() {
+                    self.pane = Pane::Tree;
+                }
+                return Some(Vec::new());
+            }
             _ => {}
         }
         match (self.pane, self.bottom) {
             (Pane::Tree, _) => self.tree_key(action),
-            (Pane::Bottom, BottomView::Changes) => self.changes_key(action),
-            (Pane::Bottom, BottomView::Comments) => match action {
-                Action::ExitSubPanel => {
-                    self.pane = Pane::Tree;
-                    Some(Vec::new())
-                }
-                _ => self.comments.update(action, ctx.review),
-            },
+            (Pane::Bottom, BottomView::GitChanges) => self.changes.update(action),
+            (Pane::Bottom, BottomView::Comments) => self.comments.update(action, ctx.review),
         }
     }
 
@@ -192,12 +158,16 @@ impl ExplorerPanel {
         Vec::new()
     }
 
+    pub fn show_commit_log(&mut self) -> Vec<Effect> {
+        self.show(BottomView::GitChanges);
+        self.changes.show_log()
+    }
+
     /// 中身が入れ替わっていることがあるので、窓の高さを知っているここで収め直す。
     fn clamp(&mut self) {
         self.tree_cursor
             .clamp(self.tree.visible().len(), self.tree_view);
-        self.changes_cursor
-            .clamp(self.diff.display_list.len(), self.changes_view);
+        self.changes.clamp();
     }
 
     fn tree_key(&mut self, action: Action) -> Option<Vec<Effect>> {
@@ -229,29 +199,6 @@ impl ExplorerPanel {
         Some(Vec::new())
     }
 
-    fn changes_key(&mut self, action: Action) -> Option<Vec<Effect>> {
-        let len = self.diff.display_list.len();
-        let row = self.changes_cursor.selected();
-        match action {
-            Action::ExitSubPanel => self.pane = Pane::Tree,
-            Action::ToggleViewed => {
-                let path = self.diff.resolve_file(row)?.path.clone();
-                return Some(vec![Effect::ToggleViewed(path)]);
-            }
-            Action::NavigateDown => self.changes_cursor.step(1, len, self.changes_view),
-            Action::NavigateUp => self.changes_cursor.step(-1, len, self.changes_view),
-            Action::GoToTop => self.changes_cursor.select(0, len, self.changes_view),
-            Action::GoToBottom => self
-                .changes_cursor
-                .select(usize::MAX, len, self.changes_view),
-            Action::CollapseOrLeft => self.diff.collapse_section(row),
-            Action::ExpandOrRight => self.diff.expand_section(row),
-            Action::Select => return Some(self.activate_change(row, false)),
-            _ => return None,
-        }
-        Some(Vec::new())
-    }
-
     /// ツリーが出すのはファイルの中身そのもので diff ではない。同じファイルを
     /// diff で見ている最中でも素の表示へ戻す。
     fn open(&self, path: &str, preview: bool) -> Effect {
@@ -261,16 +208,6 @@ impl ExplorerPanel {
             diff: None,
             preview,
         }
-    }
-
-    fn open_diff(&self, row: usize, preview: bool) -> Option<Effect> {
-        let file = self.diff.resolve_file(row)?;
-        Some(Effect::OpenFile {
-            path: PathBuf::from(&file.path),
-            line: None,
-            diff: Some(Box::new(file.clone())),
-            preview,
-        })
     }
 
     /// 行のクリック。ディレクトリは開閉し、ファイルは preview で開いて 2 回目で固定する
@@ -295,84 +232,38 @@ impl ExplorerPanel {
             let preview = !self.tree_clicks.is_double(row);
             return vec![self.open(&path, preview)];
         }
-        if self.bottom == BottomView::Comments {
-            self.pane = Pane::Bottom;
-            return self.comments.click(y, review);
-        }
-        let len = self.diff.display_list.len();
-        let Some(row) = self.changes_cursor.index_at(y, len, self.changes_view) else {
-            return Vec::new();
-        };
-        self.pane = Pane::Bottom;
-        self.changes_cursor.select(row, len, self.changes_view);
-        let preview = !self.changes_clicks.is_double(row);
-        self.activate_change(row, preview)
-    }
-
-    /// 変更一覧の 1 行を発火させる。ディレクトリは開閉し、ファイルは diff を開く。
-    fn activate_change(&mut self, row: usize, preview: bool) -> Vec<Effect> {
-        match self.diff.display_list.get(row) {
-            Some(DiffListEntry::Directory { .. }) => {
-                self.diff.toggle_section(row);
-                Vec::new()
+        match self.bottom {
+            BottomView::Comments => {
+                self.pane = Pane::Bottom;
+                self.comments.click(y, review)
             }
-            Some(DiffListEntry::File { .. }) => self.open_diff(row, preview).into_iter().collect(),
-            _ => Vec::new(),
+            BottomView::GitChanges => match self.changes.click(y) {
+                Some(effects) => {
+                    self.pane = Pane::Bottom;
+                    effects
+                }
+                None => Vec::new(),
+            },
         }
     }
 
     /// ホイール。選択は動かさず窓だけ送る。
     pub fn scroll(&mut self, region: Region, delta: isize, review: &ReviewState) {
-        match region {
-            Region::ExplorerChanges if self.bottom == BottomView::Comments => {
-                self.comments.scroll(delta, review)
-            }
-            Region::ExplorerChanges => {
-                self.changes_cursor
-                    .pan(delta, self.diff.display_list.len(), self.changes_view)
-            }
+        match (region, self.bottom) {
+            (Region::ExplorerChanges, BottomView::Comments) => self.comments.scroll(delta, review),
+            (Region::ExplorerChanges, BottomView::GitChanges) => self.changes.scroll(delta),
             _ => self
                 .tree_cursor
                 .pan(delta, self.tree.visible().len(), self.tree_view),
         }
     }
 
-    /// 変更ファイル一覧を 1 つ送り、その diff を開く。ディレクトリ行は飛ばす。
     pub fn step_changed_file(&mut self, delta: isize) -> Option<Effect> {
-        let files: Vec<usize> = self
-            .diff
-            .display_list
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| matches!(e, DiffListEntry::File { .. }))
-            .map(|(i, _)| i)
-            .collect();
-        let row = self.changes_cursor.selected();
-        let at = files.partition_point(|&i| i < row);
-        let next = if delta > 0 {
-            *files.get(at + usize::from(files.get(at) == Some(&row)))?
-        } else {
-            *files.get(at.checked_sub(1)?)?
-        };
-        self.changes_cursor
-            .select(next, self.diff.display_list.len(), self.changes_view);
-        self.open_diff(next, false)
+        self.changes.step_file(delta)
     }
 
-    /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
-    /// — 展開するまで表示行が無く、一覧の選択が動かせない。
     pub fn open_changed(&mut self, path: &str, line: Option<usize>) -> Option<Effect> {
-        let path = self.diff.resolve_changed_path(path)?;
-        let row = self.diff.reveal_path(&path)?;
-        self.changes_cursor
-            .select(row, self.diff.display_list.len(), self.changes_view);
-        let file = self.diff.resolve_file(row)?;
-        Some(Effect::OpenFile {
-            path: PathBuf::from(&file.path),
-            line,
-            diff: Some(Box::new(file.clone())),
-            preview: false,
-        })
+        self.changes.open_path(path, line)
     }
 
     /// あいまい検索で最も近いファイルを開く。
@@ -396,23 +287,8 @@ impl ExplorerPanel {
                 self.clamp();
                 Vec::new()
             }
-            TaskResult::Diff(diff) => {
-                self.pending = self.pending.saturating_sub(1);
-                let selected = self
-                    .diff
-                    .resolve_file(self.changes_cursor.selected())
-                    .map(|f| f.path.clone());
-                self.diff = *diff;
-                // 添字ではなくパスで選び直す。ファイルが増減しても指す先が動かない。
-                if let Some(at) = selected.and_then(|p| self.diff.display_index_for_path(&p)) {
-                    self.changes_cursor.place(at, self.diff.display_list.len());
-                }
-                self.clamp();
-                match self.diff.error.clone() {
-                    Some(e) => vec![Effect::Status(StatusLevel::Warning, e)],
-                    None => Vec::new(),
-                }
-            }
+            TaskResult::Diff(diff) => self.changes.install(*diff),
+            TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
             _ => Vec::new(),
         }
     }
@@ -463,8 +339,8 @@ fn score(path: &str, query: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::{Focus, Workspace};
-    use conductor_core::diff_state::FileDiff;
+    use crate::workspace::{Focus, StatusLevel, Workspace};
+    use conductor_core::diff_state::{DiffSource, FileDiff};
 
     fn file(path: &str) -> FileDiff {
         FileDiff {
@@ -475,15 +351,22 @@ mod tests {
         }
     }
 
+    fn working_tree(paths: &[&str]) -> DiffState {
+        let mut diff = DiffState::new(DiffSource::working_tree("main"));
+        diff.files = paths.iter().map(|p| file(p)).collect();
+        diff.rebuild_display_list();
+        diff
+    }
+
     fn with_changes(paths: &[&str]) -> Workspace {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;
-        let mut diff = DiffState::new("main");
-        diff.files = paths.iter().map(|p| file(p)).collect();
-        diff.rebuild_display_list();
-        ws.panels.explorer.diff = diff;
+        ws.panels.explorer.changes.install(working_tree(paths));
         ws.panels.explorer.pane = Pane::Bottom;
-        ws.panels.explorer.changes_view = Viewport::new(0, 20);
+        ws.panels
+            .explorer
+            .changes
+            .set_viewport(Viewport::new(0, 20));
         ws
     }
 
@@ -493,6 +376,10 @@ mod tests {
             let effects = ws.dispatch(*action).unwrap_or_default();
             crate::effect::apply(ws, &mut svc, effects);
         }
+    }
+
+    fn selected(ws: &Workspace) -> usize {
+        ws.panels.explorer.changes.cursor().selected()
     }
 
     #[test]
@@ -519,23 +406,21 @@ mod tests {
         for (actions, expected) in cases {
             let mut ws = with_changes(&["a.rs", "b.rs", "c.rs"]);
             drive(&mut ws, actions);
-            assert_eq!(
-                ws.panels.explorer.changes_cursor.selected(),
-                expected,
-                "{actions:?}"
-            );
+            assert_eq!(selected(&ws), expected, "{actions:?}");
         }
     }
 
     #[test]
-    fn 変更一覧のenterはdiffを添えて開く() {
+    fn 変更一覧のenterは出どころ付きのdiffを添えて開く() {
         let mut ws = with_changes(&["a.rs", "b.rs"]);
         let effects = ws.dispatch(Action::Select).unwrap();
         let [Effect::OpenFile { path, diff, .. }] = effects.as_slice() else {
             panic!("{effects:?}");
         };
         assert_eq!(path.to_str(), Some("a.rs"));
-        assert_eq!(diff.as_ref().map(|d| d.path.as_str()), Some("a.rs"));
+        let diff = diff.as_ref().unwrap();
+        assert_eq!(diff.file.path, "a.rs");
+        assert_eq!(diff.source, DiffSource::working_tree("main"));
     }
 
     #[test]
@@ -600,7 +485,7 @@ mod tests {
         assert_eq!((path.to_str(), *line), (Some("a.rs"), Some(4)));
 
         drive(&mut ws, &[Action::ShowDiffList]);
-        assert_eq!(ws.panels.explorer.bottom(), BottomView::Changes);
+        assert_eq!(ws.panels.explorer.bottom(), BottomView::GitChanges);
         assert_eq!(ws.key_context(), KeyContext::ExplorerDiffList);
 
         drive(&mut ws, &[Action::ShowCommentList, Action::ExitSubPanel]);
@@ -611,29 +496,177 @@ mod tests {
     fn diffの入れ替えは選択をパスで持ち越す() {
         let mut ws = with_changes(&["a.rs", "b.rs", "c.rs"]);
         drive(&mut ws, &[Action::GoToBottom]);
-        assert_eq!(ws.panels.explorer.changes_cursor.selected(), 2);
+        assert_eq!(selected(&ws), 2);
 
-        let mut next = DiffState::new("main");
-        next.files = vec![file("c.rs")];
-        next.rebuild_display_list();
         ws.panels
             .explorer
-            .apply_result(TaskResult::Diff(Box::new(next)));
+            .apply_result(TaskResult::Diff(Box::new(working_tree(&["c.rs"]))));
         assert_eq!(
             ws.panels
                 .explorer
-                .diff
+                .diff()
                 .resolve_file(0)
                 .map(|f| f.path.as_str()),
             Some("c.rs")
         );
-        assert_eq!(ws.panels.explorer.changes_cursor.selected(), 0);
+        assert_eq!(selected(&ws), 0);
+    }
+
+    #[test]
+    fn 頼んだ出どころと違うdiffは捨てる() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+
+        let mut stale = DiffState::new(DiffSource::commit("a"));
+        stale.files = vec![file("stale.rs")];
+        stale.rebuild_display_list();
+        ws.panels
+            .explorer
+            .apply_result(TaskResult::Diff(Box::new(stale)));
+        assert!(ws.panels.explorer.changes.is_loading());
+        assert_eq!(
+            ws.panels.explorer.diff().files[0].path,
+            "a.rs",
+            "古い出どころの結果で上書きしない"
+        );
+    }
+
+    #[test]
+    fn worktreeを替えると出どころは作業ツリーに戻る() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+        ws.panels
+            .explorer
+            .set_root(PathBuf::from("/tmp/elsewhere"), "develop");
+        assert_eq!(
+            ws.panels.explorer.changes.source(),
+            &DiffSource::working_tree("develop")
+        );
+    }
+
+    #[test]
+    fn コミット一覧で選んだコミットが出どころになり完全なハッシュが出る() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog]);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerCommitLog);
+
+        let oid = "0123456789abcdef0123456789abcdef01234567";
+        ws.panels.explorer.apply_result(TaskResult::HeadLog {
+            skip: 0,
+            commits: Ok(vec![git_changes::log::tests::commit(oid)]),
+        });
+        drive(&mut ws, &[Action::NavigateDown]);
+        assert_eq!(
+            ws.panels
+                .explorer
+                .changes
+                .log()
+                .selected_commit()
+                .map(|c| c.oid.as_str()),
+            Some(oid)
+        );
+
+        let effects = ws.dispatch(Action::Select).unwrap();
+        let [
+            Effect::Spawn(Task::ComputeDiff { source, .. }),
+            Effect::Status(StatusLevel::Info, text),
+        ] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(source, &DiffSource::commit(oid));
+        assert!(text.starts_with(oid), "{text}");
+        assert_eq!(
+            ws.panels.explorer.changes.source(),
+            &DiffSource::commit(oid)
+        );
+        assert_eq!(
+            ws.key_context(),
+            KeyContext::ExplorerDiffList,
+            "ファイル一覧へ移る"
+        );
+    }
+
+    /// ページが届く前に動かしたカーソルが、届いた瞬間に出どころの行へ戻ると、
+    /// そのまま Enter を押した人は違う行を選ぶ。
+    #[test]
+    fn ページが届く前に動かしたカーソルは戻さない() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog, Action::NavigateDown]);
+        let commits = (0..3)
+            .map(|i| git_changes::log::tests::commit(&format!("{i:040}")))
+            .collect();
+        ws.panels.explorer.apply_result(TaskResult::HeadLog {
+            skip: 0,
+            commits: Ok(commits),
+        });
+        assert_eq!(ws.panels.explorer.changes.log().cursor().selected(), 1);
+    }
+
+    #[test]
+    fn コミット一覧のescはファイル一覧へ戻りもう1回でツリーへ() {
+        let mut ws = with_changes(&["a.rs"]);
+        drive(&mut ws, &[Action::ShowCommitLog, Action::ExitSubPanel]);
+        assert_eq!(ws.key_context(), KeyContext::ExplorerDiffList);
+        drive(&mut ws, &[Action::ExitSubPanel]);
+        assert_eq!(ws.key_context(), KeyContext::Explorer);
+    }
+
+    #[test]
+    fn 作業ツリーの行を選ぶと出どころが戻る() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+        drive(&mut ws, &[Action::ShowCommitLog, Action::GoToTop]);
+        let effects = ws.dispatch(Action::Select).unwrap();
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Spawn(Task::ComputeDiff { .. })]
+            ),
+            "{effects:?}"
+        );
+        assert_eq!(
+            ws.panels.explorer.changes.source(),
+            &DiffSource::working_tree("main")
+        );
+    }
+
+    #[test]
+    fn コミットを見ている間の外からの開く要求は作業ツリーへ戻してから開く() {
+        let mut ws = with_changes(&["a.rs"]);
+        ws.panels
+            .explorer
+            .changes
+            .set_source(DiffSource::commit("b"));
+        let effect = ws.panels.explorer.open_changed("a.rs", Some(3));
+        assert!(
+            matches!(&effect, Some(Effect::Spawn(Task::ComputeDiff { source, .. })) if source == &DiffSource::working_tree("main")),
+            "{effect:?}"
+        );
+
+        let effects = ws
+            .panels
+            .explorer
+            .apply_result(TaskResult::Diff(Box::new(working_tree(&["a.rs"]))));
+        let [Effect::OpenChangedFile { path, line }] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!((path.as_str(), *line), ("a.rs", Some(3)));
     }
 
     #[test]
     fn baseを解決できなければ理由をステータスに出す() {
         let mut ws = with_changes(&["a.rs"]);
-        let mut broken = DiffState::new("main");
+        let mut broken = working_tree(&[]);
         broken.error = Some("no such ref".into());
         let effects = ws
             .panels
@@ -643,23 +676,23 @@ mod tests {
             effects.as_slice(),
             [Effect::Status(StatusLevel::Warning, _)]
         ));
-        assert_eq!(ws.panels.explorer.banner_rows(), 1);
+        assert_eq!(ws.panels.explorer.changes.banner_rows(), 1);
     }
 
     /// 覗くだけで選択が動くと、そのまま Enter を押したときに別のファイルが開く。
     #[test]
     fn ホイールは選択を動かさず窓だけ送る() {
         let mut ws = with_changes(&["a.rs", "b.rs", "c.rs", "d.rs", "e.rs"]);
-        ws.panels.explorer.changes_view = Viewport::new(0, 2);
+        ws.panels.explorer.changes.set_viewport(Viewport::new(0, 2));
         ws.panels
             .explorer
             .scroll(Region::ExplorerChanges, 2, &ReviewState::default());
-        assert_eq!(ws.panels.explorer.changes_cursor.scroll(), 2);
-        assert_eq!(ws.panels.explorer.changes_cursor.selected(), 0);
+        assert_eq!(ws.panels.explorer.changes.cursor().scroll(), 2);
+        assert_eq!(selected(&ws), 0);
         ws.panels
             .explorer
             .scroll(Region::ExplorerChanges, -9, &ReviewState::default());
-        assert_eq!(ws.panels.explorer.changes_cursor.scroll(), 0);
+        assert_eq!(ws.panels.explorer.changes.cursor().scroll(), 0);
     }
 
     #[test]

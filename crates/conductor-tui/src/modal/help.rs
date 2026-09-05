@@ -65,8 +65,12 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
         Focus::Explorer => &[
             ("Explorer \u{2014} file tree", KeyContext::Explorer),
             (
-                "Explorer \u{2014} changed files",
+                "Explorer \u{2014} Git Changes",
                 KeyContext::ExplorerDiffList,
+            ),
+            (
+                "Explorer \u{2014} commit log",
+                KeyContext::ExplorerCommitLog,
             ),
             (
                 "Explorer \u{2014} comment list",

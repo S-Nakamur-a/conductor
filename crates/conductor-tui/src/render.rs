@@ -228,10 +228,25 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
                 })
                 .add_modifier(Modifier::BOLD),
         ),
-        None => Line::styled(
-            key_hint(ws.focus, ws.key_context(), &ws.keymap),
-            Style::default().fg(theme.hint),
-        ),
+        None => {
+            let hint = Span::styled(
+                key_hint(ws.focus, ws.key_context(), &ws.keymap),
+                Style::default().fg(theme.hint),
+            );
+            // 一覧は短縮ハッシュしか出せない幅なので、完全なハッシュはフッターが持つ。
+            match ws.panels.explorer.changes.log().selected_commit() {
+                Some(commit) if ws.key_context() == KeyContext::ExplorerCommitLog => {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{}  ", commit.oid),
+                            Style::default().fg(theme.accent),
+                        ),
+                        hint,
+                    ])
+                }
+                _ => Line::from(hint),
+            }
+        }
     }
 }
 
@@ -247,12 +262,18 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("new", &[Action::CreateWorktree]),
             ("switch", &[Action::SwitchBranch]),
         ],
+        Focus::Explorer if context == KeyContext::ExplorerCommitLog => &[
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("pick", &[Action::Select]),
+            ("files", &[Action::ShowDiffList]),
+            ("back", &[Action::ExitSubPanel]),
+        ],
         Focus::Explorer => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),
             ("open", &[Action::Select]),
             ("fold", &[Action::CollapseOrLeft, Action::ExpandOrRight]),
-            ("diff", &[Action::ShowDiffList]),
+            ("changes", &[Action::ShowDiffList]),
             ("search", &[Action::SearchFilename]),
         ],
         // diff を見ている間はハンク送りと文脈の展開が主役になる。案内も入れ替える。

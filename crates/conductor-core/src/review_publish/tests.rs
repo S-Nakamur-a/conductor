@@ -1,9 +1,9 @@
 use super::*;
-use crate::diff_state::{DiffHunk, DiffLine, DiffLineTag, FileDiff};
+use crate::diff_state::{DiffHunk, DiffLine, DiffLineTag, DiffSource, FileDiff};
 
 /// path のハンク 1 つが new_lines の行番号だけを持つ差分。
 fn diff_with_hunk(path: &str, new_lines: &[usize]) -> DiffState {
-    let mut ds = DiffState::new("main");
+    let mut ds = DiffState::new(DiffSource::working_tree("main"));
     ds.files = vec![FileDiff {
         path: path.to_string(),
         added_lines: new_lines.len(),

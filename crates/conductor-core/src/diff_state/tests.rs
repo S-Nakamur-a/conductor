@@ -13,7 +13,7 @@ fn file(path: &str) -> FileDiff {
 }
 
 fn diff_state_with(paths: &[&str]) -> DiffState {
-    let mut ds = DiffState::new("main");
+    let mut ds = DiffState::new(DiffSource::working_tree("main"));
     ds.files = paths.iter().map(|p| file(p)).collect();
     ds.rebuild_display_list();
     ds
@@ -21,14 +21,28 @@ fn diff_state_with(paths: &[&str]) -> DiffState {
 
 /// (変更パス, ベースを解決できなかった理由)。
 fn changed(tree: &Tree, base: &str) -> (Vec<String>, Option<String>) {
-    let (files, error) = DiffState::compute_changed_files(&tree.path, base, false, 4).unwrap();
+    let (files, error) = DiffSource::working_tree(base)
+        .changed_files(&tree.path, false, 4)
+        .unwrap();
     (files.into_iter().map(|f| f.path).collect(), error)
 }
 
 fn loaded(tree: &Tree, base: &str) -> DiffState {
-    let mut ds = DiffState::new(base);
-    ds.load_diff(&tree.path, base, false, 4);
+    let mut ds = DiffState::new(DiffSource::working_tree(base));
+    ds.load(&tree.path, false, 4);
     ds
+}
+
+/// (パス, 追加行数, 削除行数)。
+fn commit_files(tree: &Tree, oid: Oid) -> Vec<(String, usize, usize)> {
+    let (files, error) = DiffSource::commit(&oid.to_string())
+        .changed_files(&tree.path, false, 4)
+        .unwrap();
+    assert_eq!(error, None);
+    files
+        .into_iter()
+        .map(|f| (f.path, f.added_lines, f.deleted_lines))
+        .collect()
 }
 
 fn listed_paths(ds: &DiffState) -> Vec<&str> {
@@ -354,7 +368,9 @@ fn 読めないファイルを全行削除にでっち上げない() {
     };
     set_mode(0o000);
 
-    let (files, _) = DiffState::compute_changed_files(&repo.path, "main", false, 4).unwrap();
+    let (files, _) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, false, 4)
+        .unwrap();
 
     set_mode(0o644);
     if let Some(f) = files.iter().find(|f| f.path == "a.txt") {
@@ -375,7 +391,9 @@ fn 本当に消えたファイルは全行削除として出す() {
     repo.checkout_at("main", oid);
     std::fs::remove_file(repo.path.join("a.txt")).unwrap();
 
-    let (files, _) = DiffState::compute_changed_files(&repo.path, "main", false, 4).unwrap();
+    let (files, _) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, false, 4)
+        .unwrap();
 
     let f = files
         .iter()
@@ -393,7 +411,9 @@ fn バイナリは行数無しで一覧に残る() {
     repo.checkout_at("main", oid);
     repo.file("logo.png", [0u8, 9, 9, 0, 7, 7, 7]);
 
-    let (files, _) = DiffState::compute_changed_files(&repo.path, "main", false, 4).unwrap();
+    let (files, _) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, false, 4)
+        .unwrap();
 
     let f = files
         .iter()
@@ -466,7 +486,9 @@ fn ハンクには直上の関数ヘッダーが付く() {
     repo.checkout_at("main", oid);
     repo.file("a.rs", source.replace("let e = 5;", "let e = 50;"));
 
-    let (files, _) = DiffState::compute_changed_files(&repo.path, "main", false, 4).unwrap();
+    let (files, _) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, false, 4)
+        .unwrap();
 
     assert_eq!(
         files[0].hunks[0].func_header.as_deref(),
@@ -481,7 +503,9 @@ fn 単語diffは並び順で対応する削除と追加の組にだけ付く() {
     repo.checkout_at("main", oid);
     repo.file("a.txt", "hello rust\n");
 
-    let (files, _) = DiffState::compute_changed_files(&repo.path, "main", true, 4).unwrap();
+    let (files, _) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, true, 4)
+        .unwrap();
 
     type Shape<'a> = (DiffLineTag, &'a str, Vec<(&'a str, bool)>);
     let lines = &files[0].hunks[0].lines;
@@ -674,4 +698,78 @@ fn 折りたたみはディレクトリ行だけを変えファイル行では�
     assert!(ds.toggle_section(0));
     ds.expand_section(0);
     assert_eq!(ds.display_list, rows_open, "展開済みを開いても落ちない");
+}
+
+#[test]
+fn コミットの差分は最初の親からそのコミットまで() {
+    let repo = TestRepo::new();
+    let root = repo.commit_tree(None, &[("a.txt", b"1\n2\n")]);
+    let second = repo.commit_tree(Some(root), &[("a.txt", b"1\n3\n"), ("b.txt", b"b\n")]);
+    repo.checkout_at("main", second);
+    // 作業ツリーを汚しても、コミットの差分には混ざらない。
+    repo.file("a.txt", "dirty\n").file("c.txt", "c\n");
+
+    assert_eq!(
+        commit_files(&repo, second),
+        [("a.txt".to_string(), 1, 1), ("b.txt".to_string(), 1, 0)]
+    );
+}
+
+#[test]
+fn ルートコミットは空のtreeからの追加として出す() {
+    let repo = TestRepo::new();
+    let root = repo.commit_tree(None, &[("a.txt", b"1\n2\n")]);
+    repo.checkout_at("main", root);
+
+    assert_eq!(commit_files(&repo, root), [("a.txt".to_string(), 2, 0)]);
+}
+
+#[test]
+fn マージコミットは最初の親との差分だけを出す() {
+    let repo = TestRepo::new();
+    let root = repo.commit_tree(None, &[("a.txt", b"a\n")]);
+    let first = repo.commit_tree(Some(root), &[("first.txt", b"1\n")]);
+    let second = repo.commit_tree(Some(root), &[("second.txt", b"2\n")]);
+    let merge = repo.commit_tree_with_parents(
+        &[first, second],
+        &[("first.txt", b"1\n"), ("second.txt", b"2\n")],
+    );
+    repo.checkout_at("main", merge);
+
+    assert_eq!(
+        commit_files(&repo, merge),
+        [("second.txt".to_string(), 1, 0)]
+    );
+}
+
+#[test]
+fn 無いコミットは理由を残して0件になる() {
+    let repo = TestRepo::with_base_commit();
+    let mut ds = DiffState::new(DiffSource::commit(&"0".repeat(40)));
+    ds.load(&repo.path, false, 4);
+    assert!(ds.files.is_empty());
+    assert!(
+        ds.error.as_deref().is_some_and(|e| e.contains("not found")),
+        "{:?}",
+        ds.error
+    );
+}
+
+#[test]
+fn 新しい側の本文は出どころから読む() {
+    let repo = TestRepo::new();
+    let root = repo.commit_tree(None, &[("a.txt", b"committed\n")]);
+    repo.checkout_at("main", root);
+    repo.file("a.txt", "on disk\n");
+
+    let read = |source: DiffSource| {
+        String::from_utf8(source.read_new_side(&repo.path, "a.txt").unwrap()).unwrap()
+    };
+    assert_eq!(read(DiffSource::working_tree("main")), "on disk\n");
+    assert_eq!(read(DiffSource::commit(&root.to_string())), "committed\n");
+    assert!(
+        DiffSource::commit(&root.to_string())
+            .read_new_side(&repo.path, "missing.txt")
+            .is_err()
+    );
 }

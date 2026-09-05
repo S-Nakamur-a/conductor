@@ -49,6 +49,7 @@ keymap_suite::actions! {
 
         // エクスプローラパネル
         ShowDiffList => "show_diff_list",
+        ShowCommitLog => "show_commit_log",
         ShowCommentList => "show_comment_list",
         OpenCommentList => "open_comment_list",
         SearchFilename => "search_filename",
@@ -152,7 +153,7 @@ impl Action {
             Action::PrevWorktree => "Previous worktree",
             Action::FocusWorktree => "Open worktree switcher",
             Action::FocusExplorer => "Focus Explorer (file tree)",
-            Action::FocusExplorerDiffList => "Focus Changed-files list",
+            Action::FocusExplorerDiffList => "Focus Git Changes",
             Action::FocusViewer => "Focus Viewer",
             Action::FocusTerminalClaude => "Focus Claude Code panel",
             Action::FocusTerminalShell => "Focus Shell panel",
@@ -194,7 +195,8 @@ impl Action {
             Action::ToggleViewed => "Toggle file viewed",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
-            Action::ShowDiffList => "Show changed-files list",
+            Action::ShowDiffList => "Show Git Changes",
+            Action::ShowCommitLog => "Show commit log in Git Changes",
             Action::ShowCommentList => "Show comment list",
             Action::OpenCommentList => "Open comment-list modal",
             Action::SearchFilename => "Search filenames",

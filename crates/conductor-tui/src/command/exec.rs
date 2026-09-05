@@ -129,7 +129,12 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::FoldAll => ws.panels.viewer.fold_chord('M'),
         CommandId::UnfoldAll => ws.panels.viewer.fold_chord('R'),
         CommandId::ToggleHelp => vec![Effect::PushModal(Modal::Help(help::Help::open(ws.focus)))],
-        CommandId::ShowDiffList => show_explorer(ws, BottomView::Changes),
+        CommandId::ShowDiffList => show_explorer(ws, BottomView::GitChanges),
+        CommandId::ShowCommitLog => {
+            let mut effects = ws.panels.explorer.show_commit_log();
+            effects.push(Effect::Focus(Focus::Explorer));
+            effects
+        }
         CommandId::ShowCommentList | CommandId::ShowReviewComments => {
             show_explorer(ws, BottomView::Comments)
         }
@@ -215,7 +220,9 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::ReviewPullRequest => {
             vec![Effect::PushModal(Modal::PrInput(pr::PrInput::default()))]
         }
-        CommandId::PublishReview => vec![Effect::Spawn(Task::LoadPublishable)],
+        CommandId::PublishReview => vec![Effect::Spawn(Task::LoadPublishable {
+            worktree: ws.worktree_path(),
+        })],
 
         CommandId::CheckForUpdate => vec![
             Effect::Status(

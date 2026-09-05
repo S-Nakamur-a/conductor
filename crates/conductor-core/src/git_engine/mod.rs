@@ -6,6 +6,7 @@
 
 mod branch_lineage;
 mod cherry_pick;
+mod commit_log;
 mod fetch;
 mod grab;
 mod merge;

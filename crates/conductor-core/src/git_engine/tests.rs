@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
-use super::cherry_pick::format_duration_ago;
+use super::commit_log::format_duration_ago;
 use super::*;
 use crate::test_support::{TestRepo, Tree, signature};
 
@@ -515,6 +515,43 @@ fn list_branch_commitsは新しい順にlimit件() {
             .all(|c| c.short_oid.len() == 8 && c.oid.starts_with(&c.short_oid))
     );
     assert_eq!(commits[0].author, "Test");
+}
+
+#[test]
+fn head_logはskipで次のページを続きから出す() {
+    let repo = TestRepo::with_base_commit();
+    for n in ["second", "third", "fourth"] {
+        repo.file("a.txt", n).add("a.txt").commit(n);
+    }
+    let engine = repo.engine();
+    let page = |skip| -> Vec<String> {
+        engine
+            .head_log(skip, 2)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.message)
+            .collect()
+    };
+    assert_eq!(page(0), ["fourth", "third"]);
+    assert_eq!(page(2), ["second", "base"]);
+    assert!(page(4).is_empty());
+}
+
+#[test]
+fn head_logはリンクされたworktreeのheadを歩く() {
+    let repo = TestRepo::with_base_commit();
+    let linked = repo.linked_worktree("wt");
+    linked.file("b.txt", "b").add("b.txt").commit("only on wt");
+
+    let messages: Vec<String> = linked
+        .engine()
+        .head_log(0, 10)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.message)
+        .collect();
+    assert_eq!(messages, ["only on wt", "base"]);
+    assert_eq!(repo.engine().head_log(0, 10).unwrap().len(), 1);
 }
 
 #[test]

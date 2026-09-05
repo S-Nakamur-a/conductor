@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use conductor_core::diff_state::FileDiff;
+use conductor_core::diff_state::OpenDiff;
 use conductor_svc::Services;
 use conductor_svc::pty::SessionKind;
 
@@ -17,7 +17,7 @@ pub enum Effect {
     OpenFile {
         path: PathBuf,
         line: Option<usize>,
-        diff: Option<Box<FileDiff>>,
+        diff: Option<Box<OpenDiff>>,
         preview: bool,
     },
     /// 戻り先を積んでからファイルを開く。ジャンプの出どころが Viewer の外にもあるので、
@@ -202,7 +202,7 @@ fn open_file(
     ws: &mut Workspace,
     path: &std::path::Path,
     line: Option<usize>,
-    diff: Option<Box<FileDiff>>,
+    diff: Option<Box<OpenDiff>>,
     preview: bool,
 ) -> Vec<Effect> {
     let mut effects = ws.panels.viewer.open(path, line, diff, preview);
@@ -224,7 +224,11 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     };
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
-    effects.extend(ws.panels.explorer.set_root(worktree.clone()));
+    effects.extend(
+        ws.panels
+            .explorer
+            .set_root(worktree.clone(), &ws.repo.main_branch),
+    );
     // コメントはブランチで引くので、worktree が動いたら読み直す。
     effects.push(Effect::Spawn(Task::LoadReview));
     // 確認ダイアログが「作り直しか、初めてか」を答えられるよう、成果物も先に読む。
@@ -361,7 +365,7 @@ fn switch_repo(
     ws.panels.worktree = Default::default();
     ws.panels.terminal.follow_worktree(None);
     let mut effects = ws.panels.viewer.set_root(root.clone());
-    effects.extend(ws.panels.explorer.set_root(root));
+    effects.extend(ws.panels.explorer.set_root(root, &ws.repo.main_branch));
     effects.push(Effect::Spawn(Task::ListWorktrees));
     effects.push(Effect::Spawn(Task::LoadGrabState));
     effects.push(Effect::Status(
