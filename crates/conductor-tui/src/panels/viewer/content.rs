@@ -1,11 +1,12 @@
-//! 開いているファイルの本文と、それをディスクから読む処理。
+//! 開いているファイルの本文と、それを読む処理。
 //!
-//! git を一切経由しないので、`.git` の無いディレクトリでも未追跡のファイルでも
-//! 同じように開ける。
+//! 素の本文は git を一切経由せずディスクから読むので、`.git` の無いディレクトリでも
+//! 未追跡のファイルでも同じように開ける。
 
 use std::collections::HashMap;
 use std::path::Path;
 
+use conductor_core::diff_state::DiffSource;
 use conductor_core::symbol_index::CodeMask;
 use conductor_core::test_run::{TestRun, scan_go_test_runs, scan_rust_test_runs};
 use ratatui::style::Style;
@@ -69,38 +70,79 @@ pub fn read(root: &Path, relative: &str, tab_width: usize) -> Result<Loaded, Str
         return Err(reason);
     }
     let text = std::fs::read_to_string(&full).map_err(|e| e.to_string())?;
+    Ok(parse(&text, relative, tab_width))
+}
+
+pub fn read_new_side(
+    root: &Path,
+    relative: &str,
+    source: &DiffSource,
+    tab_width: usize,
+) -> Result<Loaded, String> {
+    // 作業ツリーは従来どおりディスクから。サイズ判定を読む前にできる。
+    let DiffSource::Commit { .. } = source else {
+        return read(root, relative, tab_width);
+    };
+    if let Some(reason) = opaque(relative) {
+        return Err(reason);
+    }
+    let bytes = source
+        .read_new_side(root, relative)
+        .map_err(|e| format!("{e:#}"))?;
+    if let Some(reason) = too_large(bytes.len() as u64) {
+        return Err(reason);
+    }
+    if is_binary(&bytes) {
+        return Err("binary file".to_string());
+    }
+    Ok(parse(&String::from_utf8_lossy(&bytes), relative, tab_width))
+}
+
+fn parse(text: &str, relative: &str, tab_width: usize) -> Loaded {
     let mut lines: Vec<String> = text.lines().map(|l| expand_tabs(l, tab_width)).collect();
     if lines.is_empty() && !text.is_empty() {
         lines.push(String::new());
     }
     // 折りたたみは展開前のテキストから求める。tree-sitter もインデント幅も、
     // 書かれたままのファイルを前提にしている。
-    let folds = fold::compute(&text, relative);
+    let folds = fold::compute(text, relative);
     let tests = if relative.ends_with(".rs") {
         scan_rust_test_runs(&lines, relative)
     } else {
         scan_go_test_runs(&lines, relative)
     };
-    Ok(Loaded {
+    Loaded {
         lines,
         folds,
-        mask: CodeMask::compute(&text, relative),
+        mask: CodeMask::compute(text, relative),
         tests,
-    })
+    }
 }
 
 /// 素のテキストとして開けないなら、その理由。
 fn unsupported(full: &Path, relative: &str) -> Option<String> {
-    if let Some(ext) = extension(relative)
-        && (OPAQUE_EXTS.contains(&ext.as_str()) || media::is_image_path(relative))
-    {
-        return Some(format!("{ext} files are not shown here"));
+    if let Some(reason) = opaque(relative) {
+        return Some(reason);
     }
     let size = std::fs::metadata(full).ok()?.len();
-    if size > MAX_BYTES {
-        return Some(format!("file is too large ({} MiB)", size / (1024 * 1024)));
+    if let Some(reason) = too_large(size) {
+        return Some(reason);
     }
     contains_nul(full).then(|| "binary file".to_string())
+}
+
+fn opaque(relative: &str) -> Option<String> {
+    let ext = extension(relative)?;
+    (OPAQUE_EXTS.contains(&ext.as_str()) || media::is_image_path(relative))
+        .then(|| format!("{ext} files are not shown here"))
+}
+
+fn too_large(size: u64) -> Option<String> {
+    (size > MAX_BYTES).then(|| format!("file is too large ({} MiB)", size / (1024 * 1024)))
+}
+
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes[..SNIFF_BYTES.min(bytes.len())].contains(&0)
 }
 
 fn contains_nul(full: &Path) -> bool {

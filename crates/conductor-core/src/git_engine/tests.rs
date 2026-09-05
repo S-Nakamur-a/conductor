@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use git2::Repository;
 
-use super::cherry_pick::format_duration_ago;
+use super::commit_log::format_duration_ago;
 use super::*;
 use crate::test_support::{TestRepo, Tree, signature};
 

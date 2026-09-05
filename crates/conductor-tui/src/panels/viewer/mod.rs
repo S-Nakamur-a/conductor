@@ -19,7 +19,7 @@ pub mod thread;
 
 use std::path::{Path, PathBuf};
 
-use conductor_core::diff_state::FileDiff;
+use conductor_core::diff_state::OpenDiff;
 use conductor_core::keymap::KeyContext;
 use ratatui::layout::Rect;
 
@@ -62,7 +62,7 @@ struct Load {
     seq: u64,
     path: String,
     /// 読み終わってから組む。エントリの末尾はファイルの行数で決まる。
-    diff: Option<Box<FileDiff>>,
+    diff: Option<Box<OpenDiff>>,
     line: Option<usize>,
     /// タブを開き直しただけなら、読んでいた位置に戻す。
     keep_scroll: bool,
@@ -236,7 +236,7 @@ impl ViewerPanel {
         &mut self,
         path: &Path,
         line: Option<usize>,
-        file_diff: Option<Box<FileDiff>>,
+        file_diff: Option<Box<OpenDiff>>,
         preview: bool,
     ) -> Vec<Effect> {
         let Some(relative) = self.relative(path) else {
@@ -267,7 +267,7 @@ impl ViewerPanel {
     fn request(
         &mut self,
         path: String,
-        file_diff: Option<Box<FileDiff>>,
+        file_diff: Option<Box<OpenDiff>>,
         line: Option<usize>,
         keep_scroll: bool,
     ) -> Vec<Effect> {
@@ -281,6 +281,7 @@ impl ViewerPanel {
             root: self.root.clone(),
             path: path.clone(),
             seq: self.seq,
+            diff_of: file_diff.as_ref().map(|d| d.source.clone()),
         };
         self.load = Some(Load {
             seq: self.seq,
@@ -374,8 +375,8 @@ impl ViewerPanel {
         };
         self.scroll.diff = 0;
         self.scroll.md = 0;
-        if let Some(file_diff) = load.diff {
-            self.diff.build(&file_diff, self.content.lines.len());
+        if let Some(diff) = load.diff {
+            self.diff.build(&diff.file, self.content.lines.len());
         }
         if let Some(line) = load.line {
             self.goto_line(line);

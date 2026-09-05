@@ -252,7 +252,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("panel", &[Action::CycleFocusForward]),
             ("open", &[Action::Select]),
             ("fold", &[Action::CollapseOrLeft, Action::ExpandOrRight]),
-            ("diff", &[Action::ShowDiffList]),
+            ("changes", &[Action::ShowDiffList]),
             ("search", &[Action::SearchFilename]),
         ],
         // diff を見ている間はハンク送りと文脈の展開が主役になる。案内も入れ替える。

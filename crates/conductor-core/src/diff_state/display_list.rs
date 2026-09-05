@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::{DiffListEntry, DiffState, FileDiff};
+use super::{DiffListEntry, DiffState, FileDiff, OpenDiff};
 
 #[derive(Default)]
 struct Dir {
@@ -78,6 +78,13 @@ impl DiffState {
             DiffListEntry::File { file_index, .. } => self.files.get(*file_index),
             DiffListEntry::Directory { .. } | DiffListEntry::Summary => None,
         }
+    }
+
+    pub fn open_diff(&self, display_idx: usize) -> Option<OpenDiff> {
+        Some(OpenDiff {
+            source: self.source.clone(),
+            file: self.resolve_file(display_idx)?.clone(),
+        })
     }
 
     /// [Self::resolve_file] の逆引き。折りたたまれたディレクトリの中のファイルは見えない。

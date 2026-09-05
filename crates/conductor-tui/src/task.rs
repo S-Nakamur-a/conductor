@@ -10,7 +10,7 @@ use conductor_core::ai_caller::{self, AiCaller};
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, ApiConfig, LayoutConfig};
-use conductor_core::diff_state::DiffState;
+use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::{CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir};
 use conductor_core::grep_search::{self, GrepMatch};
 use conductor_core::pr_intake::{self, PrIntakeOutcome};
@@ -70,6 +70,7 @@ pub enum Task {
     },
     ComputeDiff {
         worktree: PathBuf,
+        source: DiffSource,
     },
     /// `seq` は結果の照合に使う。同じファイルを続けて開いても古い結果が新しい本文を
     /// 上書きしない。
@@ -77,6 +78,7 @@ pub enum Task {
         root: PathBuf,
         path: String,
         seq: u64,
+        diff_of: Option<DiffSource>,
     },
     /// 画像を升目に描く。鍵は (パス, 桁, 行) で、区画の大きさが変われば描き直す。
     RenderMedia {
@@ -409,9 +411,13 @@ impl Task {
                     TaskResult::Tree,
                 );
             }
-            Task::ComputeDiff { worktree } => {
+            Task::ComputeDiff { worktree, source } => {
                 svc.spawn(
-                    move || Box::new(compute_diff(&env, &worktree)),
+                    move || {
+                        let mut diff = DiffState::new(source);
+                        diff.load(&worktree, env.word_diff, env.tab_width);
+                        Box::new(diff)
+                    },
                     TaskResult::Diff,
                 );
             }
@@ -430,9 +436,22 @@ impl Task {
                     },
                 );
             }
-            Task::LoadFile { root, path, seq } => {
+            Task::LoadFile {
+                root,
+                path,
+                seq,
+                diff_of,
+            } => {
                 svc.spawn(
-                    move || (seq, content::read(&root, &path, env.tab_width)),
+                    move || {
+                        let loaded = match diff_of {
+                            Some(source) => {
+                                content::read_new_side(&root, &path, &source, env.tab_width)
+                            }
+                            None => content::read(&root, &path, env.tab_width),
+                        };
+                        (seq, loaded)
+                    },
                     |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
                 );
             }
@@ -1230,12 +1249,6 @@ fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, S
         log::warn!("removed the worktree but could not delete branch '{branch}': {e:#}");
     }
     Ok(branch.to_string())
-}
-
-fn compute_diff(env: &TaskEnv, worktree: &Path) -> DiffState {
-    let mut diff = DiffState::new(&env.main_branch);
-    diff.load_diff(worktree, &env.main_branch, env.word_diff, env.tab_width);
-    diff
 }
 
 #[cfg(test)]

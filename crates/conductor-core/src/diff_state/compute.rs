@@ -9,22 +9,18 @@ use git2::{Delta, DiffFile, Oid, Repository};
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 
-use super::{DiffHunk, DiffLine, DiffLineTag, DiffState, FileDiff, InlineSegment};
+use super::{DiffHunk, DiffLine, DiffLineTag, DiffSource, DiffState, FileDiff, InlineSegment};
 
 const CONTEXT_LINES: u32 = 3;
 const FUNC_HEADER_MAX_BYTES: usize = 80;
 
 impl DiffState {
-    /// worktree_path のリポジトリについてベースからの変更を読み直す。
-    pub fn load_diff(
-        &mut self,
-        worktree_path: &Path,
-        base_branch: &str,
-        word_diff: bool,
-        tab_width: usize,
-    ) {
-        self.base_branch = base_branch.to_string();
-        match Self::compute_changed_files(worktree_path, base_branch, word_diff, tab_width) {
+    /// worktree_path のリポジトリについて、自分の出どころの diff を読み直す。
+    pub fn load(&mut self, worktree_path: &Path, word_diff: bool, tab_width: usize) {
+        match self
+            .source
+            .changed_files(worktree_path, word_diff, tab_width)
+        {
             Ok((files, base_error)) => {
                 self.files = files;
                 self.error = base_error;
@@ -36,42 +32,26 @@ impl DiffState {
         }
         self.rebuild_display_list();
     }
+}
 
-    /// merge-base(base, HEAD) から作業ツリー (index 込み) までのファイル単位 diff をパス順に返す。
+impl DiffSource {
+    /// この出どころのファイル単位 diff をパス順に返す。
     ///
     /// 2 つ目はベースを解決できず HEAD 基準に落ちた理由。ベース設定のミスで手元の
     /// 未コミット変更まで見えなくなってはいけないので、一覧は返した上で理由を別に渡す。
-    pub fn compute_changed_files(
+    pub fn changed_files(
+        &self,
         worktree_path: &Path,
-        base_branch: &str,
         word_diff: bool,
         tab_width: usize,
     ) -> Result<(Vec<FileDiff>, Option<String>)> {
         let repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot open repo at {}", worktree_path.display()))?;
-        let head_commit = repo
-            .head()
-            .context("cannot resolve HEAD")?
-            .peel_to_commit()
-            .context("cannot peel HEAD to commit")?;
-
-        let (base_tree, base_error) = match merge_base_tree(&repo, base_branch, head_commit.id()) {
-            Ok(tree) => (tree, None),
-            Err(e) => (head_commit.tree()?, Some(format!("{e:#}"))),
+        let (diff, base_error, skip) = match self {
+            Self::WorkingTree { base } => workdir_diff(&repo, base)?,
+            Self::Commit { oid } => (commit_diff(&repo, oid)?, None, HashSet::new()),
         };
 
-        let mut opts = git2::DiffOptions::new();
-        opts.include_untracked(true);
-        opts.recurse_untracked_dirs(true);
-        // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、追加行数が 0 になる。
-        opts.show_untracked_content(true);
-        opts.context_lines(CONTEXT_LINES);
-        let diff = repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
-
-        let skip = case_only_rename_indices(&diff)
-            .union(&deletions_still_on_disk(&repo, &diff))
-            .copied()
-            .collect::<HashSet<_>>();
         let mut files = Vec::new();
         for idx in (0..diff.deltas().len()).filter(|idx| !skip.contains(idx)) {
             if let Some(file) = file_diff(&repo, &diff, idx, word_diff, tab_width)? {
@@ -81,6 +61,48 @@ impl DiffState {
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok((files, base_error))
     }
+}
+
+fn workdir_diff<'r>(
+    repo: &'r Repository,
+    base: &str,
+) -> Result<(git2::Diff<'r>, Option<String>, HashSet<usize>)> {
+    let head_commit = repo
+        .head()
+        .context("cannot resolve HEAD")?
+        .peel_to_commit()
+        .context("cannot peel HEAD to commit")?;
+    let (base_tree, base_error) = match merge_base_tree(repo, base, head_commit.id()) {
+        Ok(tree) => (tree, None),
+        Err(e) => (head_commit.tree()?, Some(format!("{e:#}"))),
+    };
+
+    let mut opts = git2::DiffOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+    // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、追加行数が 0 になる。
+    opts.show_untracked_content(true);
+    opts.context_lines(CONTEXT_LINES);
+    let diff = repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
+
+    let skip = case_only_rename_indices(&diff)
+        .union(&deletions_still_on_disk(repo, &diff))
+        .copied()
+        .collect();
+    Ok((diff, base_error, skip))
+}
+
+fn commit_diff<'r>(repo: &'r Repository, oid: &str) -> Result<git2::Diff<'r>> {
+    let commit = repo
+        .find_commit(Oid::from_str(oid).with_context(|| format!("invalid OID: {oid}"))?)
+        .with_context(|| format!("commit {oid} not found"))?;
+    let parent_tree = match commit.parent(0) {
+        Ok(parent) => Some(parent.tree()?),
+        Err(_) => None,
+    };
+    let mut opts = git2::DiffOptions::new();
+    opts.context_lines(CONTEXT_LINES);
+    Ok(repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&commit.tree()?), Some(&mut opts))?)
 }
 
 fn merge_base_tree<'r>(repo: &'r Repository, base: &str, head: Oid) -> Result<git2::Tree<'r>> {

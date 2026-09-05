@@ -188,7 +188,7 @@ commands! {
     FoldAll, "Viewer: Fold All (zM)", View, None, "fold collapse all everything zM";
     UnfoldAll, "Viewer: Unfold All (zR)", View, None, "unfold expand all everything zR";
     ToggleHelp, "Show Help", View, Some(Action::ShowHelp), "keybindings shortcuts";
-    ShowDiffList, "Explorer: Show Diff List", View, Some(Action::ShowDiffList), "diff changed files";
+    ShowDiffList, "Explorer: Show Git Changes", View, Some(Action::ShowDiffList), "git changes diff changed files";
     ShowCommentList, "Explorer: Show Comment List", View, Some(Action::ShowCommentList), "comment review list";
     ShowRevidere, "Review: Show Review (sections + diff)", View, Some(Action::ShowRevidere), "revidere review sections importance diff two column reading order";
     SwitchTheme, "Switch Theme", View, Some(Action::OpenThemePicker), "theme color light dark appearance palette catppuccin solarized github";

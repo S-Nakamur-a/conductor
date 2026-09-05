@@ -1,16 +1,19 @@
-//! ベースブランチとの merge-base から作業ツリー (index 込み) までの diff のデータモデル。
+//! ある出どころ ([DiffSource]) の diff のデータモデル。
 //!
 //! コミット済みと未コミットを 1 本の diff にまとめるので、1 ファイルは常に 1 エントリ。
 //! 変更ファイルは explorer に出すディレクトリツリー (折りたたみ付き) に平坦化される。
 
 mod compute;
 mod display_list;
+mod source;
 #[cfg(test)]
 mod tests;
 
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+
+pub use source::{DiffSource, short_oid};
 
 /// diff の表示スタイル。config の `[diff] default_view` と viewer の切り替えが共有する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +82,13 @@ pub struct FileDiff {
     pub hunks: Vec<DiffHunk>,
 }
 
+/// Viewer が差分として開く 1 ファイル。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenDiff {
+    pub source: DiffSource,
+    pub file: FileDiff,
+}
+
 #[derive(Debug, Clone)]
 pub struct DiffState {
     /// パス順。
@@ -86,7 +96,7 @@ pub struct DiffState {
     pub display_list: Vec<DiffListEntry>,
     /// リポジトリ相対のディレクトリパス。
     pub collapsed_dirs: HashSet<String>,
-    pub base_branch: String,
+    pub source: DiffSource,
     /// diff 全体を計算できなかった理由、またはベースを解決できず HEAD 基準に落ちた理由。
     pub error: Option<String>,
     /// 変更サマリーがあるときだけ [DiffListEntry::Summary] を先頭に出す。
@@ -94,12 +104,12 @@ pub struct DiffState {
 }
 
 impl DiffState {
-    pub fn new(base_branch: &str) -> Self {
+    pub fn new(source: DiffSource) -> Self {
         Self {
             files: Vec::new(),
             display_list: Vec::new(),
             collapsed_dirs: HashSet::new(),
-            base_branch: base_branch.to_string(),
+            source,
             error: None,
             has_summary: false,
         }

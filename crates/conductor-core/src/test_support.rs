@@ -56,8 +56,16 @@ impl Tree {
     /// parent のツリーに files を重ねたコミットを作る。ref も index も動かさないので、
     /// どの ref が存在するかはテストが決める。
     pub(crate) fn commit_tree(&self, parent: Option<Oid>, files: &[(&str, &[u8])]) -> Oid {
-        let parent = parent.map(|oid| self.repo.find_commit(oid).unwrap());
-        let base_tree = parent.as_ref().map(|c| c.tree().unwrap());
+        self.commit_tree_with_parents(parent.as_slice(), files)
+    }
+
+    /// 最初の親のツリーに files を重ねたコミット。親が無ければルートコミット。
+    pub(crate) fn commit_tree_with_parents(&self, parents: &[Oid], files: &[(&str, &[u8])]) -> Oid {
+        let parents: Vec<git2::Commit> = parents
+            .iter()
+            .map(|oid| self.repo.find_commit(*oid).unwrap())
+            .collect();
+        let base_tree = parents.first().map(|c| c.tree().unwrap());
         let mut builder = self.repo.treebuilder(base_tree.as_ref()).unwrap();
         for (path, content) in files {
             let blob = self.repo.blob(content).unwrap();
@@ -65,7 +73,7 @@ impl Tree {
         }
         let tree = self.repo.find_tree(builder.write().unwrap()).unwrap();
         let sig = signature();
-        let parents: Vec<&git2::Commit> = parent.iter().collect();
+        let parents: Vec<&git2::Commit> = parents.iter().collect();
         self.repo
             .commit(None, &sig, &sig, "test commit", &tree, &parents)
             .unwrap()

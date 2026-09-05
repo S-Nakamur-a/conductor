@@ -129,7 +129,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::FoldAll => ws.panels.viewer.fold_chord('M'),
         CommandId::UnfoldAll => ws.panels.viewer.fold_chord('R'),
         CommandId::ToggleHelp => vec![Effect::PushModal(Modal::Help(help::Help::open(ws.focus)))],
-        CommandId::ShowDiffList => show_explorer(ws, BottomView::Changes),
+        CommandId::ShowDiffList => show_explorer(ws, BottomView::GitChanges),
         CommandId::ShowCommentList | CommandId::ShowReviewComments => {
             show_explorer(ws, BottomView::Comments)
         }

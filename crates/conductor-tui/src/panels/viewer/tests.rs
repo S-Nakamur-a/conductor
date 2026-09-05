@@ -1,4 +1,5 @@
 use super::*;
+use conductor_core::diff_state::{DiffSource, FileDiff};
 use conductor_core::keymap::Action;
 use conductor_core::review_store::ReviewComment;
 use conductor_svc::Services;
@@ -301,9 +302,15 @@ fn diffを添えて開くと差分になりescで素の本文へ戻る() {
             func_header: None,
         }],
     };
-    let effects = h
-        .viewer()
-        .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+    let effects = h.viewer().open(
+        Path::new("a.txt"),
+        None,
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
+        false,
+    );
     h.run(effects);
 
     assert!(h.ws.panels.viewer.diff.active);
@@ -519,9 +526,15 @@ fn 差分表示でもガターから作成でき削除行では断る() {
             func_header: None,
         }],
     };
-    let effects = h
-        .viewer()
-        .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+    let effects = h.viewer().open(
+        Path::new("a.txt"),
+        None,
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
+        false,
+    );
     h.run(effects);
     h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
 
@@ -575,9 +588,15 @@ fn 差分の隠れた塊を押すと展開される() {
             },
         ],
     };
-    let effects = h
-        .viewer()
-        .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+    let effects = h.viewer().open(
+        Path::new("a.txt"),
+        None,
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
+        false,
+    );
     h.run(effects);
     h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
     assert!(matches!(
@@ -692,9 +711,15 @@ fn 削除行ではコメントを始められない() {
             func_header: None,
         }],
     };
-    let effects = h
-        .viewer()
-        .open(Path::new("a.txt"), None, Some(Box::new(file_diff)), false);
+    let effects = h.viewer().open(
+        Path::new("a.txt"),
+        None,
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
+        false,
+    );
     h.run(effects);
     h.ws.focus = Focus::Viewer;
 
@@ -880,7 +905,10 @@ fn レンダリング表示は素のmarkdownファイルに限る() {
     let effects = h.viewer().open(
         Path::new("notes.md"),
         None,
-        Some(Box::new(file_diff)),
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
         false,
     );
     h.run(effects);
