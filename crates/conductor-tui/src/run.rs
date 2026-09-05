@@ -31,6 +31,9 @@ const MAX_DRAIN: Duration = Duration::from_millis(8);
 const ACTIVITY_TIMEOUT: Duration = Duration::from_millis(500);
 /// フラッシュメッセージが消えるまで。
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
+/// ファイルウォッチャーの通知をまとめる猶予。エディタ保存や git checkout は
+/// 短時間に何件も飛んでくるので、都度 Explorer を投げ直すと無駄が積み重なる。
+const FS_DEBOUNCE: Duration = Duration::from_millis(500);
 
 pub fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -47,6 +50,7 @@ pub fn run(
         .check_on_startup
         .then(|| Timer::new(update_interval, last_input));
     let mut dirty = true;
+    let mut fs_refresh_due: Option<Instant> = None;
 
     let mut startup = vec![
         Effect::Spawn(Task::ListWorktrees),
@@ -97,7 +101,9 @@ pub fn run(
         while let Some(event) = svc.try_recv() {
             let effects = match event.kind {
                 EventKind::Task(result) => ws.accept(result),
-                EventKind::Watch(watch) => watch_effects(ws, watch),
+                EventKind::Watch(watch) => {
+                    watch_effects(ws, watch, &mut fs_refresh_due, Instant::now())
+                }
             };
             apply(ws, svc, effects);
             dirty = true;
@@ -108,6 +114,7 @@ pub fn run(
         dirty |= tick_index(ws, svc);
         dirty |= ws.tick_viewer();
         dirty |= tick_editor(ws, svc);
+        dirty |= tick_fs_refresh(ws, svc, &mut fs_refresh_due, Instant::now());
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
         dirty |= run_timers(
@@ -168,17 +175,42 @@ fn tick_index(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
 }
 
 /// watcher からの合図の行き先。MCP のレビュー更新だけがパネルの外に効く。
-fn watch_effects(ws: &mut Workspace, watch: conductor_svc::watch::WatchEvent) -> Vec<Effect> {
+fn watch_effects(
+    ws: &mut Workspace,
+    watch: conductor_svc::watch::WatchEvent,
+    fs_refresh_due: &mut Option<Instant>,
+    now: Instant,
+) -> Vec<Effect> {
     use conductor_svc::watch::WatchEvent;
     match watch {
         WatchEvent::RefreshRequested => vec![Effect::Spawn(Task::LoadReview)],
         // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
         WatchEvent::FsChanged(path) => {
             crate::index::note_change(ws, &path);
+            *fs_refresh_due = Some(now + FS_DEBOUNCE);
             Vec::new()
         }
         watch => ws.panels.terminal.on_watch(&watch),
     }
+}
+
+/// FS_DEBOUNCE が明けていたら Explorer を投げ直す。何か投げたら true。
+fn tick_fs_refresh(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    fs_refresh_due: &mut Option<Instant>,
+    now: Instant,
+) -> bool {
+    let Some(due) = *fs_refresh_due else {
+        return false;
+    };
+    if now < due {
+        return false;
+    }
+    *fs_refresh_due = None;
+    let effects = ws.panels.explorer.refresh();
+    apply(ws, svc, effects);
+    true
 }
 
 fn run_timers(
@@ -1368,11 +1400,50 @@ needle here
     fn watchの行き先は種類で分かれる() {
         use conductor_svc::watch::WatchEvent;
         let mut ws = Workspace::for_test();
+        let mut fs_refresh_due = None;
+        let now = Instant::now();
         assert!(matches!(
-            watch_effects(&mut ws, WatchEvent::RefreshRequested).as_slice(),
+            watch_effects(
+                &mut ws,
+                WatchEvent::RefreshRequested,
+                &mut fs_refresh_due,
+                now
+            )
+            .as_slice(),
             [Effect::Spawn(Task::LoadReview)]
         ));
-        assert!(watch_effects(&mut ws, WatchEvent::ConfigChanged).is_empty());
+        assert!(
+            watch_effects(&mut ws, WatchEvent::ConfigChanged, &mut fs_refresh_due, now).is_empty()
+        );
+    }
+
+    #[test]
+    fn fs変更は猶予が明けるまでexplorerを投げない() {
+        use conductor_svc::watch::WatchEvent;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let mut fs_refresh_due = None;
+        let start = Instant::now();
+        watch_effects(
+            &mut ws,
+            WatchEvent::FsChanged(dir.path().join("a.txt")),
+            &mut fs_refresh_due,
+            start,
+        );
+        assert!(
+            !tick_fs_refresh(&mut ws, &mut svc, &mut fs_refresh_due, start),
+            "猶予の前に投げた"
+        );
+
+        assert!(
+            tick_fs_refresh(&mut ws, &mut svc, &mut fs_refresh_due, start + FS_DEBOUNCE),
+            "猶予明けで投げていない"
+        );
+        assert!(fs_refresh_due.is_none());
     }
 
     /// パネルが消費しない Action が global の解釈へ落ちる配線。ターミナルの中では
