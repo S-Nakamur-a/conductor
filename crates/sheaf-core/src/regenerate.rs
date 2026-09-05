@@ -21,6 +21,34 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
+/// いま何時か。静穏時間と producer の上限を測るのに使う。
+///
+/// 検査だけが差し替える。実時計のままだと、静穏時間を待つ検査が実際に 3 秒眠り、
+/// 上限の検査は producer が死ぬまで待つことになる。
+#[derive(Clone)]
+struct Clock(Arc<dyn Fn() -> Instant + Send + Sync>);
+
+impl Clock {
+    fn now(&self) -> Instant {
+        (self.0)()
+    }
+
+    fn since(&self, past: Instant) -> Duration {
+        self.now().saturating_duration_since(past)
+    }
+
+    #[cfg(test)]
+    fn reading(at: impl Fn() -> Instant + Send + Sync + 'static) -> Self {
+        Clock(Arc::new(at))
+    }
+}
+
+impl Default for Clock {
+    fn default() -> Self {
+        Clock(Arc::new(Instant::now))
+    }
+}
+
 /// 変更が止まったとみなすまでの静穏時間。
 ///
 /// 編集の最中に始めても、producer が読み終える前の内容で索引ができる。
@@ -124,6 +152,7 @@ pub struct Regenerator {
     restart: bool,
     /// 引き金を数えるかどうかの判定に使う。ツリーごとに 1 回だけ作る。
     ignores: Option<(PathBuf, ignore::gitignore::Gitignore)>,
+    clock: Clock,
 }
 
 impl Default for Regenerator {
@@ -143,7 +172,14 @@ impl Regenerator {
             disabled: false,
             restart: false,
             ignores: None,
+            clock: Clock::default(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// 生成が走っているか。
@@ -166,7 +202,7 @@ impl Regenerator {
             return;
         }
         self.state = State::Pending {
-            last_change: Instant::now(),
+            last_change: self.clock.now(),
         };
     }
 
@@ -196,7 +232,7 @@ impl Regenerator {
             State::Due => {}
             _ => {
                 self.state = State::Pending {
-                    last_change: Instant::now(),
+                    last_change: self.clock.now(),
                 }
             }
         }
@@ -253,7 +289,7 @@ impl Regenerator {
                     let busy = matches!(outcome, Outcome::Busy);
                     self.state = if changed_while_running || busy {
                         State::Pending {
-                            last_change: Instant::now(),
+                            last_change: self.clock.now(),
                         }
                     } else {
                         State::Idle
@@ -271,7 +307,7 @@ impl Regenerator {
             }
         }
         let due = match self.state {
-            State::Pending { last_change } => last_change.elapsed() >= QUIESCENCE,
+            State::Pending { last_change } => self.clock.since(last_change) >= QUIESCENCE,
             State::Due => true,
             _ => false,
         };
@@ -290,6 +326,7 @@ impl Regenerator {
             producer: Arc::clone(&self.producer),
             cancel: Arc::clone(&self.cancel),
             group: Arc::clone(&self.group),
+            clock: self.clock.clone(),
         };
         std::thread::spawn(move || {
             let _ = tx.send(job.run());
@@ -316,6 +353,7 @@ pub fn generate_once(target: Target, producer: Arc<dyn Producer>) -> Outcome {
         producer,
         cancel: Arc::new(AtomicBool::new(false)),
         group: Arc::new(Mutex::new(None)),
+        clock: Clock::default(),
     }
     .run()
 }

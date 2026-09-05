@@ -1,0 +1,19 @@
+[package]
+name = "conductor-svc"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "conductor の副作用の実行者。Task を受けて Event を返す"
+
+[dependencies]
+conductor-core = { path = "../conductor-core" }
+anyhow = "1"
+log = "0.4"
+portable-pty = "0.9"
+vt100 = "0.15"
+notify = "8"
+uuid = { version = "1", features = ["v4"] }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

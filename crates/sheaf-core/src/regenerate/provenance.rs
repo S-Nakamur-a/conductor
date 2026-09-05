@@ -137,37 +137,50 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn 生成をまたいで動かなかったファイルだけが出自になる() {
-        let before = snap(&[("a.rs", "h1", 10), ("b.rs", "h2", 10)]);
-        let after = snap(&[("a.rs", "h1", 10), ("b.rs", "CHANGED", 20)]);
-        let kept = unchanged(&before, &after);
-        assert_eq!(kept.get(Path::new("a.rs")).map(String::as_str), Some("h1"));
-        assert!(!kept.contains_key(Path::new("b.rs")));
+    /// 版だけが違う producer。sheaf が固定している版を上げると実際にこの形になる。
+    struct Pinned(&'static str);
+
+    impl Producer for Pinned {
+        fn command(&self, out: &Path) -> Vec<String> {
+            vec![
+                "npx".into(),
+                format!("scip-typescript@{}", self.0),
+                "--output".into(),
+                out.to_string_lossy().into_owned(),
+            ]
+        }
+    }
+
+    fn write_table(dir: &Path, producer: &dyn Producer, rel: &str) -> PathBuf {
+        let path = dir.join("index.hashes");
+        let expected = HashMap::from([(PathBuf::from(rel), "0".repeat(40))]);
+        write_provenance(&path, producer, &expected).unwrap();
+        path
     }
 
     #[test]
-    fn 書き換えて元に戻したファイルは出自にしない() {
-        // 内容だけを見ると素通りする。producer は途中の内容を読んでいるので、
-        // 元の内容を出自として申告すると索引と食い違う。
+    fn 生成をまたいで内容も更新時刻も動かなかったファイルだけが出自になる() {
         let before = snap(&[("a.rs", "h1", 10)]);
-        let after = snap(&[("a.rs", "h1", 99)]);
-        assert!(unchanged(&before, &after).is_empty());
+        for (how, after, kept) in [
+            ("動かなかった", snap(&[("a.rs", "h1", 10)]), true),
+            ("内容が変わった", snap(&[("a.rs", "CHANGED", 20)]), false),
+            // 内容だけを見ると素通りする。producer は途中の内容を読んでいるので、
+            // 元の内容を出自として申告すると索引と食い違う。
+            ("書き換えて元に戻した", snap(&[("a.rs", "h1", 99)]), false),
+            ("生成中に消えた", Snapshot::new(), false),
+        ] {
+            assert_eq!(
+                unchanged(&before, &after).contains_key(Path::new("a.rs")),
+                kept,
+                "{how}"
+            );
+        }
     }
 
     #[test]
-    fn 生成中に消えたファイルは出自にしない() {
-        let before = snap(&[("a.rs", "h1", 10)]);
-        assert!(unchanged(&before, &Snapshot::new()).is_empty());
-    }
-
-    #[test]
-    fn 出自の表は固定幅のハッシュと相対パスで書く() {
+    fn 出自の表は固定幅のハッシュと相対パスで書いてそのまま読み戻せる() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        let mut expected = HashMap::new();
-        expected.insert(PathBuf::from("src/a b.rs"), "0".repeat(40));
-        write_provenance(&path, &RustAnalyzer, &expected).unwrap();
+        let path = write_table(dir.path(), &RustAnalyzer, "src/a b.rs");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             format!(
@@ -176,17 +189,16 @@ mod tests {
                 "0".repeat(40)
             )
         );
-        // 書いたものがそのまま読み戻せる。
-        assert_eq!(read_provenance(&path, &RustAnalyzer).unwrap(), expected);
+        assert_eq!(
+            read_provenance(&path, &RustAnalyzer).unwrap(),
+            HashMap::from([(PathBuf::from("src/a b.rs"), "0".repeat(40))])
+        );
     }
 
     #[test]
     fn 改行を含むパスは表から落とす() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        let mut expected = HashMap::new();
-        expected.insert(PathBuf::from("src/a\nb.rs"), "0".repeat(40));
-        write_provenance(&path, &RustAnalyzer, &expected).unwrap();
+        let path = write_table(dir.path(), &RustAnalyzer, "src/a\nb.rs");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             format!("# producer {}\n", fingerprint(&RustAnalyzer))
@@ -194,122 +206,96 @@ mod tests {
     }
 
     #[test]
-    fn 別の道具が作った出自の表は読まない() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        let mut expected = HashMap::new();
-        expected.insert(PathBuf::from("src/a.rs"), "0".repeat(40));
-        write_provenance(&path, &ScipGo, &expected).unwrap();
+    fn 作った道具が名乗りどおりでない出自の表は読まない() {
+        // 道具が変われば同じソースから別の索引が出る (scip-typescript は解決した
+        // typescript の版をシンボルの綴りに埋める)。前の道具の表を使い続けると、
+        // いま作れるものとは違う答えを返し続けることになる。
+        struct Case {
+            how: &'static str,
+            wrote: &'static dyn Producer,
+            reads: &'static dyn Producer,
+            tamper: fn(String) -> String,
+        }
+        let keep: fn(String) -> String = |body| body;
 
-        assert!(read_provenance(&path, &ScipGo).is_some());
-        assert!(read_provenance(&path, &RustAnalyzer).is_none());
+        let cases = [
+            Case {
+                how: "別の道具が作った",
+                wrote: &ScipGo,
+                reads: &RustAnalyzer,
+                tamper: keep,
+            },
+            Case {
+                how: "名乗りが書き換わった",
+                wrote: &RustAnalyzer,
+                reads: &RustAnalyzer,
+                tamper: |body| body.replace("--output", "--out"),
+            },
+            // 古い書式を読む分岐は置かない。索引の作り直しは Rust 13.8 秒 /
+            // Go 2.2 秒 / TypeScript 11 秒なので、拒んで作り直させるほうが安い。
+            Case {
+                how: "見出しが無い",
+                wrote: &RustAnalyzer,
+                reads: &RustAnalyzer,
+                tamper: |body| body.split_once('\n').unwrap().1.to_string(),
+            },
+            Case {
+                how: "版が上がった",
+                wrote: &Pinned("0.4.0"),
+                reads: &Pinned("0.5.0"),
+                tamper: keep,
+            },
+        ];
+
+        for case in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let path = write_table(dir.path(), case.wrote, "src/a.rs");
+            let how = case.how;
+            assert!(read_provenance(&path, case.wrote).is_some(), "{how} の前提");
+
+            let body = (case.tamper)(std::fs::read_to_string(&path).unwrap());
+            std::fs::write(&path, body).unwrap();
+            assert!(
+                read_provenance(&path, case.reads).is_none(),
+                "{how} 表を読んだ"
+            );
+        }
     }
 
     #[test]
-    fn 道具の名乗りが書き換わった出自の表は読まない() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        let mut expected = HashMap::new();
-        expected.insert(PathBuf::from("src/a.rs"), "0".repeat(40));
-        write_provenance(&path, &RustAnalyzer, &expected).unwrap();
-
-        let tampered = std::fs::read_to_string(&path)
-            .unwrap()
-            .replace("--output", "--out");
-        std::fs::write(&path, tampered).unwrap();
-
-        assert!(read_provenance(&path, &RustAnalyzer).is_none());
-    }
-
-    #[test]
-    fn 見出しの無い出自の表は読まない() {
-        // 古い書式を読む分岐は置かない。索引の作り直しは Rust 13.8 秒 / Go 2.2 秒 /
-        // TypeScript 11 秒なので、拒んで作り直させるほうが安い。
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        std::fs::write(&path, format!("{} src/a.rs\n", "0".repeat(40))).unwrap();
-
-        assert!(read_provenance(&path, &RustAnalyzer).is_none());
-    }
-
-    #[test]
-    fn 版を上げた_producer_の出自の表は読まない() {
-        // 実際に起きるのはこの形。sheaf が固定している版を上げたら、
-        // 前の版が作った索引は別の道具の産物になる。
-        struct Pinned(&'static str);
-        impl Producer for Pinned {
-            fn command(&self, out: &Path) -> Vec<String> {
-                vec![
-                    "npx".into(),
-                    format!("scip-typescript@{}", self.0),
-                    "--output".into(),
-                    out.to_string_lossy().into_owned(),
-                ]
+    fn 出自を取る対象はビルド成果物を含まない() {
+        // ignore クレートの WalkBuilder は既定で require_git が true なので、git 管理下で
+        // ないツリーでは .gitignore を素通りする。sheaf 自身が git 管理下に無い状態で
+        // 使われることもあり、崩れるとビルド成果物まで毎回ハッシュを取ることになる。
+        for git in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            if git {
+                std::process::Command::new("git")
+                    .args(["init", "-q"])
+                    .current_dir(root)
+                    .status()
+                    .unwrap();
             }
+            for (rel, body) in [
+                ("src/a.rs", "fn a() {}\n"),
+                (".sheaf/index.scip", "x\n"),
+                ("target/debug/x", "x\n"),
+                ("ignored.rs", "x\n"),
+                (".gitignore", "/target\nignored.rs\n"),
+            ] {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, body).unwrap();
+            }
+
+            // .gitignore 自身も隠しファイルなので入らない。索引の Document になるのは
+            // ソースだけなので、取りこぼしにはならない。
+            let taken: Vec<String> = snapshot(root)
+                .keys()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(taken, vec!["src/a.rs".to_string()], "git={git}");
         }
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("index.hashes");
-        write_provenance(&path, &Pinned("0.4.0"), &HashMap::new()).unwrap();
-
-        assert!(read_provenance(&path, &Pinned("0.4.0")).is_some());
-        assert!(read_provenance(&path, &Pinned("0.5.0")).is_none());
-    }
-
-    #[test]
-    fn 出自を取る対象は管理用ディレクトリとビルド成果物を含まない() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        // git 管理下でも gitignore が効くことを確かめる。git 管理下でない場合は
-        // 別途 出自を取る対象は非_git_のツリーでもビルド成果物を含まない で見る。
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(root)
-            .status()
-            .unwrap();
-        for (rel, body) in [
-            ("src/a.rs", "fn a() {}\n"),
-            (".sheaf/index.scip", "x\n"),
-            ("target/debug/x", "x\n"),
-            ("ignored.rs", "x\n"),
-            (".gitignore", "/target\nignored.rs\n"),
-        ] {
-            let path = root.join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, body).unwrap();
-        }
-
-        // .gitignore 自身も隠しファイルなので入らない。索引の Document になるのは
-        // ソースだけなので、取りこぼしにはならない。
-        let taken: Vec<String> = snapshot(root)
-            .keys()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(taken, vec!["src/a.rs".to_string()]);
-    }
-
-    #[test]
-    fn 出自を取る対象は非_git_のツリーでもビルド成果物を含まない() {
-        // ignore クレートの WalkBuilder は既定で require_git が true なので、
-        // git 管理下でないツリーでは .gitignore を素通りする。sheaf 自身が
-        // git 管理下に無い状態で使われることもあるため、ここが崩れると
-        // ビルド成果物まで毎回ハッシュを取ることになる (V1 に効く)。
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        for (rel, body) in [
-            ("src/a.rs", "fn a() {}\n"),
-            ("target/big.bin", "x\n"),
-            (".gitignore", "/target\n"),
-        ] {
-            let path = root.join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, body).unwrap();
-        }
-
-        let taken: Vec<String> = snapshot(root)
-            .keys()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(taken, vec!["src/a.rs".to_string()]);
     }
 }

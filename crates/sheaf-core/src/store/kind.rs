@@ -2,8 +2,8 @@
 //!
 //! 番号は scip crate が生成する enum とずれている。SCIP の Kind は途中で項目が
 //! 挿入されて番号が振り直されており、scip 0.9 では関数が 24 だが、索引に書いて
-//! あるのは 17 である。**これは producer の癖ではなく、producer が揃って古い
-//! 番号を書いている**ことによる (rust-analyzer と scip-go の索引を実際に読んで、
+//! あるのは 17 である。producer の癖ではなく、producer が揃って古い番号を
+//! 書いていることによる (rust-analyzer と scip-go の索引を実際に読んで、
 //! 両方が同じ体系であることを確かめた)。だから表は 1 つでよく、ツール名で
 //! 分けない。載っていない番号は [`SymbolKind::Unknown`] にする — 当てにいって
 //! 別の名前を出すより黙るほうがよい。
@@ -51,7 +51,7 @@ pub(crate) fn of(raw: i32, symbol: &str) -> SymbolKind {
 ///
 /// scip-typescript が `documentation` に入れる宣言は TypeScript の quickinfo
 /// そのままで、`(method) greet(): string` のように種別が前置される。前置の無い
-/// ものは宣言の先頭語で判る。**先頭語だけを見る。** 綴りの途中に現れる語
+/// ものは宣言の先頭語で判る。先頭語だけを見る。綴りの途中に現れる語
 /// (`function` を返す型など) を拾うと、別の種別に化ける。
 pub(crate) fn from_declaration(declaration: &str) -> SymbolKind {
     let head = declaration.trim_start();
@@ -94,72 +94,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 番号の表はproducerをまたいで同じ() {
-        // rust-analyzer と scip-go の実索引で確かめた対応。ツール名で分けると、
-        // 片方でしか観測していない番号がもう片方で黙って Unknown になる。
-        assert_eq!(of(17, "demo/Run()."), SymbolKind::Function);
-        assert_eq!(of(15, "demo/Loud#Volume."), SymbolKind::Field);
-        assert_eq!(of(61, "0"), SymbolKind::Variable);
-        // Go にしか出ないもの。
-        assert_eq!(of(21, "demo/Greeter#"), SymbolKind::Interface);
-        assert_eq!(of(35, "demo/"), SymbolKind::Package);
-        assert_eq!(of(67, "demo/Greeter#Greet."), SymbolKind::Method);
-    }
-
-    #[test]
-    fn 型を指す番号は符号で型別名とimplブロックに分かれる() {
-        assert_eq!(of(55, "store/Implements#"), SymbolKind::TypeAlias);
-        assert_eq!(
-            of(55, "worktree_ops/impl#[WorktreeManager][Default]"),
-            SymbolKind::ImplBlock
-        );
-    }
-
-    #[test]
-    fn 表に無い番号は種別なしとして読む() {
-        assert_eq!(of(9999, "x"), SymbolKind::Unknown);
-        assert_eq!(of(0, "x"), SymbolKind::Unknown);
+    fn 索引が書いた番号を種別に直す() {
+        // 対応は rust-analyzer と scip-go の実索引で確かめたもの。ツール名で表を
+        // 分けると、片方でしか観測していない番号がもう片方で黙って Unknown になる。
+        for (raw, symbol, want) in [
+            (17, "demo/Run().", SymbolKind::Function),
+            (15, "demo/Loud#Volume.", SymbolKind::Field),
+            (61, "0", SymbolKind::Variable),
+            (21, "demo/Greeter#", SymbolKind::Interface),
+            (35, "demo/", SymbolKind::Package),
+            (67, "demo/Greeter#Greet.", SymbolKind::Method),
+            // 型を指す番号は型別名と impl ブロックの両方に付く。符号で分ける。
+            (55, "store/Implements#", SymbolKind::TypeAlias),
+            (
+                55,
+                "worktree_ops/impl#[WorktreeManager][Default]",
+                SymbolKind::ImplBlock,
+            ),
+            (9999, "x", SymbolKind::Unknown),
+            (0, "x", SymbolKind::Unknown),
+        ] {
+            assert_eq!(of(raw, symbol), want, "{raw} {symbol}");
+        }
     }
 
     #[test]
     fn 番号を書かない索引は宣言の綴りから読む() {
         // scip-typescript が実際に書く形。
-        assert_eq!(
-            from_declaration("(method) greet(): string"),
-            SymbolKind::Method
-        );
-        assert_eq!(
-            from_declaration("(property) volume: number"),
-            SymbolKind::Field
-        );
-        assert_eq!(
-            from_declaration("(parameter) g: Greeter"),
-            SymbolKind::Parameter
-        );
-        assert_eq!(from_declaration("interface Greeter"), SymbolKind::Interface);
-        assert_eq!(from_declaration("class Loud"), SymbolKind::Class);
-        assert_eq!(
-            from_declaration("function run(g: Greeter): number"),
-            SymbolKind::Function
-        );
-        assert_eq!(
-            from_declaration("var message: string"),
-            SymbolKind::Variable
-        );
-        assert_eq!(
-            from_declaration(r#"module "greet.tsx""#),
-            SymbolKind::Module
-        );
-    }
-
-    #[test]
-    fn 綴りの途中に現れる語は種別にしない() {
-        // 戻り値の型が function でも、その宣言はプロパティである。
-        assert_eq!(
-            from_declaration("(property) handler: function"),
-            SymbolKind::Field
-        );
-        assert_eq!(from_declaration(""), SymbolKind::Unknown);
-        assert_eq!(from_declaration("なにか"), SymbolKind::Unknown);
+        for (declaration, want) in [
+            ("(method) greet(): string", SymbolKind::Method),
+            ("(property) volume: number", SymbolKind::Field),
+            ("(parameter) g: Greeter", SymbolKind::Parameter),
+            ("interface Greeter", SymbolKind::Interface),
+            ("class Loud", SymbolKind::Class),
+            ("function run(g: Greeter): number", SymbolKind::Function),
+            ("var message: string", SymbolKind::Variable),
+            (r#"module "greet.tsx""#, SymbolKind::Module),
+            // 戻り値の型が function でも、その宣言はプロパティである。
+            ("(property) handler: function", SymbolKind::Field),
+            ("", SymbolKind::Unknown),
+            ("なにか", SymbolKind::Unknown),
+        ] {
+            assert_eq!(from_declaration(declaration), want, "{declaration:?}");
+        }
     }
 }

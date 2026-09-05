@@ -1,13 +1,13 @@
 //! 索引を 1 本作る仕事。子プロセスの起動・寿命・強制終了と、成果物の置き換え。
 
 use super::provenance::{snapshot, unchanged, write_provenance};
-use super::{Outcome, Producer, Target};
+use super::{Clock, Outcome, Producer, Target};
 use crate::Store;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 子プロセスの終了・キャンセル・タイムアウトを確認する間隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -34,6 +34,7 @@ pub(super) struct Job {
     pub(super) producer: Arc<dyn Producer>,
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) group: Arc<Mutex<Option<i32>>>,
+    pub(super) clock: Clock,
 }
 
 impl Job {
@@ -131,6 +132,9 @@ impl Job {
         // 孫まで一度に止められるよう、子を新しいプロセスグループの長にする。
         command.process_group(0);
 
+        // 起動より前に測り始める。あとで測ると、子が動き出してから起点が決まるまでの
+        // 隙間で上限を過ぎさせられなくなり、上限の検査が決定的に書けない。
+        let start = self.clock.now();
         let mut child = command
             .spawn()
             .map_err(|e| Failure::Unavailable(format!("{program} を起動できない: {e}")))?;
@@ -138,7 +142,6 @@ impl Job {
             *slot = Some(child.id() as i32);
         }
 
-        let start = Instant::now();
         let status = loop {
             if self.cancel.load(Ordering::Relaxed) {
                 kill_group(&self.group);
@@ -148,7 +151,7 @@ impl Job {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) => {
-                    if start.elapsed() >= self.producer.timeout() {
+                    if self.clock.since(start) >= self.producer.timeout() {
                         kill_group(&self.group);
                         let _ = child.wait();
                         return Err(Failure::Failed(format!(
@@ -227,7 +230,7 @@ impl Lock {
     /// 取れなければ諦める。待たないのは、待っている間に対象のツリーが
     /// 変わってしまい、待った先で作るものが古くなるため。次の変更で作り直す。
     ///
-    /// **「ほかが持っている」と「置き場所が使えない」を分ける。** 混ぜると、
+    /// 「ほかが持っている」と「置き場所が使えない」を分ける。混ぜると、
     /// 置き場所のディレクトリがまだ無いだけのときに「ほかのプロセスが索引を
     /// 作っている」と報告することになる (索引を一度も作っていないリポジトリが
     /// まさにその状態で、`conductor index` が必ずそう答えていた)。

@@ -12,8 +12,7 @@ Terminal-based Git workspace and code review TUI written in Rust. Manages multip
 | **Node.js + npm** | 20+ | Required to install Claude Code |
 
 Optional: **`gh`** ([install](https://cli.github.com/), then `gh auth login`) for
-pulling a PR in and publishing review comments, and **ccusage** (via npx) for the
-title bar's token/cost display (`ccusage.enabled = true`).
+pulling a PR in and publishing review comments.
 
 ## Installation
 
@@ -128,10 +127,11 @@ valid one. The full set of keys — with every field commented out at its defaul
 
 The sections are `[general]` (repo, main branch, shell, worktree directory,
 Claude Code auto-resume), `[terminal]` (scrollback limits), `[viewer]` (syntax
-theme, tab width), `[diff]` (unified / side-by-side, word diff), `[keybinds]`
-(per-chord overrides layered over the defaults, globally or per panel),
-`[ccusage]`, `[updates]`, and `[api]` (the LLM provider shared by every AI
-feature).
+theme, tab width), `[diff]` (unified / side-by-side, word diff), `[ui]` (colour
+theme, contrast, icons, startup animation), `[layout]` (column and split
+proportions), `[updates]` (the GitHub release check), `[keybinds]` (per-chord
+overrides layered over the defaults, globally or per panel), and `[api]` (the
+LLM provider shared by every AI feature).
 
 ## Development
 
@@ -141,6 +141,11 @@ cargo test --workspace    # test — bare `cargo test` skips the crates/ members
 cargo clippy --workspace  # lint
 make fmt                  # cargo fmt --all
 ```
+
+The root package is a five-line `main.rs`; the code lives in `crates/` —
+`conductor-core` (domain), `conductor-svc` (threads, PTYs, watchers),
+`conductor-tui` (the screen), `conductor-mcp` (the MCP server), plus `revidere`
+(the review analyser) and `sheaf-core` (the code index).
 
 CI checks formatting and clippy on every pull request. `.githooks/pre-commit`
 runs the same `cargo fmt --all -- --check` locally if you want to catch it before

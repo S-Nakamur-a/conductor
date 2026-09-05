@@ -1,8 +1,8 @@
 //! 常駐コストの検査。
 //!
 //! グローバルアロケータを差し替えるので、他の検査と同じ実行単位に置かない。
-//! Store が自分で申告する保持量ではなく、投入中のヒープの山を数える。
-//! 申告値だと、全 Document をデコードして保持する実装に退化しても数字が動かない。
+//! Store の申告値ではなくヒープの山を数えるのは、申告値だと全 Document を
+//! デコードして保持する実装に退化しても数字が動かないため。
 
 use sheaf_core::{IndexSource, Store};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -35,8 +35,7 @@ unsafe impl GlobalAlloc for Tracking {
 #[global_allocator]
 static ALLOCATOR: Tracking = Tracking;
 
-/// ツリーの .rs を全部ハッシュして、Store::load に渡す表を作る。
-/// 実運用では git から取るところ。target と .git は歩かない。
+/// 出自の表。実運用では git から取るところ。
 fn tree_hashes(root: &std::path::Path) -> HashMap<PathBuf, String> {
     let mut out = HashMap::new();
     let mut stack = vec![root.to_path_buf()];

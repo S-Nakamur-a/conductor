@@ -1,4 +1,4 @@
-// 成果物の型。これがライブラリの本当の公開 API で、Rust の型はその写し。
+// 成果物の型。本当の公開 API は JSON の綴りの方で、Rust の型はその写し。
 // ホストは JSON を読むだけでよく、Rust である必要はない。
 
 use serde::{Deserialize, Serialize};
@@ -8,18 +8,18 @@ pub const SCHEMA_VERSION: u32 = 2;
 
 /// revidere が書き出すものの置き場。成果物も貯めた応答もこの下。
 ///
-/// ホスト (conductor) が他の作業ファイルを置いているのと同じディレクトリ。
-/// 隠しディレクトリを 2 つに分けても、無視する設定と掃除の手間が倍になるだけ。
+/// ホスト (conductor) と同じディレクトリを使う。分けても、無視する設定と
+/// 掃除の手間が倍になるだけ。
 pub const DIR: &str = ".conductor";
 
 /// どの区間を見たレビューか。
 ///
-/// 後者が要るのは、指摘そのものが conductor の外 (Claude Code の会話や
-/// GitHub) にあって取り込めないから。直しを確かめる手立ては「どこがどう
-/// 変わったか」を読むことしかない。
+/// [Scope::SincePrevious] が要るのは、指摘そのものが conductor の外
+/// (Claude Code の会話や GitHub) にあって取り込めないから。直しを確かめる
+/// 手立ては「どこがどう変わったか」を読むことしかない。
 ///
-/// 1 枚の成果物に両方を持たせない。網羅性 (全ての変更箇所がちょうど 1 つの
-/// 項目に属する) は区間ごとの性質で、混ぜると検査が意味を失う。
+/// 1 枚の成果物に両方を持たせない。網羅性は区間ごとの性質で、混ぜると
+/// 説明もれ検査が意味を失う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Scope {
     /// ベースブランチとの共通祖先から作業ツリーまで。
@@ -125,9 +125,8 @@ impl Range {
 
 /// 変更の重要度。全ての変更箇所がちょうど 1 つに属する。
 ///
-/// 項目ごとに 2 段で決まる。1 問目「主目的そのものか、その帰結か」。
-/// 帰結だったときだけ 2 問目「その帰結で振る舞いが変わったか」。
-/// 振る舞いを見るのは帰結の中を割るためだけで、Core とは競合しない。
+/// 振る舞いが変わったかを見るのは帰結の中を割るためだけで、Core とは競合
+/// しない (主目的の実装が振る舞いを変えていても Core)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Importance {
@@ -183,7 +182,7 @@ pub struct Section {
     pub importance: Importance,
     /// なぜその重要度なのか。どの重要度でも必須。
     ///
-    /// 誤分類そのものは機械では見つからないが、理由が読めれば人が見つけられる。
+    /// 誤分類は機械では見つからないが、理由が読めれば人が見つけられる。
     /// 一部の重要度にだけ課すと、書く手間を避けて課していない側へ逃げる。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -199,9 +198,8 @@ pub struct Section {
 /// 指すが、title なら存在しない相手を指したことが後から分かる。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relation {
-    /// 相手の項目の title。
     pub to: String,
-    /// なぜそう言えるのか。関係の種類はここへ吸収してあり、別の欄にはしない。
+    /// なぜそう言えるのか。関係の種類はここへ吸収し、別の欄にはしない。
     pub reason: String,
     /// 主の関係。読む順はこれだけを辿るので、1 つの項目に高々 1 つ。
     #[serde(default)]
@@ -255,9 +253,8 @@ impl Coverage {
 
 /// 前回の成果物からの進み。作り直すたびに引き直す。
 ///
-/// レビュー自体は毎回ゼロベースで作る (前回の分類を持ち越すと、履歴が書き換わった
-/// ときに何が根拠だったのか分からなくなる)。「前回見たときから何が動いたか」だけを
-/// 別に持たせて、2 度目以降の読者が全部を読み直さずに済むようにする。
+/// 2 度目以降の読者が全部を読み直さずに済むように、毎回ゼロベースで作る
+/// レビュー本体とは別に持たせる。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SincePrevious {
     /// 比べる起点。今の HEAD と違う HEAD で作られた、直近の成果物が見ていた
@@ -267,11 +264,9 @@ pub struct SincePrevious {
     pub head: String,
     /// 前回の HEAD から今の作業ツリーまでで変わったファイル。引けなければ None。
     ///
-    /// 前回の成果物も作業ツリーまで見ていて、そのときの未コミット変更はコミット ID では
-    /// 名指せない。コミットせずに解析し直すと、前回も読んでいた変更がここに並ぶ。
-    ///
-    /// 空の Vec と None を畳まない。前回のコミットが残っていなくて引けなかっただけなのに
-    /// 「変わったファイルは無い」と言うと、山ほど動いていても無いと言い切ることになる。
+    /// 空の Vec と None を畳まない。前回のコミットが残っていなくて引けなかった
+    /// だけなのに「変わったファイルは無い」と言うと、山ほど動いていても無いと
+    /// 言い切ることになる。
     pub files: Option<Vec<String>>,
     /// 前回の HEAD が今の履歴から辿れない（rebase / amend / force push、
     /// あるいは古いコミットへの巻き戻し）。
@@ -297,7 +292,6 @@ pub struct Review {
 }
 
 impl Review {
-    /// 重要度順に並べ替える。安定ソートなので同じ重要度の中の順は保たれる。
     pub fn sort_sections(&mut self) {
         self.sections.sort_by_key(|c| c.importance);
     }
@@ -315,75 +309,63 @@ impl Review {
 mod tests {
     use super::*;
 
-    /// 成果物の置き場は、書く側と読む側が同じ 1 つの関数から得る。
-    /// ここが割れると「書いたのに読まれない」が黙って起きる。
     #[test]
-    fn 成果物はホストのディレクトリの下に置く() {
-        let p = artifact_path(std::path::Path::new("/repo"), Scope::Base);
-        assert_eq!(p, std::path::Path::new("/repo/.conductor/review.json"));
-        assert!(p.starts_with(std::path::Path::new("/repo").join(DIR)));
-    }
-
-    /// 2 つの区間が同じファイルを取り合うと、片方を見ている間にもう片方が
-    /// 消える。別々の置き場であることを固定する。
-    #[test]
-    fn 区間が違えばファイルを共有しない() {
+    fn 成果物の置き場は区間ごとに1つずつホストのディレクトリの下にある() {
         let repo = std::path::Path::new("/repo");
+        assert_eq!(
+            artifact_path(repo, Scope::Base),
+            std::path::Path::new("/repo/.conductor/review.json")
+        );
+        for scope in [Scope::Base, Scope::SincePrevious] {
+            assert!(
+                artifact_path(repo, scope).starts_with(repo.join(DIR)),
+                "{scope:?}"
+            );
+        }
         assert_ne!(
             artifact_path(repo, Scope::Base),
             artifact_path(repo, Scope::SincePrevious)
         );
     }
 
-    fn range(side: Side, start: Option<u32>, end: Option<u32>) -> Range {
-        Range {
-            path: "src/x.rs".into(),
-            side,
-            start,
-            end,
+    #[test]
+    fn 範囲は指す位置に展開される() {
+        let file = Position::file("src/x.rs");
+        let new = |n| Position::new("src/x.rs", Side::New, n);
+        let old = |n| Position::new("src/x.rs", Side::Old, n);
+        for (name, side, start, end, want) in [
+            (
+                "両端を含む全ての行",
+                Side::New,
+                Some(10),
+                Some(12),
+                vec![new(10), new(11), new(12)],
+            ),
+            ("始点だけなら 1 つ", Side::Old, Some(4), None, vec![old(4)]),
+            // start > end はモデルの誤りなので、黙って直さず空にする。当該位置が
+            // unclassified に落ちて説明もれ検査で表に出る。
+            ("逆向きは空", Side::New, Some(9), Some(2), vec![]),
+            ("行番号の無い範囲は空", Side::New, None, None, vec![]),
+            (
+                "ファイル側は行番号を無視",
+                Side::File,
+                Some(1),
+                Some(100),
+                vec![file.clone()],
+            ),
+        ] {
+            let r = Range {
+                path: "src/x.rs".into(),
+                side,
+                start,
+                end,
+            };
+            assert_eq!(r.positions(), want, "{name}");
         }
     }
 
     #[test]
-    fn 範囲は両端を含む全ての行に展開される() {
-        let got: Vec<u32> = range(Side::New, Some(10), Some(12))
-            .positions()
-            .iter()
-            .filter_map(|p| p.line)
-            .collect();
-        assert_eq!(got, vec![10, 11, 12]);
-    }
-
-    #[test]
-    fn 始点だけの範囲は位置1つになる() {
-        assert_eq!(
-            range(Side::Old, Some(4), None).positions(),
-            vec![Position::new("src/x.rs", Side::Old, 4)]
-        );
-    }
-
-    #[test]
-    fn 逆向きの範囲は落ちずに何も返さない() {
-        // start > end はモデルの誤りなので、ここで黙って直さず空にする。
-        // 結果として当該位置が unclassified に落ち、検査で表に出る。
-        assert!(range(Side::New, Some(9), Some(2)).positions().is_empty());
-    }
-
-    #[test]
-    fn ファイル側の範囲は行番号を無視する() {
-        let r = Range {
-            path: "logo.png".into(),
-            side: Side::File,
-            start: Some(1),
-            end: Some(100),
-        };
-        assert_eq!(r.positions(), vec![Position::file("logo.png")]);
-    }
-
-    /// 重要度の 4 値が JSON との間で往復する。serde の名前が JSON とずれると、
-    /// 成果物を読んだ側で重要度だけが黙って落ちる。
-    #[test]
-    fn 重要度はjsonの名前を往復する() {
+    fn 重要度と側はjsonの小文字綴りを往復する() {
         for (imp, name) in [
             (Importance::Core, "core"),
             (Importance::Ripple, "ripple"),
@@ -391,15 +373,13 @@ mod tests {
             (Importance::Minor, "minor"),
         ] {
             let json = serde_json::to_string(&imp).unwrap();
-            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(json, format!("\"{name}\""), "{imp:?}");
             assert_eq!(serde_json::from_str::<Importance>(&json).unwrap(), imp);
         }
-    }
-
-    #[test]
-    fn sideは小文字のjson文字列になる() {
-        let p = Position::new("src/x.rs", Side::Old, 7);
-        let s = serde_json::to_string(&p).unwrap();
-        assert!(s.contains("\"side\":\"old\""), "{s}");
+        for (side, name) in [(Side::New, "new"), (Side::Old, "old"), (Side::File, "file")] {
+            let json = serde_json::to_string(&side).unwrap();
+            assert_eq!(json, format!("\"{name}\""), "{side:?}");
+            assert_eq!(serde_json::from_str::<Side>(&json).unwrap(), side);
+        }
     }
 }

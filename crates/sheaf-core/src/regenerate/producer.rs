@@ -92,24 +92,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 既定の_producer_はツリーのパスを渡す() {
-        // rust-analyzer scip は位置引数の path が必須で、無いと即座に落ちる。
+    fn 既定の_producer_は索引を吐く形で組み立つ() {
         // 索引を吐くコマンドが本当に動く形かは、ここでしか見ていない。
-        let argv = RustAnalyzer.command(Path::new("/tmp/out.scip"));
-        assert_eq!(argv[0], "rust-analyzer");
-        assert_eq!(argv[1], "scip");
-        assert!(argv.contains(&".".to_string()), "argv: {argv:?}");
-    }
-
-    #[test]
-    fn go_の_producer_は出力先を渡す() {
+        // rust-analyzer scip は位置引数の path が必須で、無いと即座に落ちる。
         // scip-go index は位置引数を省くと既定の ./... を対象にする。
-        let argv = ScipGo.command(Path::new("/tmp/out.scip"));
-        assert_eq!(argv[0], "scip-go");
-        assert_eq!(argv[1], "index");
-        assert!(
-            argv.contains(&"/tmp/out.scip".to_string()),
-            "argv: {argv:?}"
-        );
+        let out = Path::new("/tmp/out.scip");
+        for (argv, head, must_contain) in [
+            (RustAnalyzer.command(out), ["rust-analyzer", "scip"], "."),
+            (ScipGo.command(out), ["scip-go", "index"], "/tmp/out.scip"),
+        ] {
+            assert_eq!(&argv[..2], &head[..], "argv: {argv:?}");
+            assert!(
+                argv.contains(&must_contain.to_string()),
+                "{must_contain} が無い: {argv:?}"
+            );
+        }
     }
 }

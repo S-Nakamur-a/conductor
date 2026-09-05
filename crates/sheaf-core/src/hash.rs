@@ -2,9 +2,8 @@
 
 use sha1::{Digest, Sha1};
 
-/// git の blob ハッシュ。索引の鍵を `git ls-files -s` の出力とそのまま突き合わせられるようにする。
-/// [`Store::load`] の `expected` に入れるハッシュ。git の blob ハッシュと同じ形式なので、
-/// `git ls-tree -r <索引を作ったコミット>` の出力をそのまま使える。
+/// git の blob ハッシュ。[`crate::Store::load`] の `expected` に入れる形式でもあるので、
+/// `git ls-tree -r <索引を作ったコミット>` の出力をそのまま渡せる。
 pub fn blob_hash(content: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(format!("blob {}\0", content.len()).as_bytes());

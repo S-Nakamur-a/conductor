@@ -60,7 +60,7 @@ pub(crate) enum Resolved {
 /// derive が作った impl は定義位置を索引に持たないが、その型は持っている。
 /// 実測で自クレートへの参照 37,120 出現のうち 397 出現がこれで回収できる。
 ///
-/// **索引に書いてある符号ではなく、組み立てた符号である。** impl が型とは別の
+/// 索引に書いてある符号ではなく、組み立てた符号である。impl が型とは別の
 /// モジュールに置かれていて、しかもそのモジュールに同名の型があると別物に届く。
 /// だから直接の定義が引けないときだけ使い、答えも Exact とは分けている。
 fn enclosing_type(symbol: &str) -> Option<String> {
@@ -131,7 +131,7 @@ fn implementing_type(symbol: &str) -> Option<&str> {
 /// impl の符号から (実装している型, 実装している trait) の綴りを取る。
 /// `.../impl#[Rough][SyntacticLayer]` から `("Rough", "SyntacticLayer")`。
 ///
-/// **ブロック自身の符号だけでは足りない。** ジェネリックな impl は索引にブロックの
+/// ブロック自身の符号だけでは足りない。ジェネリックな impl は索引にブロックの
 /// 符号を持たず (`impl<'a> SyntacticLayer for Bridge<'a>` が実際にそう)、中の
 /// メソッドの符号しか出ない。だからメソッドの符号も同じ形として受ける。
 /// trait を実装していない impl は 2 つめの角括弧を持たないので None。
@@ -147,7 +147,7 @@ fn impl_pair(symbol: &str) -> Option<(&str, &str)> {
 
 /// 宣言の本文。`SymbolInformation.signature_documentation` の中身。
 ///
-/// **型付きで読むだけでは足りない。** scip crate が生成する `Signature` は本文を
+/// 型付きで読むだけでは足りない。scip crate が生成する `Signature` は本文を
 /// 2 番に置くが、rust-analyzer が書くのは旧仕様の `Document` で、本文は 5 番にある。
 /// フィールド番号が違うので `Signature::text` は必ず空文字列になり、実際の本文は
 /// 未知フィールドに落ちる。両方の綴りから読む。
@@ -208,7 +208,7 @@ pub struct Store {
     /// 同じシンボルIDに定義が複数あることは実索引で起きる（別々の関数の中の同名 const など）。
     /// どれも正しいので、先に見つけたものだけを残すと残りを黙って隠すことになる。
     ///
-    /// **索引ごとに分ける。** 索引をまたぐと、別物が同じ符号を持つ組み合わせで
+    /// 索引ごとに分ける。索引をまたぐと、別物が同じ符号を持つ組み合わせで
     /// 誤った定義を Exact で返す（scip-typescript は名前の無い package.json に
     /// 索引ルートの情報を含まない座標を振るので、これは実際に起こせる）。
     definitions: Vec<HashMap<Box<str>, Vec<Location>>>,
@@ -232,13 +232,8 @@ pub struct Store {
     trait_impls: Vec<TraitImpls>,
     /// Document 番号からパスを引く表。references の値を照合先に戻すためだけに使う。
     doc_paths: Vec<PathBuf>,
-    /// ルートの外を指していて投入しなかった Document の数。
-    /// 無回答が索引の欠落によるものだと分かるようにする。
     outside_root: usize,
-    /// `expected` に出自が無かった Document の数。
-    /// 無回答が出自の欠落によるものだと分かるようにする。
     missing_provenance: usize,
-    /// 複数の索引が同じパスを主張して、負けたほうを捨てた数。
     path_conflicts: usize,
     root: PathBuf,
 }
@@ -283,11 +278,13 @@ impl Store {
     }
 
     /// ルートの外を指していて投入しなかった Document の数。
+    /// 無回答が索引の欠落によるものだと分かるようにする。
     pub fn outside_root(&self) -> usize {
         self.outside_root
     }
 
     /// `expected` に出自が無かった Document の数。
+    /// 無回答が出自の欠落によるものだと分かるようにする。
     pub fn missing_provenance(&self) -> usize {
         self.missing_provenance
     }
@@ -364,7 +361,7 @@ impl Store {
 
     /// その符号の説明を組み立てる。
     ///
-    /// 説明はその符号の**定義がある Document** に載る。ローカル束縛は定義も参照も
+    /// 説明はその符号の定義がある Document に載る。ローカル束縛は定義も参照も
     /// 同じ Document なので、まず手元を見るだけで当たる。説明が見つからなくても
     /// 符号は答えになる (何を指しているかは分かる) ので、中身が空のまま返す。
     fn detail_of(
@@ -587,7 +584,6 @@ impl Store {
 
         let mut out: Vec<Location> = Vec::new();
         let mut symbols: Vec<&str> = Vec::new();
-        // rel は上で検査済みなので、飛び先が同じファイルのときに読み直さない。
         let mut fresh = Freshness::starting_at(self, rel);
         for occ in &doc.occurrences {
             let Some(range) = usable_range(&occ.range, entry.column_encoding, lines.as_ref())
@@ -714,7 +710,6 @@ impl Store {
         })
     }
 
-    /// その符号が実装していると名乗っているインタフェース側の符号。上向き 1 ホップだけ。
     fn interfaces_of(&self, symbol: &str, index: usize) -> &[Box<str>] {
         self.implements[index]
             .get(symbol)
@@ -735,8 +730,6 @@ impl Store {
         std::fs::read(self.root.join(rel)).is_ok_and(|src| blob_hash(&src) == *recorded)
     }
 
-    /// ローカル変数のシンボルは Document の中でしか意味を持たない
-    /// （`local 35` は別ファイルでは別物）ので、索引全体の表には入れず、その場で引く。
     fn definitions_of(&self, symbol: &str, index: usize, at: &InDocument<'_>) -> Vec<Location> {
         if is_local(symbol) {
             at.definitions(symbol)
@@ -748,8 +741,6 @@ impl Store {
         }
     }
 
-    /// ローカル変数のシンボルは definitions_of と同じ理由で Document 内だけで解決する。
-    /// 転置索引にも local を入れないので、ここで解決するのは唯一の経路になる。
     fn references_of(
         &self,
         symbol: &str,
@@ -766,7 +757,7 @@ impl Store {
 
     /// 非ローカルな符号への参照。転置索引から引くので Document の文脈が要らない。
     ///
-    /// **答えが依拠したのは、転置索引が指した Document そのものである。** 位置だけを検査すると、
+    /// 答えが依拠したのは、転置索引が指した Document そのもの。位置だけを検査すると、
     /// 位置が 1 件も出なかった Document が素通りして、そのぶん欠けた答えが Exact として通る。
     fn references_of_symbol(
         &self,
@@ -790,10 +781,8 @@ impl Store {
         Some(out)
     }
 
-    /// 転置索引が指す Document を 1 つデコードして、そのシンボルへの参照を集める。
-    ///
-    /// 数えられなければ `None`。0 件として返すと、0 件の Document は鮮度の検査に載らないので
-    /// (検査は返ってきた位置ごとに回る)、欠けた答えが Exact として通り抜ける。
+    /// 数えられなければ `None`。0 件として返すと、その Document は上の鮮度の検査に
+    /// 載らない (検査は返ってきた位置ごとに回る)。
     fn references_in_document(&self, symbol: &str, path: &Path) -> Option<Vec<Location>> {
         let entry = self.docs.get(path)?;
         let doc = parse_document(&self.bytes[entry.index][entry.span.clone()]).ok()?;
@@ -815,10 +804,9 @@ impl Store {
     }
 }
 
-/// local な符号を Document の中だけで解決するのに要る文脈。
+/// local な符号 (`local 35`) を Document の中だけで解決するのに要る文脈。
 ///
-/// local (`local 35`) は Document をまたぐと別物なので、索引全体の表には入れず、
-/// その場でこの Document だけを見る。
+/// local は Document をまたぐと別物なので索引全体の表には入れず、その場で引く。
 struct InDocument<'a> {
     doc: &'a Document,
     rel: &'a Path,
@@ -827,12 +815,10 @@ struct InDocument<'a> {
 }
 
 impl InDocument<'_> {
-    /// この Document の中でその符号を定義している位置。
     fn definitions(&self, symbol: &str) -> Vec<Location> {
         self.occurrences(symbol, true)
     }
 
-    /// この Document の中でその符号を参照している位置。
     fn references(&self, symbol: &str) -> Vec<Location> {
         self.occurrences(symbol, false)
     }
@@ -864,7 +850,6 @@ fn enclosed_lines(range: &[i32]) -> Option<(u32, u32)> {
     Some((u32::try_from(first).ok()?, u32::try_from(last).ok()?))
 }
 
-/// 索引全体の表に入れない符号か。Document をまたぐと別物になる。
 fn is_local(symbol: &str) -> bool {
     symbol.starts_with("local ")
 }

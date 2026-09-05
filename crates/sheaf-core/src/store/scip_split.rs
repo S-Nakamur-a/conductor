@@ -201,16 +201,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn varintは複数バイトを読める() {
-        let mut pos = 0;
-        assert_eq!(varint(&[0x96, 0x01], &mut pos).unwrap(), 150);
-        assert_eq!(pos, 2);
-    }
-
-    #[test]
-    fn varintは途切れた入力を拒む() {
-        let mut pos = 0;
-        assert!(varint(&[0x96], &mut pos).is_err());
+    fn varintは複数バイトを読み途切れた入力を拒む() {
+        for (buf, want) in [
+            (&[0x96u8, 0x01][..], Some((150u64, 2usize))),
+            (&[0x96u8][..], None),
+        ] {
+            let mut pos = 0;
+            let got = varint(buf, &mut pos).ok().map(|v| (v, pos));
+            assert_eq!(got, want, "{buf:?}");
+        }
     }
 
     #[test]

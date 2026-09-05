@@ -84,70 +84,62 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn rust(symbol: &str) -> Option<String> {
-        of(symbol, None, Path::new("a.rs"))
-    }
-
     #[test]
-    fn 囲んでいる型と名前空間を綴る() {
-        assert_eq!(
-            rust("rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel."),
-            Some("app::types::App".to_string())
-        );
-        assert_eq!(
-            rust("rust-analyzer cargo conductor 0.1.0 app/types/App#"),
-            Some("app::types".to_string())
-        );
-        assert_eq!(
-            rust("rust-analyzer cargo conductor 0.1.0 app/App#set_focus()."),
-            Some("app::App".to_string())
-        );
-    }
-
-    #[test]
-    fn 綴りを持たない符号は囲んでいる符号から組み立てる() {
-        let encl = "rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel().";
-        assert_eq!(
-            of("local 3", Some(encl), Path::new("a.rs")),
-            Some("app::types::App::theme_sel".to_string())
-        );
-        assert_eq!(of("local 3", None, Path::new("a.rs")), None);
-    }
-
-    #[test]
-    fn 区切りは拡張子で決まる() {
-        assert_eq!(
-            of(
+    fn 囲んでいるものの綴りを組み立てる() {
+        for (symbol, enclosing, path, want) in [
+            (
+                "rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel.",
+                None,
+                "a.rs",
+                Some("app::types::App"),
+            ),
+            (
+                "rust-analyzer cargo conductor 0.1.0 app/types/App#",
+                None,
+                "a.rs",
+                Some("app::types"),
+            ),
+            (
+                "rust-analyzer cargo conductor 0.1.0 app/App#set_focus().",
+                None,
+                "a.rs",
+                Some("app::App"),
+            ),
+            // 綴りを持たない符号は、囲んでいる符号がそのまま答えになる。
+            (
+                "local 3",
+                Some("rust-analyzer cargo conductor 0.1.0 app/types/App#theme_sel()."),
+                "a.rs",
+                Some("app::types::App::theme_sel"),
+            ),
+            ("local 3", None, "a.rs", None),
+            // 区切りは索引を作ったツールではなくソースの拡張子で決まる。
+            (
                 "scip-go gomod demo . demo/Loud#Greet().",
                 None,
-                Path::new("greet.go")
+                "greet.go",
+                Some("demo.Loud"),
             ),
-            Some("demo.Loud".to_string())
-        );
-    }
-
-    #[test]
-    fn 引数の所属は囲んでいる関数まで綴る() {
-        assert_eq!(
-            of(
+            (
                 "scip-typescript npm tsdemo 1.0.0 src/`greet.tsx`/run().(g)",
                 None,
-                Path::new("src/greet.tsx")
+                "src/greet.tsx",
+                Some("src.run"),
             ),
-            Some("src.run".to_string())
-        );
-    }
-
-    #[test]
-    fn ファイルの名前空間は綴りに入れない() {
-        assert_eq!(
-            of(
+            // ファイルの名前空間は綴りに入れない。
+            (
                 "scip-typescript npm tsdemo 1.0.0 src/`greet.tsx`/Loud#greet().",
                 None,
-                Path::new("src/greet.tsx")
+                "src/greet.tsx",
+                Some("src.Loud"),
             ),
-            Some("src.Loud".to_string())
-        );
+        ] {
+            assert_eq!(
+                of(symbol, enclosing, Path::new(path)),
+                want.map(str::to_string),
+                "{symbol}"
+            );
+        }
     }
 
     #[test]
@@ -158,7 +150,7 @@ mod tests {
             "rust-analyzer cargo conductor 0.1.0 macros/log!",
             "local 3",
         ] {
-            assert_eq!(rust(symbol), None, "{symbol}");
+            assert_eq!(of(symbol, None, Path::new("a.rs")), None, "{symbol}");
         }
     }
 }

@@ -1,0 +1,48 @@
+[package]
+name = "conductor-tui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "conductor の画面。パネル群とシェル (route / layout / Effect / render)"
+
+[dependencies]
+conductor-core = { path = "../conductor-core" }
+conductor-svc = { path = "../conductor-svc" }
+# conductor mcp-serve。別バイナリにせず埋め込む。
+conductor-mcp = { path = "../conductor-mcp" }
+# コードジャンプの確信度。答えの型そのものなので、包み直さず直接読む。
+sheaf-core = { path = "../sheaf-core" }
+# レビューの成果物。読む順も重要度も revidere の型のまま扱う。
+revidere = { path = "../revidere" }
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+# PTY 画面の読み出し。PtyStore が渡す Parser を描画時に直接ロックする。
+vt100 = "0.15"
+# panic ログの置き場と時刻。
+dirs = "6"
+chrono = "0.4"
+# Viewer の構文ハイライト。
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+syntect-tui = "3.0.6"
+# トランスクリプトの tool_use は生の JSON を持つ。分類はそれを見て決める。
+serde_json = "1"
+# 折りたたみ範囲の算出。
+tree-sitter = "0.26"
+# 変更ファイル一覧の色分けが status のビットを直接読む。
+git2 = { version = "0.20", features = ["vendored-openssl"] }
+# PR ページを既定のブラウザで開く。
+open = "5"
+# 画像プレビュー。aa-media が吐く ANSI を vt100 に通して行にする。
+aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+
+[dev-dependencies]
+tempfile = "3"
+toml = "1"
+revidere-fixtures = { path = "../revidere-fixtures" }

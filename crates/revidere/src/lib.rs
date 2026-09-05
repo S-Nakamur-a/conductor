@@ -1,10 +1,7 @@
 //! revidere: git diff を入口にした 3 段階のレビュー支援。
 //!
-//! 成果物は JSON 1 枚 (review.rs)。読む側が最初に触るのは
-//! [annotate::Annotations] で、「この行の重要度は」を引ける形にしたもの。
-//!
-//! 作る側の入口は [analyze::analyze] 1 つ。AI をどう呼ぶかは持たず、ホストが
-//! [analyze::Ai] を実装して渡す。モデルの選択もキャンセルもホストの関心事。
+//! 成果物は JSON 1 枚 (review.rs)。読む側の入口は [annotate::Annotations] で、
+//! 「この行の重要度は」を引ける形にしたもの。作る側の入口は [analyze::analyze] 1 つ。
 
 pub mod analyze;
 pub mod annotate;

@@ -1,0 +1,1376 @@
+//! Claude Code とシェルの PTY パネル。
+//!
+//! PTY だけは svc の Event 経路に乗らない (バイト列が描画より高頻度で届く) ので、
+//! [PtyStore] はこのパネルが直接持ち、描画のたびに画面をロックして読む。
+
+pub mod ansi;
+pub(crate) mod reflow;
+pub mod render;
+pub(crate) mod tabs;
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use conductor_core::claude_log::LogEntry;
+use conductor_core::config::Config;
+use conductor_core::keymap::Action;
+use conductor_core::theme::Theme;
+use conductor_svc::pty::{Launch, PtyStore, SessionKind, Spawn};
+use conductor_svc::watch::{CcState, WatchEvent};
+use crossterm::event::KeyEvent;
+
+use crate::click::ClickTracker;
+use crate::effect::Effect;
+use crate::layout::{Layout, Region};
+use crate::panels::viewer::syntax::Highlighter;
+use crate::task::Task;
+use crate::workspace::{Ctx, Focus, StatusLevel};
+use ratatui::layout::Rect;
+
+use reflow::{Handled, Reflow};
+
+/// セッションのラベルに使う番号。同じ worktree で空いている一番小さいものを取る。
+const SESSION_SLOTS: usize = 9;
+
+/// 端末パネル 1 枚。
+pub struct Pane {
+    kind: SessionKind,
+    /// 映しているセッションの id。添字は削除でずれるので持たない。
+    session: Option<String>,
+    /// 最後に PTY へ渡した内容領域の大きさ (行, 桁)。
+    size: (u16, u16),
+    /// スクロールバックのオフセット。0 が最新。
+    scroll: usize,
+    clicks: ClickTracker,
+}
+
+impl Pane {
+    fn new(kind: SessionKind, size: (u16, u16)) -> Self {
+        Self {
+            kind,
+            session: None,
+            size,
+            scroll: 0,
+            clicks: ClickTracker::default(),
+        }
+    }
+
+    /// 映すセッションを変える。スクロール位置は今のセッションのものなので落とす。
+    fn show(&mut self, session: Option<String>) {
+        self.session = session;
+        self.scroll = 0;
+    }
+}
+
+/// 1 ファイルに対して起こした $EDITOR。プロセスが終われば畳む。
+struct Editor {
+    session: String,
+    /// 編集中の絶対パス。閉じたときに読み直す先。
+    path: PathBuf,
+    size: (u16, u16),
+}
+
+pub struct TerminalPanel {
+    pty: PtyStore,
+    claude: Pane,
+    shell: Pane,
+    /// Claude 区画に重ねているトランスクリプト。
+    transcript: Option<Reflow>,
+    editor: Option<Editor>,
+    wants_clear: bool,
+    /// 選択中の worktree。セッションの絞り込みと spawn の作業ディレクトリ。
+    worktree: Option<PathBuf>,
+    waiting: HashSet<PathBuf>,
+    active: HashSet<PathBuf>,
+    /// 起こしたセッションの id と、受け取れるようになったら送るプロンプト。
+    deferred: HashMap<String, String>,
+}
+
+impl TerminalPanel {
+    pub fn new(config: &Config) -> Self {
+        Self {
+            pty: PtyStore::new(
+                config.terminal.active_scrollback,
+                config.terminal.inactive_scrollback,
+            ),
+            claude: Pane::new(SessionKind::ClaudeCode, (24, 80)),
+            shell: Pane::new(SessionKind::Shell, (6, 80)),
+            transcript: None,
+            editor: None,
+            wants_clear: false,
+            worktree: None,
+            waiting: HashSet::new(),
+            active: HashSet::new(),
+            deferred: HashMap::new(),
+        }
+    }
+
+    pub fn is_waiting(&self, worktree: &Path) -> bool {
+        self.waiting.contains(worktree)
+    }
+
+    pub fn is_active(&self, worktree: &Path) -> bool {
+        self.active.contains(worktree)
+    }
+
+    /// 新しい PTY 出力が届いていたか。届いていれば描き直す理由になる。
+    pub fn took_output(&self) -> bool {
+        self.pty.take_output_notify()
+    }
+
+    pub(crate) fn pane(&self, region: Region) -> &Pane {
+        match region {
+            Region::TerminalShell => &self.shell,
+            _ => &self.claude,
+        }
+    }
+
+    fn pane_mut(&mut self, focus: Focus) -> Option<&mut Pane> {
+        match focus {
+            Focus::TerminalClaude => Some(&mut self.claude),
+            Focus::TerminalShell => Some(&mut self.shell),
+            _ => None,
+        }
+    }
+
+    /// タブ行に並ぶ区画。
+    pub(crate) fn tab_slots(&self, region: Region, width: u16) -> Vec<tabs::Slot> {
+        let pane = self.pane(region);
+        let sessions = self.sessions(pane.kind);
+        let labelled: Vec<(&str, &str)> = sessions
+            .iter()
+            .map(|(_, id, label)| (*id, *label))
+            .collect();
+        tabs::row(pane.kind, &labelled, pane.session.as_deref(), width)
+    }
+
+    /// タブ行のクリック。x は枠の内側からの相対列。押せる区画に当たらなければ
+    /// None を返して、空の区画のダブルクリック起動へ渡す。
+    pub fn tab_click(&mut self, focus: Focus, x: u16, width: u16) -> Option<Vec<Effect>> {
+        let region = match focus {
+            Focus::TerminalClaude => Region::TerminalClaude,
+            Focus::TerminalShell => Region::TerminalShell,
+            _ => return None,
+        };
+        let slot = self
+            .tab_slots(region, width)
+            .into_iter()
+            .find(|slot| slot.contains(x))?;
+        match slot.kind {
+            tabs::SlotKind::Tab { session, .. } => {
+                // 今映しているタブを押しただけならスクロール位置を捨てない。
+                if let Some(pane) = self.pane_mut(focus)
+                    && pane.session.as_deref() != Some(session.as_str())
+                {
+                    pane.show(Some(session));
+                }
+                self.activate_visible();
+                Some(Vec::new())
+            }
+            tabs::SlotKind::Close { session } => {
+                self.close_session(focus, &session);
+                Some(Vec::new())
+            }
+            tabs::SlotKind::Add => Some(vec![Effect::NewSession(self.pane(region).kind)]),
+            tabs::SlotKind::Hint => None,
+        }
+    }
+
+    /// タブを閉じる。映していたセッションだったら同じ種類の残りへ移す。
+    fn close_session(&mut self, focus: Focus, id: &str) {
+        let Some(index) = self.index_of(Some(id)) else {
+            return;
+        };
+        let _ = self.pty.kill_session(index);
+        self.pty.remove_session(index);
+        if self.pane(region_of(focus)).session.as_deref() != Some(id) {
+            return;
+        }
+        // 落としたセッションのログを読んだままにはできない。
+        if focus == Focus::TerminalClaude {
+            self.transcript = None;
+            self.wants_clear = true;
+        }
+        let kind = self.pane(region_of(focus)).kind;
+        let next = self
+            .sessions(kind)
+            .first()
+            .map(|(_, id, _)| (*id).to_string());
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.show(next);
+        }
+        self.activate_visible();
+    }
+
+    /// 選択中の worktree にある kind のセッション。PtyStore 全体の添字を添える。
+    pub(crate) fn sessions(&self, kind: SessionKind) -> Vec<(usize, &str, &str)> {
+        let worktree = self.worktree.as_deref();
+        self.pty
+            .sessions()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind == kind && Some(s.working_dir.as_path()) == worktree)
+            .map(|(i, s)| (i, s.id.as_str(), s.label.as_str()))
+            .collect()
+    }
+
+    fn index_of(&self, session: Option<&str>) -> Option<usize> {
+        let id = session?;
+        self.pty.sessions().iter().position(|s| s.id == id)
+    }
+
+    /// 選択中の worktree が変わったとき、両パネルの表示をその worktree のものへ移す。
+    pub fn follow_worktree(&mut self, worktree: Option<PathBuf>) {
+        if self.worktree == worktree {
+            return;
+        }
+        self.worktree = worktree;
+        // 別の worktree のセッションを映したままトランスクリプトを残すと、
+        // 他人のログを見せることになる。
+        self.transcript = None;
+        self.discard_editor();
+        self.wants_clear = true;
+        for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
+            let first = self.sessions(kind).first().map(|(_, id, _)| id.to_string());
+            match kind {
+                SessionKind::Shell => self.shell.show(first),
+                _ => self.claude.show(first),
+            }
+        }
+        self.activate_visible();
+    }
+
+    /// 見えているセッションの行バッファ上限を前面用へ上げる。
+    fn activate_visible(&self) {
+        for index in [
+            self.index_of(self.claude.session.as_deref()),
+            self.index_of(self.shell.session.as_deref()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.pty.activate_session(index);
+        }
+    }
+
+    pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if self.reading(ctx.focus) {
+            return self.transcript_action(action);
+        }
+        match action {
+            Action::LeaveTerminal => return Some(vec![Effect::Focus(Focus::Explorer)]),
+            Action::NextSession => self.cycle(ctx.focus, true),
+            Action::PrevSession => self.cycle(ctx.focus, false),
+            Action::ScrollbackUp | Action::ScrollbackTop => {
+                let (opened, effects) = self.enter_transcript(ctx.focus);
+                if !opened {
+                    self.scroll(ctx.focus, action);
+                }
+                return Some(effects);
+            }
+            Action::ScrollbackDown => self.scroll(ctx.focus, action),
+            Action::SnapToLive => {
+                if let Some(pane) = self.pane_mut(ctx.focus) {
+                    pane.scroll = 0;
+                }
+            }
+            _ => return None,
+        }
+        Some(Vec::new())
+    }
+
+    /// Claude 区画がトランスクリプトを映しているか。
+    pub fn reading(&self, focus: Focus) -> bool {
+        focus == Focus::TerminalClaude && self.transcript.is_some()
+    }
+
+    /// 読んでいる間の Action。持たないものは外の解釈へ落とす (パレット、区画のリサイズ)。
+    fn transcript_action(&mut self, action: Action) -> Option<Vec<Effect>> {
+        match action {
+            Action::SnapToLive => return Some(self.close_transcript()),
+            Action::LeaveTerminal => {
+                let mut effects = self.close_transcript();
+                effects.push(Effect::Focus(Focus::Explorer));
+                return Some(effects);
+            }
+            _ => {}
+        }
+        let reflow = self.transcript.as_mut()?;
+        let page = reflow.page() as isize;
+        match action {
+            Action::ScrollbackUp => reflow.scroll_by(-page),
+            Action::ScrollbackDown => reflow.scroll_by(page),
+            Action::ScrollbackTop => reflow.scroll_to_top(),
+            _ => return None,
+        }
+        Some(Vec::new())
+    }
+
+    /// ライブ表示の一番上でさらに上へ動かしたときだけ、vt100 の行数で頭打ちになる
+    /// スクロールバックではなく .jsonl そのものを読むビューへ入る。キーとホイールが
+    /// 同じ判断を通る唯一の場所。
+    fn enter_transcript(&mut self, focus: Focus) -> (bool, Vec<Effect>) {
+        if focus != Focus::TerminalClaude || self.claude.scroll != 0 {
+            return (false, Vec::new());
+        }
+        self.open_transcript()
+    }
+
+    /// 開けたかどうかも返す — 開けなければ呼び出し側は通常のスクロールバックに落ちる。
+    fn open_transcript(&mut self) -> (bool, Vec<Effect>) {
+        let unavailable = |message: &str| {
+            (
+                false,
+                vec![Effect::Status(StatusLevel::Warning, message.to_string())],
+            )
+        };
+        let Some(index) = self.index_of(self.claude.session.as_deref()) else {
+            return unavailable("no Claude Code session in this panel");
+        };
+        let Some((working_dir, session_id, _)) = self.pty.claude_session_ref(index) else {
+            return unavailable("this panel has not reported its session id yet");
+        };
+        self.transcript = Some(Reflow::opening(session_id.clone()));
+        (
+            true,
+            vec![Effect::Spawn(Task::ReadTranscript {
+                working_dir,
+                session_id,
+            })],
+        )
+    }
+
+    /// 読み終えたログを載せる。空や読めないログではビューを畳んで理由を出す。
+    pub fn install_transcript(
+        &mut self,
+        session_id: &str,
+        entries: Result<Vec<LogEntry>, String>,
+    ) -> Vec<Effect> {
+        if self
+            .transcript
+            .as_ref()
+            .is_none_or(|r| r.session() != session_id)
+        {
+            return Vec::new();
+        }
+        match entries {
+            Ok(entries) if entries.is_empty() => {
+                let mut effects = self.close_transcript();
+                effects.push(Effect::Status(
+                    StatusLevel::Info,
+                    "the session log has nothing to show yet".into(),
+                ));
+                effects
+            }
+            Ok(entries) => {
+                if let Some(reflow) = self.transcript.as_mut() {
+                    reflow.install(entries);
+                }
+                Vec::new()
+            }
+            Err(e) => {
+                let mut effects = self.close_transcript();
+                effects.push(Effect::Status(StatusLevel::Warning, e));
+                effects
+            }
+        }
+    }
+
+    /// ライブ PTY へ戻す。
+    fn close_transcript(&mut self) -> Vec<Effect> {
+        self.transcript = None;
+        self.claude.scroll = 0;
+        self.wants_clear = true;
+        Vec::new()
+    }
+
+    pub fn transcript_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        let Some(reflow) = self.transcript.as_mut() else {
+            return Vec::new();
+        };
+        match reflow.key(key) {
+            Handled::Consumed => Vec::new(),
+            Handled::Close => self.close_transcript(),
+        }
+    }
+
+    fn transcript_wheel(&mut self, delta: isize) -> Vec<Effect> {
+        let Some(reflow) = self.transcript.as_mut() else {
+            return Vec::new();
+        };
+        match reflow.wheel(delta) {
+            Handled::Consumed => Vec::new(),
+            Handled::Close => self.close_transcript(),
+        }
+    }
+
+    /// チップを踏んでいたら最新へ飛ぶ。踏んでいなければ何もしない。
+    pub fn transcript_click(&mut self, panel: Rect, x: u16, y: u16) -> bool {
+        let area = render::content_area(panel);
+        let Some(reflow) = self.transcript.as_mut() else {
+            return false;
+        };
+        let Some(rect) = reflow.badge_rect(area) else {
+            return false;
+        };
+        let hit = x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+        if hit {
+            reflow.jump_to_latest();
+        }
+        hit
+    }
+
+    /// 端末区画のホイール。子プロセスへ渡す座標が要るので区画ごと受け取る。
+    pub fn wheel(
+        &mut self,
+        region: Region,
+        rect: Rect,
+        col: u16,
+        row: u16,
+        delta: isize,
+    ) -> Vec<Effect> {
+        let focus = focus_of(region);
+        let (content, session) = match focus {
+            Focus::Editor => (
+                render::editor_area(rect),
+                self.editor.as_ref().map(|e| e.session.as_str()),
+            ),
+            _ => (
+                render::content_area(rect),
+                self.pane(region).session.as_deref(),
+            ),
+        };
+        let lines = delta.unsigned_abs();
+        let up = delta < 0;
+
+        // マウスを要求している子 (vim, less --mouse) と自前のスクロールバックを持たない
+        // ページャは自分で捌く。こちらのオフセットも動かすと画面が二重に流れる。
+        if let Some(index) = self.index_of(session) {
+            let pty_col = col.saturating_sub(content.x) + 1;
+            let pty_row = row.saturating_sub(content.y) + 1;
+            if self
+                .pty
+                .forward_scroll_to_session(index, lines, up, pty_col, pty_row)
+            {
+                return Vec::new();
+            }
+        }
+
+        if focus == Focus::Editor {
+            return Vec::new();
+        }
+        if region == Region::TerminalClaude && self.transcript.is_some() {
+            return self.transcript_wheel(delta);
+        }
+        if !up {
+            self.scroll_lines(focus, lines, false);
+            return Vec::new();
+        }
+        let (opened, effects) = self.enter_transcript(focus);
+        if !opened {
+            self.scroll_lines(focus, lines, true);
+        }
+        effects
+    }
+
+    /// 空の区画のクリック。2 回目で新しいセッションを起こす。1 回で起こすと、
+    /// 区画へフォーカスを移すだけのつもりのクリックがそのままプロセスを増やす。
+    pub fn click(&mut self, focus: Focus) -> Vec<Effect> {
+        let Some(pane) = self.pane_mut(focus) else {
+            return Vec::new();
+        };
+        if pane.session.is_some() || !pane.clicks.is_double(0) {
+            return Vec::new();
+        }
+        vec![Effect::NewSession(pane.kind)]
+    }
+
+    /// 描く前に行を組み直す。トランスクリプトを開いていなければ何もしない。
+    pub fn prepare(&mut self, theme: &Theme, highlighter: &Highlighter, overlay_open: bool) {
+        let size = self.claude.size;
+        if let Some(reflow) = self.transcript.as_mut() {
+            reflow.prepare(theme, highlighter, size, overlay_open);
+            self.wants_clear |= reflow.take_clear_request();
+        }
+    }
+
+    /// エディタを PTY で起こす。返すのは区画の見出しに出すファイル名。
+    /// どのエディタかは環境が決めるので、argv は呼び出し側から受け取る。
+    pub fn open_editor(&mut self, path: &Path, worktree: &Path, argv: &[String]) -> Result<String> {
+        anyhow::ensure!(self.editor.is_none(), "an editor is already open");
+        let (program, args) = argv.split_first().context("the editor command is empty")?;
+        let (rows, cols) = DEFAULT_PTY_SIZE;
+        let worktree_name = worktree
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let index = self.pty.spawn(Spawn {
+            launch: Launch::Editor {
+                program,
+                args,
+                file: path,
+            },
+            worktree: &worktree_name,
+            label: "ED",
+            working_dir: worktree,
+            rows,
+            cols,
+        })?;
+        self.pty.activate_session(index);
+        self.editor = Some(Editor {
+            session: self.pty.sessions()[index].id.clone(),
+            path: path.to_path_buf(),
+            size: (rows, cols),
+        });
+        // 置き換える区画の上にエディタの代替画面を一から描かせる。
+        self.wants_clear = true;
+        Ok(self.editor_name().unwrap_or_default())
+    }
+
+    /// エディタの PTY を落として畳む。読み直しは呼び出し側がどのみち行う。
+    fn discard_editor(&mut self) {
+        let Some(editor) = self.editor.take() else {
+            return;
+        };
+        if let Some(index) = self.index_of(Some(editor.session.as_str())) {
+            let _ = self.pty.kill_session(index);
+            self.pty.remove_session(index);
+        }
+    }
+
+    /// エディタが終わっていれば畳んで、編集していたパスを返す。毎フレーム呼ぶ —
+    /// 停止セッションの掃除タイマーを待つと、閉じた後も区画が残って見える。
+    pub fn poll_editor_exit(&mut self) -> Option<PathBuf> {
+        let session = self.editor.as_ref()?.session.clone();
+        match self.index_of(Some(session.as_str())) {
+            Some(index) if self.pty.is_session_alive(index) => return None,
+            Some(index) => self.pty.remove_session(index),
+            None => {}
+        }
+        self.wants_clear = true;
+        self.editor.take().map(|editor| editor.path)
+    }
+
+    /// 開いているファイルの名前。区画の見出しが読む。
+    pub fn editor_name(&self) -> Option<String> {
+        let path = &self.editor.as_ref()?.path;
+        Some(path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        ))
+    }
+
+    pub fn take_clear_request(&mut self) -> bool {
+        std::mem::take(&mut self.wants_clear)
+    }
+
+    pub(crate) fn transcript(&self) -> Option<&Reflow> {
+        self.transcript.as_ref()
+    }
+
+    fn cycle(&mut self, focus: Focus, forward: bool) {
+        let Some(pane) = self.pane_mut(focus) else {
+            return;
+        };
+        let (kind, current) = (pane.kind, pane.session.clone());
+        let ids: Vec<String> = self
+            .sessions(kind)
+            .iter()
+            .map(|(_, id, _)| (*id).to_string())
+            .collect();
+        if ids.len() <= 1 {
+            return;
+        }
+        let at = current
+            .and_then(|id| ids.iter().position(|i| *i == id))
+            .unwrap_or(0);
+        let next = if forward {
+            (at + 1) % ids.len()
+        } else {
+            (at + ids.len() - 1) % ids.len()
+        };
+        let target = ids[next].clone();
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.show(Some(target));
+        }
+        self.activate_visible();
+    }
+
+    fn scroll(&mut self, focus: Focus, action: Action) {
+        let Some(pane) = self.pane_mut(focus) else {
+            return;
+        };
+        let page = (pane.size.0 as usize / 2).max(1);
+        match action {
+            Action::ScrollbackUp => self.scroll_lines(focus, page, true),
+            Action::ScrollbackDown => self.scroll_lines(focus, page, false),
+            _ => self.scroll_lines(focus, usize::MAX, true),
+        }
+    }
+
+    /// スクロールバックを行数で動かす。実際に効く位置は vt100 しか知らない。
+    fn scroll_lines(&mut self, focus: Focus, lines: usize, up: bool) {
+        let Some(pane) = self.pane_mut(focus) else {
+            return;
+        };
+        let want = if up {
+            pane.scroll.saturating_add(lines)
+        } else {
+            pane.scroll.saturating_sub(lines)
+        };
+        let index = self.index_of(self.pane(region_of(focus)).session.as_deref());
+        let clamped = match index {
+            Some(index) => render::clamp_scrollback(&self.pty, index, want),
+            None => 0,
+        };
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.scroll = clamped;
+        }
+    }
+
+    /// セッションを起こして id を返す。どこに映すかは呼び出し側が決める。
+    fn launch(
+        &mut self,
+        kind: SessionKind,
+        resume: Option<&str>,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+        session_name: Option<&str>,
+    ) -> Result<String> {
+        let worktree_name = worktree
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let label = self.next_label(kind, worktree);
+        let (rows, cols) = match kind {
+            SessionKind::Shell => self.shell.size,
+            _ => self.claude.size,
+        };
+        let launch = match kind {
+            SessionKind::Shell => Launch::Shell {
+                program: &config.general.shell,
+            },
+            _ => Launch::ClaudeCode {
+                repo_root,
+                resume_session_id: resume,
+                session_name,
+            },
+        };
+        let index = self.pty.spawn(Spawn {
+            launch,
+            worktree: &worktree_name,
+            label: &label,
+            working_dir: worktree,
+            rows,
+            cols,
+        })?;
+        Ok(self.pty.sessions()[index].id.clone())
+    }
+
+    /// 起動したセッションを、その種類のパネルに映す。
+    pub fn spawn(
+        &mut self,
+        kind: SessionKind,
+        resume: Option<&str>,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+    ) -> Result<()> {
+        let id = self.launch(kind, resume, worktree, repo_root, config, None)?;
+        // spawn した先の worktree を映していないと、そのセッションはどこにも出ない。
+        self.worktree = Some(worktree.to_path_buf());
+        match kind {
+            SessionKind::Shell => self.shell.show(Some(id)),
+            _ => self.claude.show(Some(id)),
+        }
+        self.activate_visible();
+        Ok(())
+    }
+
+    /// 起動時の復帰。追従中の worktree もフォーカスも動かさない — 画面に出すのは
+    /// いま映している worktree で、その区画がまだ空のときだけ。
+    pub fn resume(
+        &mut self,
+        session_id: &str,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+    ) -> Result<()> {
+        let id = self.launch(
+            SessionKind::ClaudeCode,
+            Some(session_id),
+            worktree,
+            repo_root,
+            config,
+            None,
+        )?;
+        if self.worktree.as_deref() == Some(worktree) && self.claude.session.is_none() {
+            self.claude.show(Some(id));
+            self.activate_visible();
+        }
+        Ok(())
+    }
+
+    /// 作ったばかりの worktree で Claude を起こす。今映しているものは動かさない。
+    pub fn launch_claude_at(
+        &mut self,
+        worktree: &Path,
+        repo_root: &Path,
+        config: &Config,
+        name: Option<&str>,
+        prompt: String,
+    ) -> Result<()> {
+        let id = self.launch(
+            SessionKind::ClaudeCode,
+            None,
+            worktree,
+            repo_root,
+            config,
+            name,
+        )?;
+        self.deferred.insert(id, prompt);
+        Ok(())
+    }
+
+    /// 起動待ちのプロンプトを、受け取れる状態になったものから流し込む。
+    ///
+    /// 普段は is_waiting_for_input で足りるが、起動直後はまだアイドルに達しないので、
+    /// 画面に何か出た時点で送る方が速い。
+    pub fn flush_deferred(&mut self) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        let pty = &self.pty;
+        self.deferred.retain(|id, prompt| {
+            let Some(index) = pty.sessions().iter().position(|s| s.id == *id) else {
+                return false;
+            };
+            if !pty.is_waiting_for_input(index) && !pty.has_visible_output(index) {
+                return true;
+            }
+            if let Err(e) = pty.write_chunked_to_session(index, prompt) {
+                log::warn!("could not hand the smart worktree prompt to Claude: {e:#}");
+            }
+            false
+        });
+    }
+
+    /// 同じ worktree で空いている一番小さい番号。閉じた番号は空くので詰め直る。
+    fn next_label(&self, kind: SessionKind, worktree: &Path) -> String {
+        let prefix = match kind {
+            SessionKind::Shell => "SH",
+            _ => "CC",
+        };
+        let used: Vec<String> = self
+            .pty
+            .sessions()
+            .iter()
+            .filter(|s| s.kind == kind && s.working_dir == worktree)
+            .map(|s| s.label.clone())
+            .collect();
+        (1..=SESSION_SLOTS)
+            .map(|n| format!("{prefix}:{n}"))
+            .find(|label| !used.contains(label))
+            .unwrap_or_else(|| format!("{prefix}:{}", used.len() + 1))
+    }
+
+    /// 見えているセッションのスクロールバックを保存する。Claude を優先するのは、
+    /// 残したくなるのはほぼそちらだから。
+    pub fn save_history(&self) -> Vec<Effect> {
+        let visible = self
+            .index_of(self.claude.session.as_deref())
+            .or_else(|| self.index_of(self.shell.session.as_deref()));
+        let Some(index) = visible else {
+            return vec![Effect::Status(
+                StatusLevel::Warning,
+                "no terminal session to save".into(),
+            )];
+        };
+        let session = &self.pty.sessions()[index];
+        vec![Effect::Spawn(Task::SaveHistory {
+            session_id: session.id.clone(),
+            worktree: session.worktree.clone(),
+            label: session.label.clone(),
+            kind: match session.kind {
+                SessionKind::ClaudeCode => "claude_code",
+                SessionKind::Shell => "shell",
+                SessionKind::Editor => "editor",
+            },
+            output: self.pty.output(index).join("\n"),
+        })]
+    }
+
+    /// 見えているシェルがあるか。
+    pub fn has_shell(&self) -> bool {
+        self.index_of(self.shell.session.as_deref()).is_some()
+    }
+
+    /// 見えているシェルへ 1 行流す。スクロールを最新へ戻すのは、送った行が
+    /// 遡って読んでいる位置の外で流れると押しても何も起きなく見えるため。
+    pub fn send_line(&mut self, line: &str) -> Result<()> {
+        let index = self
+            .index_of(self.shell.session.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("no shell session to run this in"))?;
+        self.pty
+            .write_to_session(index, format!("{line}\n").as_bytes())?;
+        self.shell.scroll = 0;
+        Ok(())
+    }
+
+    /// フォーカス中の区画の PTY へキーを流す。
+    pub fn forward_key(&self, key: KeyEvent, focus: Focus) {
+        let session = match focus {
+            Focus::TerminalClaude => self.claude.session.as_deref(),
+            Focus::TerminalShell => self.shell.session.as_deref(),
+            Focus::Editor => self.editor.as_ref().map(|e| e.session.as_str()),
+            _ => return,
+        };
+        let Some(index) = self.index_of(session) else {
+            return;
+        };
+        let Some(bytes) = ansi::key_to_bytes(&key, self.pty.application_cursor(index)) else {
+            return;
+        };
+        if let Err(e) = self.pty.write_to_session(index, &bytes) {
+            log::warn!("could not write to the PTY session: {e:#}");
+        }
+    }
+
+    /// フォーカス中の区画の PTY へ貼り付けを流す。スクロールを最新へ戻すのは、
+    /// 遡って読んでいる間だと入れた文字が見えないから。
+    pub fn paste(&mut self, text: &str, focus: Focus) {
+        let session = match focus {
+            Focus::TerminalClaude => self.claude.session.clone(),
+            Focus::TerminalShell => self.shell.session.clone(),
+            Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
+            _ => return,
+        };
+        let Some(index) = self.index_of(session.as_deref()) else {
+            return;
+        };
+        if let Err(e) = self.pty.write_paste_to_session(index, text) {
+            log::warn!("could not paste into the PTY session: {e:#}");
+            return;
+        }
+        if let Some(pane) = self.pane_mut(focus) {
+            pane.scroll = 0;
+        }
+    }
+
+    /// 区画の大きさが変わっていたら PTY へ伝える。同じ worktree の同じ種類は
+    /// まとめて合わせる — タブを切り替えた先が別の幅のままだと絵が崩れる。
+    pub fn sync_sizes(&mut self, layout: &Layout) {
+        if let (Some(rect), Some(editor)) = (layout.rect(Region::Editor), self.editor.as_mut()) {
+            let content = render::editor_area(rect);
+            let size = (content.height.max(1), content.width.max(1));
+            if editor.size != size {
+                editor.size = size;
+                let session = editor.session.clone();
+                if let Some(index) = self.index_of(Some(session.as_str())) {
+                    self.pty.resize_session(index, size.0, size.1);
+                }
+            }
+        }
+        for region in [Region::TerminalClaude, Region::TerminalShell] {
+            let Some(rect) = layout.rect(region) else {
+                continue;
+            };
+            let content = render::content_area(rect);
+            let size = (content.height.max(1), content.width.max(1));
+            let pane = match region {
+                Region::TerminalShell => &mut self.shell,
+                _ => &mut self.claude,
+            };
+            if pane.size == size {
+                continue;
+            }
+            pane.size = size;
+            let kind = pane.kind;
+            let indices: Vec<usize> = self.sessions(kind).iter().map(|(i, _, _)| *i).collect();
+            for index in indices {
+                self.pty.resize_session(index, size.0, size.1);
+            }
+        }
+    }
+
+    /// Claude Code のフックとソケットが伝えてくる事実を取り込む。
+    pub fn on_watch(&mut self, event: &WatchEvent) -> Vec<Effect> {
+        match event {
+            WatchEvent::CcState { kind, cwd } => {
+                match kind {
+                    CcState::Active => {
+                        self.active.insert(cwd.clone());
+                        self.waiting.remove(cwd);
+                    }
+                    CcState::Waiting => {
+                        self.waiting.insert(cwd.clone());
+                        self.active.remove(cwd);
+                    }
+                }
+                Vec::new()
+            }
+            WatchEvent::CcSessionRotated {
+                panel_id,
+                session_id,
+            } => {
+                self.pty.set_claude_session_id(panel_id, session_id.clone());
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// 終わった子プロセスのセッションを片付ける。掃除したら true。
+    pub fn cleanup_dead(&mut self) -> bool {
+        let mut removed = false;
+        for index in (0..self.pty.sessions().len()).rev() {
+            if self.pty.is_session_alive(index) {
+                continue;
+            }
+            self.pty.remove_session(index);
+            removed = true;
+        }
+        if removed {
+            // id で指しているので添字の詰め直しは要らない。消えたものだけ落とす。
+            for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
+                let alive: Vec<String> = self
+                    .sessions(kind)
+                    .iter()
+                    .map(|(_, id, _)| (*id).to_string())
+                    .collect();
+                let pane = match kind {
+                    SessionKind::Shell => &mut self.shell,
+                    _ => &mut self.claude,
+                };
+                if !pane.session.as_ref().is_some_and(|id| alive.contains(id)) {
+                    pane.show(alive.first().cloned());
+                }
+            }
+        }
+        removed
+    }
+
+    /// オルタネート画面へ入った直後のセッションを突く。fzf はこれを待っている。
+    pub fn nudge(&mut self) {
+        self.pty.nudge_alt_screen_sessions();
+        self.flush_deferred();
+    }
+}
+
+/// $EDITOR が見つからないときに使う。POSIX がどの環境にも置いている。
+const EDITOR_FALLBACK: &str = "vi";
+
+/// レイアウトが決まる前の暫定。次のフレームの [TerminalPanel::sync_sizes] が直す。
+const DEFAULT_PTY_SIZE: (u16, u16) = (24, 80);
+
+/// 環境が指すエディタ。
+pub(crate) fn editor_argv() -> Vec<String> {
+    editor_command(
+        std::env::var("VISUAL").ok().as_deref(),
+        std::env::var("EDITOR").ok().as_deref(),
+        EDITOR_FALLBACK,
+    )
+}
+
+/// $VISUAL → $EDITOR → 既定 の順。空白だけの値は空のコマンドを生まないよう飛ばす。
+/// 分割は素朴で、シェル風のクォート解釈はしない (意図的な制限)。
+fn editor_command(visual: Option<&str>, editor: Option<&str>, fallback: &str) -> Vec<String> {
+    let chosen = [visual, editor]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or(fallback);
+    let parts: Vec<String> = chosen.split_whitespace().map(str::to_string).collect();
+    if parts.is_empty() {
+        vec![fallback.to_string()]
+    } else {
+        parts
+    }
+}
+
+/// 端末の区画をその Focus に対応づける。呼び出し側は端末の区画しか渡さない。
+pub(super) fn focus_of(region: Region) -> Focus {
+    match region {
+        Region::TerminalClaude => Focus::TerminalClaude,
+        Region::TerminalShell => Focus::TerminalShell,
+        Region::Editor => Focus::Editor,
+        _ => unreachable!("focus_of: 端末以外の region {region:?}"),
+    }
+}
+
+fn region_of(focus: Focus) -> Region {
+    match focus {
+        Focus::TerminalShell => Region::TerminalShell,
+        _ => Region::TerminalClaude,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::Workspace;
+    use ratatui::layout::Rect;
+    use std::time::{Duration, Instant};
+
+    /// 本物のシェルを起動して、出力が画面に載るまで待つ。
+    fn spawn_shell(ws: &mut Workspace, script: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let panel = &mut ws.panels.terminal;
+        panel.worktree = Some(dir.path().to_path_buf());
+        let index = panel
+            .pty
+            .spawn(Spawn {
+                launch: Launch::Shell { program: "/bin/sh" },
+                worktree: "t",
+                label: "SH:1",
+                working_dir: dir.path(),
+                rows: 10,
+                cols: 40,
+            })
+            .unwrap();
+        let id = panel.pty.sessions()[index].id.clone();
+        panel.shell.show(Some(id));
+        panel
+            .pty
+            .write_to_session(index, script.as_bytes())
+            .unwrap();
+        dir
+    }
+
+    fn wait_for(ws: &Workspace, needle: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let text = render::visible_text(&ws.panels.terminal, Region::TerminalShell);
+            if text.contains(needle) || Instant::now() > deadline {
+                return text;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn ptyの出力が画面に載る() {
+        let mut ws = Workspace::for_test();
+        let _dir = spawn_shell(&mut ws, "echo conductor-hello\n");
+        let text = wait_for(&ws, "conductor-hello");
+        assert!(text.contains("conductor-hello"), "{text}");
+    }
+
+    /// タブ行の当たり判定が描画と同じ並びを見ていることを、実セッションで通す。
+    #[test]
+    fn タブのクリックで映すセッションが変わりチップは新しい1本を頼む() {
+        const WIDTH: u16 = 40;
+        let mut ws = Workspace::for_test();
+        let dir = tempfile::tempdir().unwrap();
+        let panel = &mut ws.panels.terminal;
+        panel.worktree = Some(dir.path().to_path_buf());
+        for label in ["SH:1", "SH:2"] {
+            panel
+                .pty
+                .spawn(Spawn {
+                    launch: Launch::Shell { program: "/bin/sh" },
+                    worktree: "t",
+                    label,
+                    working_dir: dir.path(),
+                    rows: 10,
+                    cols: 40,
+                })
+                .unwrap();
+        }
+        let ids: Vec<String> = panel
+            .sessions(SessionKind::Shell)
+            .iter()
+            .map(|(_, id, _)| (*id).to_string())
+            .collect();
+        panel.shell.show(Some(ids[0].clone()));
+
+        let slots = panel.tab_slots(Region::TerminalShell, WIDTH);
+        let x_of = |wanted: &tabs::SlotKind| {
+            slots
+                .iter()
+                .find(|slot| slot.kind == *wanted)
+                .unwrap_or_else(|| panic!("{slots:?}"))
+                .start
+        };
+        let second = x_of(&tabs::SlotKind::Tab {
+            session: ids[1].clone(),
+            selected: false,
+        });
+        let add = x_of(&tabs::SlotKind::Add);
+
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, second, WIDTH),
+            Some(Vec::new()),
+            "タブを選ぶのに Effect は要らない"
+        );
+        assert_eq!(panel.shell.session.as_deref(), Some(ids[1].as_str()));
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, add, WIDTH),
+            Some(vec![Effect::NewSession(SessionKind::Shell)])
+        );
+
+        // 映しているセッションを閉じたら、残っている方へ移る。
+        let close = x_of(&tabs::SlotKind::Close {
+            session: ids[1].clone(),
+        });
+        assert_eq!(
+            panel.tab_click(Focus::TerminalShell, close, WIDTH),
+            Some(Vec::new())
+        );
+        let left: Vec<String> = panel
+            .sessions(SessionKind::Shell)
+            .iter()
+            .map(|(_, id, _)| (*id).to_string())
+            .collect();
+        assert_eq!(left, [ids[0].clone()]);
+        assert_eq!(panel.shell.session.as_deref(), Some(ids[0].as_str()));
+
+        // 最後の 1 本を閉じたら区画は空になる。
+        let slots = panel.tab_slots(Region::TerminalShell, WIDTH);
+        let close = slots
+            .iter()
+            .find(|slot| matches!(slot.kind, tabs::SlotKind::Close { .. }))
+            .unwrap()
+            .start;
+        panel.tab_click(Focus::TerminalShell, close, WIDTH);
+        assert!(panel.sessions(SessionKind::Shell).is_empty());
+        assert_eq!(panel.shell.session, None);
+    }
+
+    /// ホイールは、子がマウスを要求していればそちらへ渡す。ローカルのスクロール
+    /// バックまで動かすと、ページャの中で画面が二重に流れる。
+    #[test]
+    fn ホイールは子が捌くならスクロールバックに触らない() {
+        const RECT: Rect = Rect {
+            x: 0,
+            y: 0,
+            width: 42,
+            height: 12,
+        };
+        let mut ws = Workspace::for_test();
+        let _dir = spawn_shell(
+            &mut ws,
+            "i=0; while [ $i -lt 60 ]; do echo line$i; i=$((i+1)); done\n",
+        );
+        // 画面 10 行ぶん全部を読む。既定の 6 行だと最後の行が窓の外に出る。
+        ws.panels.terminal.shell.size = (10, 40);
+        wait_for(&ws, "line59");
+
+        let panel = &mut ws.panels.terminal;
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        assert!(panel.shell.scroll > 0, "素の子なら遡れる");
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, 3);
+        assert_eq!(panel.shell.scroll, 0);
+
+        let index = panel.index_of(panel.shell.session.as_deref()).unwrap();
+        panel
+            .pty
+            .write_to_session(index, b"printf '\\033[?1000h'; printf 'mouse%s\\n' on\n")
+            .unwrap();
+        // 入力そのものがエコーされるので、出力にしか現れない綴りで待つ。
+        wait_for(&ws, "mouseon");
+
+        let panel = &mut ws.panels.terminal;
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        assert_eq!(panel.shell.scroll, 0, "子に渡したらこちらは動かさない");
+    }
+
+    /// ホイールでの入場はキーと同じ経路を通る。セッションが無ければ理由が出る。
+    #[test]
+    fn ホイールの上スクロールもトランスクリプトの入口を通る() {
+        let mut ws = Workspace::for_test();
+        let effects =
+            ws.panels
+                .terminal
+                .wheel(Region::TerminalClaude, Rect::new(0, 0, 42, 12), 5, 5, -3);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Warning, _)]
+        ));
+    }
+
+    /// キーが spawn まで届くことを見る。claude の在否に依らないよう shell で確かめる。
+    /// 2 本目を作るのに一度ターミナルを出るのは、ctrl+t が fires_in_terminal では
+    /// ないから (ターミナルの中では PTY のキーになる)。
+    #[test]
+    fn ctrl_tでシェルのセッションが増える() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let dir = tempfile::tempdir().unwrap();
+        ws.config.general.shell = "/bin/sh".into();
+        ws.panels.terminal.worktree = Some(dir.path().to_path_buf());
+        ws.repo.root = dir.path().to_path_buf();
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('t'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        crate::run::on_key(&mut ws, &mut svc, key);
+        assert_eq!(ws.panels.terminal.sessions(SessionKind::Shell).len(), 1);
+        assert_eq!(ws.focus, Focus::TerminalShell);
+
+        ws.focus = Focus::Explorer;
+        crate::run::on_key(&mut ws, &mut svc, key);
+        let sessions = ws.panels.terminal.sessions(SessionKind::Shell);
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[1].2, "SH:2", "ラベルの番号が空きを埋めていない");
+    }
+
+    /// シェルが無い状態から起こして、実際に出力が返るまで。
+    #[test]
+    fn テストのコマンドはシェルが無くても起こして流れる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let dir = tempfile::tempdir().unwrap();
+        ws.config.general.shell = "/bin/sh".into();
+        ws.repo.root = dir.path().to_path_buf();
+        assert!(!ws.panels.terminal.has_shell());
+
+        crate::effect::apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::SendToShell("echo conductor-ran-a-test".into())],
+        );
+        assert!(ws.panels.terminal.has_shell(), "無ければ起こす");
+        assert_eq!(ws.focus, Focus::TerminalShell);
+        let text = wait_for(&ws, "conductor-ran-a-test");
+        assert!(text.contains("conductor-ran-a-test"), "{text}");
+    }
+
+    /// $VISUAL > $EDITOR > 既定。空白だけの値は飛ばし、分割は空白での素朴なもの。
+    #[test]
+    fn エディタのコマンドは優先順で選び素朴に分割する() {
+        let cases: [(Option<&str>, Option<&str>, &[&str]); 10] = [
+            (None, None, &["vi"]),
+            (Some("vim"), Some("nano"), &["vim"]),
+            (None, Some("nano"), &["nano"]),
+            (Some("code -w"), None, &["code", "-w"]),
+            (Some("code\t-w  -n"), None, &["code", "-w", "-n"]),
+            (Some(""), None, &["vi"]),
+            (Some("   "), None, &["vi"]),
+            (Some(""), Some("nano"), &["nano"]),
+            (Some("  vim  "), None, &["vim"]),
+            (
+                Some("vim -c 'set ft=rust'"),
+                None,
+                &["vim", "-c", "'set", "ft=rust'"],
+            ),
+        ];
+        for (visual, editor, want) in cases {
+            assert_eq!(
+                editor_command(visual, editor, EDITOR_FALLBACK),
+                want,
+                "visual={visual:?} editor={editor:?}"
+            );
+        }
+    }
+
+    /// エディタはタブ行を持たないので、枠の 2 行 2 桁だけを引く。
+    #[test]
+    fn エディタの内容領域は枠だけを引く() {
+        assert_eq!(
+            render::editor_area(Rect::new(0, 0, 80, 40)),
+            Rect::new(1, 1, 78, 38)
+        );
+        // 極小の区画でもアンダーフローしない。vt100 は 1 以上が要る。
+        for w in 1..=3u16 {
+            for h in 1..=3u16 {
+                let area = render::editor_area(Rect::new(0, 0, w, h));
+                assert!(area.width.max(1) >= 1 && area.height.max(1) >= 1, "{w}x{h}");
+            }
+        }
+    }
+
+    /// 読む先は pin した session id だけ。id が無ければディレクトリの中から選び直さない。
+    #[test]
+    fn セッションidが無ければトランスクリプトを開かない() {
+        let mut ws = Workspace::for_test();
+        let _dir = spawn_shell(&mut ws, "");
+        let panel = &mut ws.panels.terminal;
+        let (opened, effects) = panel.open_transcript();
+        assert!(!opened && panel.transcript.is_none());
+        assert!(matches!(
+            effects[0],
+            Effect::Status(StatusLevel::Warning, _)
+        ));
+    }
+
+    /// トラックパッドの慣性で入ったビューから、同じ慣性で戻れないと閉じ込められる。
+    #[test]
+    fn トランスクリプトの最下部でさらに下へ回すとライブへ戻る() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        panel.claude.size = (5, 40);
+        panel.transcript = Some(Reflow::opening("session-a".into()));
+        let entries = (0..30)
+            .map(|i| LogEntry {
+                role: conductor_core::claude_log::Role::User,
+                blocks: vec![conductor_core::claude_log::DisplayBlock::Text(format!(
+                    "turn {i}"
+                ))],
+            })
+            .collect();
+        assert!(
+            panel
+                .install_transcript("session-a", Ok(entries))
+                .is_empty()
+        );
+        panel.prepare(
+            &Theme::default(),
+            &Highlighter::new(&Config::default()),
+            false,
+        );
+        let rect = Rect::new(0, 0, 42, 7);
+
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, -3);
+        assert!(panel.transcript.is_some(), "遡っている間は開いたまま");
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        assert!(panel.transcript.is_some(), "最下部に戻っただけでは畳まない");
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        assert!(panel.transcript.is_none(), "最下部でさらに下へ回したら畳む");
+        assert_eq!(panel.claude.scroll, 0);
+    }
+
+    /// /clear のローテーション中に届いた、開いているのとは別のセッションの結果は捨てる。
+    #[test]
+    fn 別のセッションの結果は捨てる() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        panel.transcript = Some(Reflow::opening("session-a".into()));
+        let entries = vec![LogEntry {
+            role: conductor_core::claude_log::Role::User,
+            blocks: vec![conductor_core::claude_log::DisplayBlock::Text(
+                "other".into(),
+            )],
+        }];
+
+        assert!(
+            panel
+                .install_transcript("session-b", Ok(entries))
+                .is_empty()
+        );
+        let reflow = panel.transcript.as_ref().expect("ビューは開いたまま");
+        assert!(reflow.is_loading(), "他人のログを載せてはいけない");
+    }
+
+    #[test]
+    fn 空の区画は2回目のクリックでセッションを起こす() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        assert!(panel.click(Focus::TerminalClaude).is_empty(), "1 回目");
+        assert!(matches!(
+            panel.click(Focus::TerminalClaude).as_slice(),
+            [Effect::NewSession(SessionKind::ClaudeCode)]
+        ));
+    }
+
+    #[test]
+    fn 死んだセッションは片付いてパネルの表示が残りへ移る() {
+        let mut ws = Workspace::for_test();
+        let _dir = spawn_shell(&mut ws, "exit\n");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ws.panels.terminal.cleanup_dead() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(ws.panels.terminal.pty.sessions().is_empty());
+        assert!(ws.panels.terminal.shell.session.is_none());
+    }
+}

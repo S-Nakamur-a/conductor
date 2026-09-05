@@ -1,0 +1,389 @@
+# Default keybindings, in keymap-suite's key→action TOML schema.
+#
+# This file is embedded at compile time (include_str!) and parsed by
+# `keymap_suite::from_toml_str`. The bare `[keys]` table is the global layer;
+# each `[layers.<name>]` table is a per-context layer. User bindings from
+# `~/.config/conductor/config.toml` ([keybinds.keys] / [keybinds.layers.*])
+# are merged ON TOP of these per-chord — a user chord overrides the default
+# for that exact chord, while every default the user did not touch stays live.
+# To *remove* a default without replacing it, set the chord to `false` (a
+# tombstone), e.g. `"ctrl+q" = false` under [keybinds.keys].
+#
+# Key-string grammar (see keymap-core's KeyInput::FromStr): modifiers
+# `ctrl`/`alt`/`shift`/`super` (aliases: control, opt/option, cmd/win/meta)
+# joined with `+`, then the key. A single character is written verbatim and is
+# case-sensitive (`G` is Shift+g as most terminals deliver it). Back-tab is
+# `shift+tab`. Named keys: enter, esc, tab, space, up/down/left/right, home,
+# end, pageup, pagedown, delete, f1..f24.
+
+# ── Global ──────────────────────────────────────────────────────────────────
+[keys]
+# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. Note:
+# ctrl+q is XON in some terminals' flow control — verify it reaches the app.
+"ctrl+q" = "quit"
+"?" = "show_help"
+# ':' is bound per non-terminal layer so it passes through to the PTY in
+# terminal panels. Ctrl+P stays global for command-palette access anywhere.
+"ctrl+p" = "command_palette"
+# F10 opens the menu bar, as it does in GTK and Windows apps. The function keys
+# are otherwise unused here, so this steals nothing; Alt+<letter> mnemonics were
+# rejected because that space is already dense (alt+h/l, alt+t, alt+w).
+"f10" = "focus_menu_bar"
+# Alt+h / Alt+l — panel cycle that works everywhere, including terminals.
+"alt+h" = "cycle_focus_backward"
+"alt+l" = "cycle_focus_forward"
+# macOS Unicode fallback (Option+h='˙', Option+l='¬') for terminals that send
+# Unicode instead of an Alt modifier. These are US-layout Option glyphs.
+"˙" = "cycle_focus_backward"
+"¬" = "cycle_focus_forward"
+# Ctrl+Tab / Ctrl+Shift+Tab — switch the selected worktree (next/prev) from
+# anywhere, browser-tab style. The worktree strip follows the selection. This
+# is separate from Tab's panel-focus cycle.
+"ctrl+tab" = "next_worktree"
+"ctrl+shift+tab" = "prev_worktree"
+# Reliable worktree-switch aliases for terminals without the kitty protocol
+# (where ctrl+tab degrades to bare tab). ] / [ mirror the next/prev idiom used
+# for hunks in diff mode.
+"alt+]" = "next_worktree"
+"alt+[" = "prev_worktree"
+"ctrl+w" = "focus_worktree"
+"ctrl+n" = "new_claude_code"
+"ctrl+t" = "new_shell"
+"ctrl+o" = "open_repo"
+"ctrl+r" = "switch_repo"
+"super+1" = "focus_worktree"
+"super+2" = "focus_explorer"
+"super+3" = "focus_explorer_diff_list"
+"super+4" = "focus_viewer"
+"super+5" = "focus_terminal_claude"
+"super+6" = "focus_terminal_shell"
+# Alt+number fallback — Cmd+number is intercepted by most macOS terminals.
+"alt+1" = "focus_worktree"
+"alt+2" = "focus_explorer"
+"alt+3" = "focus_explorer_diff_list"
+"alt+4" = "focus_viewer"
+"alt+5" = "focus_terminal_claude"
+"alt+6" = "focus_terminal_shell"
+# Focus a panel with alt/super+digit, then maximize it with ctrl+alt+z (below) —
+# this replaces the old hard-to-press alt+shift+digit "focus+expand" combo.
+# macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
+"¡" = "focus_worktree"
+"™" = "focus_explorer"
+"£" = "focus_explorer_diff_list"
+"¢" = "focus_viewer"
+"∞" = "focus_terminal_claude"
+"§" = "focus_terminal_shell"
+"ctrl+g" = "search_full_text"
+# ── Layout: tmux-style pane sizing (the ctrl+alt family) ───────────────────────
+# Resize the focused panel: Ctrl+Alt+Arrow grows the focused panel toward the
+# arrow (against an edge it shrinks instead), moving the shared divider and
+# re-distributing space to the neighbor. Left/Right move the column dividers
+# (Explorer|Viewer|Terminal); Up/Down move the Claude|Shell split while a
+# terminal is focused. These fire even with a terminal focused, so you can resize
+# while typing in it, and the new ratios are persisted to config.toml.
+"ctrl+alt+left" = "resize_pane_left"
+"ctrl+alt+right" = "resize_pane_right"
+"ctrl+alt+up" = "resize_pane_up"
+"ctrl+alt+down" = "resize_pane_down"
+# Ctrl+Alt+Z — maximize/restore (zoom) the focused panel, tmux's `prefix z`.
+# Same ctrl+alt family as the resize chords; works over a PTY too.
+"ctrl+alt+z" = "toggle_panel_expand"
+# Alt+t — open the theme picker (t for "theme").
+# macOS Unicode fallback (Option+t = '†', dagger, US layout).
+"alt+t" = "open_theme_picker"
+"†" = "open_theme_picker"
+
+# ── Worktree ──────────────────────────────────────────────────────────────────
+[layers.worktree]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"enter" = "select"
+"w" = "create_worktree"
+"x" = "delete_worktree"
+"delete" = "delete_worktree"
+"s" = "switch_branch"
+# g/G are go_to_top/bottom in every other panel; keep them consistent here too.
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+# Grab (checkout branch onto main) / ungrab (restore main) — b for "branch",
+# capital for the undo, mirroring the do/undo shift-pairing they had on g/G.
+"b" = "grab_branch"
+"B" = "ungrab_branch"
+"X" = "prune_worktrees"
+"m" = "merge_to_main"
+"r" = "refresh_worktrees"
+"R" = "reset_main_to_origin"
+"c" = "cherry_pick"
+"p" = "pull_worktree"
+"H" = "session_history"
+"o" = "open_pull_request"
+":" = "command_palette"
+
+# ── Explorer (file tree) ───────────────────────────────────────────────────────
+[layers.explorer]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"d" = "show_diff_list"
+"c" = "show_comment_list"
+"C" = "open_comment_list"
+"w" = "show_revidere"
+# Shift+W runs the analysis — the "heavier" sibling of w=show, mirroring the
+# do/undo shift-pairing used elsewhere. Dispatched as a global action, so it
+# fires even though this Explorer layer owns the chord. revidere caches its
+# reply keyed on the diff itself, so pressing W twice on an unchanged diff
+# returns instantly without starting the AI; alt+w skips the cache.
+"W" = "analyze_revidere"
+"alt+w" = "force_analyze_revidere"
+"/" = "search_filename"
+":" = "command_palette"
+
+# ── Explorer: diff list ─────────────────────────────────────────────────────────
+[layers.explorer_diff_list]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"enter" = "select"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"v" = "toggle_viewed"
+# 下区画の 2 つの一覧は互いに行き来できる。ツリーまで戻らないと切り替えられないと、
+# コメントを見てから変更一覧へ戻る往復が毎回 2 手増える。
+"c" = "show_comment_list"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Explorer: comment list ──────────────────────────────────────────────────────
+[layers.explorer_comment_list]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"x" = "delete_comment"
+"delete" = "delete_comment"
+"r" = "toggle_resolve"
+"e" = "edit_comment"
+"R" = "reply_to_comment"
+"space" = "view_comment_detail"
+"d" = "show_diff_list"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Revidere: the two-column review view ────────────────────────────────────────
+# Occupies the whole screen, so this layer owns every key: there is no other
+# panel underneath to fall through to.
+[layers.revidere]
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+# 2 列を 1 つのフォーカスで歩く。列を分けないと j/k が「次の項目」と「次の diff 行」の
+# 両方を意味することになる。
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"enter" = "select"
+# Move between sections rather than lines, with the diff following along —
+# the same n/N pairing the comment list uses.
+"n" = "revidere_next_section"
+"N" = "revidere_prev_section"
+# GitHub が PR description と Files changed を分けているのと同じ切り分け。総括は
+# 読むのは最初の一度で、そのあとずっと画面を取り続けるものではない。行き先ごとに
+# キーを分けてあるので、いまどちらを出していても押した結果は同じ。
+"o" = "revidere_show_overview"
+"d" = "revidere_show_sections"
+# p は列 (o/d) とは別の軸で、見ている区間を入れ替える。W をこのレイヤーにも置くのは、
+# 切り替えた先が未解析のときに、いったん抜けないと作れないのでは行き止まりになるため。
+"p" = "revidere_toggle_scope"
+# 開いた w で閉じる。
+"w" = "show_revidere"
+"W" = "analyze_revidere"
+"alt+w" = "force_analyze_revidere"
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"q" = "exit_sub_panel"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Viewer (file content) ───────────────────────────────────────────────────────
+[layers.viewer]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "scroll_left"
+"left" = "scroll_left"
+"l" = "scroll_right"
+"right" = "scroll_right"
+"0" = "scroll_home"
+"/" = "search_in_file"
+"n" = "next_search_match"
+"N" = "prev_search_match"
+# Fuzzy filename jump — usable even when the viewer is maximized and the file
+# tree is hidden, so files can be switched without un-maximizing.
+"ctrl+f" = "search_filename"
+"c" = "add_comment"
+"C" = "open_comment_list"
+# 'e' for "edit": hand off to $VISUAL/$EDITOR for a quick manual touch-up,
+# then drop back into the viewer (the file reloads on return).
+"e" = "open_in_editor"
+# 'm' for "markdown": switch a .md/.markdown file between raw source and
+# rendered prose. Bound in this layer only — the rendered view resolves its keys
+# against it too, so one binding covers both directions.
+"m" = "toggle_markdown_render"
+# File tabs — several files stay open at once in the Viewer; t/T walk them and
+# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
+# same three work in diff mode so the strip behaves identically in both.
+"t" = "next_viewer_tab"
+"T" = "prev_viewer_tab"
+"x" = "close_viewer_tab"
+# 'z' opens the Vim fold chord: za toggles, zc closes, zo opens, zR opens every
+# fold, zM closes every fold. Only the prefix is bound — the second key is read
+# by the viewer handler, exactly like the g-prefixed jumps (gd/gi/gr).
+"z" = "fold_prefix"
+"space" = "toggle_inline_thread"
+# インラインスレッドの中だけで返信と解決を完結させる。
+"R" = "reply_to_comment"
+"r" = "toggle_resolve"
+"esc" = "exit_to_explorer"
+# Ctrl+Esc is the app-wide "leave focus" chord (it is the only way out of the
+# PTY panels, where bare Esc is forwarded to the inner program). Bound here too
+# so the same chord works everywhere; bare Esc still works in this panel.
+"ctrl+esc" = "exit_to_explorer"
+":" = "command_palette"
+"ctrl+o" = "jump_back"
+"ctrl+i" = "jump_forward"
+# Hover info also appears automatically when the mouse rests on a symbol or the
+# cursor sits idle. `K` (à la Vim/LSP hover) forces it instantly without waiting.
+"K" = "show_hover_info"
+
+# ── Viewer: diff mode ────────────────────────────────────────────────────────────
+[layers.viewer_diff_mode]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "scroll_left"
+"left" = "scroll_left"
+"l" = "scroll_right"
+"right" = "scroll_right"
+"0" = "scroll_home"
+"/" = "search_in_file"
+"n" = "next_search_match"
+"N" = "prev_search_match"
+"ctrl+f" = "search_filename"
+# Jump between changes (hunks) and between review comments.
+"]" = "next_hunk"
+"[" = "prev_hunk"
+"}" = "next_comment"
+"{" = "prev_comment"
+# Jump to the next/previous changed file (GitHub-style "next file").
+"J" = "next_changed_file"
+"K" = "prev_changed_file"
+"c" = "add_comment"
+"v" = "toggle_viewed"
+# 's' for "side by side": unified と左右 2 列を行き来する。
+"s" = "toggle_diff_view"
+# File tabs — several files stay open at once in the Viewer; t/T walk them and
+# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
+# same three work in diff mode so the strip behaves identically in both.
+"t" = "next_viewer_tab"
+"T" = "prev_viewer_tab"
+"x" = "close_viewer_tab"
+# 'e' for "edit": open the file under review in $VISUAL/$EDITOR for a quick
+# manual fix without leaving the diff workflow (reloads on return).
+"e" = "open_in_editor"
+"space" = "toggle_inline_thread"
+# インラインスレッドの中だけで返信と解決を完結させる。
+"R" = "reply_to_comment"
+"r" = "toggle_resolve"
+"esc" = "exit_to_explorer"
+"ctrl+esc" = "exit_to_explorer"
+"enter" = "expand_context"
+"shift+enter" = "expand_all_context"
+":" = "command_palette"
+
+# ── Overlay (shared popup navigation) ──────────────────────────────────────────
+[layers.overlay]
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"enter" = "select"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+
+# ── Terminal ──────────────────────────────────────────────────────────────────
+[layers.terminal]
+"ctrl+esc" = "leave_terminal"
+"shift+pageup" = "scrollback_up"
+"shift+pagedown" = "scrollback_down"
+"shift+home" = "scrollback_top"
+"shift+end" = "snap_to_live"
+"ctrl+g" = "open_file_from_terminal"
+# Cycle session tabs in the focused terminal panel (Ctrl+PageUp/Down is the
+# conventional "previous/next tab" chord in editors & terminals). Shift+arrows
+# are kitty-protocol-free aliases for terminals that don't deliver Ctrl+PageX.
+"ctrl+pagedown" = "next_session"
+"ctrl+pageup" = "prev_session"
+"shift+right" = "next_session"
+"shift+left" = "prev_session"
+
+# ── Editor (embedded vim/emacs PTY) ───────────────────────────────────────────
+# Almost everything is forwarded to the inner editor — Esc (vim mode changes),
+# Ctrl+G, Shift+PageUp, etc. all reach the program. Only "leave focus" is stolen
+# back, on Ctrl+Esc, matching the terminal panel. (Ctrl+Esc requires the kitty
+# keyboard protocol; on terminals without it, quit the editor with `:q` — the
+# process exit closes the panel automatically. alt+l / alt+h also step away.)
+[layers.editor]
+"ctrl+esc" = "leave_terminal"

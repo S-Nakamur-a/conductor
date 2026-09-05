@@ -3,74 +3,12 @@
 //! 回帰値は実リポジトリからしか採れないので、位置を固定する検査は `#[ignore]` にする。
 //!   SHEAF_TEST_GO_ROOT=<go.mod のあるモジュールルート> cargo test --test dispatch -- --ignored
 
-use protobuf::{EnumOrUnknown, Message, MessageField};
-use scip::types::{
-    Document, Index, Metadata, Occurrence, Relationship, SymbolInformation, TextEncoding,
-};
-use sheaf_core::{
-    IndexSource, Outcome, References, ScipGo, ScipTypescript, Span, Store, SyntacticAnswer,
-    SyntacticLayer, Target, Token, references_at,
-};
-use std::collections::HashMap;
+mod common;
+
+use common::{doc, index, load_one, provenance, silent, workdir};
+use sheaf_core::{Outcome, References, ScipGo, ScipTypescript, Store, Target, references_at};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-/// 語の切り出しを素朴にした構文層。索引が答えられなかったことが
-/// `Exact` の不在としてそのまま出るよう、フォールバックは常に NotCode を返す。
-struct Rough;
-
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
-}
-
-impl SyntacticLayer for Rough {
-    fn token_at(&self, path: &Path, line: u32, col: u32) -> Token {
-        let Ok(src) = std::fs::read(path) else {
-            return Token::Unknown;
-        };
-        let Some(text) = src.split(|b| *b == b'\n').nth(line as usize) else {
-            return Token::NotWord;
-        };
-        let col = col as usize;
-        if col >= text.len() || !is_word_byte(text[col]) {
-            return Token::NotWord;
-        }
-        let mut start = col;
-        while start > 0 && is_word_byte(text[start - 1]) {
-            start -= 1;
-        }
-        let mut end = col + 1;
-        while end < text.len() && is_word_byte(text[end]) {
-            end += 1;
-        }
-        Token::Word(Span {
-            start_line: line,
-            start_col: start as u32,
-            end_line: line,
-            end_col: end as u32,
-        })
-    }
-
-    fn definition_at(&self, _path: &Path, _line: u32, _col: u32) -> SyntacticAnswer {
-        SyntacticAnswer::NotCode
-    }
-
-    fn references_at(&self, _path: &Path, _line: u32, _col: u32) -> SyntacticAnswer {
-        SyntacticAnswer::NotCode
-    }
-}
-
-fn workdir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "sheaf-test-dispatch-{}-{}-{:?}",
-        tag,
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
 
 fn target_in(root: &Path, artifacts: &Path) -> Target {
     Target {
@@ -82,82 +20,40 @@ fn target_in(root: &Path, artifacts: &Path) -> Target {
     }
 }
 
-// 合成した索引で見るもの（素の cargo test で走る）
+fn generate(root: &Path, producer: Arc<dyn sheaf_core::Producer>, tag: &str) -> Outcome {
+    sheaf_core::generate_once(target_in(root, &workdir(tag)), producer)
+}
 
 const SELF: &str = "scip-test cargo demo 0.1.0 Repo#Find().";
 const LIB: &str = "impl Repo { fn Find() {} }\n";
 const CALLER: &str = "fn a() { Find(); }\n";
-
-/// `Repo#Find()` が自分自身を実装していると名乗る索引を書く。
-fn self_loop_index(root: &Path) -> PathBuf {
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src/lib.rs"), LIB).unwrap();
-    std::fs::write(root.join("src/caller.rs"), CALLER).unwrap();
-
-    let index = Index {
-        metadata: MessageField::some(Metadata {
-            text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
-            ..Default::default()
-        }),
-        documents: vec![
-            Document {
-                relative_path: "src/lib.rs".to_string(),
-                occurrences: vec![Occurrence {
-                    range: vec![0, 15, 19],
-                    symbol: SELF.to_string(),
-                    symbol_roles: 1,
-                    ..Default::default()
-                }],
-                symbols: vec![SymbolInformation {
-                    symbol: SELF.to_string(),
-                    relationships: vec![Relationship {
-                        symbol: SELF.to_string(),
-                        is_implementation: true,
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-            Document {
-                relative_path: "src/caller.rs".to_string(),
-                occurrences: vec![Occurrence {
-                    range: vec![0, 9, 13],
-                    symbol: SELF.to_string(),
-                    symbol_roles: 0,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-        ],
-        ..Default::default()
-    };
-    let path = root.join("index.scip");
-    std::fs::write(&path, index.write_to_bytes().unwrap()).unwrap();
-    path
-}
 
 #[test]
 fn 自分自身を実装していると名乗る符号は経由先にしない() {
     // scip-go はインタフェース埋め込みで SRC == DST の辺を出す（実索引に 3 件）。
     // 残すと、直接参照と同じ位置がインタフェース経由にも並ぶ。
     let root = workdir("self-loop");
-    let index = self_loop_index(&root);
-    let expected: HashMap<PathBuf, String> = [("src/lib.rs", LIB), ("src/caller.rs", CALLER)]
-        .into_iter()
-        .map(|(rel, body)| (PathBuf::from(rel), sheaf_core::blob_hash(body.as_bytes())))
-        .collect();
-    let store = Store::load(
-        &[IndexSource {
-            index,
-            subroot: PathBuf::new(),
-            expected,
-        }],
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), LIB).unwrap();
+    std::fs::write(root.join("src/caller.rs"), CALLER).unwrap();
+
+    let index_path = index()
+        .utf8()
+        .add(
+            doc("src/lib.rs")
+                .def([0, 15, 19], SELF)
+                .info(implements(SELF, SELF)),
+        )
+        .add(doc("src/caller.rs").reference([0, 9, 13], SELF))
+        .write(&root.join("index.scip"));
+    let store = load_one(
+        &index_path,
         &root,
+        provenance(&[("src/lib.rs", LIB), ("src/caller.rs", CALLER)]),
     )
     .unwrap();
 
-    let answer = references_at(&store, &Rough, Path::new("src/lib.rs"), 0, 15);
+    let answer = references_at(&store, &silent(), Path::new("src/lib.rs"), 0, 15);
 
     let References::Exact(found) = answer else {
         panic!("Exact が返らなかった: {answer:?}");
@@ -170,91 +66,50 @@ fn 自分自身を実装していると名乗る符号は経由先にしない()
     );
 }
 
+fn implements(symbol: &str, interface: &str) -> scip::types::SymbolInformation {
+    scip::types::SymbolInformation {
+        symbol: symbol.to_string(),
+        relationships: vec![scip::types::Relationship {
+            symbol: interface.to_string(),
+            is_implementation: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
 const IFACE: &str = "scip-test cargo demo 0.1.0 Iface#M().";
 const IMPL: &str = "scip-test cargo demo 0.1.0 Impl#M().";
 const IFACE_LIB: &str = "trait Iface { fn M(); }\nimpl Iface for Impl { fn M() {} }\n";
 const IFACE_CALLER: &str = "fn a(x: &dyn Iface) { x.M(); }\n";
-
-/// `Impl#M` が `Iface#M` を実装していて、`Iface#M` の参照が別ファイルにある索引を書く。
-fn interface_index(root: &Path) -> PathBuf {
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src/lib.rs"), IFACE_LIB).unwrap();
-    std::fs::write(root.join("src/caller.rs"), IFACE_CALLER).unwrap();
-
-    let def = |range: Vec<i32>, symbol: &str| Occurrence {
-        range,
-        symbol: symbol.to_string(),
-        symbol_roles: 1,
-        ..Default::default()
-    };
-    let index = Index {
-        metadata: MessageField::some(Metadata {
-            text_document_encoding: EnumOrUnknown::from_i32(TextEncoding::UTF8 as i32),
-            ..Default::default()
-        }),
-        documents: vec![
-            Document {
-                relative_path: "src/lib.rs".to_string(),
-                // "trait Iface { fn M(); }" の M と、2 行目の impl 側の M。
-                occurrences: vec![def(vec![0, 17, 18], IFACE), def(vec![1, 25, 26], IMPL)],
-                symbols: vec![SymbolInformation {
-                    symbol: IMPL.to_string(),
-                    relationships: vec![Relationship {
-                        symbol: IFACE.to_string(),
-                        is_implementation: true,
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-            Document {
-                relative_path: "src/caller.rs".to_string(),
-                occurrences: vec![Occurrence {
-                    range: vec![0, 24, 25],
-                    symbol: IFACE.to_string(),
-                    symbol_roles: 0,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-        ],
-        ..Default::default()
-    };
-    let path = root.join("index.scip");
-    std::fs::write(&path, index.write_to_bytes().unwrap()).unwrap();
-    path
-}
-
-fn load(index: PathBuf, root: &Path, expected: &[(&str, &str)]) -> Store {
-    let expected: HashMap<PathBuf, String> = expected
-        .iter()
-        .map(|(rel, body)| (PathBuf::from(rel), sheaf_core::blob_hash(body.as_bytes())))
-        .collect();
-    Store::load(
-        &[IndexSource {
-            index,
-            subroot: PathBuf::new(),
-            expected,
-        }],
-        root,
-    )
-    .unwrap()
-}
 
 #[test]
 fn 経由先の参照が載るファイルが変わったら構文層に回る() {
     // インタフェース経由の参照先も依拠集合に入る。規則を直接参照と分けると、
     // 空が「無い」なのか「言えない」なのかを利用側が区別できなくなる。
     let root = workdir("iface-stale");
-    let index = interface_index(&root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), IFACE_LIB).unwrap();
+    std::fs::write(root.join("src/caller.rs"), IFACE_CALLER).unwrap();
 
-    let fresh = load(
-        index.clone(),
+    let index_path = index()
+        .utf8()
+        .add(
+            doc("src/lib.rs")
+                .def([0, 17, 18], IFACE)
+                .def([1, 25, 26], IMPL)
+                .info(implements(IMPL, IFACE)),
+        )
+        .add(doc("src/caller.rs").reference([0, 24, 25], IFACE))
+        .write(&root.join("index.scip"));
+
+    let fresh = load_one(
+        &index_path,
         &root,
-        &[("src/lib.rs", IFACE_LIB), ("src/caller.rs", IFACE_CALLER)],
-    );
-    let answer = references_at(&fresh, &Rough, Path::new("src/lib.rs"), 1, 25);
+        provenance(&[("src/lib.rs", IFACE_LIB), ("src/caller.rs", IFACE_CALLER)]),
+    )
+    .unwrap();
+    let answer = references_at(&fresh, &silent(), Path::new("src/lib.rs"), 1, 25);
     let References::Exact(found) = answer else {
         panic!("最新の状態で Exact が返らなかった: {answer:?}");
     };
@@ -262,13 +117,14 @@ fn 経由先の参照が載るファイルが変わったら構文層に回る()
     assert_eq!(found.via_interface.len(), 1);
     assert_eq!(found.via_interface[0].implementations, 1);
 
-    let stale = load(
-        index,
+    let stale = load_one(
+        &index_path,
         &root,
-        &[("src/lib.rs", IFACE_LIB), ("src/caller.rs", "中身が違う\n")],
-    );
+        provenance(&[("src/lib.rs", IFACE_LIB), ("src/caller.rs", "中身が違う\n")]),
+    )
+    .unwrap();
     assert_eq!(
-        references_at(&stale, &Rough, Path::new("src/lib.rs"), 1, 25),
+        references_at(&stale, &silent(), Path::new("src/lib.rs"), 1, 25),
         References::NotCode,
         "経由先のファイルが古いのに Exact を返した"
     );
@@ -276,8 +132,8 @@ fn 経由先の参照が載るファイルが変わったら構文層に回る()
 
 #[test]
 fn typescript_でもインタフェース経由の参照が返る() {
-    // sheaf 側に言語の分岐を書かないことを見る。scip-typescript も
-    // is_implementation の辺を出すので、Go と同じ経路でそのまま通る。
+    // sheaf 側に言語の分岐を書かないことを見る。scip-typescript も is_implementation の
+    // 辺を出すので、Go と同じ経路でそのまま通る。
     let root = workdir("ts");
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::write(
@@ -307,7 +163,7 @@ fn typescript_でもインタフェース経由の参照が返る() {
     };
 
     // Polite#greet の定義位置。直接参照は 0 件で、`g.greet()` は Greeter#greet を指す。
-    let answer = references_at(&store, &Rough, Path::new("src/greeter.ts"), 5, 2);
+    let answer = references_at(&store, &silent(), Path::new("src/greeter.ts"), 5, 2);
     let References::Exact(found) = answer else {
         panic!("Exact が返らなかった: {answer:?}");
     };
@@ -323,12 +179,6 @@ fn typescript_でもインタフェース経由の参照が返る() {
     assert_eq!(via.reference.path, PathBuf::from("src/main.ts"));
     assert_eq!(via.reference.line, 3);
 }
-
-fn generate(root: &Path, producer: Arc<dyn sheaf_core::Producer>, tag: &str) -> Outcome {
-    sheaf_core::generate_once(target_in(root, &workdir(tag)), producer)
-}
-
-// 実リポジトリで見るもの
 
 fn go_store(tag: &str) -> Store {
     let root = PathBuf::from(
@@ -347,14 +197,14 @@ fn go_store(tag: &str) -> Store {
 /// 索引が答えたかどうか。答えないのは、直接参照もインタフェース経由も 0 件のとき。
 fn answered(store: &Store, rel: &str, line: u32, col: u32) -> bool {
     matches!(
-        references_at(store, &Rough, Path::new(rel), line, col),
+        references_at(store, &silent(), Path::new(rel), line, col),
         References::Exact(_)
     )
 }
 
 /// 直接参照の位置。聞いた位置が本当にその符号を指していることを示すのに使う。
 fn direct(store: &Store, rel: &str, line: u32, col: u32) -> Vec<String> {
-    let answer = references_at(store, &Rough, Path::new(rel), line, col);
+    let answer = references_at(store, &silent(), Path::new(rel), line, col);
     let References::Exact(found) = answer else {
         panic!("{rel}:{line}:{col} で Exact が返らなかった: {answer:?}");
     };
@@ -372,7 +222,7 @@ fn direct(store: &Store, rel: &str, line: u32, col: u32) -> Vec<String> {
 
 /// メソッド定義の位置を引いて、インタフェース経由の参照を (経由先の末尾, 実装数, 位置) で返す。
 fn via(store: &Store, rel: &str, line: u32, col: u32) -> (String, u32, Vec<String>) {
-    let answer = references_at(store, &Rough, Path::new(rel), line, col);
+    let answer = references_at(store, &silent(), Path::new(rel), line, col);
     let References::Exact(found) = answer else {
         panic!("{rel}:{line}:{col} で Exact が返らなかった: {answer:?}");
     };

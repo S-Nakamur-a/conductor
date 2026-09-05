@@ -1,79 +1,32 @@
 [workspace]
-members = ["crates/revidere", "crates/revidere-fixtures", "crates/sheaf-core"]
+members = [
+    "crates/conductor-core",
+    "crates/conductor-mcp",
+    "crates/conductor-svc",
+    "crates/conductor-tui",
+    "crates/revidere",
+    "crates/revidere-fixtures",
+    "crates/sheaf-core",
+]
 
 [package]
 name = "conductor"
-version = "0.122.0"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
-git2 = { version = "0.20", features = ["vendored-openssl"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
-syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
-syntect-tui = "3.0.6"
-similar = { version = "3", features = ["inline"] }
-toml = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
-portable-pty = "0.9"
-chrono = { version = "0.4", features = ["serde"] }
+conductor-tui = { path = "crates/conductor-tui" }
 anyhow = "1"
-dirs = "6"
-copypasta = "0.10"
-log = "0.4"
-env_logger = "0.11"
-notify = "8"
-unicode-segmentation = "1"
-unicode-width = "0.2"
-vt100 = "0.15"
-open = "5"
-regex = "1"
-ignore = "0.4"
-aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
-tree-sitter = "0.26"
-tree-sitter-rust = "0.24"
-tree-sitter-go = "0.25"
-tree-sitter-typescript = "0.23"
-# レビュー成果物 (<worktree>/.conductor/review.json) を作る側と読む側の両方。
-# AI をどう呼ぶかは持っていないので、ai_caller を繋ぐのは conductor
-# (src/app/revidere.rs)。
-revidere = { path = "crates/revidere" }
-# SCIP 索引に確信度つきで答えさせる意味層。構文層 (tree-sitter) は sheaf が
-# trait でしか持たないので、その実装は conductor 側 (src/semantic_index/bridge.rs)。
-sheaf-core = { path = "crates/sheaf-core" }
-libc = "0.2"
-# 1つのインポートで済むファサード (keymap-core + keymap-config + keymap-seq)。
-# crossterm フィーチャーで KeyInput::try_from(KeyEvent) が使えるようになる。
-# 0.1.2 では、このアプリが依存する宣言的レイヤー — actions! マクロと ActionName
-# トレイト — が、0.1.1 の merge (デフォルトとユーザー設定を統合、= false で
-# 無効化するトゥームストーン方式) と keys_for_action の探索ヘルパーに追加された。
-keymap-suite = { version = "0.1.2", features = ["crossterm"] }
-# conductor mcp-serve — ヘッドレスのウォークスルーセッションが話しかける stdio の
-# MCP サーバ。別パッケージにせずバイナリへ埋め込んである理由は src/mcp_serve/mod.rs
-# のモジュール doc を参照。schemars はツール引数の構造体に付けた
-# #[derive(JsonSchema)] を支える。tokio は reqwest → hyper 経由で既に依存木に
-# 入っているので、新たに要るのは rmcp の stdio トランスポートが必要とするフィーチャー
-# だけ。current-thread ランタイムで十分 — サーバは 1 本のパイプで 1 クライアントだけを
-# 相手にする。
-rmcp = { version = "3.0.1", features = ["server", "macros", "transport-io"] }
-schemars = "1"
-tokio = { version = "1", features = ["rt", "io-std", "time"] }
 
 [profile.dev]
 debug = "limited"
 
+# vt100 0.15.2 の Grid::visible_rows は `rows - scrollback_offset` を符号なしで引く。
+# 1 画面より深いスクロールバックを読むと debug ビルドだけが panic し、release は
+# ラップして正しい窓を返す。ラップ後の巨大な take() は我々が読む行数に届かないので
+# 無害で、ここを外すと端末のスクロールバックが 1 画面に縮む。
+[profile.dev.package.vt100]
+overflow-checks = false
+
 [profile.dev.package."*"]
 opt-level = 2
-
-[dev-dependencies]
-tempfile = "3"
-# semantic_index の検査が SCIP 索引を組み立てるのに要る。sheaf-core は公開 API に
-# これらの型を出さないので、本体側の依存には入らない。
-protobuf = "3.7"
-scip = "0.9"

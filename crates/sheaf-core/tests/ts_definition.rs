@@ -3,76 +3,17 @@
 //! `npx` が要る。版を固定してあるので、npm キャッシュにその版があれば
 //! ネットワークが無くても走る。
 
+mod common;
+
+use common::{silent, workdir};
 use sheaf_core::{
-    Definition, Outcome, ScipTypescript, Span, SyntacticAnswer, SyntacticLayer, Target, Token,
-    definition_at, generate_once,
+    Definition, Location, Outcome, ScipTypescript, Target, definition_at, generate_once,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// 語の切り出しをわざと素朴にした構文層。フォールバックは常に NotCode を返すので、
-/// 索引が答えられなかったことが `Exact` の不在としてそのまま出る。
-struct Rough;
-
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
-}
-
-impl SyntacticLayer for Rough {
-    fn token_at(&self, path: &Path, line: u32, col: u32) -> Token {
-        let Ok(src) = std::fs::read(path) else {
-            return Token::Unknown;
-        };
-        let Some(text) = src.split(|b| *b == b'\n').nth(line as usize) else {
-            return Token::NotWord;
-        };
-        let col = col as usize;
-        if col >= text.len() || !is_word_byte(text[col]) {
-            return Token::NotWord;
-        }
-        let mut start = col;
-        while start > 0 && is_word_byte(text[start - 1]) {
-            start -= 1;
-        }
-        let mut end = col + 1;
-        while end < text.len() && is_word_byte(text[end]) {
-            end += 1;
-        }
-        Token::Word(Span {
-            start_line: line,
-            start_col: start as u32,
-            end_line: line,
-            end_col: end as u32,
-        })
-    }
-
-    fn definition_at(&self, _path: &Path, _line: u32, _col: u32) -> SyntacticAnswer {
-        SyntacticAnswer::NotCode
-    }
-
-    fn references_at(&self, _path: &Path, _line: u32, _col: u32) -> SyntacticAnswer {
-        SyntacticAnswer::NotCode
-    }
-}
-
-fn workdir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "sheaf-test-ts-{}-{}-{:?}",
-        tag,
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-/// `src/greet.ts` に定義を、`src/main.ts` にそこからの取り込みと呼び出しを持つ
-/// 最小のツリーを `at` の下に書く。
-///
-/// `tsconfig.json` はフィクスチャ側で置く。producer には `--infer-tsconfig` を
-/// 渡さないので、無いと索引が空になる。
+/// producer には `--infer-tsconfig` を渡さないので、`tsconfig.json` が無いと索引が空になる。
 fn write_two_file_project(at: &Path) {
     std::fs::create_dir_all(at.join("src")).unwrap();
     std::fs::write(
@@ -137,11 +78,11 @@ fn hash_tree(root: &Path) -> BTreeMap<PathBuf, String> {
 
 #[test]
 fn scip_typescript_は別ファイルの定義にexactで飛ぶ() {
-    let root = workdir("min");
+    let root = workdir("ts-min");
     write_two_file_project(&root);
 
     let outcome = generate_once(
-        target_in(&root, &workdir("min-out")),
+        target_in(&root, &workdir("ts-min-out")),
         Arc::new(ScipTypescript),
     );
     let Outcome::Ready { store, .. } = outcome else {
@@ -170,11 +111,11 @@ fn scip_typescript_は別ファイルの定義にexactで飛ぶ() {
         .expect("定義行が見つからない");
     let def_col = def_line_text.find("greet").unwrap() as u32;
 
-    let answer = definition_at(&store, &Rough, caller_rel, call_line as u32, call_col);
+    let answer = definition_at(&store, &silent(), caller_rel, call_line as u32, call_col);
 
     assert_eq!(
         answer,
-        Definition::Exact(vec![sheaf_core::Location {
+        Definition::Exact(vec![Location {
             path: def_rel.to_path_buf(),
             line: def_line as u32,
             col: def_col,
@@ -186,39 +127,33 @@ fn scip_typescript_は別ファイルの定義にexactで飛ぶ() {
 fn scip_typescript_は対象のツリーに何も書かない() {
     // tsconfig.json だけを見る形にすると、別の経路で書かれたときに素通りする。
     // ツリー全体を突き合わせる。
-    let root = workdir("readonly");
-    write_two_file_project(&root);
-
-    let before = hash_tree(&root);
-    let outcome = generate_once(
-        target_in(&root, &workdir("readonly-out")),
-        Arc::new(ScipTypescript),
-    );
-    assert!(
-        matches!(outcome, Outcome::Ready { .. }),
-        "生成が Ready に到達しなかった"
-    );
-    let after = hash_tree(&root);
-
-    assert_eq!(before, after, "producer が対象のツリーを変えた");
-}
-
-#[test]
-fn tsconfigの無いツリーでも対象に書き込まない() {
-    // `--infer-tsconfig` が tsconfig.json を書き込むのは、無いときだけ。
-    // 上の判定器はツリーに tsconfig.json があるので、この経路を通らない。
     //
-    // 索引が作れないこと自体は許す。書き込んで作れるようにするのを許さない。
-    let root = workdir("no-tsconfig");
-    write_two_file_project(&root);
-    std::fs::remove_file(root.join("tsconfig.json")).unwrap();
+    // tsconfig.json が無いときは `--infer-tsconfig` がそれを書き込む経路があるので、
+    // 索引が作れるかどうかとは別に、両方の入口で見る。索引が作れないこと自体は許す。
+    for (why, tsconfig, expect_ready) in [
+        ("tsconfig.json がある", true, true),
+        ("tsconfig.json が無い", false, false),
+    ] {
+        let tag = if tsconfig { "ts-ro" } else { "ts-ro-none" };
+        let root = workdir(tag);
+        write_two_file_project(&root);
+        if !tsconfig {
+            std::fs::remove_file(root.join("tsconfig.json")).unwrap();
+        }
 
-    let before = hash_tree(&root);
-    let _ = generate_once(
-        target_in(&root, &workdir("no-tsconfig-out")),
-        Arc::new(ScipTypescript),
-    );
-    let after = hash_tree(&root);
+        let before = hash_tree(&root);
+        let outcome = generate_once(
+            target_in(&root, &workdir(&format!("{tag}-out"))),
+            Arc::new(ScipTypescript),
+        );
+        let after = hash_tree(&root);
 
-    assert_eq!(before, after, "producer が対象のツリーに書き込んだ");
+        if expect_ready {
+            assert!(
+                matches!(outcome, Outcome::Ready { .. }),
+                "{why}: 生成が Ready に到達しなかった"
+            );
+        }
+        assert_eq!(before, after, "{why}: producer が対象のツリーを変えた");
+    }
 }

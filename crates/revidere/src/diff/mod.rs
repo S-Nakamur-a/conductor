@@ -8,7 +8,6 @@ pub mod parser;
 
 pub use parser::parse;
 
-/// 行の種別。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tag {
     Context,
@@ -28,7 +27,6 @@ pub struct DiffLine {
     pub text: String,
 }
 
-/// ハンク 1 つ。
 #[derive(Debug, Clone)]
 pub struct Hunk {
     /// @@ 行の後ろに付く関数コンテキスト（無ければ空）。
@@ -36,14 +34,13 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
-/// ファイルの変更の種類。
+/// 後ろ 2 つは行を持たない変更。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
     Modified,
     Added,
     Deleted,
     Renamed,
-    /// 行を持たない変更。バイナリ、モードのみ。
     Binary,
     ModeOnly,
 }
@@ -59,7 +56,6 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
-/// diff 全体。
 #[derive(Debug, Clone, Default)]
 pub struct Diff {
     pub files: Vec<FileDiff>,
