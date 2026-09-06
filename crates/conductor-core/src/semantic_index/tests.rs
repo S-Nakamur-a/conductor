@@ -655,6 +655,10 @@ fn tick_regenerationは生成が走っていても即座に返る() {
     semantic.roots[0].key = Some(KEY.to_string());
 
     // 静穏時間が経つのを待って、生成が実際に走っている状態を作る。
+    assert!(
+        !semantic.is_generating(),
+        "待っているだけの間は走っていない"
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while semantic.is_pending() {
         assert!(
@@ -674,8 +678,13 @@ fn tick_regenerationは生成が走っていても即座に返る() {
         elapsed < Duration::from_millis(200),
         "tick が生成を待ってしまっている: {elapsed:?}"
     );
+    assert!(semantic.is_generating());
 
     semantic.abort_regeneration(dir.path());
+    assert!(
+        !semantic.is_generating(),
+        "止めたあとも走っていることになっている"
+    );
 }
 
 #[test]

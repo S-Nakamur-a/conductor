@@ -11,7 +11,7 @@ use conductor_core::symbol_index::SymbolIndex;
 use sheaf_core::Store;
 
 use crate::effect::Effect;
-use crate::fx::{Kind, Target};
+use crate::fx::{Fx, Kind, Target};
 use crate::layout::Region;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{StatusLevel, Workspace};
@@ -107,16 +107,6 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 
     if let Some(rel) = &reading {
         let answer = ws.index.semantic.note_open(rel, &repo, &tree);
-        let building = answer == Reading::Building;
-        let viewer = Target::Region(Region::Viewer);
-        if building != ws.fx.is_playing(&Kind::Busy, viewer) {
-            if building {
-                ws.fx.play(Kind::Busy, viewer);
-            } else {
-                ws.fx.stop(&Kind::Busy, viewer);
-                ws.fx.play(Kind::Flash, viewer);
-            }
-        }
         // 索引がこのファイルを説明できないと黙って構文層に落ちる。言わないと
         // 「ジャンプが甘い」としか見えないので、開いたときに 1 度だけ出す。
         if answer == Reading::Stale {
@@ -129,7 +119,25 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
     }
 
     effects.extend(finish_regeneration(ws, &repo, &tree));
+    sync_generation_fx(&mut ws.fx, ws.index.semantic.is_generating());
     effects
+}
+
+/// producer の生死を Viewer の枠に写す。`note_open` の答えで駆動しないのは、同じファイルを
+/// 読み続ける 2 周目から `Unchanged` になり、始まった直後に止まって見えるため。
+fn sync_generation_fx(fx: &mut Fx, generating: bool) {
+    let viewer = Target::Region(Region::Viewer);
+    let showing_busy = fx.is_playing(&Kind::Busy, viewer);
+    if generating == showing_busy {
+        return;
+    }
+    if generating {
+        fx.play(Kind::Scan, viewer);
+        fx.play(Kind::Busy, viewer);
+    } else {
+        fx.stop(&Kind::Busy, viewer);
+        fx.play(Kind::Flash, viewer);
+    }
 }
 
 /// 静穏が明けていれば tree-sitter の索引を作り直させる。
@@ -301,6 +309,21 @@ mod tests {
             "前のツリーの調査を今のツリーのものとして取り込んだ"
         );
         assert_eq!(surveys(&tick(&mut ws)), 1, "調べ直しに行かない");
+    }
+
+    /// 始まりだけ落とすと、13 秒のバーがいつの間にか出ていることになる。
+    #[test]
+    fn 生成の始まりと終わりを演出に写す() {
+        let viewer = Target::Region(Region::Viewer);
+        let mut fx = Fx::default();
+        sync_generation_fx(&mut fx, false);
+        assert!(!fx.is_animating(), "何も走っていないのに演出が出た");
+
+        sync_generation_fx(&mut fx, true);
+        assert!(fx.is_playing(&Kind::Scan, viewer) && fx.is_playing(&Kind::Busy, viewer));
+        sync_generation_fx(&mut fx, false);
+        assert!(!fx.is_playing(&Kind::Busy, viewer));
+        assert!(fx.is_playing(&Kind::Flash, viewer));
     }
 
     #[test]

@@ -18,6 +18,7 @@ use ratatui::layout::Rect;
 use revidere::Scope;
 
 use crate::effect::Effect;
+use crate::fx::{Kind, Target};
 use crate::layout::{Layout, Region};
 use crate::task::{AnalyzeOutcome, Task};
 use crate::workspace::{Ctx, Focus, StatusLevel};
@@ -204,6 +205,10 @@ impl RevidereState {
             ),
         };
         let mut effects = vec![Effect::Status(level, message)];
+        if self.running.is_empty() {
+            effects.push(Effect::Stop(Kind::Breath, Target::Review));
+        }
+        effects.push(Effect::Play(Kind::Flash, Target::Review));
         // フォーカスは動かさない。数分待つ仕事なので、終わった頃には端末で打鍵している。
         if matches!(outcome, AnalyzeOutcome::Failed(_)) || branch != selected_branch {
             return effects;

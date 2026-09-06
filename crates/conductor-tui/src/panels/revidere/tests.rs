@@ -10,6 +10,7 @@ use revidere::Scope;
 use super::*;
 use crate::command::{CommandId, execute};
 use crate::effect::{Effect, apply};
+use crate::fx::{Kind, Target};
 use crate::modal::Modal;
 use crate::task::TaskResult;
 use crate::testing::{TestRepo, pump, select_only_worktree, workspace_for};
@@ -371,7 +372,8 @@ fn 同じコミットの作り直しは貯めた応答を捨てる() {
             panic!("{effects:?}");
         };
         assert_eq!(confirm.artifact, artifact);
-        let [Effect::Spawn(Task::Analyze { force: got, .. }), _] = confirm.on_yes.as_slice() else {
+        let [Effect::Spawn(Task::Analyze { force: got, .. }), ..] = confirm.on_yes.as_slice()
+        else {
             panic!("{:?}", confirm.on_yes);
         };
         assert_eq!(*got, force, "{artifact:?}");
@@ -404,6 +406,40 @@ fn 左列の枠題が説明もれの件数を言う() {
         assert!(title.contains("読む順 1 項目"), "{title}");
         assert_eq!(title.contains("説明の無い変更 1 件"), want, "{title}");
     }
+}
+
+/// 呼吸を止めるのは最後の 1 本が終わったときだけ — 別ブランチが走っている横で止めると、
+/// まだ動いているのに死んで見える。
+#[test]
+fn 解析の始まりと終わりは枠に出す() {
+    let mut panel = RevidereState::default();
+    panel.note_spawned(&analyze_task("feature/a"));
+    panel.note_spawned(&analyze_task("feature/b"));
+    let done = || AnalyzeOutcome::Done {
+        coverage_complete: true,
+    };
+
+    let effects = panel.finished("feature/a", done(), "/tmp/wt".into(), "other");
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::Stop(Kind::Breath, Target::Review))),
+        "まだ 1 本走っているのに呼吸を止めた: {effects:?}"
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Play(Kind::Flash, Target::Review))),
+        "{effects:?}"
+    );
+
+    let effects = panel.finished("feature/b", done(), "/tmp/wt".into(), "other");
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Stop(Kind::Breath, Target::Review))),
+        "{effects:?}"
+    );
 }
 
 /// 解析は数分かかる。終わった頃には端末で打鍵しているので、勝手に画面を持っていかない。

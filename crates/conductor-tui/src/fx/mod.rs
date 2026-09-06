@@ -11,6 +11,8 @@
 //! がフレームごとに PTY を resize してしまう。
 
 mod assemble;
+mod breath;
+mod scan;
 mod stagger;
 
 use std::time::{Duration, Instant};
@@ -18,6 +20,7 @@ use std::time::{Duration, Instant};
 use conductor_core::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 use crate::layout::Region;
 
@@ -40,6 +43,10 @@ pub enum Kind {
     Busy,
     /// 枠を一度 accent へ沸かせて元の色へ落とす。完了や切替の合図。
     Flash,
+    /// 帯が内側を上から下へ 1 回通る。始まりの合図。
+    Scan,
+    /// 四隅から腕が伸び縮みし続ける。進捗の出せない仕事が生きている印で、止めるまで続く。
+    Breath,
 }
 
 /// 演出を重ねる先。矩形は描く時点のレイアウトから引くので、ここでは名前で持つ。
@@ -49,6 +56,8 @@ pub enum Target {
     Panels,
     Region(Region),
     Modal,
+    /// レビューを映す区画。解決先は render の review_panels。
+    Review,
 }
 
 impl Kind {
@@ -65,6 +74,8 @@ impl Kind {
             Kind::Assemble { .. } => finite(elapsed, assemble::DURATION_MS),
             Kind::Busy => Some(elapsed.as_millis() as f64 / BAR_CYCLE_MS % 1.0),
             Kind::Flash => finite(elapsed, FLASH_MS),
+            Kind::Scan => finite(elapsed, scan::DURATION_MS),
+            Kind::Breath => Some(elapsed.as_millis() as f64 / breath::CYCLE_MS % 1.0),
         }
     }
 
@@ -83,6 +94,8 @@ impl Kind {
             Kind::Assemble { stagger } => assemble::paint(buf, screen, rects, p, stagger, theme),
             Kind::Busy => rects.iter().for_each(|r| paint_bar(buf, *r, p, theme)),
             Kind::Flash => rects.iter().for_each(|r| paint_flash(buf, *r, p, theme)),
+            Kind::Scan => rects.iter().for_each(|r| scan::paint(buf, *r, p, theme)),
+            Kind::Breath => rects.iter().for_each(|r| breath::paint(buf, *r, p, theme)),
         }
     }
 }
@@ -192,6 +205,15 @@ fn ratio(elapsed: Duration, total_ms: u64) -> f64 {
 fn ease(p: f64) -> f64 {
     let p = p.clamp(0.0, 1.0);
     p * p * (3.0 - 2.0 * p)
+}
+
+/// 色を「目立つ側」へ寄せる。どちらも白へ寄せると、ライトテーマでは文字が地に溶ける。
+fn raise(theme: &Theme, color: Color, k: f64) -> Color {
+    if theme.light {
+        Theme::lerp(color, Color::Rgb(0, 0, 0), k)
+    } else {
+        Theme::lighten(color, k)
+    }
 }
 
 fn on_edge(r: Rect, x: u16, y: u16) -> bool {

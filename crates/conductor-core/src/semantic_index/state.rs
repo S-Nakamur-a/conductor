@@ -303,6 +303,11 @@ impl SemanticIndex {
         })
     }
 
+    /// producer が実際に走っているか。静穏時間の待ちは含めない。
+    pub fn is_generating(&self) -> bool {
+        self.roots.iter().any(|r| r.regenerator.is_running())
+    }
+
     /// 索引ルートの調査が要るか。要るなら、鍵を出しておくべきルート。
     ///
     /// ツリーを歩く重さは [`super::survey`]。名指しで返すのは、鍵を出す相手を調査が自分で
