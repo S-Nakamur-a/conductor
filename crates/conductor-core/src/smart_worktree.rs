@@ -1,4 +1,4 @@
-//! 自由記述のタスクから、ブランチ名・Claude Code へのプロンプト・セッション名を作る。
+//! 自由記述のタスクから、ブランチ名と Claude Code のセッション名を作る。
 //!
 //! worktree を作るのも Claude を起こすのも呼び出し側の仕事で、ここは AI に訊いて
 //! [Plan] にするところまでを持つ。
@@ -15,13 +15,12 @@ use crate::config::ApiConfig;
 /// ツールを禁じる一文は、[api] command が claude -p のようなエージェント型 CLI の
 /// ときに効く。放っておくと Bash に手を伸ばして会話的に答え、パースに失敗する。
 /// 素の補完 API は黙って無視するので、ユーザにラッパーを書かせずここに置ける。
-pub const SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name, a Claude Code prompt, and a session name from a task description.
+pub const SYSTEM_PROMPT: &str = r#"You are a helper that generates a git branch name and a session name from a task description.
 
 IMPORTANT: Do not use any tools. Do not run any commands. Do not explain. Answer immediately from the description alone.
 
-Output ONLY a JSON object with three fields:
+Output ONLY a JSON object with two fields:
 - "branch": a kebab-case branch name in English, 3-5 words, prefixed with "feature/", "fix/", or "refactor/" as appropriate.
-- "prompt": a detailed, actionable prompt for Claude Code to implement the task. Write the prompt in the same language as the input description.
 - "session_name": a short, descriptive session name (max 50 chars) for display in session lists. Write in the same language as the input description.
 No markdown fences, no explanation, just the JSON object."#;
 
@@ -29,7 +28,6 @@ No markdown fences, no explanation, just the JSON object."#;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Plan {
     pub branch: String,
-    pub prompt: String,
     #[serde(default)]
     pub session_name: Option<String>,
 }
@@ -70,19 +68,18 @@ pub fn parse(raw: &str) -> Result<Plan, String> {
         .unwrap_or(trimmed);
     let stripped = stripped.strip_suffix("```").unwrap_or(stripped).trim();
 
-    if let Ok(plan) = serde_json::from_str::<Plan>(stripped) {
-        return Ok(plan);
+    let plan = serde_json::from_str::<Plan>(stripped).ok().or_else(|| {
+        let start = stripped.find('{')?;
+        let end = stripped.rfind('}')?;
+        serde_json::from_str::<Plan>(stripped.get(start..=end)?).ok()
+    });
+    match plan {
+        Some(plan) if !plan.branch.trim().is_empty() => Ok(plan),
+        Some(_) => Err("the model answered with an empty branch name".into()),
+        None => Err(format!(
+            "JSON parse error: could not extract valid JSON\nRaw output: {raw}"
+        )),
     }
-    if let Some(start) = stripped.find('{')
-        && let Some(end) = stripped.rfind('}')
-        && start < end
-        && let Ok(plan) = serde_json::from_str::<Plan>(&stripped[start..=end])
-    {
-        return Ok(plan);
-    }
-    Err(format!(
-        "JSON parse error: could not extract valid JSON\nRaw output: {raw}"
-    ))
 }
 
 #[cfg(test)]
@@ -99,37 +96,53 @@ mod tests {
     }
 
     #[test]
+    fn システムプロンプトはプロンプトの生成を求めない() {
+        assert!(!SYSTEM_PROMPT.contains("\"prompt\""));
+    }
+
+    #[test]
     fn 素のjsonを読める() {
-        let raw = r#"{"branch": "feature/add-login", "prompt": "Add login page"}"#;
+        let raw = r#"{"branch": "feature/add-login", "session_name": "ログイン画面"}"#;
         let plan = parse(raw).unwrap();
         assert_eq!(plan.branch, "feature/add-login");
-        assert_eq!(plan.prompt, "Add login page");
+        assert_eq!(plan.session_name.as_deref(), Some("ログイン画面"));
+    }
+
+    #[test]
+    fn 余分なpromptフィールドがあっても読める() {
+        let raw = r#"{"branch": "feature/add-login", "prompt": "Add login page"}"#;
+        assert_eq!(parse(raw).unwrap().branch, "feature/add-login");
     }
 
     #[test]
     fn コードフェンスの中のjsonを読める() {
-        let raw = "```json\n{\"branch\": \"fix/bug\", \"prompt\": \"Fix bug\"}\n```";
+        let raw = "```json\n{\"branch\": \"fix/bug\"}\n```";
         assert_eq!(parse(raw).unwrap().branch, "fix/bug");
     }
 
     #[test]
     fn 地の文に包まれたjsonを読める() {
         let raw = r#"Here is the result:
-{"branch": "feature/smart-parse", "prompt": "Implement smart parsing"}
+{"branch": "feature/smart-parse", "session_name": "smart parse"}
 Hope this helps!"#;
         let plan = parse(raw).unwrap();
         assert_eq!(plan.branch, "feature/smart-parse");
-        assert_eq!(plan.prompt, "Implement smart parsing");
+        assert_eq!(plan.session_name.as_deref(), Some("smart parse"));
     }
 
     #[test]
     fn 前置きの後ろのjsonを読める() {
-        let raw = r#"Now I have full understanding. The result is: {"branch": "fix/json-parse", "prompt": "Fix JSON parsing"}"#;
+        let raw = r#"Now I have full understanding. The result is: {"branch": "fix/json-parse"}"#;
         assert_eq!(parse(raw).unwrap().branch, "fix/json-parse");
     }
 
     #[test]
     fn jsonが1つも無い応答はエラー() {
         assert!(parse("This has no JSON at all").is_err());
+    }
+
+    #[test]
+    fn 空のブランチ名はエラー() {
+        assert!(parse(r#"{"branch": "  "}"#).is_err());
     }
 }
