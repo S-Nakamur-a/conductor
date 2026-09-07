@@ -11,7 +11,7 @@
 //! がフレームごとに PTY を resize してしまう。
 
 mod assemble;
-mod breath;
+mod orbit;
 mod scan;
 mod stagger;
 
@@ -45,8 +45,8 @@ pub enum Kind {
     Flash,
     /// 帯が内側を上から下へ 1 回通る。始まりの合図。
     Scan,
-    /// 四隅から腕が伸び縮みし続ける。進捗の出せない仕事が生きている印で、止めるまで続く。
-    Breath,
+    /// 光が枠の上を回り続ける。進捗の出せない仕事が生きている印で、止めるまで続く。
+    Orbit,
 }
 
 /// 演出を重ねる先。矩形は描く時点のレイアウトから引くので、ここでは名前で持つ。
@@ -68,14 +68,14 @@ impl Kind {
         }
     }
 
-    /// 経過時間を進捗へ。None なら終わり。Busy は終わらないので位相を返す。
+    /// 経過時間を進捗へ。None なら終わり。終わらない Busy は位相を、Orbit は経過 ms を返す。
     fn progress(&self, elapsed: Duration) -> Option<f64> {
         match self {
             Kind::Assemble { .. } => finite(elapsed, assemble::DURATION_MS),
             Kind::Busy => Some(elapsed.as_millis() as f64 / BAR_CYCLE_MS % 1.0),
             Kind::Flash => finite(elapsed, FLASH_MS),
             Kind::Scan => finite(elapsed, scan::DURATION_MS),
-            Kind::Breath => Some(elapsed.as_millis() as f64 / breath::CYCLE_MS % 1.0),
+            Kind::Orbit => Some(elapsed.as_millis() as f64),
         }
     }
 
@@ -95,7 +95,7 @@ impl Kind {
             Kind::Busy => rects.iter().for_each(|r| paint_bar(buf, *r, p, theme)),
             Kind::Flash => rects.iter().for_each(|r| paint_flash(buf, *r, p, theme)),
             Kind::Scan => rects.iter().for_each(|r| scan::paint(buf, *r, p, theme)),
-            Kind::Breath => rects.iter().for_each(|r| breath::paint(buf, *r, p, theme)),
+            Kind::Orbit => rects.iter().for_each(|r| orbit::paint(buf, *r, p, theme)),
         }
     }
 }

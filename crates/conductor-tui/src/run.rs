@@ -1056,12 +1056,12 @@ mod tests {
         ws.fx.skip();
         assert_eq!(liveness(&ws, false), Liveness::Idle);
 
-        // 数分続く呼吸も同じ理由で Active。
+        // 数分続く周回も同じ理由で Active。
         ws.fx
-            .play(crate::fx::Kind::Breath, crate::fx::Target::Review);
+            .play(crate::fx::Kind::Orbit, crate::fx::Target::Review);
         assert_eq!(liveness(&ws, false), Liveness::Active);
         ws.fx
-            .stop(&crate::fx::Kind::Breath, crate::fx::Target::Review);
+            .stop(&crate::fx::Kind::Orbit, crate::fx::Target::Review);
         assert_eq!(liveness(&ws, false), Liveness::Idle);
     }
 

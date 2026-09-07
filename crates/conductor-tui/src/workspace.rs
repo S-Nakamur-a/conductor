@@ -616,6 +616,7 @@ impl Workspace {
 
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
+        self.sync_review_fx();
         if self.focus == Focus::Revidere {
             self.panels.revidere.prepare(&self.theme, &self.config);
         }
@@ -636,6 +637,21 @@ impl Workspace {
         } = panels;
         terminal.prepare(theme, viewer.highlighter(config), overlay_open);
         effects
+    }
+
+    /// 解析中の周回は見ているブランチのもの。走り始めや終わりの合図と違って、
+    /// worktree を切り替えるたびに出し入れが要るので、毎フレーム状態から引く。
+    fn sync_review_fx(&mut self) {
+        use crate::fx::{Kind, Target};
+        let running = self.panels.revidere.is_running(self.branch());
+        if running == self.fx.is_playing(&Kind::Orbit, Target::Review) {
+            return;
+        }
+        if running {
+            self.fx.play(Kind::Orbit, Target::Review);
+        } else {
+            self.fx.stop(&Kind::Orbit, Target::Review);
+        }
     }
 
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。

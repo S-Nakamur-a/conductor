@@ -332,7 +332,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
         )];
     }
     let scope = ws.panels.revidere.scope();
-    let mut effects = vec![
+    vec![
         Effect::Spawn(Task::Analyze {
             worktree: ws.worktree_path(),
             branch,
@@ -351,11 +351,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
                 revidere_panel::scope_label(scope)
             ),
         ),
-    ];
-    if !ws.fx.is_playing(&Kind::Breath, Target::Review) {
-        effects.push(Effect::Play(Kind::Breath, Target::Review));
-    }
-    effects
+    ]
 }
 
 /// 文言が作れないことが「対象が無い」の印。

@@ -408,38 +408,44 @@ fn 左列の枠題が説明もれの件数を言う() {
     }
 }
 
-/// 呼吸を止めるのは最後の 1 本が終わったときだけ — 別ブランチが走っている横で止めると、
-/// まだ動いているのに死んで見える。
+/// 枠の演出は見ているブランチのもの。別の worktree の解析で光ると、自分の diff が
+/// 解析されていると読む。
 #[test]
-fn 解析の始まりと終わりは枠に出す() {
-    let mut panel = RevidereState::default();
-    panel.note_spawned(&analyze_task("feature/a"));
-    panel.note_spawned(&analyze_task("feature/b"));
+fn 枠の演出は見ているブランチの解析だけに出す() {
+    let mut ws = Workspace::for_test();
+    let orbiting = |ws: &Workspace| ws.fx.is_playing(&Kind::Orbit, Target::Review);
+    let flashes = |effects: &[Effect]| {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Play(Kind::Flash, Target::Review)))
+    };
     let done = || AnalyzeOutcome::Done {
         coverage_complete: true,
     };
+    let selected = ws.branch().to_string();
 
-    let effects = panel.finished("feature/a", done(), "/tmp/wt".into(), "other");
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::Stop(Kind::Breath, Target::Review))),
-        "まだ 1 本走っているのに呼吸を止めた: {effects:?}"
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Play(Kind::Flash, Target::Review))),
-        "{effects:?}"
-    );
+    ws.panels
+        .revidere
+        .note_spawned(&analyze_task("feature/other"));
+    ws.prepare();
+    assert!(!orbiting(&ws), "別ブランチの解析で光った");
+    assert!(!flashes(&ws.panels.revidere.finished(
+        "feature/other",
+        done(),
+        "/tmp/wt".into(),
+        &selected
+    )));
 
-    let effects = panel.finished("feature/b", done(), "/tmp/wt".into(), "other");
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Stop(Kind::Breath, Target::Review))),
-        "{effects:?}"
-    );
+    ws.panels.revidere.note_spawned(&analyze_task(&selected));
+    ws.prepare();
+    assert!(orbiting(&ws));
+    let effects = ws
+        .panels
+        .revidere
+        .finished(&selected, done(), "/tmp/wt".into(), &selected);
+    assert!(flashes(&effects), "{effects:?}");
+    ws.prepare();
+    assert!(!orbiting(&ws), "終わったのに回り続けている");
 }
 
 /// 解析は数分かかる。終わった頃には端末で打鍵しているので、勝手に画面を持っていかない。

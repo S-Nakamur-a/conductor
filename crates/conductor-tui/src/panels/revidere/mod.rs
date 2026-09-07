@@ -205,12 +205,13 @@ impl RevidereState {
             ),
         };
         let mut effects = vec![Effect::Status(level, message)];
-        if self.running.is_empty() {
-            effects.push(Effect::Stop(Kind::Breath, Target::Review));
+        // 見ているのが別のブランチなら、その枠に沸きを出しても何が終わったのか読めない。
+        if branch != selected_branch {
+            return effects;
         }
         effects.push(Effect::Play(Kind::Flash, Target::Review));
         // フォーカスは動かさない。数分待つ仕事なので、終わった頃には端末で打鍵している。
-        if matches!(outcome, AnalyzeOutcome::Failed(_)) || branch != selected_branch {
+        if matches!(outcome, AnalyzeOutcome::Failed(_)) {
             return effects;
         }
         effects.push(self.reload(worktree));
