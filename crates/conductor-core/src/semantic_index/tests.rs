@@ -621,6 +621,16 @@ fn 出自の表は綴りも値もそのまま往復する() {
 /// 引数を無視してひたすら sleep するだけの producer。生成が走っている最中を安定して作る。
 struct SlowProducer(PathBuf);
 
+fn slow_producer(dir: &Path) -> Arc<dyn Producer> {
+    let script = dir.join("slow-producer.sh");
+    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+    Arc::new(SlowProducer(script))
+}
+
 impl Producer for SlowProducer {
     fn command(&self, _out: &Path) -> Vec<String> {
         vec![self.0.to_string_lossy().into_owned()]
@@ -635,19 +645,12 @@ fn tick_regenerationは生成が走っていても即座に返る() {
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
     std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
 
-    let script = dir.path().join("slow-producer.sh");
-    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
-
     // ツリーを既に引いてあることにしないと、調査の取り込みが rust-analyzer の Regenerator に
     // 差し替えてしまう。
     let mut semantic = SemanticIndex::with_root(
         dir.path(),
         at("", Language::Rust),
-        sheaf_core::Regenerator::new(Arc::new(SlowProducer(script))),
+        sheaf_core::Regenerator::new(slow_producer(dir.path())),
         KEY,
     );
     semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
@@ -685,6 +688,31 @@ fn tick_regenerationは生成が走っていても即座に返る() {
         !semantic.is_generating(),
         "止めたあとも走っていることになっている"
     );
+}
+
+/// 「もうある」の門を手動にも通すと、画面は Rebuilding と言ったまま何も起きない。
+#[test]
+fn 手動の作り直しは同じ内容の索引があっても走る() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    let conductor = dir.path().join(".conductor");
+    std::fs::create_dir_all(&conductor).unwrap();
+    let root = at("", Language::Rust);
+    std::fs::write(root.target(&conductor, dir.path(), KEY).index, b"").unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        root,
+        sheaf_core::Regenerator::new(slow_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Manual, None);
+    assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+    assert!(
+        semantic.is_generating(),
+        "同じ内容の索引があるのを理由に手動の作り直しが止まった"
+    );
+    semantic.abort_regeneration(dir.path());
 }
 
 #[test]

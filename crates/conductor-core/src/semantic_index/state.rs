@@ -41,7 +41,7 @@ impl Root {
     }
 
     /// 既に待っている/走っている世代のきっかけは上書きしない (最初に頼んだものがその理由)。
-    fn request(&mut self, trigger: Trigger, cause: Option<PathBuf>) {
+    pub(super) fn request(&mut self, trigger: Trigger, cause: Option<PathBuf>) {
         if !self.is_working() {
             self.run = Run::asked(trigger, cause);
         }
@@ -278,8 +278,12 @@ impl SemanticIndex {
             // 鍵の無いルートは進めない (Root::key)。
             let key = root.key.clone()?;
             // この内容の索引はもう置いてある。producer を起こしても同じものが出る。編集で
-            // 行ったり来たりするだけで 14 秒 / 2.3GiB を払わないための門。
-            if root.regenerator.is_pending() && root.at.has_generation(&dir, &key) {
+            // 行ったり来たりするだけで 14 秒 / 2.3GiB を払わないための門。手で頼まれた
+            // ときは通さない — 押した人は「もうある」ではなく作り直しを待っている。
+            if root.regenerator.is_pending()
+                && root.run.trigger != Some(Trigger::Manual)
+                && root.at.has_generation(&dir, &key)
+            {
                 root.log_with(&dir, history::Sources::Unknown, history::Outcome::Reused);
                 root.regenerator.abort();
                 root.run = Run::default();
