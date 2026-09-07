@@ -254,6 +254,36 @@ pub struct SymbolDetail {
     pub documentation: Vec<String>,
 }
 
+/// 索引が定義を書いているシンボル 1 つ。[`Store::symbols`] が返す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolEntry {
+    /// 表示名。符号の末尾 descriptor から取った綴り (`load`, `Store`, `note_open`)。
+    pub name: String,
+    pub detail: SymbolDetail,
+    pub at: Placement,
+}
+
+/// 定義の場所。ファイルが索引生成時のままかどうかで型が分かれる。
+///
+/// 変わったファイルの行番号は信用できないので、そもそも持たせない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+    Exact {
+        definition: Location,
+        body: Option<Body>,
+    },
+    Stale {
+        path: PathBuf,
+    },
+}
+
+/// そのシンボル自身が占める行範囲。0 始まり、両端を含む。doc コメントと attribute を含む。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Body {
+    pub first_line: u32,
+    pub last_line: u32,
+}
+
 /// シンボルの種別。
 ///
 /// 言語をまたいで名前が要るので、綴りは Rust に寄せていない。Go の interface と
@@ -291,6 +321,11 @@ pub enum SymbolKind {
 pub struct SymbolId(Box<str>);
 
 impl SymbolId {
+    /// 索引を介さずに [`SymbolDetail`] を組み立てるための入口。
+    pub fn new(symbol: &str) -> Self {
+        Self(symbol.into())
+    }
+
     /// SCIP のシンボル文字列。何を経由したのかを利用側が見せるのに要る。
     pub fn as_str(&self) -> &str {
         &self.0

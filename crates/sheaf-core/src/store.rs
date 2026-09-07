@@ -11,6 +11,7 @@ mod kind;
 mod load;
 mod scip_split;
 mod slot;
+mod symbols;
 #[cfg(test)]
 mod tests;
 
