@@ -8,6 +8,9 @@
 /// `enclosing` はローカル束縛のように符号そのものが綴りを持たないときに使う。
 /// そちらは「囲んでいるもの」がそのまま答えなので、末尾を落とさない。
 pub(crate) fn of(symbol: &str, enclosing: Option<&str>, path: &std::path::Path) -> Option<String> {
+    if let Some(ty) = impl_block_type(symbol) {
+        return Some(ty);
+    }
     let sep = separator(path);
     match parts(symbol) {
         Some(mut parts) if parts.len() > 1 => {
@@ -18,6 +21,23 @@ pub(crate) fn of(symbol: &str, enclosing: Option<&str>, path: &std::path::Path) 
         Some(_) => None,
         None => Some(parts(enclosing?)?.join(sep)),
     }
+}
+
+/// 素の impl のメソッドの container は、囲んでいる型 (`impl#[Type]` の角括弧の中) が
+/// そのまま答え。impl が置かれたモジュールは型の定義場所ではないので付けない —
+/// 付けると `store::load::Store` のような実在しない綴りになる。
+///
+/// 角括弧で終わる符号は impl ブロックそのものを指し、中のメンバーではない。
+/// そちらは自分自身の container を持たない。
+fn impl_block_type(symbol: &str) -> Option<String> {
+    let descriptors = symbol.split(' ').nth(4)?;
+    if descriptors.ends_with(']') {
+        return None;
+    }
+    let start = descriptors.find("impl#[")? + "impl#[".len();
+    let end = descriptors[start..].find(']')? + start;
+    let ty = super::descriptor_name(&descriptors[start..end]);
+    (!ty.is_empty()).then(|| ty.to_string())
 }
 
 /// Rust だけが `::` で、ほかは `.`。索引を作ったツールではなくソースの綴りで決める。
@@ -133,6 +153,18 @@ mod tests {
                 "src/greet.tsx",
                 Some("src.Loud"),
             ),
+            (
+                "rust-analyzer cargo conductor 0.1.0 store/load/impl#[Store]load().",
+                None,
+                "a.rs",
+                Some("Store"),
+            ),
+            (
+                "rust-analyzer cargo conductor 0.1.0 app/focus/impl#[Focus][Eq]eq().",
+                None,
+                "a.rs",
+                Some("Focus"),
+            ),
         ] {
             assert_eq!(
                 of(symbol, enclosing, Path::new(path)),
@@ -145,7 +177,6 @@ mod tests {
     #[test]
     fn 組み立てられない綴りでは黙る() {
         for symbol in [
-            "rust-analyzer cargo conductor 0.1.0 app/focus/impl#[Focus][Eq]eq().",
             "rust-analyzer cargo conductor 0.1.0 ui/`PanelChrome<'a>`#draw().",
             "rust-analyzer cargo conductor 0.1.0 macros/log!",
             "local 3",

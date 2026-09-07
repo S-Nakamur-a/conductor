@@ -84,7 +84,7 @@ fn text_of(result: &CallToolResult) -> &str {
 }
 
 #[test]
-fn 公開するツールはちょうど7つ() {
+fn 公開するツールはちょうど9つ() {
     let tools = McpServer::tool_router().list_all();
     let names: BTreeSet<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert_eq!(
@@ -97,6 +97,8 @@ fn 公開するツールはちょうど7つ() {
             "create_comment",
             "set_change_summary",
             "get_change_summary",
+            "search_symbols",
+            "read_symbol",
         ]
         .into_iter()
         .collect()

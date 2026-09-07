@@ -86,3 +86,31 @@ pub struct GetChangeSummary {
     #[serde(default)]
     pub branch: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchSymbols {
+    /// 名前で絞り込む（大文字小文字を無視した部分一致）。`Type::name` で同名メンバーを絞り込める
+    #[serde(default)]
+    pub query: Option<String>,
+    /// リポジトリ相対パスの部分一致で絞り込む（大文字小文字を区別）。query を省略するとそのファイルの定義一覧になる
+    #[serde(default)]
+    pub path: Option<String>,
+    /// 種別で絞り込む: function, method, struct, class, enum, variant, trait, interface, field, const, type, module
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// 返す件数の上限（既定 20、最大 100）
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadSymbol {
+    /// シンボル名。メンバーなら `Type::name`
+    pub name: String,
+    /// リポジトリ相対パスの部分一致で候補を絞り込む（同名が複数あるとき）
+    #[serde(default)]
+    pub path: Option<String>,
+    /// 種別で候補を絞り込む: function, method, struct, class, enum, variant, trait, interface, field, const, type, module
+    #[serde(default)]
+    pub kind: Option<String>,
+}
