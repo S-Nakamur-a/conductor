@@ -1,4 +1,5 @@
-//! stdio 越しに公開する 7 つのレビュー DB ツール。
+//! stdio 越しに公開する 9 つのツール — レビュー DB 7 つと、コード索引を読む
+//! `search_symbols` / `read_symbol`。
 //!
 //! ワイヤ上の契約 — ツール名、引数名、description、返信文の一字一句 — はあえて
 //! 変えない。既に世に出ているセッションとスラッシュコマンドがそれに依存する。
@@ -6,7 +7,7 @@
 //! ハンドラの本体が同期なのは、パイプもクライアントも 1 つずつしかないため。
 //! 2 つ目の同時呼び出し元を支えるには先に作り直しが要る。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -15,10 +16,11 @@ use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 
 use conductor_core::review_store::{Author, CommentKind, CommentStatus, NewReview, ReviewStore};
+use conductor_core::semantic_index::{self, SymbolEntry};
 
 use crate::args::{
-    CommentIdOnly, CreateComment, GetChangeSummary, GetPendingComments, ReplyToComment,
-    SetChangeSummary,
+    CommentIdOnly, CreateComment, GetChangeSummary, GetPendingComments, ReadSymbol, ReplyToComment,
+    SearchSymbols, SetChangeSummary,
 };
 use crate::refresh_signal::signal_refresh;
 use crate::reply::{
@@ -26,6 +28,11 @@ use crate::reply::{
     short_id,
 };
 use crate::resolve;
+
+mod symbols;
+
+/// 誤った答えより無回答。
+const NO_INDEX_TEXT: &str = "No code index is available for this repository yet. conductor builds it when a file is opened in the Viewer, or run 'conductor index'. Use Grep and Read meanwhile.";
 
 /// 1 ブランチ上の未解決な自己レビューコメントがこれを超えると、成功メッセージに
 /// 注意書きが添えられる。ハードな上限ではなくソフトなシグナル。
@@ -122,6 +129,16 @@ impl McpServer {
 
     fn resolve_comment_id(&self, comment_id: &str) -> Result<Option<String>, ErrorData> {
         self.store().resolve_id_prefix(comment_id).map_err(db_error)
+    }
+
+    /// 呼び出しごとに読み直すのは、索引が裏 (TUI の再生成) で置き換わるため。
+    fn load_symbols(&self) -> Option<(PathBuf, Vec<SymbolEntry>)> {
+        let root = git2::Repository::discover(&self.inner.repo_root)
+            .ok()?
+            .workdir()
+            .map(Path::to_path_buf)?;
+        let (_survey, store) = semantic_index::survey_and_load(&root, &root, None, &[]);
+        Some((root, store?.symbols()))
     }
 }
 
@@ -343,6 +360,84 @@ impl McpServer {
         match summary {
             Some(body) => ok_text(body),
             None => ok_text(format!("No change summary set for branch \"{target}\".")),
+        }
+    }
+
+    #[tool(
+        description = "Search symbol definitions (functions, structs, enums, traits, …) in the code index built by conductor. Returns one definition per line with file:line, kind, and signature — no call sites, no comments, unlike Grep. `query` matches the name (case-insensitive substring; `Type::name` to disambiguate members); `path` filters by repo-relative path substring and, with no query, lists every definition in a file (an outline); `kind` is one of function, method, struct, class, enum, variant, trait, interface, field, const, type, module. Only languages with an index (currently Rust, Go, TypeScript when built) are covered; Markdown, TOML, shell and other files are invisible here — use Grep for those."
+    )]
+    async fn search_symbols(
+        &self,
+        Parameters(args): Parameters<SearchSymbols>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if args.query.is_none() && args.path.is_none() {
+            return err_text("give query or path");
+        }
+        let kind = match args.kind.as_deref().map(symbols::parse_kind) {
+            Some(Ok(k)) => Some(k),
+            Some(Err(msg)) => return err_text(msg),
+            None => None,
+        };
+        let Some((_root, entries)) = self.load_symbols() else {
+            return ok_text(NO_INDEX_TEXT);
+        };
+        let query = symbols::Query {
+            text: args.query.as_deref(),
+            path: args.path.as_deref(),
+            kind,
+            limit: args.limit.map_or(20, |n| (n as usize).min(100)),
+        };
+        let hits = symbols::select(&entries, &query);
+        ok_text(symbols::render_list(&hits, hits.len(), query.limit))
+    }
+
+    #[tool(
+        description = "Return the source text of one definition — doc comment, attributes and body — by name, without reading the whole file. `name` is the symbol name (`Type::name` for members); `path` (substring) and `kind` narrow it when several definitions share the name; when still ambiguous, the candidates are listed instead. If the file changed since the index was built, no lines are returned (they would be wrong) — Read the file instead."
+    )]
+    async fn read_symbol(
+        &self,
+        Parameters(args): Parameters<ReadSymbol>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let kind = match args.kind.as_deref().map(symbols::parse_kind) {
+            Some(Ok(k)) => Some(k),
+            Some(Err(msg)) => return err_text(msg),
+            None => None,
+        };
+        let Some((root, entries)) = self.load_symbols() else {
+            return ok_text(NO_INDEX_TEXT);
+        };
+
+        let matching = |case_insensitive: bool| -> Vec<&SymbolEntry> {
+            entries
+                .iter()
+                .filter(|e| symbols::matches_name(e, &args.name, case_insensitive))
+                .filter(|e| kind.is_none_or(|k| k.matches(e.detail.kind)))
+                .filter(|e| {
+                    args.path
+                        .as_deref()
+                        .is_none_or(|p| symbols::entry_path(e).to_string_lossy().contains(p))
+                })
+                .collect()
+        };
+
+        let mut candidates = matching(false);
+        if candidates.is_empty() {
+            candidates = matching(true);
+        }
+
+        match candidates.len() {
+            0 => err_text(format!(
+                "No definition named '{}' in the index. Try search_symbols.",
+                args.name
+            )),
+            1 => ok_text(symbols::render_body(candidates[0], |p| {
+                std::fs::read_to_string(root.join(p))
+            })),
+            n => ok_text(format!(
+                "{n} definitions named '{}' — pass path or kind to pick one:\n{}",
+                args.name,
+                symbols::render_list(&candidates, n, n)
+            )),
         }
     }
 }

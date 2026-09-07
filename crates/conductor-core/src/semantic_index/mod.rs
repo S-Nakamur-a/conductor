@@ -19,7 +19,9 @@ mod tests;
 
 pub use bridge::Bridge;
 pub use roots::IndexRoot;
-pub use sheaf_core::Regenerated;
+pub use sheaf_core::{
+    Body, Location, Placement, Regenerated, SymbolDetail, SymbolEntry, SymbolId, SymbolKind,
+};
 pub use state::{Finished, SemanticIndex};
 pub use survey::{BuildOutcome, Built, Survey, build_index, survey, survey_and_load};
 
