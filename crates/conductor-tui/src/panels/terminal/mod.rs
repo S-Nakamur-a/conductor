@@ -1011,7 +1011,6 @@ mod tests {
     use super::*;
     use crate::workspace::Workspace;
     use ratatui::layout::Rect;
-    use std::time::{Duration, Instant};
 
     /// 本物のシェルを起動して、出力が画面に載るまで待つ。
     fn spawn_shell(ws: &mut Workspace, script: &str) -> tempfile::TempDir {
@@ -1039,14 +1038,12 @@ mod tests {
     }
 
     fn wait_for(ws: &Workspace, needle: &str) -> String {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let text = render::visible_text(&ws.panels.terminal, Region::TerminalShell);
-            if text.contains(needle) || Instant::now() > deadline {
-                return text;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let mut text = String::new();
+        crate::testing::wait_for(|| {
+            text = render::visible_text(&ws.panels.terminal, Region::TerminalShell);
+            text.contains(needle)
+        });
+        text
     }
 
     #[test]
@@ -1366,10 +1363,7 @@ mod tests {
     fn 死んだセッションは片付いてパネルの表示が残りへ移る() {
         let mut ws = Workspace::for_test();
         let _dir = spawn_shell(&mut ws, "exit\n");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !ws.panels.terminal.cleanup_dead() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        crate::testing::wait_for(|| ws.panels.terminal.cleanup_dead());
         assert!(ws.panels.terminal.pty.sessions().is_empty());
         assert!(ws.panels.terminal.shell.session.is_none());
     }

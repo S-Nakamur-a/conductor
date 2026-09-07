@@ -1,7 +1,7 @@
 //! テストから svc の往復を待つための足回り。
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use conductor_core::git_engine::WorktreeInfo;
 use conductor_svc::{EventKind, Services};
@@ -10,13 +10,30 @@ use crate::effect::apply;
 use crate::task::TaskResult;
 use crate::workspace::Workspace;
 
-/// 何も届かなくなるまで svc の結果を消費する。
+/// 負荷の高いマシンでも PTY や git が返る余裕を見た上限。
+const WAIT_LIMIT: Duration = Duration::from_secs(10);
+
+/// `done` が立つまで待つ。来ないことを言うのは呼び出し側の assert の仕事。
+pub fn wait_for(mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + WAIT_LIMIT;
+    loop {
+        if done() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// 飛んでいる Task が全部帰り、届いた結果を取り込みきるまで待つ。
 ///
-/// ワーカーは本物のスレッドなので、届く順も時刻も決めうちにしない。静かになってから
-/// 少し待つのは、1 つの結果が次の Task を生む経路 (worktree 選択 → 走査) があるため。
+/// 静かな時間で区切ると、git の遅いマシンで結果より先に抜ける。
 pub fn pump(ws: &mut Workspace, svc: &mut Services<TaskResult>) {
-    let mut quiet = 0;
-    for _ in 0..500 {
+    wait_for(|| {
+        // 取り込む前に見る。あとで見ると、その間に届いた結果を数え落とす。
+        let idle = svc.in_flight() == 0;
         let mut got = false;
         while let Some(event) = svc.try_recv() {
             got = true;
@@ -26,12 +43,8 @@ pub fn pump(ws: &mut Workspace, svc: &mut Services<TaskResult>) {
             };
             apply(ws, svc, effects);
         }
-        quiet = if got { 0 } else { quiet + 1 };
-        if quiet > 20 {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
+        idle && !got
+    });
 }
 
 /// worktree 一覧に 1 つだけ載せて、そこを選ばせる。
