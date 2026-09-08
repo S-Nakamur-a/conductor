@@ -553,10 +553,8 @@ pub fn bar_line(ws: &Workspace, bar: Rect) -> Line<'static> {
                         .fg(theme.selected_fg)
                         .bg(theme.selected_bg)
                         .add_modifier(Modifier::BOLD)
-                } else if ws.chrome.menu.is_active() {
-                    Style::default().fg(theme.fg)
                 } else {
-                    Style::default().fg(theme.muted)
+                    Style::default().fg(theme.fg)
                 };
                 Span::styled(title_text(&MENUS[index], icons), style)
             })
