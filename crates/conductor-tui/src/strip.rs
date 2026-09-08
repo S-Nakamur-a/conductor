@@ -1,4 +1,53 @@
-//! チップ帯の可視範囲。worktree ストリップと端末のセッションタブが共有する。
+//! チップ帯の部品。worktree ストリップ、端末のセッションタブ、Viewer のタブが共有する。
+
+use conductor_core::theme::Theme;
+use ratatui::style::{Modifier, Style};
+use unicode_width::UnicodeWidthStr;
+
+// チップを閉じる印と増やす印。帯ごとに文字や色が違うと、同じ操作に見えない。
+pub const CLOSE: &str = "[x] ";
+pub const ADD: &str = "[+]";
+
+pub fn close_style(theme: &Theme) -> Style {
+    Style::default().fg(theme.error)
+}
+
+pub fn add_style(theme: &Theme) -> Style {
+    Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// 帯に並ぶ 1 区画。列は帯の左端からの相対で、`end` は含まない。
+/// 描画とクリック判定が同じ並びを見る。
+#[derive(Debug)]
+pub struct Slot<K> {
+    pub start: u16,
+    pub end: u16,
+    pub label: String,
+    pub kind: K,
+}
+
+impl<K> Slot<K> {
+    pub fn contains(&self, x: u16) -> bool {
+        (self.start..self.end).contains(&x)
+    }
+}
+
+pub fn width_of(s: &str) -> u16 {
+    UnicodeWidthStr::width(s) as u16
+}
+
+pub fn push<K>(slots: &mut Vec<Slot<K>>, label: String, kind: K) {
+    let start = slots.last().map_or(0, |s| s.end);
+    let end = start + width_of(&label);
+    slots.push(Slot {
+        start,
+        end,
+        label,
+        kind,
+    });
+}
 
 /// 帯に出すチップの窓 `[start, end)`。
 ///

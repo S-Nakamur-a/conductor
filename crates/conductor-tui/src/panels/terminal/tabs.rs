@@ -1,15 +1,8 @@
-//! セッションタブ行の中身と配置。描画とクリック判定が同じ並びを見る。
+//! セッションタブ行の中身と配置。
 
 use conductor_svc::pty::SessionKind;
-use unicode_width::UnicodeWidthStr;
 
-use crate::strip::visible_window;
-
-/// 新しいセッションを起こすチップ。
-const ADD: &str = " + ";
-
-/// タブの後ろに置く、そのセッションを閉じるチップ。
-const CLOSE: &str = " [x] ";
+use crate::strip::{ADD, CLOSE, push, visible_window, width_of};
 
 /// タブ行の 1 区画が何を指しているか。
 #[derive(Debug, PartialEq, Eq)]
@@ -27,35 +20,7 @@ pub enum SlotKind {
     Hint,
 }
 
-/// タブ行に並ぶ 1 区画。列は枠の内側からの相対で、`end` は含まない。
-#[derive(Debug)]
-pub struct Slot {
-    pub start: u16,
-    pub end: u16,
-    pub label: String,
-    pub kind: SlotKind,
-}
-
-impl Slot {
-    pub fn contains(&self, x: u16) -> bool {
-        (self.start..self.end).contains(&x)
-    }
-}
-
-fn width_of(s: &str) -> u16 {
-    UnicodeWidthStr::width(s) as u16
-}
-
-fn push(slots: &mut Vec<Slot>, label: String, kind: SlotKind) {
-    let start = slots.last().map_or(0, |s| s.end);
-    let end = start + width_of(&label);
-    slots.push(Slot {
-        start,
-        end,
-        label,
-        kind,
-    });
-}
+pub type Slot = crate::strip::Slot<SlotKind>;
 
 fn hint(kind: SessionKind) -> &'static str {
     match kind {
@@ -64,7 +29,7 @@ fn hint(kind: SessionKind) -> &'static str {
     }
 }
 
-/// `width` に収まるタブと、その後ろに置く `+` チップ。チップの幅を先に取り分ける
+/// `width` に収まるタブと、その後ろに置く `[+]` チップ。チップの幅を先に取り分ける
 /// のは、名前の長いセッションが並ぶほど新しいセッションを起こす口が要るため。
 /// 同じ理由で、入り切らなければ `[x]` の方を落とす。
 pub fn row(
@@ -133,7 +98,7 @@ mod tests {
 
         assert_eq!(
             slots.iter().map(|s| (s.start, s.end)).collect::<Vec<_>>(),
-            [(0, 6), (6, 11), (11, 17), (17, 22), (22, 25)]
+            [(0, 6), (6, 10), (10, 16), (16, 20), (20, 23)]
         );
         assert_eq!(
             hit(&slots, 0),
@@ -162,8 +127,8 @@ mod tests {
                 session: "b".into()
             })
         );
-        assert_eq!(hit(&slots, 23), Some(&SlotKind::Add));
-        assert_eq!(hit(&slots, 25), None, "チップの外は何も指さない");
+        assert_eq!(hit(&slots, 21), Some(&SlotKind::Add));
+        assert_eq!(hit(&slots, 23), None, "チップの外は何も指さない");
     }
 
     #[test]

@@ -229,7 +229,6 @@ pub struct Strip {
 
 pub const OVERFLOW_LEFT: char = '\u{2039}';
 pub const OVERFLOW_RIGHT: char = '\u{203a}';
-pub const CLOSE: &str = " [x]";
 
 /// タブ 1 枚の表示文字列。長ければ先頭を省いてファイル名を残す。
 pub fn label(path: &str) -> String {
@@ -248,7 +247,7 @@ pub fn strip(tabs: &[Tab], scroll: usize, width: u16) -> Strip {
     let left = scroll > 0;
     let mut x = u16::from(left);
     let mut cells = Vec::new();
-    let close_w = CLOSE.chars().count() as u16;
+    let close_w = crate::strip::width_of(crate::strip::CLOSE);
     for (i, tab) in tabs.iter().enumerate().skip(scroll) {
         let label_w = label(&tab.path).chars().count() as u16;
         let w = label_w + close_w;

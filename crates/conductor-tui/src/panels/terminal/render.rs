@@ -196,8 +196,8 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
                 SlotKind::Tab { .. } | SlotKind::Hint => Style::default().fg(theme.muted),
                 // 選んでいるタブの塗りつぶしの中には入れない。アクセント背景に赤を
                 // 乗せるとコントラストが落ちて、危険な操作が読めなくなる。
-                SlotKind::Close { .. } => Style::default().fg(theme.error),
-                SlotKind::Add => Style::default().fg(theme.accent),
+                SlotKind::Close { .. } => crate::strip::close_style(theme),
+                SlotKind::Add => crate::strip::add_style(theme),
             };
             Span::styled(slot.label, style)
         })
