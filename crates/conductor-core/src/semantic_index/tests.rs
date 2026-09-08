@@ -354,7 +354,7 @@ fn 成果物の名前は索引ルートごとに分かれる() {
         index(at("a/b", Language::Go)),
         index(at("a_b", Language::Go))
     );
-    // 生成 1 本のピークが 2.3GiB なので、上限はリポジトリ単位で効かせる。
+    // 生成 1 本でメモリの大半を食うので、上限はリポジトリ単位で効かせる。
     assert_eq!(
         at("", Language::Rust).target(dir, tree_root, KEY).lock,
         at("services/api", Language::Go)
@@ -366,7 +366,7 @@ fn 成果物の名前は索引ルートごとに分かれる() {
 #[test]
 fn 鍵はそのルートのその言語のファイルだけで決まる() {
     // 全部を畳むと、画像を差し替えただけで名前が変わり、中身の同じ索引を作り直す。内側の
-    // ルートを数えるのも同じで、そこの編集で外側の 2.3GiB を払うことになる。
+    // ルートを数えるのも同じで、そこの編集で外側の producer を丸ごと起こすことになる。
     let files = [
         ("go.mod", "module demo\n"),
         ("main.go", "package main\n"),
@@ -896,7 +896,7 @@ fn 世代は上限まで残して古いものから落とす() {
 #[test]
 fn 一度作った内容の索引は戻ってきても作り直さない() {
     // 索引を 1 本しか持たないと、内容の違う worktree を行き来するたびに上書きし合い、戻る
-    // たびに 14 秒 / 2.3GiB を払うことになる。
+    // たびに producer を丸ごと起こすことになる。
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
     let conductor_dir = dir.path().join(".conductor");
     let lib = dir.path().join("src/lib.rs");
@@ -971,7 +971,7 @@ fn 内容の変わったツリーを読んだら作りに行く() {
 fn 読んでいるファイルが説明できているなら内容が動いても作りに行かない() {
     // 起動のたびに producer を起こさないための門。出自はファイル単位なので、ほかのファイルが
     // 動いて鍵がずれても、読んでいるファイルは前の世代のまま Exact に答えられる。鍵だけを
-    // 見て作りに行くと、git がツリーを動かすたびに 14 秒を払うことになる。
+    // 見て作りに行くと、git がツリーを動かすたびに producer を丸ごと起こすことになる。
     let (dir, _) = repo_with(&[
         CARGO_TOML,
         ("src/lib.rs", SOURCE),
