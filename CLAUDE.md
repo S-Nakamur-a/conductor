@@ -364,3 +364,7 @@ git, and any rework of theme / keymap / text_input / config.
   the list.
 - **Status messages:** `Effect::Status(level, text)`
 - **Doc comments:** `//!` at module level, `///` on public items
+- **Tests never wait on "quiet for N ms".** Use `conductor_tui::testing::wait_for(cond)`
+  or `pump` (waits for `Services::in_flight() == 0`). A quiet-time wait only fails on a
+  loaded machine; to prove a flake is pre-existing, check main out with
+  `git worktree add --detach` and run both under `yes` × CPU count
