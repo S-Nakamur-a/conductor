@@ -195,7 +195,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
             if focused {
                 border.add_modifier(Modifier::BOLD)
             } else {
-                border
+                Style::default().fg(ws.theme.fg)
             },
         ))
 }
