@@ -417,10 +417,11 @@ fn on_mouse(
         MouseEventKind::Moved => {
             let root = ws.panels.viewer.root().to_path_buf();
             let (panels, _, ctx) = ws.split(&root);
-            let over = (region == Region::Viewer)
-                .then(|| panels.viewer.word_at_screen(mouse.column, mouse.row, &ctx))
-                .flatten();
-            panels.viewer.note_pointer(over);
+            if region == Region::Viewer {
+                panels.viewer.pointer_moved(mouse.column, mouse.row, &ctx);
+            } else {
+                panels.viewer.note_pointer(None);
+            }
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の

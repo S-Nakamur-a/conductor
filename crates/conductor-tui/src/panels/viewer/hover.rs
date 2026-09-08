@@ -11,6 +11,7 @@ use conductor_core::symbol_index::SymbolIndex;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use conductor_core::theme::Theme;
 
@@ -330,17 +331,31 @@ fn strip_block(text: &str) -> String {
 /// 描画の副産物にならない。
 pub struct Popup {
     pub rect: Rect,
+    /// 見出しと宣言の行。押すと定義へ飛ぶ。無ければ大きさ 0。
+    pub def_block: Rect,
     /// 定義位置の行。押すとそこへ飛ぶ。
     pub def_row: Rect,
     /// 参照数の行。押すと一覧が開く。参照が無ければ大きさ 0。
     pub refs_row: Rect,
-    pub body: Vec<Line<'static>>,
-    pub footer: Vec<(Rect, Line<'static>)>,
+    /// 上から順の全行。区切り線は枠と繋がるよう枠ごと描く。
+    pub rows: Vec<(Rect, Line<'static>)>,
+}
+
+enum Row {
+    Text(Line<'static>),
+    Rule,
+    Def(Line<'static>),
+    Refs(Line<'static>),
+}
+
+pub fn rect(hover: &Hover, theme: &Theme, host: Rect) -> Rect {
+    popup(hover, theme, host, None).rect
 }
 
 /// ポップアップの中身と置き場所を決める。`host` は Viewer の矩形。シグネチャは定義元の
 /// ファイルの言語で色を付けたいので、読んでいるファイルではなく `hover.path` を渡す。
 /// `highlighter` が無ければ (まだ構築されていなければ) 単色にフォールバックする。
+/// 置き場所と大きさは色付けに依らないので、`None` でも同じ矩形になる。
 pub fn popup(
     hover: &Hover,
     theme: &Theme,
@@ -349,96 +364,118 @@ pub fn popup(
 ) -> Popup {
     let def_label = def_label(hover);
     let refs_label = refs_label(hover);
-    let mut body: Vec<Line<'static>> = Vec::new();
-    if hover.signature_from_index || !hover.on_definition_line {
-        body.extend(signature_lines(hover, theme, highlighter));
-    }
-    if !hover.doc.is_empty() {
-        if !body.is_empty() {
-            body.push(Line::from(""));
-        }
-        body.extend(
-            hover
-                .doc
-                .iter()
-                .map(|d| Line::from(Span::styled(d.clone(), Style::default().fg(theme.fg)))),
-        );
-    }
-
     let header = header(hover);
-    let content_w = body
-        .iter()
-        .map(Line::width)
-        .chain([
-            def_label.chars().count(),
-            refs_label.chars().count(),
-            header.chars().count(),
-        ])
+    let shows_signature = hover.signature_from_index || !hover.on_definition_line;
+    let signature: &[String] = if shows_signature {
+        &hover.signature
+    } else {
+        &[]
+    };
+    let content_w = [header.as_str(), &def_label, &refs_label]
+        .into_iter()
+        .chain(signature.iter().map(String::as_str))
+        .chain(hover.doc.iter().map(String::as_str))
+        .map(UnicodeWidthStr::width)
         .max()
         .unwrap_or(20)
         .clamp(20, 100) as u16;
-    let width = (content_w + 4).min(host.width.saturating_sub(2)).max(4);
+
+    let mut definition: Vec<Line<'static>> = Vec::new();
     if !header.is_empty() {
-        body.insert(
-            0,
-            Line::from(Span::styled(
-                header,
-                Style::default()
-                    .fg(theme.info)
-                    .add_modifier(Modifier::ITALIC),
-            )),
-        );
+        definition.push(Line::from(Span::styled(
+            header,
+            Style::default()
+                .fg(theme.info)
+                .add_modifier(Modifier::ITALIC),
+        )));
     }
-    let footer_h = 1 + usize::from(hover.refs > 0);
-    let height = (body.len() + footer_h) as u16 + 2;
+    if shows_signature {
+        definition.extend(signature_lines(hover, theme, highlighter));
+    }
+    let width = (content_w + 4).min(host.width.saturating_sub(2)).max(4);
+    let text_w = usize::from(width.saturating_sub(4)).max(1);
+    let doc: Vec<Line<'static>> = hover
+        .doc
+        .iter()
+        .flat_map(|d| crate::modal::input::wrap(d, text_w))
+        .map(|d| Line::from(Span::styled(d, Style::default().fg(theme.fg))))
+        .collect();
+
+    let def_rows = definition.len();
+    let mut body: Vec<Row> = definition.into_iter().map(Row::Text).collect();
+    if !body.is_empty() && !doc.is_empty() {
+        body.push(Row::Rule);
+    }
+    body.extend(doc.into_iter().map(Row::Text));
+    let mut footer: Vec<Row> = Vec::new();
+    if !body.is_empty() {
+        footer.push(Row::Rule);
+    }
+    footer.push(Row::Def(Line::from(Span::styled(
+        def_label,
+        Style::default().fg(theme.fg),
+    ))));
+    if hover.refs > 0 {
+        footer.push(Row::Refs(Line::from(Span::styled(
+            refs_label,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))));
+    }
+
+    let height = (body.len() + footer.len()) as u16 + 2;
     let height = height.min(host.height.saturating_sub(2)).max(3);
     let rect = place(host, hover.anchor, width, height);
-
     let inner = Rect::new(
         rect.x + 1,
         rect.y + 1,
         rect.width.saturating_sub(2),
         rect.height.saturating_sub(2),
     );
-    let footer_h = (footer_h as u16).min(inner.height);
+    let footer_h = (footer.len() as u16).min(inner.height);
     let body_h = inner.height.saturating_sub(footer_h);
-    let row = |offset: u16| Rect::new(inner.x, inner.y + body_h + offset, inner.width, 1);
-    let def_row = if footer_h >= 1 {
-        row(0)
-    } else {
-        Rect::default()
-    };
-    let refs_row = if footer_h >= 2 {
-        row(1)
-    } else {
-        Rect::default()
-    };
-
-    let mut footer = Vec::new();
-    if def_row.height > 0 {
-        footer.push((
-            def_row,
-            Line::from(Span::styled(def_label, Style::default().fg(theme.fg))),
-        ));
-    }
-    if refs_row.height > 0 {
-        footer.push((
-            refs_row,
-            Line::from(Span::styled(
-                refs_label,
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        ));
-    }
     body.truncate(body_h as usize);
+
+    let full = |y: u16| Rect::new(inner.x, y, inner.width, 1);
+    let text = |y: u16| Rect::new(inner.x + 1, y, inner.width.saturating_sub(2), 1);
+    let rule = Line::from(Span::styled(
+        format!(
+            "\u{251c}{}\u{2524}",
+            "\u{2500}".repeat(usize::from(inner.width))
+        ),
+        Style::default().fg(theme.border_focused),
+    ));
+    let mut rows = Vec::new();
+    let mut def_row = Rect::default();
+    let mut refs_row = Rect::default();
+    for (i, row) in body
+        .into_iter()
+        .chain(footer)
+        .take(usize::from(inner.height))
+        .enumerate()
+    {
+        let y = inner.y + i as u16;
+        match row {
+            Row::Text(line) => rows.push((text(y), line)),
+            Row::Rule => rows.push((Rect::new(rect.x, y, rect.width, 1), rule.clone())),
+            Row::Def(line) => {
+                def_row = full(y);
+                rows.push((text(y), line));
+            }
+            Row::Refs(line) => {
+                refs_row = full(y);
+                rows.push((text(y), line));
+            }
+        }
+    }
+    let def_block = Rect::new(inner.x, inner.y, inner.width, (def_rows as u16).min(body_h));
     Popup {
         rect,
+        def_block,
         def_row,
         refs_row,
-        body,
-        footer,
+        rows,
     }
 }
 
@@ -700,6 +737,18 @@ mod tests {
         }
     }
 
+    fn texts(popup: &Popup) -> Vec<String> {
+        popup
+            .rows
+            .iter()
+            .map(|(_, line)| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    fn is_rule(text: &str) -> bool {
+        text.starts_with('\u{251c}')
+    }
+
     #[test]
     fn フッターの2行はポップアップの中にあり互いに重ならない() {
         let host = Rect::new(0, 0, 80, 30);
@@ -708,6 +757,63 @@ mod tests {
         assert_eq!(popup.refs_row.y, popup.def_row.y + 1);
         assert!(popup.def_row.y >= popup.rect.y);
         assert!(popup.refs_row.y < popup.rect.y + popup.rect.height);
+    }
+
+    #[test]
+    fn 見出しと宣言は1つの押せる塊で区切り線を挟んで場所の行の上にある() {
+        let popup = popup(
+            &hover_fixture(),
+            &Theme::default(),
+            Rect::new(0, 0, 80, 30),
+            None,
+        );
+        let rows = texts(&popup);
+        assert_eq!(rows[0], "fn");
+        assert_eq!(rows[1], "pub fn add(a: i64) -> i64");
+        assert!(is_rule(&rows[2]), "{rows:?}");
+        assert_eq!(rows[3], "Adds.");
+        assert!(is_rule(&rows[4]), "{rows:?}");
+        assert!(rows[5].contains("lib.rs:3"));
+        assert_eq!(popup.def_block.height, 2);
+        assert_eq!(popup.def_block.y, popup.rect.y + 1);
+        assert_eq!(popup.def_row.y, popup.def_block.y + 5);
+    }
+
+    #[test]
+    fn 区切り線は中身のあるブロックの間にだけ入る() {
+        let host = Rect::new(0, 0, 80, 30);
+        let mut hover = hover_fixture();
+        hover.doc.clear();
+        let rows = texts(&popup(&hover, &Theme::default(), host, None));
+        assert_eq!(rows.iter().filter(|r| is_rule(r)).count(), 1, "{rows:?}");
+
+        hover.kind.clear();
+        hover.on_definition_line = true;
+        let popup = popup(&hover, &Theme::default(), host, None);
+        let rows = texts(&popup);
+        assert!(!rows.iter().any(|r| is_rule(r)), "{rows:?}");
+        assert_eq!(popup.def_block.height, 0);
+        assert_eq!(popup.def_row.y, popup.rect.y + 1);
+    }
+
+    #[test]
+    fn 長いdocは枠の中で折り返す() {
+        let mut hover = hover_fixture();
+        hover.doc = vec!["word ".repeat(40).trim_end().to_string()];
+        let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 200, 30), None);
+        let text_w = usize::from(popup.rect.width) - 4;
+        let rows = texts(&popup);
+        let doc_rows: Vec<&str> = rows
+            .iter()
+            .map(String::as_str)
+            .filter(|r| r.starts_with("word"))
+            .collect();
+        assert!(doc_rows.len() >= 2, "{doc_rows:?}");
+        assert!(
+            doc_rows
+                .iter()
+                .all(|r| UnicodeWidthStr::width(*r) <= text_w)
+        );
     }
 
     /// gd は名乗るのに同じ位置を説明するホバーが黙ると、名前一致で拾った宣言が
@@ -735,7 +841,7 @@ mod tests {
         hover.refs = 0;
         let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 80, 30), None);
         assert_eq!(popup.refs_row, Rect::default());
-        assert_eq!(popup.footer.len(), 1);
+        assert!(!texts(&popup).iter().any(|r| r.contains("refs")));
     }
 
     #[test]
