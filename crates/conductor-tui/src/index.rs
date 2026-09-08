@@ -119,24 +119,34 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
     }
 
     effects.extend(finish_regeneration(ws, &repo, &tree));
-    sync_generation_fx(&mut ws.fx, ws.index.semantic.is_generating());
+    effects.extend(sync_generation_fx(
+        &mut ws.fx,
+        ws.index.semantic.is_generating(),
+    ));
     effects
 }
 
 /// producer の生死を Viewer の枠に写す。`note_open` の答えで駆動しないのは、同じファイルを
 /// 読み続ける 2 周目から `Unchanged` になり、始まった直後に止まって見えるため。
-fn sync_generation_fx(fx: &mut Fx, generating: bool) {
+///
+/// 生成は勝手に走るので、枠が光り出しただけでは何が起きたか読めない。
+fn sync_generation_fx(fx: &mut Fx, generating: bool) -> Option<Effect> {
     let viewer = Target::Region(Region::Viewer);
     let showing_busy = fx.is_playing(&Kind::Busy, viewer);
     if generating == showing_busy {
-        return;
+        return None;
     }
     if generating {
         fx.play(Kind::Scan, viewer);
         fx.play(Kind::Busy, viewer);
+        Some(Effect::Status(
+            StatusLevel::Info,
+            "Indexing code for go-to-definition and references\u{2026}".into(),
+        ))
     } else {
         fx.stop(&Kind::Busy, viewer);
         fx.play(Kind::Flash, viewer);
+        None
     }
 }
 
@@ -316,11 +326,21 @@ mod tests {
     fn 生成の始まりと終わりを演出に写す() {
         let viewer = Target::Region(Region::Viewer);
         let mut fx = Fx::default();
-        sync_generation_fx(&mut fx, false);
+        assert!(sync_generation_fx(&mut fx, false).is_none());
         assert!(!fx.is_animating(), "何も走っていないのに演出が出た");
 
-        sync_generation_fx(&mut fx, true);
+        assert!(
+            matches!(
+                sync_generation_fx(&mut fx, true),
+                Some(Effect::Status(StatusLevel::Info, _))
+            ),
+            "勝手に始まる生成は文字でも言う"
+        );
         assert!(fx.is_playing(&Kind::Scan, viewer) && fx.is_playing(&Kind::Busy, viewer));
+        assert!(
+            sync_generation_fx(&mut fx, true).is_none(),
+            "走っている間に言い直した"
+        );
         sync_generation_fx(&mut fx, false);
         assert!(!fx.is_playing(&Kind::Busy, viewer));
         assert!(fx.is_playing(&Kind::Flash, viewer));
