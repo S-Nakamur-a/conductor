@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "1.6.1"
+version = "1.7.0"
 dependencies = [
  "anyhow",
  "conductor-tui",
@@ -466,6 +466,7 @@ version = "0.1.0"
 dependencies = [
  "aa-media",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "conductor-core",
  "conductor-mcp",
