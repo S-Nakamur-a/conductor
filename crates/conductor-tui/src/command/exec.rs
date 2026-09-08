@@ -11,7 +11,6 @@ use super::CommandId;
 use crate::effect::Effect;
 use crate::fx::{Kind, Target};
 use crate::layout::Divider;
-use crate::modal::revidere as revidere_modal;
 use crate::modal::{
     Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme, update,
 };
@@ -205,13 +204,16 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             )
         }
         // R は refresh の r の隣で、失うのはローカルのコミット。押し間違いで走らせない。
-        CommandId::ResetMainToOrigin => confirm(
-            Some(format!(
-                "Reset '{}' to origin? Local commits on it are DISCARDED.",
-                ws.repo.main_branch
-            )),
-            Task::ResetMainToOrigin,
-        ),
+        CommandId::ResetMainToOrigin => vec![Effect::PushModal(Modal::Confirm(
+            Confirm::destructive(
+                format!(
+                    "Reset '{}' to origin? Local commits on it are DISCARDED.",
+                    ws.repo.main_branch
+                ),
+                vec![Effect::Spawn(Task::ResetMainToOrigin)],
+            )
+            .title("Reset main"),
+        ))],
         CommandId::OpenPullRequest => match ws.panels.worktree.selected() {
             Some(worktree) => vec![Effect::Spawn(Task::OpenPullRequest {
                 branch: worktree.branch.clone(),
@@ -237,8 +239,8 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             }),
         ],
         CommandId::UpdateAndRestart => match &ws.chrome.update {
-            Some(info) => vec![Effect::PushModal(Modal::Update(update::Update::Confirm(
-                Box::new(info.clone()),
+            Some(info) => vec![Effect::PushModal(Modal::Update(update::Update::confirm(
+                info.clone(),
             )))],
             None => Vec::new(),
         },
@@ -291,8 +293,9 @@ fn show_revidere(ws: &mut Workspace) -> Vec<Effect> {
     ]
 }
 
-/// 解析の前に確認を出す。worktree が無いときや既に走っているときの断り方は解析側が
-/// 持っているので、そこには確認を挟まずそのまま渡す。
+/// 解析の前に確認を出す。AI の呼び出しは数分と費用がかかるので、W の押し間違いや
+/// メニューの隣の行を選んだだけで走り出さないようにする。worktree が無いときや
+/// 既に走っているときの断り方は解析側が持っているので、そこには確認を挟まずそのまま渡す。
 fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
     let branch = ws.branch().to_string();
     if branch.is_empty() || ws.panels.revidere.is_running(&branch) {
@@ -306,13 +309,27 @@ fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
     let artifact = ws.panels.revidere.artifact(head.as_deref());
     // 同じコミットの成果物があるなら貯めた応答を捨てる。
     let on_yes = analyze(ws, artifact == revidere_panel::Artifact::Current);
-    vec![Effect::PushModal(Modal::RevidereConfirm(
-        revidere_modal::RevidereConfirm {
-            branch,
-            scope: revidere_panel::scope_label(ws.panels.revidere.scope()),
-            artifact,
-            on_yes,
-        },
+    // 作り直しなのか初めてなのかで、押す前に知りたいことが変わる。
+    let (title, situation, verb) = match artifact {
+        revidere_panel::Artifact::None => ("Review", "No review for this worktree yet.", "Analyse"),
+        revidere_panel::Artifact::Stale => (
+            "Review",
+            "A review exists, but commits have landed since.",
+            "Analyse",
+        ),
+        revidere_panel::Artifact::Current => (
+            "Re-analyse",
+            "A review for this commit already exists.",
+            "Re-analyse",
+        ),
+    };
+    let scope = revidere_panel::scope_label(ws.panels.revidere.scope());
+    vec![Effect::PushModal(Modal::Confirm(
+        Confirm::ask(situation, on_yes)
+            .title(title)
+            .detail(format!("{branch} [{scope}]"))
+            .detail("It calls the AI and takes a few minutes.")
+            .labels(verb, "Cancel"),
     ))]
 }
 
@@ -357,10 +374,10 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
 /// 文言が作れないことが「対象が無い」の印。
 fn confirm(question: Option<String>, on_yes: Task) -> Vec<Effect> {
     match question {
-        Some(question) => vec![Effect::PushModal(Modal::Confirm(Confirm {
+        Some(question) => vec![Effect::PushModal(Modal::Confirm(Confirm::ask(
             question,
-            on_yes: vec![Effect::Spawn(on_yes)],
-        }))],
+            vec![Effect::Spawn(on_yes)],
+        )))],
         None => vec![Effect::Status(
             StatusLevel::Warning,
             "no worktree selected".into(),

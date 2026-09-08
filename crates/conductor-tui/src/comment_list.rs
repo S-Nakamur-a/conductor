@@ -217,10 +217,10 @@ impl CommentList {
                 )
             }
         };
-        vec![Effect::PushModal(Modal::Confirm(Confirm {
-            question,
-            on_yes: vec![Effect::Spawn(Task::WriteReview(write))],
-        }))]
+        vec![Effect::PushModal(Modal::Confirm(
+            Confirm::destructive(question, vec![Effect::Spawn(Task::WriteReview(write))])
+                .title("Delete comment"),
+        ))]
     }
 }
 

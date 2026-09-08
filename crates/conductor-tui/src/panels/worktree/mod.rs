@@ -134,13 +134,16 @@ impl WorktreePanel {
                 worktree.branch
             )
         };
-        Effect::PushModal(Modal::Confirm(Confirm {
-            question,
-            on_yes: vec![Effect::Spawn(Task::DeleteWorktree {
-                path: worktree.path.clone(),
-                branch: worktree.branch.clone(),
-            })],
-        }))
+        Effect::PushModal(Modal::Confirm(
+            Confirm::destructive(
+                question,
+                vec![Effect::Spawn(Task::DeleteWorktree {
+                    path: worktree.path.clone(),
+                    branch: worktree.branch.clone(),
+                })],
+            )
+            .title("Delete worktree"),
+        ))
     }
 
     pub fn apply_result(&mut self, result: TaskResult, ctx: &Ctx) -> Vec<Effect> {
@@ -166,14 +169,17 @@ impl WorktreePanel {
                 )]
             }
             TaskResult::StaleWorktrees(Ok(stale)) => {
-                vec![Effect::PushModal(Modal::Confirm(Confirm {
-                    question: format!(
-                        "Prune {} stale worktree(s)? {}",
-                        stale.len(),
-                        stale.join(", ")
-                    ),
-                    on_yes: vec![Effect::Spawn(Task::PruneWorktrees { names: stale })],
-                }))]
+                vec![Effect::PushModal(Modal::Confirm(
+                    Confirm::destructive(
+                        format!(
+                            "Prune {} stale worktree(s)? {}",
+                            stale.len(),
+                            stale.join(", ")
+                        ),
+                        vec![Effect::Spawn(Task::PruneWorktrees { names: stale })],
+                    )
+                    .title("Prune worktrees"),
+                ))]
             }
             TaskResult::StaleWorktrees(Err(e)) => vec![Effect::Status(StatusLevel::Error, e)],
             TaskResult::Worktrees(Err(e)) => {
