@@ -360,9 +360,10 @@ git, and any rework of theme / keymap / text_input / config.
   `gd`/`gi`/`gr`/`gK` label every identifier on the top visible line and let you pick one
   (a single identifier jumps straight through). Picking the first one silently sent
   `pub use model::MenuItem;` to `model.rs:1` every time. Mouse Cmd+click needs no
-  picker — it already carries the clicked column. The hover popup's footer rows are
-  the mouse route: the location row jumps to the definition, the "N refs" row opens
-  the list.
+  picker — it already carries the clicked column. The hover popup is the mouse route:
+  the definition block at the top (kind header + signature) and the `path:line` row
+  both jump, the "N refs" row opens the list, and the popup stays put while the
+  pointer is inside its rectangle.
 - **Status messages:** `Effect::Status(level, text)`
 - **Doc comments:** `//!` at module level, `///` on public items
 - **Tests never wait on "quiet for N ms".** Use `conductor_tui::testing::wait_for(cond)`
