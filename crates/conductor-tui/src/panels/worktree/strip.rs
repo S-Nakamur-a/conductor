@@ -1,17 +1,9 @@
-//! ストリップ 1 行の割り付け。描画とクリック判定が同じ並びを見る。
-
-use unicode_width::UnicodeWidthStr;
+//! ストリップ 1 行の割り付け。
 
 use conductor_core::git_engine::WorktreeInfo;
 
-use crate::strip::visible_window;
+use crate::strip::{ADD, CLOSE, push, visible_window, width_of};
 use crate::workspace::Workspace;
-
-/// 新しい worktree を作るチップ。
-const ADD: &str = " [+]";
-
-/// チップの後ろに置く、その worktree を消すチップ。
-const DELETE: &str = "[x]";
 
 const SEP: &str = "\u{2502} ";
 
@@ -28,35 +20,7 @@ pub enum SlotKind {
     Muted,
 }
 
-/// ストリップに並ぶ 1 区画。列は帯の左端からの相対で、`end` は含まない。
-#[derive(Debug)]
-pub struct Slot {
-    pub start: u16,
-    pub end: u16,
-    pub label: String,
-    pub kind: SlotKind,
-}
-
-impl Slot {
-    pub fn contains(&self, x: u16) -> bool {
-        (self.start..self.end).contains(&x)
-    }
-}
-
-fn width_of(s: &str) -> u16 {
-    UnicodeWidthStr::width(s) as u16
-}
-
-fn push(slots: &mut Vec<Slot>, label: String, kind: SlotKind) {
-    let start = slots.last().map_or(0, |s| s.end);
-    let end = start + width_of(&label);
-    slots.push(Slot {
-        start,
-        end,
-        label,
-        kind,
-    });
-}
+pub type Slot = crate::strip::Slot<SlotKind>;
 
 /// worktree 1 つを一目で表す文字列。ブランチ、変更数、ahead/behind。
 fn chip_text(worktree: &WorktreeInfo, waiting: bool, active: bool) -> String {
@@ -98,7 +62,7 @@ pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
     let mut out = Vec::new();
     push(&mut out, lead.into(), SlotKind::Lead);
     if panel.list().is_empty() {
-        push(&mut out, "no worktrees".into(), SlotKind::Muted);
+        push(&mut out, "no worktrees ".into(), SlotKind::Muted);
         return out;
     }
 
@@ -117,7 +81,7 @@ pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
 
     let widths: Vec<u16> = chips
         .iter()
-        .map(|(text, deletable)| width_of(text) + if *deletable { width_of(DELETE) } else { 0 })
+        .map(|(text, deletable)| width_of(text) + if *deletable { width_of(CLOSE) } else { 0 })
         .collect();
     let avail = width.saturating_sub(width_of(lead) + width_of(ADD));
     let (start, end) = visible_window(
@@ -138,13 +102,13 @@ pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
         }
         push(&mut out, text.clone(), SlotKind::Select(i));
         if *deletable {
-            push(&mut out, DELETE.into(), SlotKind::Delete(i));
+            push(&mut out, CLOSE.into(), SlotKind::Delete(i));
         }
     }
     if end < chips.len() {
         push(
             &mut out,
-            format!(" {}\u{203a}", chips.len() - end),
+            format!(" {}\u{203a} ", chips.len() - end),
             SlotKind::Muted,
         );
     }

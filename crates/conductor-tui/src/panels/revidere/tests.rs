@@ -219,10 +219,14 @@ fn 解析の確認から2列ビューまで通る() {
     // 成果物がまだ無いので、開こうとすると作る確認になる。
     let effects = execute(&mut ws, CommandId::ShowRevidere);
     apply(&mut ws, &mut svc, effects);
-    let Some(Modal::RevidereConfirm(confirm)) = ws.modals.last() else {
+    let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
         panic!("{:?}", ws.modals.last());
     };
-    assert_eq!(confirm.artifact, Artifact::None);
+    assert!(
+        confirm.question.contains("No review"),
+        "{}",
+        confirm.question
+    );
     assert_ne!(ws.focus, Focus::Revidere, "確認の前にビューへは行かない");
 
     // y は解析を起こす。AI は呼ばず、届いた結果として成果物を差し込む。
@@ -368,10 +372,11 @@ fn 同じコミットの作り直しは貯めた応答を捨てる() {
         pump(&mut ws, &mut svc);
 
         let effects = execute(&mut ws, CommandId::AnalyzeRevidere);
-        let [Effect::PushModal(Modal::RevidereConfirm(confirm))] = effects.as_slice() else {
+        let [Effect::PushModal(Modal::Confirm(confirm))] = effects.as_slice() else {
             panic!("{effects:?}");
         };
-        assert_eq!(confirm.artifact, artifact);
+        let re_analyse = artifact == Artifact::Current;
+        assert_eq!(confirm.title == "Re-analyse", re_analyse, "{artifact:?}");
         let [Effect::Spawn(Task::Analyze { force: got, .. }), ..] = confirm.on_yes.as_slice()
         else {
             panic!("{:?}", confirm.on_yes);

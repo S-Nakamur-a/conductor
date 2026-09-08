@@ -1,9 +1,10 @@
 //! GitHub へコメントを投稿する前の確認。取り消せないので、何が飛ぶかを並べる。
 
-use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::style::{Modifier, Style};
+use crossterm::event::KeyEvent;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use super::confirm::{Answer, Choice};
 use crate::effect::Effect;
 use crate::task::{Publishable, Task};
 use crate::workspace::{Ctx, StatusLevel};
@@ -11,16 +12,20 @@ use crate::workspace::{Ctx, StatusLevel};
 #[derive(Debug)]
 pub struct Publish {
     request: Box<Publishable>,
+    choice: Choice,
 }
 
 impl Publish {
     pub fn new(request: Box<Publishable>) -> Self {
-        Self { request }
+        Self {
+            request,
+            choice: Choice::new(Answer::Yes).labels("Publish", "Cancel"),
+        }
     }
 
     pub fn update(&mut self, key: KeyEvent, _ctx: &Ctx) -> Vec<Effect> {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => vec![
+        match self.choice.key(key) {
+            Some(Answer::Yes) => vec![
                 Effect::PopModal,
                 Effect::Status(
                     StatusLevel::Info,
@@ -31,11 +36,11 @@ impl Publish {
                 ),
                 Effect::Spawn(Task::Publish(self.request.clone())),
             ],
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => vec![
+            Some(Answer::No) => vec![
                 Effect::PopModal,
                 Effect::Status(StatusLevel::Warning, "Publish cancelled.".into()),
             ],
-            _ => Vec::new(),
+            None => Vec::new(),
         }
     }
 }
@@ -80,10 +85,7 @@ pub fn lines(modal: &Publish, ctx: &Ctx) -> Vec<Line<'static>> {
         ));
     }
     lines.push(Line::from(""));
-    lines.push(Line::styled(
-        " y: publish  \u{b7}  n: cancel",
-        Style::default().fg(theme.hint).add_modifier(Modifier::BOLD),
-    ));
+    lines.push(modal.choice.line(theme));
     lines
 }
 
@@ -92,7 +94,7 @@ mod tests {
     use super::*;
     use crate::workspace::Workspace;
     use conductor_core::review_publish::PublishComment;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyCode, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

@@ -214,7 +214,10 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
         }
         spans.push(Span::styled(tabs::label(&tab.path), style));
         if !close.is_empty() {
-            spans.push(Span::styled(tabs::CLOSE, Style::default().fg(theme.error)));
+            spans.push(Span::styled(
+                crate::strip::CLOSE,
+                crate::strip::close_style(theme),
+            ));
         }
     }
     if strip.right {

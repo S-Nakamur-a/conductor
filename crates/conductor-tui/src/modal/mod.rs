@@ -17,6 +17,7 @@ use crate::workspace::{Ctx, StatusLevel};
 
 pub mod branch;
 pub mod commits;
+pub mod confirm;
 pub mod grep;
 pub mod help;
 pub mod history;
@@ -27,11 +28,12 @@ pub mod pr;
 pub mod publish;
 pub mod references;
 pub mod repo;
-pub mod revidere;
 pub mod session;
 pub mod symbol_actions;
 pub mod theme;
 pub mod update;
+
+pub use confirm::Confirm;
 
 #[derive(Debug)]
 pub enum Modal {
@@ -53,7 +55,6 @@ pub enum Modal {
     Update(update::Update),
     References(references::References),
     SymbolActions(symbol_actions::SymbolActions),
-    RevidereConfirm(revidere::RevidereConfirm),
 }
 
 /// 1 行のテキスト入力。確定した文字列は選択中の [Mode] が Effect に変える。
@@ -135,14 +136,6 @@ pub fn prompt_lines(prompt: &Prompt, theme: &Theme, width: usize) -> Vec<Line<'s
             .map(|line| Line::styled(format!("> {line}"), Style::default().fg(theme.fg))),
     );
     lines
-}
-
-/// y で発火する Effect を積んだ確認。開いた側が対象を捕まえたまま作れるよう、
-/// 閉包ではなく組み立て済みの Effect を持つ。
-#[derive(Debug)]
-pub struct Confirm {
-    pub question: String,
-    pub on_yes: Vec<Effect>,
 }
 
 /// 1 つの入力欄が兼ねる 4 つの書き込み先。
@@ -289,19 +282,6 @@ impl CommentEditor {
     }
 }
 
-/// y / enter で積んだ Effect を流し、n / esc で閉じるだけの確認。
-fn yes_no(key: KeyEvent, on_yes: &mut Vec<Effect>) -> Vec<Effect> {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            let mut effects = vec![Effect::PopModal];
-            effects.append(on_yes);
-            effects
-        }
-        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => vec![Effect::PopModal],
-        _ => Vec::new(),
-    }
-}
-
 impl Modal {
     pub fn tick(&mut self, ctx: &Ctx) -> Vec<Effect> {
         match self {
@@ -338,8 +318,7 @@ impl Modal {
             | Modal::Publish(_)
             | Modal::Update(_)
             | Modal::References(_)
-            | Modal::SymbolActions(_)
-            | Modal::RevidereConfirm(_) => {}
+            | Modal::SymbolActions(_) => {}
         }
     }
 
@@ -375,8 +354,7 @@ impl Modal {
                     vec![]
                 }
             },
-            Modal::Confirm(confirm) => yes_no(key, &mut confirm.on_yes),
-            Modal::RevidereConfirm(confirm) => yes_no(key, &mut confirm.on_yes),
+            Modal::Confirm(confirm) => confirm.update(key),
             Modal::CommentEditor(editor) => editor.key(key),
             Modal::CommentList(list) => {
                 if key.code == KeyCode::Esc {

@@ -463,16 +463,8 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
             crate::modal::prompt_lines(prompt, &ws.theme, area.width as usize * 60 / 100),
         ),
         Modal::Confirm(confirm) => (
-            "Confirm".to_string(),
-            vec![
-                Line::from(confirm.question.clone()),
-                Line::from(""),
-                Line::styled("y / n", Style::default().fg(ws.theme.hint)),
-            ],
-        ),
-        Modal::RevidereConfirm(confirm) => (
-            crate::modal::revidere::title(confirm),
-            crate::modal::revidere::lines(confirm, &ws.theme),
+            confirm.title.clone(),
+            crate::modal::confirm::lines(confirm, &ws.theme),
         ),
         Modal::CommentEditor(editor) => (
             editor.title(),

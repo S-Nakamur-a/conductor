@@ -34,10 +34,8 @@ pub fn strip(ws: &Workspace, area: Rect) -> Line<'static> {
                     Style::default().fg(theme.warning)
                 }
                 strip::SlotKind::Select(_) => Style::default().fg(theme.muted),
-                strip::SlotKind::Delete(_) => Style::default().fg(theme.error),
-                strip::SlotKind::Add => Style::default()
-                    .fg(theme.success)
-                    .add_modifier(Modifier::BOLD),
+                strip::SlotKind::Delete(_) => crate::strip::close_style(theme),
+                strip::SlotKind::Add => crate::strip::add_style(theme),
                 strip::SlotKind::Sep => Style::default().fg(theme.border_secondary),
                 strip::SlotKind::Muted => Style::default().fg(theme.muted),
             };
