@@ -24,6 +24,7 @@ pub mod review;
 pub mod route;
 pub mod run;
 pub mod search_tree;
+pub mod select;
 pub mod strip;
 pub mod task;
 pub mod term;

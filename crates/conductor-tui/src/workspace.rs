@@ -106,6 +106,10 @@ pub struct Chrome {
     pub maximized: bool,
     /// つかんでいる境界。離すまで持つ。
     pub drag: Option<crate::layout::Divider>,
+    /// マウスで選んでいる区画内の範囲。次のクリック・スクロール・キーで消える。
+    pub selection: Option<crate::select::Selection>,
+    /// 離した選択をクリップボードへ渡す番。文字は描いた画面から拾うので、次の描画の後に済ませる。
+    pub copy_requested: bool,
     /// 走っているものより新しいリリース。タイトルバーのバッジが読む。
     pub update: Option<UpdateInfo>,
 }

@@ -38,6 +38,8 @@ tree-sitter = "0.26"
 git2 = { version = "0.20", features = ["vendored-openssl"] }
 # PR ページを既定のブラウザで開く。
 open = "5"
+# 区画内選択を OSC 52 で端末のクリップボードへ渡す。
+base64 = "0.22"
 # 画像プレビュー。aa-media が吐く ANSI を vt100 に通して行にする。
 aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }

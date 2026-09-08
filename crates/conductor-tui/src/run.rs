@@ -1,6 +1,6 @@
 //! メインループ。待つ → 入力を捌く → svc の結果を消費 → 描く、の 1 周を回す。
 
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use crossterm::execute;
 use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 
 use conductor_svc::watch::FileWatcher;
@@ -22,6 +23,7 @@ use crate::layout::{Layout, Region, layout};
 use crate::liveness::{Liveness, liveness};
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
+use crate::select;
 use crate::task::{Task, TaskResult};
 use crate::timer::{CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL};
 use crate::workspace::{Focus, StatusLevel, Workspace};
@@ -138,8 +140,30 @@ pub fn run(
                 terminal.clear()?;
             }
             ws.fx.start_pending();
-            terminal.draw(|frame| render(frame, ws, &last_layout))?;
+            let mut clipboard = None;
+            terminal.draw(|frame| {
+                render(frame, ws, &last_layout);
+                if ws.chrome.copy_requested {
+                    clipboard = selected_text(ws, &last_layout, frame.buffer_mut())
+                        .filter(|text| !text.is_empty());
+                }
+            })?;
             let _ = execute!(io::stdout(), EndSynchronizedUpdate);
+            ws.chrome.copy_requested = false;
+            if let Some(text) = clipboard {
+                let mut stdout = io::stdout();
+                let _ = stdout
+                    .write_all(&select::osc52(&text))
+                    .and_then(|_| stdout.flush());
+                apply(
+                    ws,
+                    svc,
+                    vec![Effect::Status(
+                        StatusLevel::Info,
+                        "Copied to clipboard".into(),
+                    )],
+                );
+            }
             dirty = false;
         }
 
@@ -346,7 +370,7 @@ fn drain_input(
                 on_key(ws, svc, key);
             }
             Event::Mouse(mouse) => on_mouse(ws, svc, layout, mouse),
-            Event::Paste(data) => on_paste(ws, data),
+            Event::Paste(data) => on_paste(ws, svc, data),
             _ => {}
         }
         if ws.should_quit || Instant::now() >= deadline || !crossterm::event::poll(Duration::ZERO)?
@@ -358,6 +382,7 @@ fn drain_input(
 
 /// キー 1 つ分の route → update → apply。ループとテストの両方がここを通る。
 pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent) {
+    ws.chrome.selection = None;
     let effects = match route(ws, key) {
         Routed::Effects(effects) => effects,
         Routed::Action(action) => ws
@@ -375,9 +400,15 @@ pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent)
 /// 貼り付け 1 つ分。macOS の端末は IME で確定したマルチバイト文字をキーではなく
 /// bracketed paste で届けるので、これを捨てると日本語が 1 文字ずつしか入らない。
 /// キーと同じ順で最前面のモーダルに優先権を渡す (裏の PTY へ流れると入力欄から消える)。
-pub fn on_paste(ws: &mut Workspace, data: String) {
+///
+/// ドロップされたファイルは端末が落とした位置を教えないので、フォーカスに関係なく Claude Code へ流す。
+pub fn on_paste(ws: &mut Workspace, svc: &mut Services<TaskResult>, data: String) {
     if let Some(modal) = ws.modals.last_mut() {
         modal.paste(&data);
+        return;
+    }
+    if dropped_file(&data).is_some() && ws.panels.terminal.paste(&data, Focus::TerminalClaude) {
+        apply(ws, svc, vec![Effect::Focus(Focus::TerminalClaude)]);
         return;
     }
     if matches!(
@@ -386,6 +417,35 @@ pub fn on_paste(ws: &mut Workspace, data: String) {
     ) {
         ws.panels.terminal.paste(&data, ws.focus);
     }
+}
+
+/// 貼り付けがファイルのドロップなら、そのパス。
+///
+/// 端末はドロップしたパスの後ろに空白を 1 つ足す — Cmd+V で貼ったパスには無いので、
+/// これが両者を分ける印。空白を含むパスは iTerm2 や Terminal.app が `\ ` に、
+/// Alacritty が `'…'` に包むので、存在を確かめる前にほどく。
+fn dropped_file(text: &str) -> Option<PathBuf> {
+    let trimmed = text.trim_end_matches([' ', '\n', '\r']);
+    if trimmed.len() == text.len() || trimmed.contains('\n') {
+        return None;
+    }
+    let unquoted = trimmed
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap_or(trimmed);
+    let mut path = String::with_capacity(unquoted.len());
+    let mut chars = unquoted.chars();
+    while let Some(c) = chars.next() {
+        path.push(if c == '\\' { chars.next()? } else { c });
+    }
+    let path = PathBuf::from(path);
+    (path.is_absolute() && path.is_file()).then_some(path)
+}
+
+fn selected_text(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Option<String> {
+    let selection = ws.chrome.selection.as_ref()?;
+    let area = select::area(layout, selection.region)?;
+    Some(select::text(buffer, selection, area))
 }
 
 /// クリックした区画へフォーカスを移し、その区画に行を渡す。ホイールは
@@ -398,6 +458,9 @@ fn on_mouse(
 ) {
     if let Some(effects) = drag_divider(ws, layout, mouse) {
         apply(ws, svc, effects);
+        return;
+    }
+    if drag_select(ws, layout, mouse) {
         return;
     }
     let Some(region) = layout.hit(mouse.column, mouse.row) else {
@@ -424,6 +487,8 @@ fn on_mouse(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            ws.chrome.selection = select::area(layout, region)
+                .map(|_| select::Selection::begin(region, mouse.column, mouse.row));
             // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の
             // 代わりに中央の一覧が開く。
             if region == Region::WorktreeStrip {
@@ -497,6 +562,29 @@ fn on_mouse(
     }
 }
 
+fn drag_select(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> bool {
+    let Some(selection) = ws.chrome.selection.as_mut() else {
+        return false;
+    };
+    match mouse.kind {
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(area) = select::area(layout, selection.region) {
+                selection.extend(mouse.column, mouse.row, area);
+            }
+            true
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if selection.is_empty() {
+                ws.chrome.selection = None;
+            } else {
+                ws.chrome.copy_requested = true;
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 /// つかんだ境界は区画に属さないので、区画の割り出しより先に捌く。
 fn drag_divider(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
     if let Some(divider) = ws.chrome.drag {
@@ -544,6 +632,7 @@ fn scroll_region(
     mouse: MouseEvent,
     delta: isize,
 ) {
+    ws.chrome.selection = None;
     match region {
         Region::ExplorerTree | Region::ExplorerChanges => {
             let Workspace { panels, review, .. } = ws;
@@ -628,7 +717,7 @@ mod tests {
             .push(Modal::Prompt(crate::modal::Prompt::single("t", |_| {
                 Vec::new()
             })));
-        on_paste(&mut ws, "日本語".into());
+        on_paste(&mut ws, &mut Services::new(), "日本語".into());
         let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
             panic!("{:?}", ws.modals);
         };
@@ -677,9 +766,131 @@ mod tests {
     fn 端末に映すセッションが無ければ貼り付けは捨てる() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::TerminalShell;
-        on_paste(&mut ws, "日本語".into());
+        on_paste(&mut ws, &mut Services::new(), "日本語".into());
         assert!(ws.modals.is_empty());
         assert!(ws.chrome.status.is_none());
+    }
+
+    #[test]
+    fn ドロップは末尾の空白と存在で見分ける() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("shot.png");
+        let spaced = dir.path().join("Screenshot 2026-09-08 at 18.02.11.png");
+        std::fs::write(&plain, b"").unwrap();
+        std::fs::write(&spaced, b"").unwrap();
+        let escaped = spaced.display().to_string().replace(' ', "\\ ");
+
+        assert_eq!(
+            dropped_file(&format!("{} ", plain.display())),
+            Some(plain.clone())
+        );
+        assert_eq!(dropped_file(&format!("{escaped} ")), Some(spaced.clone()));
+        assert_eq!(
+            dropped_file(&format!("'{}' ", spaced.display())),
+            Some(spaced.clone())
+        );
+        assert_eq!(
+            dropped_file(&plain.display().to_string()),
+            None,
+            "Cmd+V で貼ったパスには末尾の空白が無い"
+        );
+        assert_eq!(
+            dropped_file(&format!("{} ", dir.path().join("nope.png").display())),
+            None
+        );
+        assert_eq!(
+            dropped_file(&format!("{}\n{} ", plain.display(), plain.display())),
+            None
+        );
+    }
+
+    #[test]
+    fn ドロップしたファイルはフォーカスがどこでもclaude_codeへ行く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let dir = tempfile::tempdir().unwrap();
+        ws.config.general.shell = "/bin/sh".into();
+        ws.repo.root = dir.path().to_path_buf();
+        ws.panels
+            .terminal
+            .follow_worktree(Some(dir.path().to_path_buf()));
+        let file = dir.path().join("shot.png");
+        std::fs::write(&file, b"").unwrap();
+
+        ws.focus = Focus::Viewer;
+        on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
+        assert_eq!(
+            ws.focus,
+            Focus::Viewer,
+            "Claude Code のセッションが無ければ今まで通り捨てる"
+        );
+
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
+        assert_eq!(ws.focus, Focus::TerminalClaude);
+    }
+
+    #[test]
+    fn 区画の中でドラッグすると選択が枠の内側に収まり離すと書き出す番になる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let viewer = l.rect(Region::Viewer).unwrap();
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        let down = at(
+            MouseEventKind::Down(MouseButton::Left),
+            viewer.x + 3,
+            viewer.y + 3,
+        );
+        on_mouse(&mut ws, &mut svc, &l, down);
+        let up_in_place = at(
+            MouseEventKind::Up(MouseButton::Left),
+            viewer.x + 3,
+            viewer.y + 3,
+        );
+        on_mouse(&mut ws, &mut svc, &l, up_in_place);
+        assert_eq!(
+            ws.chrome.selection, None,
+            "動かさずに離したクリックは選ばない"
+        );
+        assert!(!ws.chrome.copy_requested);
+
+        on_mouse(&mut ws, &mut svc, &l, down);
+        let outside = at(
+            MouseEventKind::Drag(MouseButton::Left),
+            0,
+            viewer.bottom() + 5,
+        );
+        on_mouse(&mut ws, &mut svc, &l, outside);
+        let selection = ws.chrome.selection.expect("ドラッグで選択が始まる");
+        assert_eq!(selection.region, Region::Viewer);
+        assert!(selection.contains(viewer.x + 1, viewer.bottom() - 2));
+        assert!(
+            !selection.contains(viewer.x + 2, viewer.bottom() - 2),
+            "先端は枠の内側の左端で止まる"
+        );
+        assert!(
+            !selection.contains(viewer.x + 1, viewer.bottom() - 1),
+            "先端は枠の内側の下端で止まる"
+        );
+
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::Up(MouseButton::Left), 0, 0),
+        );
+        assert!(ws.chrome.copy_requested);
+        assert!(ws.chrome.selection.is_some(), "書き出すまで選択は残る");
+
+        press(&mut ws, &[key(KeyCode::Char('j'))]);
+        assert_eq!(ws.chrome.selection, None, "キーを押したら消える");
     }
 
     /// Viewer の e から埋め込みエディタを起こし、プロセスが終わったら Viewer に戻って

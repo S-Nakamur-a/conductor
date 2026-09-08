@@ -60,6 +60,15 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
         crate::panels::explorer::render::render(frame, tree, changes, ws);
     }
 
+    if let Some(selection) = ws.chrome.selection.as_ref().filter(|s| !s.is_empty())
+        && let Some(area) = crate::select::area(layout, selection.region)
+    {
+        let style = Style::default()
+            .fg(ws.theme.selected_fg)
+            .bg(ws.theme.selected_bg);
+        crate::select::highlight(frame.buffer_mut(), selection, area, style);
+    }
+
     // worktree は全幅のストリップに収まらないので、フォーカス中だけ一覧を重ねる。
     if ws.focus == Focus::Worktree {
         crate::panels::worktree::render::list(frame, frame.area(), ws);
