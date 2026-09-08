@@ -63,6 +63,9 @@ struct SharedIo {
     /// 出るだけで、メモリと CPU を捨てることになる。
     raw_history: Option<Arc<Mutex<VecDeque<u8>>>>,
     last_output: Arc<Mutex<Instant>>,
+    /// 子が最後にカーソルを見せていたときの位置。描画中に隠している間 (DECTCEM off) は
+    /// カーソルが本文の中を走るので、その瞬間の位置は IME の変換窓の置き場にならない。
+    shown_cursor: Arc<Mutex<(u16, u16)>>,
     /// オルタネートスクリーンへの遷移を reader スレッドが立てる。
     alt_screen_entered: Arc<AtomicBool>,
     /// store 全体で 1 つ。新しい出力が届いたことをメインループへ知らせる。
@@ -100,6 +103,11 @@ impl PtySession {
     /// 最後に PTY 出力を受け取った時刻。
     pub fn last_output(&self) -> Instant {
         *lock(&self.io.last_output)
+    }
+
+    /// 子がカーソルを見せていた最後の位置 (行, 桁)。
+    pub fn shown_cursor(&self) -> (u16, u16) {
+        *lock(&self.io.shown_cursor)
     }
 }
 

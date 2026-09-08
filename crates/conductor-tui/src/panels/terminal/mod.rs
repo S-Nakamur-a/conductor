@@ -687,6 +687,25 @@ impl TerminalPanel {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn show_shell_as_claude_for_test(&mut self, dir: &Path) {
+        use conductor_svc::pty::{Launch, Spawn};
+        self.worktree = Some(dir.to_path_buf());
+        let index = self
+            .pty
+            .spawn(Spawn {
+                launch: Launch::Shell { program: "/bin/sh" },
+                worktree: "t",
+                label: "CC:1",
+                working_dir: dir,
+                rows: 10,
+                cols: 40,
+            })
+            .unwrap();
+        let id = self.pty.sessions()[index].id.clone();
+        self.claude.show(Some(id));
+    }
+
     /// 起動時の復帰。追従中の worktree もフォーカスも動かさない — 画面に出すのは
     /// いま映している worktree で、その区画がまだ空のときだけ。
     pub fn resume(
@@ -836,25 +855,26 @@ impl TerminalPanel {
         }
     }
 
-    /// フォーカス中の区画の PTY へ貼り付けを流す。スクロールを最新へ戻すのは、
-    /// 遡って読んでいる間だと入れた文字が見えないから。
-    pub fn paste(&mut self, text: &str, focus: Focus) {
+    /// focus の区画の PTY へ貼り付けを流す。映すセッションが無ければ false。
+    /// スクロールを最新へ戻すのは、遡って読んでいる間だと入れた文字が見えないから。
+    pub fn paste(&mut self, text: &str, focus: Focus) -> bool {
         let session = match focus {
             Focus::TerminalClaude => self.claude.session.clone(),
             Focus::TerminalShell => self.shell.session.clone(),
             Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
-            _ => return,
+            _ => return false,
         };
         let Some(index) = self.index_of(session.as_deref()) else {
-            return;
+            return false;
         };
         if let Err(e) = self.pty.write_paste_to_session(index, text) {
             log::warn!("could not paste into the PTY session: {e:#}");
-            return;
+            return false;
         }
         if let Some(pane) = self.pane_mut(focus) {
             pane.scroll = 0;
         }
+        true
     }
 
     /// 区画の大きさが変わっていたら PTY へ伝える。同じ worktree の同じ種類は

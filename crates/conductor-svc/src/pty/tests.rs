@@ -5,8 +5,25 @@ use std::collections::VecDeque;
 
 use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence};
 use super::locale::{utf8_chunks, utf8_locale_overrides};
-use super::reader::trim_raw_history;
+use super::reader::{note_shown_cursor, trim_raw_history};
 use super::screen::rebuild_parser;
+
+#[test]
+fn 隠している間のカーソル位置は取り込まない() {
+    let mut parser = vt100::Parser::new(10, 40, 0);
+    let mut shown = (0, 0);
+    parser.process(b"\x1b[5;3H");
+    note_shown_cursor(parser.screen(), &mut shown);
+    assert_eq!(shown, (4, 2));
+
+    parser.process(b"\x1b[?25l\x1b[2;1Hstreaming");
+    note_shown_cursor(parser.screen(), &mut shown);
+    assert_eq!(shown, (4, 2), "描き途中の位置は無視する");
+
+    parser.process(b"\x1b[8;3H\x1b[?25h");
+    note_shown_cursor(parser.screen(), &mut shown);
+    assert_eq!(shown, (7, 2));
+}
 
 #[test]
 fn 矢印の列はdecckmと向きに従う() {

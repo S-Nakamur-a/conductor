@@ -39,6 +39,7 @@ pub(super) fn run(
         {
             let mut parser = lock(&io.screen);
             parser.process(bytes);
+            note_shown_cursor(parser.screen(), &mut lock(&io.shown_cursor));
 
             // 記録はパーサへの供給と同じロックの下で行う。並行するリサイズの再構築から
             // 見ても、履歴とパーサの内容が食い違わないようにするため。
@@ -81,6 +82,12 @@ pub(super) fn run(
 
     if !partial.is_empty() {
         push_line(&io, partial);
+    }
+}
+
+pub(super) fn note_shown_cursor(screen: &vt100::Screen, shown: &mut (u16, u16)) {
+    if !screen.hide_cursor() {
+        *shown = screen.cursor_position();
     }
 }
 
