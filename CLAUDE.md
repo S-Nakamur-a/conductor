@@ -190,10 +190,11 @@ first.
   who pressed it is waiting. A root whose key is stale (`note_change` clears it)
   waits for the survey, or the index would be written under the name of content it
   no longer describes.
-- **Reading falls back to the newest generation when no key matches**
-  (`IndexRoot::source`). Requiring an exact match would make one keystroke hide
-  the whole index, when per-file provenance already keeps the untouched files
-  answering `Exact`.
+- **Reading falls back to the generation that explains the file being read**
+  (`IndexRoot::source`), and only to the newest one when none does. Requiring an
+  exact key match would make one keystroke hide the whole index; taking the newest
+  unconditionally rebuilt on every worktree switch, because an edit landing here
+  while another tree was on screen moved the key without touching the open file.
 - **Every generation appends one `key=value` line to `index-history.log`**
   (`semantic_index/history.rs`) — enough to reconstruct both the causality and
   whether the work was worth doing:

@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use sheaf_core::{Definition, Location, Producer, Store};
 
@@ -456,6 +456,41 @@ fn 索引ルートが複数あればすべて畳んで読む() {
 
     let store = load(dir.path(), dir.path()).expect("置いた索引を読めない");
     assert_eq!(store.len(), 2, "索引ルートのどちらかが落ちた");
+}
+
+#[test]
+fn 鍵の合う世代が無ければ読んでいるファイルを説明できる世代を読む() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = at("", Language::Rust);
+    let place = |key: &str, hash: &str, age: Duration| -> PathBuf {
+        let target = root.target(dir.path(), dir.path(), key);
+        write_index(&target.index);
+        write_hashes(&target.hashes, &[("src/lib.rs", hash.into())]);
+        std::fs::File::options()
+            .write(true)
+            .open(&target.index)
+            .unwrap()
+            .set_modified(SystemTime::now() - age)
+            .unwrap();
+        target.index
+    };
+    let older = place("aaaaaaaaaaaa", "h1", Duration::from_secs(60));
+    let newest = place("bbbbbbbbbbbb", "h2", Duration::ZERO);
+    let lib = Path::new("src/lib.rs");
+    let pick = |key: &str, reading| root.source(dir.path(), key, reading).map(|s| s.index);
+
+    assert_eq!(pick("cccccccccccc", Some((lib, "h1"))), Some(older.clone()));
+    assert_eq!(
+        pick("cccccccccccc", Some((lib, "h3"))),
+        Some(newest.clone()),
+        "説明できる世代が無ければ最新"
+    );
+    assert_eq!(pick("cccccccccccc", None), Some(newest));
+    assert_eq!(
+        pick("aaaaaaaaaaaa", Some((lib, "h2"))),
+        Some(older),
+        "鍵が合えばそれ"
+    );
 }
 
 #[test]

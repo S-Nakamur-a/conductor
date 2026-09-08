@@ -280,15 +280,21 @@ impl IndexRoot {
 
     /// 置いてある索引を投入元にする。索引か出自の表のどちらかが無ければ `None`。
     ///
-    /// 鍵が一致する世代が無ければ最新の世代に落ちる。落とさないと 1 ファイル編集した
-    /// 瞬間に索引全体が見えなくなる。説明できるかは出自の表がファイル単位で決めるので、
-    /// 内容の違う世代を読んでも誤答にはならない。
-    pub fn source(&self, dir: &Path, key: &str) -> Option<IndexSource> {
+    /// 鍵が一致する世代が無ければ、読んでいるファイル (`reading` はルート相対のパスと今の
+    /// 内容ハッシュ) を同じ内容で載せている世代、それも無ければ最新の世代に落ちる。落とさ
+    /// ないと 1 ファイル編集した瞬間に索引全体が見えなくなる。説明できるかは出自の表が
+    /// ファイル単位で決めるので、内容の違う世代を読んでも誤答にはならない。
+    pub fn source(
+        &self,
+        dir: &Path,
+        key: &str,
+        reading: Option<(&Path, &str)>,
+    ) -> Option<IndexSource> {
         let exact = dir.join(format!("{}.scip", self.stem_for(key)));
         let index = if exact.is_file() {
             exact
         } else {
-            self.generations(dir).into_iter().next()?.1
+            self.explaining_generation(dir, reading)?
         };
         let expected = self.provenance_at(&index.with_extension("hashes"))?;
         Some(IndexSource {
@@ -296,6 +302,22 @@ impl IndexRoot {
             subroot: self.subroot.clone(),
             expected,
         })
+    }
+
+    /// 最新で決め打ちすると、別の worktree を見ている間にこちらへ編集が入るたび、開いて
+    /// いるファイルは動いていないのに 12 秒の作り直しに行く。
+    fn explaining_generation(&self, dir: &Path, reading: Option<(&Path, &str)>) -> Option<PathBuf> {
+        let generations = self.generations(dir);
+        let explains = |index: &Path| {
+            let (rel, hash) = reading?;
+            let table = self.provenance_at(&index.with_extension("hashes"))?;
+            (table.get(rel).map(String::as_str) == Some(hash)).then_some(())
+        };
+        generations
+            .iter()
+            .find(|(_, index)| explains(index).is_some())
+            .or(generations.first())
+            .map(|(_, index)| index.clone())
     }
 
     /// `key` の世代の出自の表。索引ルート相対のパス -> 内容ハッシュ。

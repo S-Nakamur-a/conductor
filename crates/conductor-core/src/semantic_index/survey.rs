@@ -61,11 +61,20 @@ pub fn survey_and_load(
 ) -> (Survey, Option<Store>) {
     let conductor_dir = main_conductor_dir(repo_root);
     let survey = survey(tree_root, conductor_dir.as_deref(), reading, wanted);
+    let current = reading.and_then(|rel| {
+        let hash = sheaf_core::blob_hash(&std::fs::read(tree_root.join(rel)).ok()?);
+        Some((rel, hash))
+    });
     let store = conductor_dir.and_then(|dir| {
         let sources: Vec<IndexSource> = survey
             .roots
             .iter()
-            .filter_map(|(at, key)| at.source(&dir, key))
+            .filter_map(|(at, key)| {
+                let reading = current.as_ref().and_then(|(rel, hash)| {
+                    Some((rel.strip_prefix(&at.subroot).ok()?, hash.as_str()))
+                });
+                at.source(&dir, key, reading)
+            })
             .collect();
         if sources.is_empty() {
             return None;
