@@ -16,14 +16,15 @@ Set `RUST_LOG=debug` for logging.
 root `conductor` package, which is a five-line `main.rs`; everything else is in
 `crates/`. `default-members` is left alone so `cargo run` stays unambiguous.
 
-CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace` on every
-pull request. `.githooks/pre-commit` runs the same fmt check locally, but wiring
+CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace -- -D warnings`
+on every pull request — a warning is a failure, including one inherited from main. `.githooks/pre-commit` runs the same fmt check locally, but wiring
 it up is each developer's own business — the repository does not install it.
 
 ### MCP Server (`conductor mcp-serve`, `crates/conductor-mcp/`)
 
-The review DB tools are served by the conductor binary itself over stdio — no
-separate build step, no Node. `cargo install --path .` updates the binary and its
+The review DB tools and the code-index tools (`search_symbols` / `read_symbol`,
+`crates/conductor-mcp/src/tools/symbols.rs`) are served by the conductor binary
+itself over stdio — no separate build step, no Node. `cargo install --path .` updates the binary and its
 MCP tools together, which is the point: they used to be two artifacts on two
 release channels and drifted apart. `plugins/conductor/.mcp.json` starts it for
 the Claude Code sessions inside the TUI, resolving the DB from
@@ -124,6 +125,11 @@ Two SCIP traps that typed access will not save you from:
   table: scip-typescript writes no `kind` at all, and a tool-keyed table would
   silently answer `Unknown`. Producers that omit it fall to
   `kind::from_declaration`.
+- **A test over hand-written SCIP spellings proves nothing.** Any code that parses
+  producer output must have at least one case pasted verbatim from a real index
+  (`.conductor/index.<lang>.<key>.scip`). Counts grouped by descriptor *suffix*
+  hide prefix grammar: `impl#[Store]load().` lands in the `().` bucket, which is
+  how `display_name` shipped answering `[Store]load`.
 
 Where it lives: `<main worktree>/.conductor/`, one set of
 `index.<lang>[.<root>].<key>.{scip,hashes,log}` per index root *per tree

@@ -117,6 +117,14 @@ TUI's version. Installing the plugin configures it, but **`conductor` must be on
 conductor mcp-serve --db /path/to/repo/.conductor/conductor.db   # run it by hand
 ```
 
+Besides the review-comment tools, the server reads the code index conductor
+builds (`.conductor/index.<lang>.<key>.scip`): `search_symbols` lists definitions
+by name, kind, or file (one line each: `path:line kind Type::name [first-last]`
+plus the signature), and `read_symbol` returns one definition's doc comment,
+attributes and body without reading the whole file. A file edited since the
+index was built gets no line numbers — the tools say so instead of guessing.
+Markdown, TOML and other non-indexed files stay invisible to them; use grep.
+
 ## Configuration
 
 Config file: `~/.config/conductor/config.toml`

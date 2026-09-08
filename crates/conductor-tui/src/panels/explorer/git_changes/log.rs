@@ -55,6 +55,10 @@ impl CommitLog {
         1 + self.commits.len() + usize::from(!self.exhausted)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn row(&self, index: usize) -> Option<Row> {
         match index {
             0 => Some(Row::WorkingTree),
