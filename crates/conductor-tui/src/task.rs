@@ -54,8 +54,8 @@ pub enum Task {
     CreateWorktree {
         branch: String,
     },
-    /// 自由記述のタスクから worktree を組み立てる。ブランチ名と Claude へ流す
-    /// プロンプトは AI が決める。
+    /// 自由記述のタスクから worktree を組み立てる。ブランチ名とセッション名は
+    /// AI が決め、Claude へは説明文をそのまま流す。
     SmartWorktree {
         description: String,
         api: ApiConfig,
@@ -1258,9 +1258,6 @@ fn smart_worktree(
     api: &ApiConfig,
 ) -> Result<SmartWorktree, String> {
     let plan = smart_worktree::generate(description, api, &env.root)?;
-    if plan.branch.trim().is_empty() {
-        return Err("the model answered with an empty branch name".into());
-    }
     let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
     // リモートを持たないリポジトリで origin/main を掴んで作成ごと失敗しないよう、
     // 実在する ref へ解決してから渡す。
@@ -1271,7 +1268,7 @@ fn smart_worktree(
     Ok(SmartWorktree {
         path,
         branch: plan.branch,
-        prompt: plan.prompt,
+        prompt: description.to_string(),
         session_name: plan.session_name,
     })
 }

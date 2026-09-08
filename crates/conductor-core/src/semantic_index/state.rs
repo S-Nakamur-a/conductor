@@ -205,7 +205,7 @@ impl SemanticIndex {
         };
         // 出自はファイル単位なので、ほかのファイルが動いて鍵がずれても、読んでいるファイルは
         // 前の世代のまま Exact に答える。鍵だけを見て走らせると、git がツリーを動かすたびに
-        // producer (実測 14 秒 / 2.3GiB) を起こすことになる。
+        // producer を丸ごと起こすことになる。
         if covered {
             return settle(self, Reading::Indexed);
         }
@@ -277,9 +277,9 @@ impl SemanticIndex {
         self.roots.iter_mut().find_map(|root| {
             // 鍵の無いルートは進めない (Root::key)。
             let key = root.key.clone()?;
-            // この内容の索引はもう置いてある。producer を起こしても同じものが出る。編集で
-            // 行ったり来たりするだけで 14 秒 / 2.3GiB を払わないための門。手で頼まれた
-            // ときは通さない — 押した人は「もうある」ではなく作り直しを待っている。
+            // この内容の索引はもう置いてある。producer を起こしても同じものが出るし、編集で
+            // 行ったり来たりするたびに丸ごと 1 本ぶん払うことになる。手で頼まれたときは
+            // 通さない — 押した人は「もうある」ではなく作り直しを待っている。
             if root.regenerator.is_pending()
                 && root.run.trigger != Some(Trigger::Manual)
                 && root.at.has_generation(&dir, &key)
