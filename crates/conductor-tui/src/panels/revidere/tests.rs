@@ -10,6 +10,7 @@ use revidere::Scope;
 use super::*;
 use crate::command::{CommandId, execute};
 use crate::effect::{Effect, apply};
+use crate::fx::{Kind, Target};
 use crate::modal::Modal;
 use crate::task::TaskResult;
 use crate::testing::{TestRepo, pump, select_only_worktree, workspace_for};
@@ -371,7 +372,8 @@ fn 同じコミットの作り直しは貯めた応答を捨てる() {
             panic!("{effects:?}");
         };
         assert_eq!(confirm.artifact, artifact);
-        let [Effect::Spawn(Task::Analyze { force: got, .. }), _] = confirm.on_yes.as_slice() else {
+        let [Effect::Spawn(Task::Analyze { force: got, .. }), ..] = confirm.on_yes.as_slice()
+        else {
             panic!("{:?}", confirm.on_yes);
         };
         assert_eq!(*got, force, "{artifact:?}");
@@ -404,6 +406,46 @@ fn 左列の枠題が説明もれの件数を言う() {
         assert!(title.contains("読む順 1 項目"), "{title}");
         assert_eq!(title.contains("説明の無い変更 1 件"), want, "{title}");
     }
+}
+
+/// 枠の演出は見ているブランチのもの。別の worktree の解析で光ると、自分の diff が
+/// 解析されていると読む。
+#[test]
+fn 枠の演出は見ているブランチの解析だけに出す() {
+    let mut ws = Workspace::for_test();
+    let orbiting = |ws: &Workspace| ws.fx.is_playing(&Kind::Orbit, Target::Review);
+    let flashes = |effects: &[Effect]| {
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::Play(Kind::Flash, Target::Review)))
+    };
+    let done = || AnalyzeOutcome::Done {
+        coverage_complete: true,
+    };
+    let selected = ws.branch().to_string();
+
+    ws.panels
+        .revidere
+        .note_spawned(&analyze_task("feature/other"));
+    ws.prepare();
+    assert!(!orbiting(&ws), "別ブランチの解析で光った");
+    assert!(!flashes(&ws.panels.revidere.finished(
+        "feature/other",
+        done(),
+        "/tmp/wt".into(),
+        &selected
+    )));
+
+    ws.panels.revidere.note_spawned(&analyze_task(&selected));
+    ws.prepare();
+    assert!(orbiting(&ws));
+    let effects = ws
+        .panels
+        .revidere
+        .finished(&selected, done(), "/tmp/wt".into(), &selected);
+    assert!(flashes(&effects), "{effects:?}");
+    ws.prepare();
+    assert!(!orbiting(&ws), "終わったのに回り続けている");
 }
 
 /// 解析は数分かかる。終わった頃には端末で打鍵しているので、勝手に画面を持っていかない。

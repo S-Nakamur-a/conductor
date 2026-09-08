@@ -8,7 +8,7 @@ pub mod pty;
 pub mod watch;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -40,6 +40,7 @@ pub struct Services<P> {
     /// watcher の合図が永久に捨てられる。
     generation: Arc<AtomicU64>,
     next_req: u64,
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl<P: Send + 'static> Default for Services<P> {
@@ -56,7 +57,14 @@ impl<P: Send + 'static> Services<P> {
             rx,
             generation: Arc::new(AtomicU64::new(0)),
             next_req: 0,
+            in_flight: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// 結果をまだ送っていない Task の数。0 を見た時点で、投げた Task の結果は全部
+    /// チャネルに入っている。
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::SeqCst)
     }
 
     pub fn generation(&self) -> Generation {
@@ -78,6 +86,8 @@ impl<P: Send + 'static> Services<P> {
         self.next_req += 1;
         let generation = self.generation();
         let tx = self.tx.clone();
+        let in_flight = Arc::clone(&self.in_flight);
+        in_flight.fetch_add(1, Ordering::SeqCst);
         thread::spawn(move || {
             let event = Event {
                 generation,
@@ -85,6 +95,7 @@ impl<P: Send + 'static> Services<P> {
                 kind: EventKind::Task(into(work())),
             };
             let _ = tx.send(event);
+            in_flight.fetch_sub(1, Ordering::SeqCst);
         });
         req
     }
@@ -168,6 +179,33 @@ mod tests {
         assert_eq!(event.req, Some(req));
         assert_eq!(event.generation, svc.generation());
         assert!(matches!(event.kind, EventKind::Task(42)));
+    }
+
+    /// 先に減らすと、0 を見て安心した側が結果を取りこぼす。
+    #[test]
+    fn 飛んでいる数は結果を送ってから減る() {
+        let mut svc = Services::<u32>::new();
+        let (release, gate) = mpsc::channel::<()>();
+        svc.spawn(
+            move || {
+                gate.recv().unwrap();
+                7u32
+            },
+            |n| n,
+        );
+        assert_eq!(svc.in_flight(), 1);
+        assert!(svc.try_recv().is_none());
+
+        release.send(()).unwrap();
+        let event = recv_blocking(&svc).unwrap();
+        assert!(matches!(event.kind, EventKind::Task(7)));
+        for _ in 0..200 {
+            if svc.in_flight() == 0 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("結果を送ったのに数が減らない");
     }
 
     #[test]

@@ -88,8 +88,20 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
             Target::Panels => accordion_panels(layout),
             Target::Region(region) => layout.rect(region).into_iter().collect(),
             Target::Modal => modal.into_iter().collect(),
+            Target::Review => review_panels(layout),
         },
     );
+}
+
+fn review_panels(layout: &Layout) -> Vec<Rect> {
+    let reading: Vec<Rect> = [Region::RevidereOrder, Region::RevidereDiff]
+        .iter()
+        .filter_map(|region| layout.rect(*region))
+        .collect();
+    if !reading.is_empty() {
+        return reading;
+    }
+    layout.rect(Region::ExplorerChanges).into_iter().collect()
 }
 
 /// 演出が枠を組み上げる区画。左から順。

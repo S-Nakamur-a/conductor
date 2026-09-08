@@ -3,10 +3,9 @@
 use conductor_core::theme::Theme;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 use super::stagger::Stagger;
-use super::{ease, on_edge};
+use super::{ease, on_edge, raise};
 
 pub(super) const DURATION_MS: u64 = 640;
 /// パネルごとの開始のずらしと、そこに乗せるゆらぎの幅 (進捗の割合)。
@@ -82,15 +81,6 @@ fn apply_glow(buf: &mut Buffer, area: Rect, progress: f64, start: f64, theme: &T
                 cell.set_fg(raise(theme, cell.fg, k));
             }
         }
-    }
-}
-
-/// 色を「目立つ側」へ寄せる。どちらも白へ寄せると、ライトテーマでは文字が地に溶ける。
-fn raise(theme: &Theme, color: Color, k: f64) -> Color {
-    if theme.light {
-        Theme::lerp(color, Color::Rgb(0, 0, 0), k)
-    } else {
-        Theme::lighten(color, k)
     }
 }
 

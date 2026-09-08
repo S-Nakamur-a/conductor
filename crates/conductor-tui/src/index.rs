@@ -11,7 +11,7 @@ use conductor_core::symbol_index::SymbolIndex;
 use sheaf_core::Store;
 
 use crate::effect::Effect;
-use crate::fx::{Kind, Target};
+use crate::fx::{Fx, Kind, Target};
 use crate::layout::Region;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{StatusLevel, Workspace};
@@ -107,16 +107,6 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 
     if let Some(rel) = &reading {
         let answer = ws.index.semantic.note_open(rel, &repo, &tree);
-        let building = answer == Reading::Building;
-        let viewer = Target::Region(Region::Viewer);
-        if building != ws.fx.is_playing(&Kind::Busy, viewer) {
-            if building {
-                ws.fx.play(Kind::Busy, viewer);
-            } else {
-                ws.fx.stop(&Kind::Busy, viewer);
-                ws.fx.play(Kind::Flash, viewer);
-            }
-        }
         // 索引がこのファイルを説明できないと黙って構文層に落ちる。言わないと
         // 「ジャンプが甘い」としか見えないので、開いたときに 1 度だけ出す。
         if answer == Reading::Stale {
@@ -129,7 +119,35 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
     }
 
     effects.extend(finish_regeneration(ws, &repo, &tree));
+    effects.extend(sync_generation_fx(
+        &mut ws.fx,
+        ws.index.semantic.is_generating(),
+    ));
     effects
+}
+
+/// producer の生死を Viewer の枠に写す。`note_open` の答えで駆動しないのは、同じファイルを
+/// 読み続ける 2 周目から `Unchanged` になり、始まった直後に止まって見えるため。
+///
+/// 生成は勝手に走るので、枠が光り出しただけでは何が起きたか読めない。
+fn sync_generation_fx(fx: &mut Fx, generating: bool) -> Option<Effect> {
+    let viewer = Target::Region(Region::Viewer);
+    let showing_busy = fx.is_playing(&Kind::Busy, viewer);
+    if generating == showing_busy {
+        return None;
+    }
+    if generating {
+        fx.play(Kind::Scan, viewer);
+        fx.play(Kind::Busy, viewer);
+        Some(Effect::Status(
+            StatusLevel::Info,
+            "Indexing code for go-to-definition and references\u{2026}".into(),
+        ))
+    } else {
+        fx.stop(&Kind::Busy, viewer);
+        fx.play(Kind::Flash, viewer);
+        None
+    }
 }
 
 /// 静穏が明けていれば tree-sitter の索引を作り直させる。
@@ -301,6 +319,31 @@ mod tests {
             "前のツリーの調査を今のツリーのものとして取り込んだ"
         );
         assert_eq!(surveys(&tick(&mut ws)), 1, "調べ直しに行かない");
+    }
+
+    /// 始まりだけ落とすと、13 秒のバーがいつの間にか出ていることになる。
+    #[test]
+    fn 生成の始まりと終わりを演出に写す() {
+        let viewer = Target::Region(Region::Viewer);
+        let mut fx = Fx::default();
+        assert!(sync_generation_fx(&mut fx, false).is_none());
+        assert!(!fx.is_animating(), "何も走っていないのに演出が出た");
+
+        assert!(
+            matches!(
+                sync_generation_fx(&mut fx, true),
+                Some(Effect::Status(StatusLevel::Info, _))
+            ),
+            "勝手に始まる生成は文字でも言う"
+        );
+        assert!(fx.is_playing(&Kind::Scan, viewer) && fx.is_playing(&Kind::Busy, viewer));
+        assert!(
+            sync_generation_fx(&mut fx, true).is_none(),
+            "走っている間に言い直した"
+        );
+        sync_generation_fx(&mut fx, false);
+        assert!(!fx.is_playing(&Kind::Busy, viewer));
+        assert!(fx.is_playing(&Kind::Flash, viewer));
     }
 
     #[test]

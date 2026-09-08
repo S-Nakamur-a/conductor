@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use sheaf_core::{Definition, Location, Producer, Store};
 
@@ -459,6 +459,41 @@ fn 索引ルートが複数あればすべて畳んで読む() {
 }
 
 #[test]
+fn 鍵の合う世代が無ければ読んでいるファイルを説明できる世代を読む() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = at("", Language::Rust);
+    let place = |key: &str, hash: &str, age: Duration| -> PathBuf {
+        let target = root.target(dir.path(), dir.path(), key);
+        write_index(&target.index);
+        write_hashes(&target.hashes, &[("src/lib.rs", hash.into())]);
+        std::fs::File::options()
+            .write(true)
+            .open(&target.index)
+            .unwrap()
+            .set_modified(SystemTime::now() - age)
+            .unwrap();
+        target.index
+    };
+    let older = place("aaaaaaaaaaaa", "h1", Duration::from_secs(60));
+    let newest = place("bbbbbbbbbbbb", "h2", Duration::ZERO);
+    let lib = Path::new("src/lib.rs");
+    let pick = |key: &str, reading| root.source(dir.path(), key, reading).map(|s| s.index);
+
+    assert_eq!(pick("cccccccccccc", Some((lib, "h1"))), Some(older.clone()));
+    assert_eq!(
+        pick("cccccccccccc", Some((lib, "h3"))),
+        Some(newest.clone()),
+        "説明できる世代が無ければ最新"
+    );
+    assert_eq!(pick("cccccccccccc", None), Some(newest));
+    assert_eq!(
+        pick("aaaaaaaaaaaa", Some((lib, "h2"))),
+        Some(older),
+        "鍵が合えばそれ"
+    );
+}
+
+#[test]
 fn リンクされたworktreeはmain側の索引を見つける() {
     // リンクされた worktree の workdir() はリンク先自身を指すので、repo_root にそれを
     // そのまま渡すと main 側にしか無い .conductor/ が見つからない。
@@ -621,6 +656,16 @@ fn 出自の表は綴りも値もそのまま往復する() {
 /// 引数を無視してひたすら sleep するだけの producer。生成が走っている最中を安定して作る。
 struct SlowProducer(PathBuf);
 
+fn slow_producer(dir: &Path) -> Arc<dyn Producer> {
+    let script = dir.join("slow-producer.sh");
+    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+    Arc::new(SlowProducer(script))
+}
+
 impl Producer for SlowProducer {
     fn command(&self, _out: &Path) -> Vec<String> {
         vec![self.0.to_string_lossy().into_owned()]
@@ -635,19 +680,12 @@ fn tick_regenerationは生成が走っていても即座に返る() {
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
     std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
 
-    let script = dir.path().join("slow-producer.sh");
-    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
-
     // ツリーを既に引いてあることにしないと、調査の取り込みが rust-analyzer の Regenerator に
     // 差し替えてしまう。
     let mut semantic = SemanticIndex::with_root(
         dir.path(),
         at("", Language::Rust),
-        sheaf_core::Regenerator::new(Arc::new(SlowProducer(script))),
+        sheaf_core::Regenerator::new(slow_producer(dir.path())),
         KEY,
     );
     semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
@@ -655,6 +693,10 @@ fn tick_regenerationは生成が走っていても即座に返る() {
     semantic.roots[0].key = Some(KEY.to_string());
 
     // 静穏時間が経つのを待って、生成が実際に走っている状態を作る。
+    assert!(
+        !semantic.is_generating(),
+        "待っているだけの間は走っていない"
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while semantic.is_pending() {
         assert!(
@@ -674,7 +716,37 @@ fn tick_regenerationは生成が走っていても即座に返る() {
         elapsed < Duration::from_millis(200),
         "tick が生成を待ってしまっている: {elapsed:?}"
     );
+    assert!(semantic.is_generating());
 
+    semantic.abort_regeneration(dir.path());
+    assert!(
+        !semantic.is_generating(),
+        "止めたあとも走っていることになっている"
+    );
+}
+
+/// 「もうある」の門を手動にも通すと、画面は Rebuilding と言ったまま何も起きない。
+#[test]
+fn 手動の作り直しは同じ内容の索引があっても走る() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    let conductor = dir.path().join(".conductor");
+    std::fs::create_dir_all(&conductor).unwrap();
+    let root = at("", Language::Rust);
+    std::fs::write(root.target(&conductor, dir.path(), KEY).index, b"").unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        root,
+        sheaf_core::Regenerator::new(slow_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Manual, None);
+    assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+    assert!(
+        semantic.is_generating(),
+        "同じ内容の索引があるのを理由に手動の作り直しが止まった"
+    );
     semantic.abort_regeneration(dir.path());
 }
 

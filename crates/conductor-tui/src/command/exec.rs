@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 
 use super::CommandId;
 use crate::effect::Effect;
+use crate::fx::{Kind, Target};
 use crate::layout::Divider;
 use crate::modal::revidere as revidere_modal;
 use crate::modal::{
@@ -340,6 +341,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
             api: ws.config.api.clone(),
             cancel: Default::default(),
         }),
+        Effect::Play(Kind::Scan, Target::Review),
         // どちらの区間かを言う。区間はビューを閉じても残るので、外から W を押すと
         // 数分待った先で思っていない方が出てくることがある。
         Effect::Status(
