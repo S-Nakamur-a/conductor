@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 
 use super::diff::{Entry, SideRow, side_by_side};
@@ -149,10 +149,8 @@ fn popup(frame: &mut Frame, popup: super::hover::Popup, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_focused));
-    let inner = block.inner(popup.rect);
     frame.render_widget(block, popup.rect);
-    frame.render_widget(Paragraph::new(popup.body).wrap(Wrap { trim: false }), inner);
-    for (rect, line) in popup.footer {
+    for (rect, line) in popup.rows {
         frame.render_widget(Paragraph::new(line), rect);
     }
 }

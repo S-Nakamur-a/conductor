@@ -10,6 +10,7 @@ use conductor_core::symbol_index::{
     occurrence_span_in_source,
 };
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::layout::Position;
 use sheaf_core::{Definition, Implementations, Location, References, Store, SymbolDetail};
 
 use conductor_core::semantic_index::{Bridge, kind_label};
@@ -681,14 +682,28 @@ impl ViewerPanel {
         true
     }
 
-    /// ポップアップのフッター行を押した。定義位置なら飛び、参照数なら一覧を開く。
+    /// ポップアップの上では下に透けている語を拾わず、出ているものを居座らせる。
+    pub fn pointer_moved(&mut self, col: u16, row: u16, ctx: &Ctx) {
+        let on_popup = self.nav.hover.as_ref().is_some_and(|hover| {
+            hover::rect(hover, ctx.theme, self.body).contains(Position::new(col, row))
+        });
+        if on_popup {
+            if let Some(hover) = &mut self.nav.hover {
+                hover.left_at = None;
+            }
+            return;
+        }
+        let over = self.word_at_screen(col, row, ctx);
+        self.note_pointer(over);
+    }
+
+    /// ポップアップを押した。宣言か定義位置なら飛び、参照数なら一覧を開く。
     pub fn click_hover(&mut self, col: u16, row: u16, ctx: &Ctx) -> Option<Vec<Effect>> {
         let hover = self.nav.hover.as_ref()?;
         let popup = hover::popup(hover, ctx.theme, self.body, self.highlighter_ref());
-        let hit = |r: ratatui::layout::Rect| {
-            r.height > 0 && row == r.y && col >= r.x && col < r.x + r.width
-        };
-        if hit(popup.def_row) {
+        let at = Position::new(col, row);
+        let hit = |r: ratatui::layout::Rect| r.contains(at);
+        if hit(popup.def_block) || hit(popup.def_row) {
             let (path, line) = (hover.path.clone(), hover.line);
             self.nav.hover = None;
             return Some(vec![Effect::JumpTo {
@@ -711,8 +726,7 @@ impl ViewerPanel {
             ))]);
         }
         // ポップアップの中の空振りは飲み込む。外側なら呼び出し側の通常処理へ。
-        let r = popup.rect;
-        (col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height).then(Vec::new)
+        hit(popup.rect).then(Vec::new)
     }
 
     // ── 索引への問い合わせ ────────────────────────────────────────────────
@@ -1103,6 +1117,27 @@ pub fn caller() { target(); }
                 ..crate::review::Snapshot::default()
             }));
         }
+
+        /// caller の行の target にマウスが止まった体でポップアップを出す。
+        fn hover_by_mouse(&mut self) -> hover::Popup {
+            let gutter = 1 + render::GUTTER_FIXED as u16;
+            let spot = self.word_at(gutter + 18, 6).expect("target の上");
+            assert_eq!((spot.word.as_str(), spot.line), ("target", 2));
+            self.ws.panels.viewer.note_pointer(Some(spot));
+            self.ws.panels.viewer.nav.pending.as_mut().unwrap().since =
+                std::time::Instant::now() - hover::IDLE;
+            let root = self.ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = self.ws.split(&root);
+            assert!(panels.viewer.tick_hover(&ctx));
+            let hover = panels
+                .viewer
+                .nav
+                .hover
+                .as_ref()
+                .expect("ポップアップが出る");
+            assert!(!hover.pinned);
+            hover::popup(hover, ctx.theme, panels.viewer.body, None)
+        }
     }
 
     fn at(path: &str, line: u32) -> Location {
@@ -1317,5 +1352,47 @@ pub fn caller() { target(); }
         assert!(rows > 1, "スレッドが割り込んでいる: {rows}");
         let spot = h.word_at(gutter + 7, 5 + rows as u16).expect("caller の上");
         assert_eq!((spot.word.as_str(), spot.line), ("caller", 2));
+    }
+
+    #[test]
+    fn ポップアップの上にマウスを運んでも下に透けている語に乗り換えない() {
+        let mut h = Harness::new();
+        h.ws.panels.viewer.body = ratatui::layout::Rect::new(0, 5, 80, 20);
+        let popup = h.hover_by_mouse();
+        let root = h.ws.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = h.ws.split(&root);
+
+        // ポップアップは target の定義行に被さっている。素通しなら target を拾い直す。
+        panels
+            .viewer
+            .pointer_moved(popup.rect.x + 1, popup.rect.y + 1, &ctx);
+        let hover = panels.viewer.nav.hover.as_ref().expect("居座る");
+        assert!(hover.left_at.is_none());
+
+        let gutter = 1 + render::GUTTER_FIXED as u16;
+        assert!(!popup.rect.contains(Position::new(gutter + 7, 6)));
+        panels.viewer.pointer_moved(gutter + 7, 6, &ctx);
+        assert!(
+            panels.viewer.nav.hover.is_none(),
+            "ポップアップの外の別の語に乗れば消える"
+        );
+    }
+
+    #[test]
+    fn 宣言の行を押すと定義へ飛ぶ() {
+        let mut h = Harness::new();
+        h.ws.panels.viewer.body = ratatui::layout::Rect::new(0, 5, 80, 20);
+        let popup = h.hover_by_mouse();
+        assert!(popup.def_block.height > 0, "宣言が出ている");
+        let root = h.ws.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = h.ws.split(&root);
+        let effects = panels
+            .viewer
+            .click_hover(popup.def_block.x + 3, popup.def_block.y, &ctx)
+            .expect("ポップアップの中");
+        assert!(
+            matches!(&effects[..], [Effect::JumpTo { path, line: 1 }] if path == Path::new("lib.rs")),
+            "{effects:?}"
+        );
     }
 }
