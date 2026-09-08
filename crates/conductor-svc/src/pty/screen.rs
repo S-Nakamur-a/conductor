@@ -15,6 +15,11 @@ impl PtyStore {
         self.sessions.get(idx).map(|s| Arc::clone(&s.io.screen))
     }
 
+    /// idx のセッションで子が最後にカーソルを見せていた位置。
+    pub fn shown_cursor(&self, idx: usize) -> Option<(u16, u16)> {
+        self.sessions.get(idx).map(|s| s.shown_cursor())
+    }
+
     /// idx のセッションの行バッファのスナップショット。
     pub fn output(&self, idx: usize) -> Vec<String> {
         self.sessions

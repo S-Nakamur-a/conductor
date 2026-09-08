@@ -78,6 +78,7 @@ struct Snapshot {
 /// こちらのオフセットは当てない。
 fn snapshot_screen(
     screen: &Arc<Mutex<vt100::Parser>>,
+    shown_cursor: (u16, u16),
     scroll: usize,
     max_rows: u16,
     max_cols: u16,
@@ -90,7 +91,7 @@ fn snapshot_screen(
     };
     parser.set_scrollback(wanted);
     let effective = parser.screen().scrollback();
-    let cursor = (effective == 0).then(|| parser.screen().cursor_position());
+    let cursor = (effective == 0).then_some(shown_cursor);
 
     let lines = {
         let screen = parser.screen();
@@ -215,10 +216,10 @@ pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let Some(index) = panel.index_of(panel.editor.as_ref().map(|e| e.session.as_str())) else {
         return;
     };
-    let Some(screen) = panel.pty.screen(index) else {
+    let Some((screen, cursor)) = panel.pty.screen(index).zip(panel.pty.shown_cursor(index)) else {
         return;
     };
-    let snapshot = snapshot_screen(&screen, 0, content.height, content.width);
+    let snapshot = snapshot_screen(&screen, cursor, 0, content.height, content.width);
     let buffer = frame.buffer_mut();
     for (row, line) in snapshot.lines.iter().enumerate() {
         buffer.set_line(content.x, content.y + row as u16, line, content.width);
@@ -254,12 +255,12 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     let Some(index) = panel.index_of(pane.session.as_deref()) else {
         return;
     };
-    let Some(screen) = panel.pty.screen(index) else {
+    let Some((screen, cursor)) = panel.pty.screen(index).zip(panel.pty.shown_cursor(index)) else {
         return;
     };
 
     let content = content_area(rect);
-    let snapshot = snapshot_screen(&screen, pane.scroll, content.height, content.width);
+    let snapshot = snapshot_screen(&screen, cursor, pane.scroll, content.height, content.width);
     let buffer = frame.buffer_mut();
     for (row, line) in snapshot
         .lines
@@ -302,7 +303,7 @@ pub(super) fn visible_text(panel: &TerminalPanel, region: Region) -> String {
     let Some(screen) = panel.pty.screen(index) else {
         return String::new();
     };
-    let snapshot = snapshot_screen(&screen, pane.scroll, pane.size.0, pane.size.1);
+    let snapshot = snapshot_screen(&screen, (0, 0), pane.scroll, pane.size.0, pane.size.1);
     snapshot
         .lines
         .iter()
@@ -322,7 +323,7 @@ mod tests {
         for i in 0..60 {
             lock(&screen).process(format!("line{i}\r\n").as_bytes());
         }
-        let snapshot = snapshot_screen(&screen, 30, 5, 20);
+        let snapshot = snapshot_screen(&screen, (0, 0), 30, 5, 20);
         assert_eq!(snapshot.effective, 30);
         assert!(
             snapshot.lines[0].to_string().starts_with("line26"),
@@ -342,7 +343,10 @@ mod tests {
     fn ライブ表示ではカーソルの位置を返す() {
         let screen = Arc::new(Mutex::new(vt100::Parser::new(5, 20, 100)));
         lock(&screen).process(b"line0\r\nab");
-        assert_eq!(snapshot_screen(&screen, 0, 5, 20).cursor, Some((1, 2)));
+        assert_eq!(
+            snapshot_screen(&screen, (1, 2), 0, 5, 20).cursor,
+            Some((1, 2))
+        );
     }
 
     #[test]
@@ -352,7 +356,7 @@ mod tests {
             lock(&screen).process(format!("line{i}\r\n").as_bytes());
         }
         lock(&screen).process(b"\x1b[?1049h");
-        let snapshot = snapshot_screen(&screen, 30, 5, 20);
+        let snapshot = snapshot_screen(&screen, (0, 0), 30, 5, 20);
         assert_eq!(snapshot.effective, 0);
     }
 

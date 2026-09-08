@@ -103,6 +103,7 @@ impl PtyStore {
             raw_history: matches!(kind, SessionKind::Shell)
                 .then(|| Arc::new(Mutex::new(VecDeque::new()))),
             last_output: Arc::new(Mutex::new(Instant::now())),
+            shown_cursor: Arc::new(Mutex::new((0, 0))),
             alt_screen_entered: Arc::new(AtomicBool::new(false)),
             output_notify: Arc::clone(&self.output_notify),
         };
