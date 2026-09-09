@@ -27,20 +27,12 @@ use crate::layout::Region;
 pub use stagger::Stagger;
 
 const FLASH_MS: u64 = 260;
-/// 不定バーが 1 周する時間。
-const BAR_CYCLE_MS: f64 = 900.0;
-/// 不定バーの尾の長さ。
-const BAR_TAIL: u16 = 6;
-/// 不定バーの 1 セルを 8 段に割るブロック。
-const EIGHTH: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 
 /// 演出の種類。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     /// 四隅から枠を組み上げ、閉じきってから中身を見せる。矩形ごとにずらして始まる。
     Assemble { stagger: Stagger },
-    /// 終わりの見えない作業中。上辺を流れ続ける光で、止めるまで続く。
-    Busy,
     /// 枠を一度 accent へ沸かせて元の色へ落とす。完了や切替の合図。
     Flash,
     /// 帯が内側を上から下へ 1 回通る。始まりの合図。
@@ -68,11 +60,10 @@ impl Kind {
         }
     }
 
-    /// 経過時間を進捗へ。None なら終わり。終わらない Busy は位相を、Orbit は経過 ms を返す。
+    /// 経過時間を進捗へ。None なら終わり。終わらない Orbit は経過 ms をそのまま返す。
     fn progress(&self, elapsed: Duration) -> Option<f64> {
         match self {
             Kind::Assemble { .. } => finite(elapsed, assemble::DURATION_MS),
-            Kind::Busy => Some(elapsed.as_millis() as f64 / BAR_CYCLE_MS % 1.0),
             Kind::Flash => finite(elapsed, FLASH_MS),
             Kind::Scan => finite(elapsed, scan::DURATION_MS),
             Kind::Orbit => Some(elapsed.as_millis() as f64),
@@ -92,7 +83,6 @@ impl Kind {
     fn paint(&self, buf: &mut Buffer, screen: Rect, rects: &[Rect], p: f64, theme: &Theme) {
         match self {
             Kind::Assemble { stagger } => assemble::paint(buf, screen, rects, p, stagger, theme),
-            Kind::Busy => rects.iter().for_each(|r| paint_bar(buf, *r, p, theme)),
             Kind::Flash => rects.iter().for_each(|r| paint_flash(buf, *r, p, theme)),
             Kind::Scan => rects.iter().for_each(|r| scan::paint(buf, *r, p, theme)),
             Kind::Orbit => rects.iter().for_each(|r| orbit::paint(buf, *r, p, theme)),
@@ -220,37 +210,6 @@ fn on_edge(r: Rect, x: u16, y: u16) -> bool {
     x == r.x || x == r.right().saturating_sub(1) || y == r.y || y == r.bottom().saturating_sub(1)
 }
 
-/// 進行度が取れないので割合ではなく「流れ続ける光」で表す。埋め尽くすと残り時間として
-/// 読まれるので、先端から数セルだけを尾として残す。
-fn paint_bar(buf: &mut Buffer, panel: Rect, phase: f64, theme: &Theme) {
-    if panel.width < 4 {
-        return;
-    }
-    let span = panel.width.saturating_sub(2);
-    let head = phase.rem_euclid(1.0) * f64::from(span);
-    let lit = head.floor() as u16;
-    let frac = ((head - head.floor()) * 8.0) as usize;
-    for i in 0..span {
-        let Some(cell) = buf.cell_mut((panel.x + 1 + i, panel.y)) else {
-            continue;
-        };
-        let behind = lit.saturating_sub(i);
-        if i == lit {
-            if frac > 0 {
-                cell.set_symbol(EIGHTH[frac]);
-                cell.set_fg(theme.fg);
-            }
-        } else if i < lit && behind <= BAR_TAIL {
-            cell.set_symbol("█");
-            cell.set_fg(Theme::lerp(
-                theme.accent,
-                theme.border_unfocused,
-                f64::from(behind) / f64::from(BAR_TAIL),
-            ));
-        }
-    }
-}
-
 /// 戻り先は描かれている色そのもの。フォーカスの有無で枠の色が違っても、終わりに
 /// 色が跳ねない。
 fn paint_flash(buf: &mut Buffer, panel: Rect, progress: f64, theme: &Theme) {
@@ -313,10 +272,12 @@ mod tests {
         }
     }
 
-    fn lit(buf: &Buffer) -> usize {
-        let bar = Rect::new(17, 3, 24, 11);
-        (1..bar.width - 1)
-            .filter(|i| buf.cell((bar.x + i, bar.y)).unwrap().symbol() == "█")
+    /// 回る光が置いた色の数。地の色と、組み上げが伏せた [Color::Reset] は数えない。
+    fn orbiting(buf: &Buffer) -> usize {
+        let panel = Rect::new(17, 3, 24, 11);
+        (1..panel.width - 1)
+            .map(|i| buf.cell((panel.x + i, panel.y)).unwrap().fg)
+            .filter(|fg| *fg != theme().fg && *fg != Color::Reset)
             .count()
     }
 
@@ -357,23 +318,6 @@ mod tests {
         assert!(!fx.tick());
     }
 
-    /// 不定バーは進捗ではないので、どの時点でも辺を埋め尽くさない。埋まって見えると
-    /// 「あと少し」と読まれてしまう。
-    #[test]
-    fn 不定バーは辺を埋め尽くさない() {
-        let panel = Rect::new(17, 3, 24, 11);
-        for step in 0..20 {
-            let phase = f64::from(step) / 20.0;
-            let mut buf = filled(AREA);
-            paint_bar(&mut buf, panel, phase, &theme());
-            assert!(
-                lit(&buf) <= usize::from(BAR_TAIL) + 1,
-                "phase={phase} で {} セルが点灯した",
-                lit(&buf)
-            );
-        }
-    }
-
     #[test]
     fn 沸きは枠だけに触る() {
         let panel = Rect::new(17, 3, 24, 11);
@@ -392,17 +336,17 @@ mod tests {
     fn 起動演出中は他の演出を重ねない() {
         let mut fx = Fx::default();
         fx.play(Kind::assemble(), Target::Panels);
-        fx.play(Kind::Busy, VIEWER);
+        fx.play(Kind::Orbit, VIEWER);
         fx.start_pending();
         fx.running[1].started = Some(Instant::now() - Duration::from_millis(300));
 
         let mut buf = filled(AREA);
         fx.apply(&mut buf, AREA, &theme(), resolve);
-        assert_eq!(lit(&buf), 0, "起動演出の上にバーが乗っている");
+        assert_eq!(orbiting(&buf), 0, "起動演出の上に光が乗っている");
 
         fx.skip();
         let mut buf = filled(AREA);
         fx.apply(&mut buf, AREA, &theme(), resolve);
-        assert!(lit(&buf) > 0, "演出が終わってもバーが出ない");
+        assert!(orbiting(&buf) > 0, "演出が終わっても光が出ない");
     }
 }
