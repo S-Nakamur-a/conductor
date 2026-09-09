@@ -1,7 +1,7 @@
 //! 2 つの索引の持ち場と、その作り直しを 1 周進める場所。
 //!
 //! 判断は core 側の状態機械が持っている。ここがやるのは、重い仕事を Task へ出し、
-//! 帰ってきたものを取り込み、結果を画面の語彙 (ステータス・起動演出のバー) に直すこと。
+//! 帰ってきたものを取り込み、結果を画面の語彙 (ステータス・枠の演出) に直すこと。
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -132,19 +132,18 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 /// 生成は勝手に走るので、枠が光り出しただけでは何が起きたか読めない。
 fn sync_generation_fx(fx: &mut Fx, generating: bool) -> Option<Effect> {
     let viewer = Target::Region(Region::Viewer);
-    let showing_busy = fx.is_playing(&Kind::Busy, viewer);
-    if generating == showing_busy {
+    let showing = fx.is_playing(&Kind::Orbit, viewer);
+    if generating == showing {
         return None;
     }
     if generating {
-        fx.play(Kind::Scan, viewer);
-        fx.play(Kind::Busy, viewer);
+        fx.play(Kind::Orbit, viewer);
         Some(Effect::Status(
             StatusLevel::Info,
             "Indexing code for go-to-definition and references\u{2026}".into(),
         ))
     } else {
-        fx.stop(&Kind::Busy, viewer);
+        fx.stop(&Kind::Orbit, viewer);
         fx.play(Kind::Flash, viewer);
         None
     }
@@ -321,7 +320,7 @@ mod tests {
         assert_eq!(surveys(&tick(&mut ws)), 1, "調べ直しに行かない");
     }
 
-    /// 始まりだけ落とすと、13 秒のバーがいつの間にか出ていることになる。
+    /// 始まりだけ落とすと、13 秒回り続ける光がいつの間にか出ていることになる。
     #[test]
     fn 生成の始まりと終わりを演出に写す() {
         let viewer = Target::Region(Region::Viewer);
@@ -336,13 +335,13 @@ mod tests {
             ),
             "勝手に始まる生成は文字でも言う"
         );
-        assert!(fx.is_playing(&Kind::Scan, viewer) && fx.is_playing(&Kind::Busy, viewer));
+        assert!(fx.is_playing(&Kind::Orbit, viewer));
         assert!(
             sync_generation_fx(&mut fx, true).is_none(),
             "走っている間に言い直した"
         );
         sync_generation_fx(&mut fx, false);
-        assert!(!fx.is_playing(&Kind::Busy, viewer));
+        assert!(!fx.is_playing(&Kind::Orbit, viewer));
         assert!(fx.is_playing(&Kind::Flash, viewer));
     }
 
