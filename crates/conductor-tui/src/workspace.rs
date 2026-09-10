@@ -622,7 +622,16 @@ impl Workspace {
     pub fn prepare(&mut self) -> Vec<Effect> {
         self.sync_review_fx();
         if self.focus == Focus::Revidere {
-            self.panels.revidere.prepare(&self.theme, &self.config);
+            let Self {
+                panels,
+                theme,
+                config,
+                ..
+            } = self;
+            let Panels {
+                viewer, revidere, ..
+            } = panels;
+            revidere.prepare(theme, config, viewer.highlighter(config));
         }
         let effects = self.panels.viewer.prepare(&self.config, &self.theme);
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。

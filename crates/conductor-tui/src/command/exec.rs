@@ -356,6 +356,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
             scope,
             force,
             api: ws.config.api.clone(),
+            review: ws.config.review.clone(),
             cancel: Default::default(),
         }),
         Effect::Play(Kind::Scan, Target::Review),

@@ -9,7 +9,7 @@ use std::time::Duration;
 use conductor_core::ai_caller::{self, AiCaller};
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
-use conductor_core::config::{self, ApiConfig, LayoutConfig};
+use conductor_core::config::{self, ApiConfig, LayoutConfig, ReviewConfig};
 use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::{CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir};
 use conductor_core::grep_search::{self, GrepMatch};
@@ -214,6 +214,7 @@ pub enum Task {
         /// 貯めた応答を捨てるか。捨てないと、作り直しを選んだのに前と同じ答えが返る。
         force: bool,
         api: ApiConfig,
+        review: ReviewConfig,
         cancel: Arc<AtomicBool>,
     },
 }
@@ -681,11 +682,12 @@ impl Task {
                 scope,
                 force,
                 api,
+                review,
                 cancel,
             } => {
                 svc.spawn(
                     move || {
-                        let outcome = analyze(&worktree, scope, force, &api, &cancel);
+                        let outcome = analyze(&worktree, scope, force, &api, &review, &cancel);
                         TaskResult::Analyzed { branch, outcome }
                     },
                     |result| result,
@@ -740,10 +742,11 @@ fn analyze(
     scope: revidere::Scope,
     force: bool,
     api: &ApiConfig,
+    review: &ReviewConfig,
     cancel: &Arc<AtomicBool>,
 ) -> AnalyzeOutcome {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_analyze(worktree, scope, force, api, cancel)
+        run_analyze(worktree, scope, force, api, review, cancel)
     }))
     .unwrap_or_else(|_| AnalyzeOutcome::Failed("the analysis thread panicked".into()))
 }
@@ -753,6 +756,7 @@ fn run_analyze(
     scope: revidere::Scope,
     force: bool,
     api: &ApiConfig,
+    review: &ReviewConfig,
     cancel: &Arc<AtomicBool>,
 ) -> AnalyzeOutcome {
     // 起点はブランチ全体の成果物にしか書かれていない。無いのは 1 度目のレビューを
@@ -788,6 +792,10 @@ fn run_analyze(
         base,
         cache: !force,
         scope,
+        style: review
+            .style_path
+            .as_deref()
+            .and_then(conductor_core::output_style::load),
     };
     match revidere::analyze(&options, &ai) {
         Ok(review) => AnalyzeOutcome::Done {

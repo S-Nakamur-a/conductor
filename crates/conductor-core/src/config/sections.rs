@@ -123,6 +123,14 @@ impl Default for ApiConfig {
     }
 }
 
+/// [review] セクション。revidere が作るレビュー成果物。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReviewConfig {
+    /// 本文の口調を指定する Claude Code の output style ファイル。
+    pub style_path: Option<PathBuf>,
+}
+
 /// [updates] セクション。GitHub Releases との照合。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

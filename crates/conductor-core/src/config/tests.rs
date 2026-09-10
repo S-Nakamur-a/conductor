@@ -81,6 +81,9 @@ fn non_default() -> Config {
             check_on_startup: false,
             check_interval_secs: 60,
         },
+        review: ReviewConfig {
+            style_path: Some(PathBuf::from("/s.md")),
+        },
     }
 }
 
