@@ -94,6 +94,7 @@ mod tests {
             behind: None,
             head_oid: None,
             head_time: None,
+            review: Default::default(),
         }
     }
 

@@ -1,6 +1,6 @@
 //! ストリップ 1 行の割り付け。
 
-use conductor_core::git_engine::WorktreeInfo;
+use conductor_core::git_engine::{ReviewState, WorktreeInfo};
 
 use crate::strip::{ADD, CLOSE, push, visible_window, width_of};
 use crate::workspace::Workspace;
@@ -42,6 +42,11 @@ fn chip_text(worktree: &WorktreeInfo, waiting: bool, active: bool) -> String {
     }
     if let Some(behind) = worktree.behind.filter(|b| *b > 0) {
         text.push_str(&format!(" \u{2193}{behind}"));
+    }
+    match worktree.review {
+        ReviewState::None => {}
+        ReviewState::Stale => text.push_str(" \u{25cc}"),
+        ReviewState::Current => text.push_str(" \u{25c9}"),
     }
     text.push(' ');
     text
