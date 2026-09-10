@@ -26,6 +26,7 @@ const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
 /// Claude Code の状態通知を Unix ドメインソケットで待ち受ける。
 pub struct CcNotifyListener {
     socket_path: PathBuf,
+    pointer_path: PathBuf,
     shutdown: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -36,10 +37,8 @@ impl CcNotifyListener {
         repo_path: &std::path::Path,
         sender: EventSender<P>,
     ) -> anyhow::Result<Self> {
+        conductor_core::cc_hook::ensure_runtime_dir()?;
         let socket_path = conductor_core::cc_hook::socket_path(repo_path);
-        if let Some(dir) = socket_path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
 
         // 前回のクラッシュで残ったソケットを処理する。
         if socket_path.exists() {
@@ -52,6 +51,13 @@ impl CcNotifyListener {
             }
         }
 
+        // bind より先に書く。後回しだと、書けなかったときに誰も片付けないソケットが残る。
+        let pointer_path = conductor_core::cc_hook::socket_pointer_path(repo_path);
+        if let Some(dir) = pointer_path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&pointer_path, format!("{}\n", socket_path.display()))?;
+
         let listener = UnixListener::bind(&socket_path)?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -63,6 +69,7 @@ impl CcNotifyListener {
 
         Ok(Self {
             socket_path,
+            pointer_path,
             shutdown,
             thread: Some(thread),
         })
@@ -144,6 +151,7 @@ impl Drop for CcNotifyListener {
             crate::join_or_abandon(thread, SHUTDOWN_JOIN_TIMEOUT);
         }
         let _ = std::fs::remove_file(&self.socket_path);
+        let _ = std::fs::remove_file(&self.pointer_path);
     }
 }
 

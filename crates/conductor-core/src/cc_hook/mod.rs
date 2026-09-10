@@ -1,22 +1,23 @@
-//! conductor cc-hook: Claude Code の SessionStart フック本体と、cc-notify ソケットの電文。
+//! Claude Code のパネルから Conductor へ事実を送り返す 2 つのコマンド
+//! (conductor cc-hook / cc-signal) と、cc-notify ソケットの電文。
 //!
-//! フックはパネル自身の Claude プロセスの子として走るので、spawn 時に PTY へ注入した
-//! CONDUCTOR_PANEL_ID / CONDUCTOR_NOTIFY_SOCK がそのまま見える。stdin の payload から
-//! session_id を取り出し、[Notification::Session] を 1 行ソケットへ書いて終わる。
-//! これで「どのパネルがいまどの .jsonl を書いているか」がログの推測でなく事実として届く。
+//! どちらもパネル自身の Claude プロセスの子として走るので、spawn 時に PTY へ注入した
+//! CONDUCTOR_PANEL_ID / CONDUCTOR_NOTIFY_SOCK がそのまま見える。どのパネルがいま
+//! どの .jsonl を書いているかも、作業中か入力待ちかも、ログの推測でなく事実で届く。
 //!
 //! バイナリに同居させるのは、プラグイン側に置くと別リリースチャネルになり、ずれた
 //! 組み合わせで黙って効かなくなるため (mcp-serve と同じ理由)。
 //!
-//! stdout には書かない。SessionStart の stdout はセッションへの追加コンテキストになる。
+//! SessionStart の stdout はセッションへの追加コンテキストになってしまうので、
+//! [run] は何も書かない。
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod settings;
 
-pub use settings::{install_settings, socket_path};
+pub use settings::{ensure_runtime_dir, install_settings, socket_path, socket_pointer_path};
 
 pub const PANEL_ID_ENV: &str = "CONDUCTOR_PANEL_ID";
 pub const NOTIFY_SOCK_ENV: &str = "CONDUCTOR_NOTIFY_SOCK";
@@ -94,18 +95,46 @@ pub fn run() -> anyhow::Result<()> {
 
     // payload の source (startup / resume / clear) は見ない。どれも「このパネルはいま
     // この session を書いている」という同じ事実で、startup は pin 済みの id と同じ値になる。
-    let line = Notification::Session {
-        panel_id,
-        session_id,
-    }
-    .to_line();
-    // 1 回の write で送りきる。write! はフォーマット断片ごとに write を呼ぶので、
-    // 受け手が 1 回の read で拾うと "session" だけ届くことがあった。
-    if let Ok(mut stream) = UnixStream::connect(&sock_path) {
-        let _ = stream.write_all(line.as_bytes());
+    notify(
+        Path::new(&sock_path),
+        &Notification::Session {
+            panel_id,
+            session_id,
+        },
+    );
+    Ok(())
+}
+
+/// このパネルが作業中か入力待ちかを Conductor へ伝える。worktree 監視ストリップが読む。
+///
+/// フックは Claude の cwd を継ぐので、どの worktree の話かは自分の cwd がそのまま答え。
+/// [run] と同じく常に Ok。
+pub fn run_signal(state: CcSignal) -> anyhow::Result<()> {
+    let (Ok(sock_path), Ok(cwd)) = (std::env::var(NOTIFY_SOCK_ENV), std::env::current_dir()) else {
+        return Ok(());
+    };
+    let message = match state {
+        CcSignal::Active => Notification::Active { cwd },
+        CcSignal::Waiting => Notification::Waiting { cwd },
+    };
+    notify(Path::new(&sock_path), &message);
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CcSignal {
+    Active,
+    Waiting,
+}
+
+// 届かないことは咎めない — Conductor が居ないだけでもここへ来る。
+// 1 回の write で送りきる。write! はフォーマット断片ごとに write を呼ぶので、
+// 受け手が 1 回の read で拾うと "session" だけ届くことがあった。
+fn notify(sock_path: &Path, message: &Notification) {
+    if let Ok(mut stream) = UnixStream::connect(sock_path) {
+        let _ = stream.write_all(message.to_line().as_bytes());
         let _ = stream.flush();
     }
-    Ok(())
 }
 
 fn session_id_from_payload(payload: &str) -> Option<String> {

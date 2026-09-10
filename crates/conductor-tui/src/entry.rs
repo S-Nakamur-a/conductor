@@ -202,6 +202,13 @@ fn cli_fast_path(version: &str) -> Option<Result<()>> {
         }
         "mcp-serve" => Some(conductor_mcp::run(std::env::args(), version)),
         "cc-hook" => Some(cc_hook::run()),
+        "cc-signal" => Some(match std::env::args().nth(2).as_deref() {
+            Some("active") => cc_hook::run_signal(cc_hook::CcSignal::Active),
+            Some("waiting") => cc_hook::run_signal(cc_hook::CcSignal::Waiting),
+            other => Err(anyhow::anyhow!(
+                "cc-signal expects active or waiting, got {other:?}"
+            )),
+        }),
         "index" => Some(build_index()),
         _ => None,
     }
@@ -232,6 +239,7 @@ Usage: conductor [REPO_PATH]
        conductor index [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
+       conductor cc-signal <active|waiting>
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
@@ -254,6 +262,11 @@ Commands:
                and reports the panel's current session id back to the running
                conductor. Wired up automatically via --settings when conductor
                spawns a Claude panel; not usually run by hand.
+
+  cc-signal    Claude Code prompt/stop/notification hook. Tells the running
+               conductor whether the panel in this directory is working or
+               waiting for you, which drives the worktree monitor strip. Wired
+               up the same way as cc-hook; not usually run by hand.
 
 Options:
   -V, --version    Print version and exit
