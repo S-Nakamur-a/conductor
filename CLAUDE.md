@@ -38,20 +38,34 @@ does *not* go through MCP — its artifact is a JSON file written by `revidere`.
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
 
-### Session hook (`conductor cc-hook`, `crates/conductor-core/src/cc_hook/`)
+### Session hooks (`conductor cc-hook` / `cc-signal`, `crates/conductor-core/src/cc_hook/`)
 
 `/clear` rotates Claude Code's log to a **new session id** and nothing on disk
 links the old file to the new one, so a panel pinned to its spawn-time
 `--session-id` would show the pre-clear transcript forever. A `SessionStart` hook
 runs inside the panel's own Claude process and reports the current id back over a
-Unix socket, which `conductor-svc`'s `watch/cc_notify.rs` listens on (it carries
-the waiting/active state too). `pty/spawn.rs` writes `.conductor/claude-hooks.json`
-and passes it as `--settings` on every spawn (that *adds a layer*, so the user's
-own settings keep working), plus `CONDUCTOR_PANEL_ID` and `CONDUCTOR_NOTIFY_SOCK`.
-It lives in the binary rather than `plugins/` for the same reason `mcp-serve`
-does: a separately released plugin drifts, and the failure is silent. **There is
-no hook-less fallback** — the old log-shape inference is gone, so a panel whose
-hook stays quiet keeps its spawn-time session id.
+Unix socket, which `conductor-svc`'s `watch/cc_notify.rs` listens on. `cc-signal`
+rides the same socket with the waiting/active state the monitor strip shows.
+`pty/spawn.rs` writes `.conductor/claude-hooks.json` and passes it as `--settings`
+on every spawn (that *adds a layer*, so the user's own settings keep working),
+plus `CONDUCTOR_PANEL_ID` and `CONDUCTOR_NOTIFY_SOCK`.
+They live in the binary rather than `plugins/` for the same reason `mcp-serve`
+does: a separately released plugin drifts, and the failure is silent — and
+waiting/active used to be plugin-only, so anyone without it had a dead strip.
+`PostToolUse` is declared on top of the plugin's three events because it is the
+only one that fires after a permission dialog is approved; without it the strip
+stays "waiting" while the panel is working. **There is no hook-less fallback** —
+the old log-shape inference is gone, so a panel whose hook stays quiet keeps its
+spawn-time session id.
+
+**The socket does not live in `.conductor/`.** A worktree path there overruns
+`sun_path` (104 bytes on macOS) and neither `bind` nor `connect` gets through, so
+it sits under `$XDG_RUNTIME_DIR` / `$TMPDIR` (falling back to `/tmp/conductor-<uid>`),
+in a 0700 directory, named by a hash of the repository's `conductor_dir`. Keying
+it off `conductor_dir` rather than the worktree root is what makes every linked
+worktree share the one listener. Clients that cannot read the environment — the
+plugin's shell scripts — find the path in `.conductor/cc-notify.path`, written
+before the `bind`.
 
 ### Review analyser (`crates/revidere`)
 
