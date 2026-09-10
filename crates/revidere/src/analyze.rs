@@ -74,6 +74,8 @@ pub struct Options {
     /// どの成果物として残すか。区間そのものを決めるのは base の方なので、
     /// [Scope::SincePrevious] にするなら base に前回の起点コミットを渡すこと。
     pub scope: Scope,
+    /// 本文の口調の指定。ホストが読んだ文章をそのまま渡す。
+    pub style: Option<String>,
 }
 
 /// 差分を解析して `<root>/.conductor/review.json` を書き、その内容を返す。
@@ -117,8 +119,9 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
 
     let store = Cache::new(cache_dir(&root), o.cache);
     let identity = ai.identity();
+    let system = prompt::system(o.style.as_deref());
     let ask = |user: &str| -> Result<String, AnalyzeError> {
-        let key = cache::key(&identity, prompt::SYSTEM, user, &text);
+        let key = cache::key(&identity, &system, user, &text);
         if let Some((raw, at)) = store.get(&key) {
             log::info!(
                 "revidere: reusing a stored answer (no AI call): {}",
@@ -126,9 +129,7 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
             );
             return Ok(raw);
         }
-        let raw = ai
-            .complete(prompt::SYSTEM, user)
-            .map_err(AnalyzeError::Ai)?;
+        let raw = ai.complete(&system, user).map_err(AnalyzeError::Ai)?;
         if let Err(e) = store.put(&key, &raw) {
             log::warn!("revidere: could not store the answer (using it anyway): {e}");
         }

@@ -60,6 +60,20 @@ pub struct WorktreeInfo {
     /// HEAD の committer 時刻 (Unix 秒)。revidere の成果物が HEAD より古いかの
     /// 判定に使う。
     pub head_time: Option<i64>,
+    pub review: ReviewState,
+}
+
+/// この worktree に AI レビューがあるか。
+///
+/// 解析は数分かかるうえ、終わりは合図が消えれば分からなくなる。一覧に出しておけば
+/// 「もう読めるのか」「もう一度回すべきか」が押す前に分かる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReviewState {
+    #[default]
+    None,
+    /// あるが、書かれたあとにコミットが載っている。
+    Stale,
+    Current,
 }
 
 /// 1 つのコミットの要約。

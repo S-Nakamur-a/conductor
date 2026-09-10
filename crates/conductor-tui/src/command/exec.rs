@@ -324,10 +324,14 @@ fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
         ),
     };
     let scope = revidere_panel::scope_label(ws.panels.revidere.scope());
+    // 起点の取り違えは、出てきたレビューを読んでも気付きにくい。押す前に名前で見せる。
+    let base = revidere::git::guess_base(&ws.worktree_path())
+        .unwrap_or_else(|_| "(cannot guess \u{2014} nothing to compare against)".into());
     vec![Effect::PushModal(Modal::Confirm(
         Confirm::ask(situation, on_yes)
             .title(title)
             .detail(format!("{branch} [{scope}]"))
+            .detail(format!("Against {base}"))
             .detail("It calls the AI and takes a few minutes.")
             .labels(verb, "Cancel"),
     ))]
@@ -356,6 +360,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
             scope,
             force,
             api: ws.config.api.clone(),
+            review: ws.config.review.clone(),
             cancel: Default::default(),
         }),
         Effect::Play(Kind::Scan, Target::Review),

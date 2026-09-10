@@ -50,7 +50,12 @@ pub fn short_oid(repo: &Path, rev: &str) -> Result<String, GitError> {
         .to_string())
 }
 
-/// ベースを推定する。origin/HEAD が指す先、無ければ main、無ければ master。
+/// ベースを推定する。origin/HEAD が指す先、無ければ origin/main、origin/master、
+/// それも無ければローカルの main、master。
+///
+/// ローカルを最後に回すのは、fetch がローカルの main を動かさないから。手元の
+/// main は放っておくと取り残され、そこを起点にすると自分の変更に加えて
+/// 「その間に main へ入った他人の変更」まで丸ごとレビュー対象になる。
 pub fn guess_base(repo: &Path) -> Result<String, GitError> {
     if let Ok(s) = run(
         repo,
@@ -61,7 +66,7 @@ pub fn guess_base(repo: &Path) -> Result<String, GitError> {
             return Ok(name.to_string());
         }
     }
-    for cand in ["main", "master"] {
+    for cand in ["origin/main", "origin/master", "main", "master"] {
         if run(repo, &["rev-parse", "--verify", "--quiet", cand]).is_ok() {
             return Ok(cand.to_string());
         }
@@ -325,7 +330,16 @@ mod tests {
                 point_origin_head,
                 Some("origin/develop"),
             ),
-            ("origin/HEAD が無ければ main", &[][..], Some("main")),
+            (
+                "origin/HEAD が無くても origin/main がローカルの main に勝つ",
+                &["update-ref", "refs/remotes/origin/main", "HEAD"][..],
+                Some("origin/main"),
+            ),
+            (
+                "追跡ブランチも無ければローカルの main",
+                &[][..],
+                Some("main"),
+            ),
             (
                 "main が無ければ master",
                 &["branch", "-m", "main", "master"][..],

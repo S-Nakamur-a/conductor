@@ -165,6 +165,7 @@ fn analyze_task(branch: &str) -> Task {
         scope: Scope::Base,
         force: false,
         api: Default::default(),
+        review: Default::default(),
         cancel: Arc::new(AtomicBool::new(false)),
     }
 }
@@ -271,6 +272,64 @@ fn 解析の確認から2列ビューまで通る() {
         .collect();
     assert!(listed.contains("beta を足す"), "{listed}");
     assert!(!cache.diff_lines.is_empty());
+}
+
+/// 成果物を差し込んで 2 列を組み立てたところまで進める。
+fn built(sections: &str) -> (Workspace, conductor_svc::Services<TaskResult>) {
+    let repo = TestRepo::new();
+    let base = repo
+        .git(&["rev-parse", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    repo.commit_in(&repo.root(), "a.txt", "alpha\nbeta\n", "second");
+    let (mut ws, mut svc) = workspace_for(&repo);
+    select_only_worktree(&mut ws, &mut svc, &repo.root());
+    write_artifact(
+        &repo.root(),
+        Scope::Base,
+        &artifact_json(&base, "analysed", sections),
+    );
+    let effects = ws.panels.revidere.reload(repo.root());
+    apply(&mut ws, &mut svc, vec![effects]);
+    pump(&mut ws, &mut svc);
+    // 組み立てはビューを見ている間しか走らない。
+    apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::Revidere)]);
+    ws.panels.revidere.show_overview(false);
+    let layout = crate::layout::layout(&ws, Rect::new(0, 0, 140, 40));
+    ws.sync_layout(&layout);
+    ws.prepare();
+    (ws, svc)
+}
+
+fn joined(lines: &[ratatui::text::Line<'static>]) -> String {
+    lines
+        .iter()
+        .map(ratatui::text::Line::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn 本文のマークダウンは記号のまま出さない() {
+    let sections = r#"[{"title":"t","body":"**強い** ところと `code`","importance":"core",
+        "reason":"主目的そのもの",
+        "ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}]"#;
+    let (ws, _svc) = built(sections);
+    let cache = ws.panels.revidere.cache().expect("組み立て済み");
+    let shown = joined(&cache.diff_lines);
+    assert!(shown.contains("強い"), "{shown}");
+    assert!(!shown.contains("**"), "記号が生で出ている: {shown}");
+}
+
+#[test]
+fn 読む順の列は項目ごとに触る場所も出す() {
+    let sections = r#"[{"title":"t","body":"b","importance":"core",
+        "reason":"主目的そのもの",
+        "ranges":[{"path":"a.txt","side":"new","start":2,"end":2}]}]"#;
+    let (ws, _svc) = built(sections);
+    let cache = ws.panels.revidere.cache().expect("組み立て済み");
+    let listed = joined(&cache.order_lines);
+    assert!(listed.contains("a.txt"), "{listed}");
 }
 
 /// 項目を選ぶと右の列がその項目の先頭へ動き、enter は列を渡り歩いてから Viewer へ出す。

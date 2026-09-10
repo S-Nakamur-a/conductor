@@ -4,6 +4,10 @@
 //! 右の列を歩くのは diff であって項目ではない。行を出しているのは
 //! [revidere::ReadingOrder] で、そのループの主語は変更一覧の側。項目が漏らしても
 //! 変更行は消えず、最悪でも帯の無い素の diff に退化する。
+//!
+//! 並びが重要度順であることが、この列の設計をほぼ決めている。ファイル順なら隣の
+//! 行から現在地を推せるが、ここでは推せない。だから場所は繰り返し名乗らせる —
+//! 左列は項目ごとに、右列は流れて消えないように上へ貼り付ける。
 
 use conductor_core::diff_state::DiffLineTag;
 use conductor_core::theme::Theme;
@@ -17,6 +21,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{Loaded, artifact::importance_color, scope_label};
 use crate::panels::viewer::diff::Entry;
 use crate::panels::viewer::render::{digit_count, unified_line};
+use crate::panels::viewer::syntax::Highlighter;
 use crate::workspace::Workspace;
 
 /// 左列の重要度ラベルが取る表示幅。一番長い「影響あり」に合わせる。揃えないと、
@@ -57,6 +62,9 @@ pub struct Rendered {
     pub diff_lines: Vec<Line<'static>>,
     /// 項目ごとの、右列での先頭行。
     pub section_rows: Vec<usize>,
+    /// 画面に出した diff の行 → その行が属するかたまりの見出しの行。項目単位の
+    /// [Self::section_rows] では足りない — 1 項目が複数のファイルを触る。
+    locator_of_row: Vec<Option<usize>>,
     pub overview_lines: Vec<Line<'static>>,
 }
 
@@ -68,14 +76,34 @@ impl Rendered {
             .saturating_sub(height / 3)
             .min(self.order_lines.len().saturating_sub(1))
     }
+
+    /// 見出しが上へ流れてしまっているときだけ、その見出しを返す。
+    ///
+    /// 見出しそのものが画面に見えているのに上へ貼ると、同じ行が 2 度並ぶ。
+    fn locator(&self, scroll: usize) -> Option<&Line<'static>> {
+        let head = (*self.locator_of_row.get(scroll)?)?;
+        (head < scroll).then(|| self.diff_lines.get(head))?
+    }
 }
 
-pub fn build(key: Key, review: &Loaded, theme: &Theme, tab_width: usize) -> Rendered {
+pub fn build(
+    key: Key,
+    review: &Loaded,
+    theme: &Theme,
+    tab_width: usize,
+    highlighter: &Highlighter,
+) -> Rendered {
     let (order_lines, item_of_row, row_of_item) =
         order_column(review, theme, inner_width(key.order_width));
-    let (diff_lines, section_rows) =
-        diff_column(review, theme, inner_width(key.diff_width), tab_width);
-    let overview_width = inner_width(key.diff_width.min(READING_W + 2));
+    let body_width = inner_width(key.diff_width.min(READING_W + 2));
+    let (diff_lines, section_rows, locator_of_row) = diff_column(
+        review,
+        theme,
+        inner_width(key.diff_width),
+        body_width,
+        tab_width,
+        highlighter,
+    );
     Rendered {
         key,
         order_lines,
@@ -83,7 +111,8 @@ pub fn build(key: Key, review: &Loaded, theme: &Theme, tab_width: usize) -> Rend
         row_of_item,
         diff_lines,
         section_rows,
-        overview_lines: overview(review, theme, overview_width),
+        locator_of_row,
+        overview_lines: overview(review, theme, body_width, highlighter),
     }
 }
 
@@ -177,6 +206,14 @@ pub fn diff(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         frame.render_widget(Paragraph::new(empty_lines(ws, &ws.theme)), inner);
         return;
     };
+    if !panel.showing_overview()
+        && let Some(locator) = cache.locator(panel.diff_scroll())
+    {
+        let (head, rest) = split_top(inner);
+        frame.render_widget(Paragraph::new(vec![locator.clone()]), head);
+        render_window(frame, &cache.diff_lines, panel.diff_scroll() + 1, rest);
+        return;
+    }
     let (source, scroll, area) = if panel.showing_overview() {
         // 余った幅は枠の外に出して中央に置く。枠だけ全幅で伸ばすと、右側の
         // 空きが折り返しの失敗に見える。
@@ -188,6 +225,10 @@ pub fn diff(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     } else {
         (&cache.diff_lines, panel.diff_scroll(), inner)
     };
+    render_window(frame, source, scroll, area);
+}
+
+fn render_window(frame: &mut Frame, source: &[Line<'static>], scroll: usize, area: Rect) {
     let lines: Vec<Line> = source
         .iter()
         .skip(scroll)
@@ -195,6 +236,20 @@ pub fn diff(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         .cloned()
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// 1 行目と、その下。高さが 1 行しか無いなら貼る余地は無い。
+fn split_top(area: Rect) -> (Rect, Rect) {
+    let head = Rect {
+        height: area.height.min(1),
+        ..area
+    };
+    let rest = Rect {
+        y: area.y + head.height,
+        height: area.height.saturating_sub(head.height),
+        ..area
+    };
+    (head, rest)
 }
 
 fn centered(area: Rect, max_w: u16) -> Rect {
@@ -242,6 +297,21 @@ fn order_column(
             ]));
             item_of_row.push(i);
         }
+        if let Some(where_) = whereabouts(placed) {
+            for chunk in wrap(
+                &where_,
+                inner_w.saturating_sub(indent.len() + LABEL_W + 2).max(8),
+            ) {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{indent}\u{258c}{} ", " ".repeat(LABEL_W)),
+                        Style::default().fg(color),
+                    ),
+                    Span::styled(chunk, Style::default().fg(theme.diff_section_header)),
+                ]));
+                item_of_row.push(i);
+            }
+        }
         // 項目が在るのに指す行が diff に 1 つも無い状態。黙って消すと「在ると
         // 言った変更が無かった」ことに気付けない。
         if placed.is_empty() {
@@ -255,6 +325,24 @@ fn order_column(
     (lines, item_of_row, row_of_item)
 }
 
+/// 項目が触っている場所を 1 行に畳む。同じファイルの複数のかたまりは 1 つと数える。
+///
+/// 溢れた分を件数に落とすのは、前回からの進みのファイル一覧と同じ畳み方。同じ
+/// 画面に 2 通りあると、読む側は表記の違いを意味の違いと読む。
+fn whereabouts(placed: &revidere::PlacedSection) -> Option<String> {
+    let mut paths: Vec<&str> = Vec::new();
+    for block in &placed.blocks {
+        if !paths.contains(&block.path.as_str()) {
+            paths.push(&block.path);
+        }
+    }
+    let first = paths.first()?;
+    Some(match paths.len() {
+        1 => first.to_string(),
+        n => format!("{first} ほか {} 件", n - 1),
+    })
+}
+
 fn label_of(importance: Option<revidere::Importance>, theme: &Theme) -> (&'static str, Color) {
     match importance {
         Some(importance) => (importance.label_ja(), importance_color(importance)),
@@ -263,16 +351,21 @@ fn label_of(importance: Option<revidere::Importance>, theme: &Theme) -> (&'stati
     }
 }
 
+type DiffColumn = (Vec<Line<'static>>, Vec<usize>, Vec<Option<usize>>);
+
 fn diff_column(
     review: &Loaded,
     theme: &Theme,
     inner_w: usize,
+    body_w: usize,
     tab_width: usize,
-) -> (Vec<Line<'static>>, Vec<usize>) {
+    highlighter: &Highlighter,
+) -> DiffColumn {
     let sections = review.annotations.sections();
     let digits = digit_count(max_line_no(review));
     let mut lines = Vec::new();
     let mut section_rows = Vec::with_capacity(review.order.sections.len());
+    let mut locators: Vec<Option<usize>> = Vec::new();
 
     for placed in &review.order.sections {
         section_rows.push(lines.len());
@@ -286,12 +379,7 @@ fn diff_column(
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
         if let Some(section) = section {
-            for chunk in wrap(&section.body, inner_w.saturating_sub(2)) {
-                lines.push(Line::styled(
-                    format!("  {chunk}"),
-                    Style::default().fg(theme.fg),
-                ));
-            }
+            lines.extend(prose(&section.body, "  ", body_w, theme, highlighter));
             // なぜその重要度なのかは全項目必須。誤分類は機械では見つからないが、
             // 理由が読めれば人が見つけられる。
             if let Some(reason) = &section.reason {
@@ -300,11 +388,12 @@ fn diff_column(
                     &format!("  なぜ{label}: "),
                     reason,
                     theme.muted,
-                    inner_w,
+                    body_w,
                 );
             }
         }
         lines.push(Line::default());
+        locators.resize(lines.len(), None);
 
         for block in &placed.blocks {
             let head = if block.hunk.is_empty() {
@@ -312,9 +401,14 @@ fn diff_column(
             } else {
                 format!("  {}  @@ {}", block.path, block.hunk)
             };
+            // 見出しは太字にする。読んでいる最中に一番知りたいのは現在地なのに、
+            // 素の diff_section_header は muted 寄りのテーマがあって沈む。
+            let locator = lines.len();
             lines.push(Line::styled(
                 head,
-                Style::default().fg(theme.diff_section_header),
+                Style::default()
+                    .fg(theme.diff_section_header)
+                    .add_modifier(Modifier::BOLD),
             ));
             if block.whole_file {
                 // 行を持たない変更 (バイナリ、モードのみ、純粋な rename)。落とすと
@@ -335,9 +429,40 @@ fn diff_column(
                 ));
             }
             lines.push(Line::default());
+            locators.resize(lines.len(), Some(locator));
         }
     }
-    (lines, section_rows)
+    locators.resize(lines.len(), None);
+    (lines, section_rows, locators)
+}
+
+/// マークダウンとして書かれた本文を描く。
+///
+/// 生で出すと `**` や `- ` がそのまま画面に出る。書く側 (prompt.rs) は最初から
+/// 「マークダウン可」と言っている。
+fn prose(
+    text: &str,
+    indent: &str,
+    width: usize,
+    theme: &Theme,
+    highlighter: &Highlighter,
+) -> Vec<Line<'static>> {
+    let width = width.saturating_sub(indent.width()).max(8);
+    crate::markdown::render(
+        text,
+        width,
+        theme,
+        highlighter.syntax_set(),
+        highlighter.theme(),
+        crate::markdown::Flavor::Rich,
+    )
+    .into_iter()
+    .map(|line| {
+        let mut out = line;
+        out.spans.insert(0, Span::raw(indent.to_string()));
+        out
+    })
+    .collect()
 }
 
 fn max_line_no(review: &Loaded) -> usize {
@@ -394,7 +519,12 @@ fn expand_tabs(text: &str, tab_width: usize) -> String {
 
 /// 概要。畳んだり途中で切ったりしない。これを読まずに項目から読み始めると、
 /// 個々の変更が何のためかが分からないまま進むことになる。
-fn overview(review: &Loaded, theme: &Theme, inner_w: usize) -> Vec<Line<'static>> {
+fn overview(
+    review: &Loaded,
+    theme: &Theme,
+    inner_w: usize,
+    highlighter: &Highlighter,
+) -> Vec<Line<'static>> {
     let overview = review.annotations.overview();
     let head = |text: String, color| {
         Line::styled(
@@ -416,12 +546,7 @@ fn overview(review: &Loaded, theme: &Theme, inner_w: usize) -> Vec<Line<'static>
         ("範囲", &overview.scope),
     ] {
         lines.push(head(format!("  {key}"), theme.diff_section_header));
-        for chunk in wrap(value, inner_w.saturating_sub(4)) {
-            lines.push(Line::styled(
-                format!("    {chunk}"),
-                Style::default().fg(theme.fg),
-            ));
-        }
+        lines.extend(prose(value, "    ", inner_w, theme, highlighter));
         lines.push(Line::default());
     }
 
@@ -625,5 +750,88 @@ mod tests {
     fn タブは表示幅で埋める() {
         assert_eq!(expand_tabs("\tx", 4), "    x");
         assert_eq!(expand_tabs("ab\tx", 4), "ab  x");
+    }
+
+    fn placed(paths: &[&str]) -> revidere::PlacedSection {
+        revidere::PlacedSection {
+            section: None,
+            importance: None,
+            blocks: paths
+                .iter()
+                .map(|p| revidere::Block {
+                    path: (*p).to_string(),
+                    hunk: String::new(),
+                    lines: Vec::new(),
+                    whole_file: false,
+                })
+                .collect(),
+            changed: 0,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn 触る場所が1つならそのまま出す() {
+        assert_eq!(whereabouts(&placed(&["src/a.rs"])).unwrap(), "src/a.rs");
+    }
+
+    /// 同じファイルの複数のかたまりは 1 件。数えてしまうと、1 ファイルしか触って
+    /// いない項目が「ほか 3 件」を名乗る。
+    #[test]
+    fn 同じファイルは何度出てきても1件() {
+        let got = whereabouts(&placed(&["src/a.rs", "src/a.rs", "src/b.rs"])).unwrap();
+        assert_eq!(got, "src/a.rs ほか 1 件");
+    }
+
+    #[test]
+    fn 触る場所が無ければ行を足さない() {
+        assert!(whereabouts(&placed(&[])).is_none());
+    }
+
+    fn rendered(locator_of_row: Vec<Option<usize>>) -> Rendered {
+        let diff_lines = (0..locator_of_row.len())
+            .map(|n| Line::from(format!("row{n}")))
+            .collect();
+        Rendered {
+            key: Key {
+                order_width: 0,
+                diff_width: 0,
+                theme: "t",
+                epoch: 0,
+            },
+            order_lines: Vec::new(),
+            item_of_row: Vec::new(),
+            row_of_item: Vec::new(),
+            diff_lines,
+            section_rows: Vec::new(),
+            locator_of_row,
+            overview_lines: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn 見出しが見えている間は貼らない() {
+        let r = rendered(vec![Some(0), Some(0), Some(0)]);
+        assert!(r.locator(0).is_none());
+    }
+
+    #[test]
+    fn 見出しが流れたら貼る() {
+        let r = rendered(vec![Some(0), Some(0), Some(0)]);
+        assert_eq!(r.locator(2).unwrap().spans[0].content, "row0");
+    }
+
+    /// 項目の説明の途中には貼るものが無い。どのファイルの話でもないため。
+    #[test]
+    fn かたまりの外では貼らない() {
+        let r = rendered(vec![None, None, Some(2)]);
+        assert!(r.locator(1).is_none());
+    }
+
+    /// 1 項目が複数のファイルを触るとき、2 つ目に入ったらそちらの見出しに変わる。
+    #[test]
+    fn 次のファイルに入ったら見出しも変わる() {
+        let r = rendered(vec![Some(0), Some(0), Some(2), Some(2)]);
+        assert_eq!(r.locator(3).unwrap().spans[0].content, "row2");
     }
 }

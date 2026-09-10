@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use git2::{Repository, Status, StatusOptions, StatusShow};
 
-use super::{GitEngine, WorktreeInfo};
+use super::{GitEngine, ReviewState, WorktreeInfo};
 
 struct ChangeCounts {
     added: usize,
@@ -157,7 +157,24 @@ impl GitEngine {
             behind,
             head_oid,
             head_time,
+            review: Self::review_state(path, head_time),
         })
+    }
+
+    /// 成果物の更新時刻と HEAD の時刻を比べるだけ。中身は読まない — worktree の
+    /// 数だけ走るうえ、一覧の更新は変更を打つたびに起きる。
+    fn review_state(worktree: &Path, head_time: Option<i64>) -> ReviewState {
+        let artifact = worktree.join(".conductor").join("review.json");
+        let Ok(written) = artifact.metadata().and_then(|m| m.modified()) else {
+            return ReviewState::None;
+        };
+        let Ok(written) = written.duration_since(std::time::UNIX_EPOCH) else {
+            return ReviewState::Current;
+        };
+        match head_time {
+            Some(head) if (written.as_secs() as i64) < head => ReviewState::Stale,
+            _ => ReviewState::Current,
+        }
     }
 
     fn ahead_behind_upstream(repo: &Repository) -> (Option<usize>, Option<usize>) {
@@ -233,5 +250,64 @@ impl GitEngine {
             }
         }
         Ok(counts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// 成果物を書き、その更新時刻を Unix 秒で固定する。
+    fn artifact_at(dir: &Path, written: u64) {
+        let path = dir.join(".conductor").join("review.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(written))
+            .unwrap();
+    }
+
+    #[test]
+    fn 成果物が無ければレビューは無い() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(
+            GitEngine::review_state(d.path(), Some(1000)),
+            ReviewState::None
+        );
+    }
+
+    #[test]
+    fn 成果物のあとにコミットが載っていれば古い() {
+        let d = tempfile::tempdir().unwrap();
+        artifact_at(d.path(), 1000);
+        assert_eq!(
+            GitEngine::review_state(d.path(), Some(2000)),
+            ReviewState::Stale
+        );
+    }
+
+    #[test]
+    fn コミットより新しければ最新() {
+        let d = tempfile::tempdir().unwrap();
+        artifact_at(d.path(), 2000);
+        assert_eq!(
+            GitEngine::review_state(d.path(), Some(1000)),
+            ReviewState::Current
+        );
+    }
+
+    /// HEAD が読めないときに古い側へ倒すと、在るレビューが常に古く見える。
+    #[test]
+    fn headの時刻が無ければ古いとは言わない() {
+        let d = tempfile::tempdir().unwrap();
+        artifact_at(d.path(), 1000);
+        assert_eq!(
+            GitEngine::review_state(d.path(), None),
+            ReviewState::Current
+        );
     }
 }

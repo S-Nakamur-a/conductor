@@ -60,6 +60,7 @@ fn options(repo: &Repo, base: &str) -> Options {
         base: Some(base.to_string()),
         cache: true,
         scope: crate::review::Scope::Base,
+        style: None,
     }
 }
 
@@ -233,6 +234,27 @@ fn コミットせずに解析し直しても比較の起点は動かない() {
         "起点は 2 度目のときと同じ first のまま: {since:?}"
     );
     assert_eq!(since.files, Some(vec!["a.txt".to_string()]));
+}
+
+/// 口調はプロンプトの一部なので、変えれば貯めた応答は当たらない。当たってしまうと、
+/// 口調を差し替えたのに前の口調の答えが返り続ける。
+#[test]
+fn 口調を変えると貯めた応答は当たらない() {
+    let repo = repo_ignoring_artifacts();
+    let (base, _) = one_line_feature(&repo);
+    let ai = StubAi::always(&answer_covering("changes", 2, 3));
+
+    analyze(&options(&repo, &base), &ai).unwrap();
+    let after_first = ai.calls();
+    analyze(&options(&repo, &base), &ai).unwrap();
+    assert_eq!(ai.calls(), after_first, "同じ口調なら貯めた応答に当たる");
+
+    let styled = Options {
+        style: Some("うちはこう喋る".to_string()),
+        ..options(&repo, &base)
+    };
+    analyze(&styled, &ai).unwrap();
+    assert_eq!(ai.calls(), after_first + 1, "口調が違えば聞き直す");
 }
 
 /// 前回のコミットがもう残っていない (gc 済み、あるいは別のリポジトリの成果物)

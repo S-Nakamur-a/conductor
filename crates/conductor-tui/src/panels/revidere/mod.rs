@@ -20,6 +20,7 @@ use revidere::Scope;
 use crate::effect::Effect;
 use crate::fx::{Kind, Target};
 use crate::layout::{Layout, Region};
+use crate::panels::viewer::syntax::Highlighter;
 use crate::task::{AnalyzeOutcome, Task};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
@@ -225,7 +226,7 @@ impl RevidereState {
 
     /// 折り返しと組み立ては 1 フレームに収まる仕事ではないので、幅・テーマ・成果物の
     /// どれかが変わったときだけ組み直す。
-    pub fn prepare(&mut self, theme: &Theme, config: &Config) {
+    pub fn prepare(&mut self, theme: &Theme, config: &Config, highlighter: &Highlighter) {
         let key = render::Key {
             order_width: self.order_area.width,
             diff_width: self.diff_area.width,
@@ -238,7 +239,7 @@ impl RevidereState {
         self.cache = self
             .review
             .as_deref()
-            .map(|review| render::build(key, review, theme, config.viewer.tab_width));
+            .map(|review| render::build(key, review, theme, config.viewer.tab_width, highlighter));
     }
 
     pub(crate) fn cache(&self) -> Option<&render::Rendered> {

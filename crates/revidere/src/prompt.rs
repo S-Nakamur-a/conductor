@@ -4,8 +4,30 @@
 // 呼んでいるが、書き換えると貯めた応答が全部使えなくなり、AI の出力の質も
 // 確かめ直しになる。JSON のキーと enum は英語なので、呼び名の違いは外へ出ない。
 
+/// 口調の指定を末尾に足した [BASE]。指定が無ければ [BASE] のまま。
+///
+/// 末尾に置くのは、上の「確かめた事実として書け」に押し負けさせないため。
+/// 同じ重さで前に置くと、規律の側が勝って素の文体に戻る (実測)。
+pub fn system(style: Option<&str>) -> String {
+    let Some(style) = style else {
+        return BASE.to_string();
+    };
+    format!(
+        r#"{BASE}
+
+文章の口調は次の指定に従う。overview の 5 欄、節の body と reason、impacts の
+各欄が対象で、JSON の形・キー・enum の値は変えない。
+
+口調が変わっても、上に書いた事実の確かめ方は一切ゆるまない。確かめていない
+ことを勢いで書いてよいという意味ではないし、分からないことを埋めてよくもならない。
+砕けた言い方で、確かめた事実だけを短く書くこと。
+
+{style}"#
+    )
+}
+
 /// 何を作るのかと、返す JSON の形。実行ごとの事情は [user] 側に置く。
-pub const SYSTEM: &str = r#"あなたはコードレビューの下読みをする。読む人が次の 3 段階でレビューを進められるように、変更を整理して JSON で返す。
+pub const BASE: &str = r#"あなたはコードレビューの下読みをする。読む人が次の 3 段階でレビューを進められるように、変更を整理して JSON で返す。
 
 段階 1 — 抽象で掴む
 毎回同じ 5 欄を同じ順で埋める。PR description ではなく、読む側の型。
@@ -212,9 +234,29 @@ mod tests {
             ),
         ] {
             for phrase in phrases {
-                assert!(SYSTEM.contains(phrase), "{why}: 「{phrase}」が無い");
+                assert!(BASE.contains(phrase), "{why}: 「{phrase}」が無い");
             }
         }
+    }
+
+    #[test]
+    fn 口調の指定が無ければ素のままで足さない() {
+        assert_eq!(system(None), BASE);
+    }
+
+    #[test]
+    fn 口調は規律のあとに置く() {
+        let p = system(Some("うちはこう喋る"));
+        let discipline = p.find("確かめた事実として書くこと").expect("{p}");
+        assert!(p.find("うちはこう喋る").expect("{p}") > discipline, "{p}");
+    }
+
+    /// 口調が事実の確かめ方まで緩めると、勢いで書いた推測が事実の顔で並ぶ。
+    #[test]
+    fn 口調を足しても確かめ方は緩めないと断る() {
+        let p = system(Some("x"));
+        assert!(p.contains("事実の確かめ方は一切ゆるまない"), "{p}");
+        assert!(p.contains("JSON の形・キー・enum の値は変えない"), "{p}");
     }
 
     #[test]

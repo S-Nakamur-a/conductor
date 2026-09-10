@@ -19,6 +19,7 @@ pub mod theme;
 pub mod ai_caller;
 pub mod grep_search;
 pub mod instance_lock;
+pub mod output_style;
 pub mod pr_intake;
 pub mod review_publish;
 pub mod semantic_index;

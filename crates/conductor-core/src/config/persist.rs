@@ -114,6 +114,15 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 # startup_animation = true              # panels assemble themselves on the first frames.
 #                                       # Turn it off over SSH or on slow-drawing terminals.
 
+[review]
+# Voice for the prose in the AI review (revidere). Without one, the review prompt's
+# own demand for verified fact outweighs whatever voice your AI tool already carries,
+# and the review comes back in flat prose. Either key leaves the JSON shape and the
+# standard of evidence untouched. Set both and the inline `style` is the one used.
+#
+# style = "Keep it short. Skip the polite register."   # written here, sent as-is
+# style_path = "~/.claude/output-styles/my-style.md"   # a Claude Code output-style file
+
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup
 # check_interval_secs = 3600            # minimum interval between checks; also the cache lifetime
