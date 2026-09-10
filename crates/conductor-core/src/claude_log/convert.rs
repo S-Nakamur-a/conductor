@@ -88,6 +88,13 @@ fn attr_value<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..rest.find('"')?])
 }
 
+/// 行頭にあるものだけ。地の文でタグに言及しただけの行を畳むと本文が消える。
+fn teammate_tag_start(text: &str) -> Option<usize> {
+    text.match_indices("<teammate-message")
+        .find(|(at, _)| *at == 0 || text.as_bytes()[at - 1] == b'\n')
+        .map(|(at, _)| at)
+}
+
 /// summary 属性は読まない。展開時に見える body だけが本体を持つ。
 fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     const OPEN_PREFIX: &str = "<teammate-message";
@@ -96,19 +103,55 @@ fn parse_teammate_message(lead: &str) -> Option<(String, String)> {
     let id = attr_value(&lead[OPEN_PREFIX.len()..tag_end], "teammate_id")?;
     let rest = &lead[tag_end + 1..];
     let body = rest.find(CLOSE).map_or(rest, |end| &rest[..end]);
-    Some((id.to_string(), body.trim().to_string()))
+    Some((id.to_string(), teammate_body(body.trim())))
+}
+
+/// エージェントの通知 JSON のうち、人が読む本文ではないと分かっているキー。
+/// 本文の側を名指しにすると、Claude Code が知らないキーで本文を運んできたときに
+/// メッセージごと消える。知らないキーを本文として拾う方は短い機械語が出るだけで済む。
+const TEAMMATE_META_KEYS: &[&str] = &[
+    "type",
+    "from",
+    "timestamp",
+    "idleReason",
+    "paneId",
+    "requestId",
+    "backendType",
+    "taskId",
+    "assignedBy",
+];
+
+/// 待機に入っただけの通知には本文が無く、空になる。手で書かれたメッセージは
+/// JSON ではないので、そのまま本文になる。
+fn teammate_body(raw: &str) -> String {
+    let Ok(notification) = serde_json::from_str::<Value>(raw) else {
+        return raw.to_string();
+    };
+    let Some(fields) = notification.as_object() else {
+        return raw.to_string();
+    };
+    fields
+        .iter()
+        .filter(|(key, _)| !TEAMMATE_META_KEYS.contains(&key.as_str()))
+        .filter_map(|(_, value)| value.as_str())
+        .map(str::trim)
+        .max_by_key(|body| body.len())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// CLI が user ターンの中に記録するラッパー形式を、画面で見えていた形に畳む。
 ///
-/// ラッパーは先頭にある場合だけ認識する。例外は task-notification で、Claude Code は
-/// メッセージのどこにあっても最初の summary だけを残し、周りの文章ごと捨てる
-/// (summary が無ければメッセージ全体が消える)。system-reminder は畳まない。
+/// ラッパーは先頭にある場合だけ認識する。例外は task-notification と teammate-message で、
+/// どちらもメッセージのどこにあっても中身だけを残し、周りの文章ごと捨てる
+/// (task-notification は summary が無ければメッセージ全体が消える)。
+/// 別セッションからのメッセージは "Another Claude session sent a message:" の 1 行と、
+/// 権限に関する後書きに挟まれて届く。system-reminder は畳まない。
 /// Claude Code はインラインでも単独でもそのまま描き、見えないものは isMeta 側で隠れる。
 fn normalise_user_text(text: String) -> Option<DisplayBlock> {
     let lead = text.trim_start();
-    if lead.starts_with("<teammate-message")
-        && let Some((id, body)) = parse_teammate_message(lead)
+    if let Some(at) = teammate_tag_start(lead)
+        && let Some((id, body)) = parse_teammate_message(&lead[at..])
     {
         return Some(DisplayBlock::TeammateMessage { id, body });
     }
