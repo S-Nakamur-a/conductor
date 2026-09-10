@@ -115,14 +115,13 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #                                       # Turn it off over SSH or on slow-drawing terminals.
 
 [review]
-# style_path = "~/.claude/output-styles/my-style.md"
-#                                       # Voice for the prose in the AI review (revidere).
-#                                       # Point it at a Claude Code output-style file; its body is
-#                                       # handed to the model as part of the review prompt. Without
-#                                       # this, the review prompt's own demand for verified fact
-#                                       # outweighs whatever voice your AI tool already carries, and
-#                                       # the review comes back in flat prose. The JSON shape and the
-#                                       # standard of evidence are unaffected.
+# Voice for the prose in the AI review (revidere). Without one, the review prompt's
+# own demand for verified fact outweighs whatever voice your AI tool already carries,
+# and the review comes back in flat prose. Either key leaves the JSON shape and the
+# standard of evidence untouched. Set both and the inline `style` is the one used.
+#
+# style = "Keep it short. Skip the polite register."   # written here, sent as-is
+# style_path = "~/.claude/output-styles/my-style.md"   # a Claude Code output-style file
 
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup

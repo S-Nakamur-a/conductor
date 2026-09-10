@@ -129,6 +129,8 @@ impl Default for ApiConfig {
 pub struct ReviewConfig {
     /// 本文の口調を指定する Claude Code の output style ファイル。
     pub style_path: Option<PathBuf>,
+    /// 本文の口調を直接書いたもの。[Self::style_path] より優先する。
+    pub style: Option<String>,
 }
 
 /// [updates] セクション。GitHub Releases との照合。

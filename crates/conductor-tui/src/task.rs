@@ -792,10 +792,10 @@ fn run_analyze(
         base,
         cache: !force,
         scope,
-        style: review
-            .style_path
-            .as_deref()
-            .and_then(conductor_core::output_style::load),
+        style: conductor_core::output_style::resolve(
+            review.style.as_deref(),
+            review.style_path.as_deref(),
+        ),
     };
     match revidere::analyze(&options, &ai) {
         Ok(review) => AnalyzeOutcome::Done {

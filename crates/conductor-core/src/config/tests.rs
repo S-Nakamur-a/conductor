@@ -83,6 +83,7 @@ fn non_default() -> Config {
         },
         review: ReviewConfig {
             style_path: Some(PathBuf::from("/s.md")),
+            style: Some(String::from("短く書く")),
         },
     }
 }

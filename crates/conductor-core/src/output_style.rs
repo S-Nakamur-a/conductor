@@ -7,6 +7,21 @@
 
 use std::path::Path;
 
+/// 設定が指している口調。直接書いた文章が、ファイルより先。
+///
+/// 逆にすると、目の前の config に書いてある文章が黙って無視される。
+pub fn resolve(inline: Option<&str>, path: Option<&Path>) -> Option<String> {
+    match (inline.map(str::trim).filter(|s| !s.is_empty()), path) {
+        (Some(text), Some(path)) => {
+            log::info!("using the inline review style, not {}", path.display());
+            Some(text.to_string())
+        }
+        (Some(text), None) => Some(text.to_string()),
+        (None, Some(path)) => load(path),
+        (None, None) => None,
+    }
+}
+
 /// frontmatter を落とした本文。読めない・空なら None。
 ///
 /// 失敗を握り潰すのは、口調の指定が無いレビューは成立するため。呼ぶ側は
@@ -64,5 +79,22 @@ mod tests {
     #[test]
     fn 読めないパスは何も返さない() {
         assert!(load(Path::new("/nonexistent/style.md")).is_none());
+    }
+
+    #[test]
+    fn 直接書いた文章はファイルより先() {
+        let got = resolve(Some("短く書く"), Some(Path::new("/nonexistent/style.md")));
+        assert_eq!(got.unwrap(), "短く書く");
+    }
+
+    /// 空文字を「指定された」と読むと、口調の欄が空のまま送られる。
+    #[test]
+    fn 空文字は指定が無いのと同じ() {
+        assert!(resolve(Some("  \n"), None).is_none());
+    }
+
+    #[test]
+    fn どちらも無ければ何も返さない() {
+        assert!(resolve(None, None).is_none());
     }
 }
