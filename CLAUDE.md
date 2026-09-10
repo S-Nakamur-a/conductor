@@ -80,8 +80,20 @@ line is left unexplained. `crates/revidere-fixtures` is shared test scaffolding.
   `[api]` config as every other AI feature. `provider = "gemini"` will *not* work:
   the prompt hands over the ledger only and the model must read the repository
   itself, so it needs an agentic CLI under `provider = "command"`.
-- **Cache identity** includes `Ai::identity()`. If that goes constant, changing
-  models silently returns the old model's answer.
+- **The voice is part of the prompt, and it goes last.** `[review] style` (inline)
+  or `style_path` (a Claude Code output-style file) is appended by
+  `prompt::system`. Whatever voice the AI tool already carries loses to this
+  prompt's own demand for verified fact, so naming it here is the only way it
+  survives — and it only survives from the *end*: measured, the same text placed
+  before the rules is overridden by them. The JSON shape and the standard of
+  evidence are explicitly held constant in that block.
+- **The base is guessed remote-first** (`git::guess_base`): `origin/HEAD`, then
+  `origin/main` / `origin/master`, and only then the local branches. `git fetch`
+  never advances a local `main`, so preferring it silently widened the review to
+  include everything that landed upstream meanwhile.
+- **Cache identity** includes `Ai::identity()` *and the composed prompt*, so
+  changing the voice re-asks. If identity goes constant, changing models silently
+  returns the old model's answer.
 - **Failing coverage is not a failure.** `analyze` returns the artifact either
   way; `review.coverage.is_complete()` distinguishes them.
 - revidere writes nothing to stdout/stderr (the host owns a TUI) — use `log`.
