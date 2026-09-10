@@ -16,7 +16,8 @@ use crate::panels::viewer::syntax::Highlighter;
 
 use super::style::{
     ASSISTANT_MARKER, INACTIVE, MARKER_COLS, Styles, TEAMMATE_GLYPH, THINKING_GLYPH, USER_MARKER,
-    fit_glyph_line, fit_styled_line, is_width_ambiguous, markdown_theme, pad_glyph_to, with_marker,
+    fit_glyph_line, fit_styled_line, is_width_ambiguous, markdown_theme, pad_glyph_to,
+    truncate_to_width, with_marker,
 };
 use super::tool::{
     count_buckets, render_annotation, render_result_collapsed, render_result_expanded,
@@ -284,6 +285,15 @@ fn thinking(
     lines
 }
 
+/// 畳んだ 1 行に載る分の本文。改行から先は載らないので最初の中身のある行だけを使う。
+fn body_head(body: &str, budget: usize) -> Option<String> {
+    if budget == 0 {
+        return None;
+    }
+    let head = body.lines().map(str::trim).find(|l| !l.is_empty())?;
+    Some(truncate_to_width(head, budget))
+}
+
 /// 折りたたみは 1 行で背景ブロック無し。thinking と違い普通のチャットなので本文は markdown。
 fn teammate(
     ctx: &Ctx<'_>,
@@ -294,18 +304,24 @@ fn teammate(
     body: &str,
 ) -> Vec<Line<'static>> {
     let marker = pad_glyph_to(TEAMMATE_GLYPH, MARKER_COLS);
+    let head = format!("Message from @{id}");
     if !ctx.expanded {
-        return vec![Line::from(vec![
-            Span::styled(marker, styles.result),
-            Span::styled(
-                format!("Message from @{id} (ctrl+o to expand)"),
-                styles.result,
-            ),
-        ])];
+        const HINT: &str = " (ctrl+o to expand)";
+        let spent = UnicodeWidthStr::width(head.as_str()) + UnicodeWidthStr::width(HINT) + 2;
+        let budget = width.saturating_sub(MARKER_COLS + spent);
+        let text = match body_head(body, budget) {
+            Some(preview) => format!("{head}: {preview}{HINT}"),
+            None => format!("{head}{HINT}"),
+        };
+        return vec![fit_glyph_line(
+            TEAMMATE_GLYPH,
+            &[(text, styles.result)],
+            width,
+        )];
     }
     let mut lines = vec![Line::from(vec![
         Span::styled(marker, styles.result),
-        Span::styled(format!("Message from @{id}"), styles.result),
+        Span::styled(head, styles.result),
     ])];
     if body.trim().is_empty() {
         return lines;

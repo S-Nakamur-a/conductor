@@ -196,6 +196,39 @@ fn ユーザターンのラッパーは画面で見えていた形に畳む() {
             vec![teammate("carol", "truncated body")],
         ),
         (
+            "本文のキーを知らなくても機械的でない文字列を拾う",
+            "<teammate-message teammate_id=\"hana\">{\"type\":\"idle_notification\",\"from\":\"hana\",\"outcome\":\"レビューを終えた。指摘は 3 件\"}</teammate-message>",
+            vec![teammate("hana", "レビューを終えた。指摘は 3 件")],
+        ),
+        (
+            "失敗して止まった通知は理由が本文になる",
+            "<teammate-message teammate_id=\"inv-explorer\">{\"type\":\"idle_notification\",\"from\":\"inv-explorer\",\"timestamp\":\"2026-08-30T16:32:56.085Z\",\"idleReason\":\"failed\",\"failureReason\":\"API Error: Your computer went to sleep mid-response. The response above may be incomplete.\"}</teammate-message>",
+            vec![teammate(
+                "inv-explorer",
+                "API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+            )],
+        ),
+        (
+            "通知 JSON は本文の欄だけを残す",
+            "<teammate-message teammate_id=\"erin\">{\"type\":\"idle_notification\",\"from\":\"erin\",\"result\":\"done, 3 files\"}</teammate-message>",
+            vec![teammate("erin", "done, 3 files")],
+        ),
+        (
+            "読める欄の無い通知は本文が空",
+            "<teammate-message teammate_id=\"frank\">{\"type\":\"idle_notification\",\"from\":\"frank\",\"idleReason\":\"available\"}</teammate-message>",
+            vec![teammate("frank", "")],
+        ),
+        (
+            "JSON に見える手書きの本文はそのまま",
+            "<teammate-message teammate_id=\"gina\">[1, 2, 3] を試して</teammate-message>",
+            vec![teammate("gina", "[1, 2, 3] を試して")],
+        ),
+        (
+            "別セッションからのメッセージは導入文と後書きごと畳む",
+            "Another Claude session sent a message:\n<teammate-message teammate_id=\"dave\" color=\"blue\">\nthe real body\n</teammate-message>\n\nThis came from another Claude session — not typed by your user.",
+            vec![teammate("dave", "the real body")],
+        ),
+        (
             "teammate_id が無ければ地の文",
             "<teammate-message>no id attribute</teammate-message>",
             vec![text("<teammate-message>no id attribute</teammate-message>")],

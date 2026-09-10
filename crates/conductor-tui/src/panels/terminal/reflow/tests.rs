@@ -666,12 +666,12 @@ fn thinkingは折りたたみで1行_展開で見出しと本文() {
 }
 
 #[test]
-fn teammateは折りたたみで本文を見ず展開で本文を出す() {
+fn teammateは折りたたみで本文の頭だけ出し展開で全文を出す() {
     let entries = [entry(
         Role::User,
         vec![DisplayBlock::TeammateMessage {
             id: "alice".into(),
-            body: "please review PR 42".into(),
+            body: "please review PR 42\nand the follow-up".into(),
         }],
     )];
 
@@ -680,10 +680,10 @@ fn teammateは折りたたみで本文を見ず展開で本文を出す() {
     assert_eq!(
         shown,
         vec![format!(
-            "{TEAMMATE_GLYPH} Message from @alice (ctrl+o to expand)"
+            "{TEAMMATE_GLYPH} Message from @alice: please review PR 42 (ctrl+o to expand)"
         )]
     );
-    assert!(!shown[0].contains("review"), "本文が要約に漏れている");
+    assert!(!shown[0].contains("follow-up"), "2 行目まで載っている");
     for span in &only_line(&lines).spans {
         assert_eq!(span.style.fg, Some(INACTIVE));
         assert_eq!(
@@ -695,6 +695,22 @@ fn teammateは折りたたみで本文を見ず展開で本文を出す() {
     let shown = visible(&lines_of(&entries, true));
     assert_eq!(shown[0], format!("{TEAMMATE_GLYPH} Message from @alice"));
     assert!(shown.iter().any(|t| t.contains("please review PR 42")));
+}
+
+#[test]
+fn teammateの折りたたみは幅に収まりヒントを削らない() {
+    let entries = [entry(
+        Role::User,
+        vec![DisplayBlock::TeammateMessage {
+            id: "alice".into(),
+            body: "x".repeat(200),
+        }],
+    )];
+    let shown = visible(&lines_of(&entries, false));
+    assert_eq!(shown.len(), 1);
+    assert_eq!(UnicodeWidthStr::width(shown[0].as_str()), 80);
+    assert!(shown[0].ends_with(" (ctrl+o to expand)"), "{}", shown[0]);
+    assert!(shown[0].contains('\u{2026}'), "{}", shown[0]);
 }
 
 #[test]
