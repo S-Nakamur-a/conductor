@@ -276,7 +276,7 @@ fn 遅れて届いた古い読み込みは捨てる() {
             lines: vec!["STALE".into()],
             folds: Vec::new(),
             mask: Default::default(),
-            tests: Default::default(),
+            runs: Default::default(),
         }),
     };
     h.viewer().apply_result(stale);

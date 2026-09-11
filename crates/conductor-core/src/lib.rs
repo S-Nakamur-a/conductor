@@ -22,10 +22,10 @@ pub mod instance_lock;
 pub mod output_style;
 pub mod pr_intake;
 pub mod review_publish;
+pub mod runnable;
 pub mod semantic_index;
 pub mod smart_worktree;
 pub mod term_caps;
-pub mod test_run;
 #[cfg(test)]
 mod test_support;
 pub mod update_checker;

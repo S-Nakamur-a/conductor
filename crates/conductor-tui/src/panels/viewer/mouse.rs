@@ -12,8 +12,8 @@ enum Zone {
     Comment,
     Number,
     Fold,
-    /// テスト実行ボタン。
-    Test,
+    /// 実行ボタン。
+    Run,
     Text,
 }
 
@@ -105,9 +105,9 @@ impl ViewerPanel {
                 self.fold.toggle(line);
                 self.scroll.line = self.fold.visible_anchor(line) - 1;
             }
-            Zone::Test => {
-                return match self.content.tests.contains_key(&line) {
-                    true => self.run_test_at(line),
+            Zone::Run => {
+                return match self.content.runs.contains_key(&line) {
+                    true => self.run_at(line),
                     false => self.click_comment(line),
                 };
             }
@@ -127,9 +127,9 @@ impl ViewerPanel {
         self.start_comment(line_1)
     }
 
-    /// その行のテストをシェルへ流す。
-    fn run_test_at(&self, line_1: usize) -> Vec<Effect> {
-        let Some(run) = self.content.tests.get(&line_1) else {
+    /// その行のコマンドをシェルへ流す。
+    fn run_at(&self, line_1: usize) -> Vec<Effect> {
+        let Some(run) = self.content.runs.get(&line_1) else {
             return Vec::new();
         };
         vec![
@@ -163,7 +163,7 @@ impl ViewerPanel {
         }
         let badge = render::badge_width(self);
         if badge > 0 && (mark + digits + 1..mark + digits + 1 + badge).contains(&column) {
-            return Zone::Test;
+            return Zone::Run;
         }
         Zone::Text
     }

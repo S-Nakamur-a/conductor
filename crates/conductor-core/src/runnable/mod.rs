@@ -1,24 +1,26 @@
-//! ファイルの行に紐づいた実行可能なテストスコープ。Viewer のクリック可能な
-//! ▶ 実行ボタンの背後にある共有モデル。
+//! ファイルの行に紐づいた実行可能なもの。Viewer のクリック可能な ▶ 実行ボタンの
+//! 背後にある共有モデル。
 //!
-//! 言語ごとのスキャナ ([go::scan_go_test_runs] が `*_test.go`、
-//! [rust::scan_rust_test_runs] が `*.rs` を担当) が、1 始まりの行番号から
-//! [TestRun] へのマップを作る。Viewer はキーになっている各行に ▶ を描き、
-//! クリックされたら [TestRun::command] を Shell の PTY へ送る。
+//! 種類ごとのスキャナ ([go::scan_go_tests] が `*_test.go`、[rust::scan_rust_tests]
+//! が `*.rs`、[make::scan_make_targets] が Makefile を担当) が、1 始まりの行番号から
+//! [Runnable] へのマップを作る。Viewer はキーになっている各行に ▶ を描き、
+//! クリックされたら [Runnable::command] を Shell の PTY へ送る。
 //! スキャナから先は言語非依存で、利用側は command と label しか読まない。
 
 mod go;
+mod make;
 mod rust;
 
 #[cfg(test)]
 mod tests;
 
-pub use go::scan_go_test_runs;
-pub use rust::scan_rust_test_runs;
+pub use go::scan_go_tests;
+pub use make::scan_make_targets;
+pub use rust::scan_rust_tests;
 
 /// 実行ボタンがカバーするスコープ (ステータスバーの文言に使う)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestRunKind {
+pub enum RunnableKind {
     /// ファイル内の全テスト。
     File,
     /// テスト関数 1 つ。
@@ -27,12 +29,14 @@ pub enum TestRunKind {
     Module,
     /// 外側のテスト関数に属する Go の `Run("…")` サブテスト。
     Subtest,
+    /// Makefile の `.PHONY` ターゲット 1 つ。
+    Target,
 }
 
-/// ファイルの行に紐づいた、実行可能なテストスコープ 1 件。
+/// ファイルの行に紐づいた、実行可能なもの 1 件。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestRun {
-    pub kind: TestRunKind,
+pub struct Runnable {
+    pub kind: RunnableKind,
     /// ステータスバー用の人間可読なラベル (例: "TestFoo/case",
     /// "build_caller_rejects_empty_command")。
     pub label: String,
