@@ -276,12 +276,20 @@ fn 解析の確認から2列ビューまで通る() {
 
 /// 成果物を差し込んで 2 列を組み立てたところまで進める。
 fn built(sections: &str) -> (Workspace, conductor_svc::Services<TaskResult>) {
+    built_with("a.txt", "alpha\nbeta\n", sections)
+}
+
+fn built_with(
+    path: &str,
+    content: &str,
+    sections: &str,
+) -> (Workspace, conductor_svc::Services<TaskResult>) {
     let repo = TestRepo::new();
     let base = repo
         .git(&["rev-parse", "--short", "HEAD"])
         .trim()
         .to_string();
-    repo.commit_in(&repo.root(), "a.txt", "alpha\nbeta\n", "second");
+    repo.commit_in(&repo.root(), path, content, "second");
     let (mut ws, mut svc) = workspace_for(&repo);
     select_only_worktree(&mut ws, &mut svc, &repo.root());
     write_artifact(
@@ -307,6 +315,26 @@ fn joined(lines: &[ratatui::text::Line<'static>]) -> String {
         .map(ratatui::text::Line::to_string)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// render.rs の単体テストは diff_line から下しか通らないので、渡し忘れはここでしか落ちない。
+#[test]
+fn diff_の行は単色にならない() {
+    let sections = r#"[{"title":"t","body":"b","importance":"core",
+        "reason":"主目的そのもの",
+        "ranges":[{"path":"a.rs","side":"new","start":1,"end":1}]}]"#;
+    let (ws, _svc) = built_with("a.rs", "let x: usize = 1;\n", sections);
+    let cache = ws.panels.revidere.cache().expect("組み立て済み");
+    let colors = cache
+        .diff_lines
+        .iter()
+        .find(|line| line.to_string().contains("let x"))
+        .expect("追加行が出ている")
+        .spans
+        .iter()
+        .filter_map(|span| span.style.fg)
+        .collect::<std::collections::HashSet<_>>();
+    assert!(colors.len() > 2, "構文色が乗っていない: {colors:?}");
 }
 
 #[test]

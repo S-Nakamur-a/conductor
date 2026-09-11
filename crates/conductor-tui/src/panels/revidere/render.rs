@@ -418,14 +418,24 @@ fn diff_column(
                     Style::default().fg(theme.muted),
                 ));
             }
-            for ordered in &block.lines {
+            // revidere が持っているのは選ばれた行だけで、ファイルの途中から色を
+            // 付け始めることになる (複数行文字列の途中ならずれる)。Viewer のように
+            // 全文から引くには全文の取得が要る。
+            let texts: Vec<String> = block
+                .lines
+                .iter()
+                .map(|ordered| expand_tabs(&ordered.line.text, tab_width))
+                .collect();
+            let highlighted = highlighter.highlight(Some(&block.path), &texts);
+            for (i, (ordered, text)) in block.lines.iter().zip(texts).enumerate() {
                 lines.push(diff_line(
                     &ordered.line,
                     ordered.owned,
                     theme,
                     digits,
                     inner_w,
-                    tab_width,
+                    text,
+                    highlighted.get(i).map(Vec::as_slice),
                 ));
             }
             lines.push(Line::default());
@@ -483,7 +493,8 @@ fn diff_line(
     theme: &Theme,
     digits: usize,
     inner_w: usize,
-    tab_width: usize,
+    content: String,
+    syntax: Option<&[(Style, String)]>,
 ) -> Line<'static> {
     let (tag, band_color) = match line.tag {
         revidere::Tag::Add => (DiffLineTag::Insert, theme.diff_add),
@@ -494,10 +505,10 @@ fn diff_line(
         tag,
         old_line_no: line.old_line.map(|n| n as usize),
         new_line_no: line.new_line.map(|n| n as usize),
-        content: expand_tabs(&line.text, tab_width),
+        content,
         inline_segments: Vec::new(),
     };
-    let mut rendered = unified_line(&entry, theme, digits, inner_w.saturating_sub(1), 0, None);
+    let mut rendered = unified_line(&entry, theme, digits, inner_w.saturating_sub(1), 0, syntax);
     let band = if owned { "\u{258c}" } else { " " };
     let style = Style::default().fg(if owned { band_color } else { theme.muted });
     rendered.spans.insert(0, Span::styled(band, style));
@@ -750,6 +761,31 @@ mod tests {
     fn タブは表示幅で埋める() {
         assert_eq!(expand_tabs("\tx", 4), "    x");
         assert_eq!(expand_tabs("ab\tx", 4), "ab  x");
+    }
+
+    #[test]
+    fn 追加行にも構文色が乗る() {
+        let line = revidere::DiffLine {
+            tag: revidere::Tag::Add,
+            old_line: None,
+            new_line: Some(1),
+            text: "let x = 1;".to_string(),
+        };
+        let syntax = [
+            (Style::default().fg(Color::Red), "let ".to_string()),
+            (Style::default().fg(Color::Blue), "x = 1;".to_string()),
+        ];
+        let rendered = diff_line(
+            &line,
+            true,
+            &Theme::default(),
+            3,
+            80,
+            "let x = 1;".to_string(),
+            Some(&syntax),
+        );
+        let colors: Vec<_> = rendered.spans.iter().filter_map(|s| s.style.fg).collect();
+        assert!(colors.contains(&Color::Red) && colors.contains(&Color::Blue));
     }
 
     fn placed(paths: &[&str]) -> revidere::PlacedSection {
