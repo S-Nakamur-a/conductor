@@ -312,7 +312,7 @@ impl ViewerPanel {
         self.content.highlight_key = None;
         self.content.rendered.clear();
         self.content.rendered_key = None;
-        self.content.tests.clear();
+        self.content.runs.clear();
         self.content.media = None;
         self.search.matches.clear();
         self.selection.clear();
@@ -357,7 +357,7 @@ impl ViewerPanel {
         match loaded {
             Ok(file) => {
                 self.content.lines = file.lines;
-                self.content.tests = file.tests;
+                self.content.runs = file.runs;
                 self.fold.install(file.folds, &load.path);
                 self.nav.reset_for_file(file.mask);
             }

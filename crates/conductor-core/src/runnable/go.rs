@@ -1,7 +1,7 @@
 //! 開いている `*_test.go` ファイルの中から、実行可能な Go のテストを検出する。
 //!
 //! ファイルの内容を 1 行ずつ走査し (正規表現。Go のパーサは持たない)、1 始まりの
-//! 行番号から、そのスコープを実行する go test コマンドを表す [TestRun] への
+//! 行番号から、そのスコープを実行する go test コマンドを表す [Runnable] への
 //! マップを作る。作るボタンは 3 種類:
 //!
 //! - File: 1 行目。ファイル内のトップレベルの `Test*` 関数をすべて実行する。
@@ -17,7 +17,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::{TestRun, TestRunKind, shell_single_quote};
+use super::{Runnable, RunnableKind, shell_single_quote};
 
 /// トップレベルのテスト関数: 0 桁目から始まる `func TestXxx(`。レシーバ付きの
 /// メソッド (`func (s *Suite) TestX()`) はあえて対象外にしている。go test -run
@@ -34,7 +34,7 @@ static SUBTEST_RE: LazyLock<Regex> =
 ///
 /// relative_path が `*_test.go` でないか、ファイルにトップレベルの `Test*`
 /// 関数が無い場合は空のマップを返す。
-pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMap<usize, TestRun> {
+pub fn scan_go_tests(file_content: &[String], relative_path: &str) -> HashMap<usize, Runnable> {
     let mut runs = HashMap::new();
     if !relative_path.ends_with("_test.go") {
         return runs;
@@ -63,8 +63,8 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         .join("|");
     runs.insert(
         1,
-        TestRun {
-            kind: TestRunKind::File,
+        Runnable {
+            kind: RunnableKind::File,
             label: file_label(relative_path),
             command: go_test_cmd(&format!("^({all})$"), &target),
         },
@@ -73,8 +73,8 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
     for (line, name) in &funcs {
         runs.insert(
             *line,
-            TestRun {
-                kind: TestRunKind::Func,
+            Runnable {
+                kind: RunnableKind::Func,
                 label: name.clone(),
                 command: go_test_cmd(&format!("^{name}$"), &target),
             },
@@ -111,8 +111,8 @@ pub fn scan_go_test_runs(file_content: &[String], relative_path: &str) -> HashMa
         let sub_pattern = sub.replace(' ', "_");
         runs.insert(
             line_1,
-            TestRun {
-                kind: TestRunKind::Subtest,
+            Runnable {
+                kind: RunnableKind::Subtest,
                 label: format!("{func}/{sub}"),
                 command: go_test_cmd(&format!("^{func}$/^{sub_pattern}$"), &target),
             },

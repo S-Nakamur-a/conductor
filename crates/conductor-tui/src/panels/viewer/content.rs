@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use conductor_core::diff_state::DiffSource;
+use conductor_core::runnable::{Runnable, scan_go_tests, scan_make_targets, scan_rust_tests};
 use conductor_core::symbol_index::CodeMask;
-use conductor_core::test_run::{TestRun, scan_go_test_runs, scan_rust_test_runs};
 use ratatui::style::Style;
 use ratatui::text::Line;
 
@@ -39,9 +39,9 @@ pub struct Content {
     /// syntect の結果。空ならハイライト無しで描く。
     pub highlighted: Vec<Vec<(Style, String)>>,
     pub(super) highlight_key: Option<u64>,
-    /// 実行できるテストの行 (1 始まり)。行頭の \u{25b8} と、押したときに送る
+    /// 実行できるものがある行 (1 始まり)。行頭の \u{25b8} と、押したときに送る
     /// コマンドの両方がここを引く。
-    pub tests: HashMap<usize, TestRun>,
+    pub runs: HashMap<usize, Runnable>,
     /// レンダリング済み markdown。折り返し済みで本文の行とは対応しないので、
     /// [Content::lines] とは別に持つ。
     pub(super) rendered: Vec<Line<'static>>,
@@ -59,7 +59,7 @@ pub struct Loaded {
     pub folds: Vec<FoldRange>,
     /// どの語がコードでどれが地の文か。ジャンプもホバーもここを最初に通る。
     pub mask: CodeMask,
-    pub tests: HashMap<usize, TestRun>,
+    pub runs: HashMap<usize, Runnable>,
 }
 
 /// root/relative を読む。折りたたみ範囲とコードマスクも同じ場所で求める
@@ -106,16 +106,18 @@ fn parse(text: &str, relative: &str, tab_width: usize) -> Loaded {
     // 折りたたみは展開前のテキストから求める。tree-sitter もインデント幅も、
     // 書かれたままのファイルを前提にしている。
     let folds = fold::compute(text, relative);
-    let tests = if relative.ends_with(".rs") {
-        scan_rust_test_runs(&lines, relative)
+    let runs = if relative.ends_with(".rs") {
+        scan_rust_tests(&lines, relative)
+    } else if relative.ends_with("_test.go") {
+        scan_go_tests(&lines, relative)
     } else {
-        scan_go_test_runs(&lines, relative)
+        scan_make_targets(&lines, relative)
     };
     Loaded {
         lines,
         folds,
         mask: CodeMask::compute(text, relative),
-        tests,
+        runs,
     }
 }
 
@@ -231,17 +233,12 @@ mod tests {
         .unwrap();
         std::fs::write(dir.path().join("src/plain.rs"), "fn main() {}\n").unwrap();
 
-        let runs = read(dir.path(), "src/lib.rs", 4).unwrap().tests;
+        let runs = read(dir.path(), "src/lib.rs", 4).unwrap().runs;
         assert_eq!(runs[&4].label, "works");
         assert!(runs[&4].command.starts_with("cargo test"), "{:?}", runs[&4]);
         assert!(runs.contains_key(&1), "ファイル全体のボタンも出る");
 
-        assert!(
-            read(dir.path(), "src/plain.rs", 4)
-                .unwrap()
-                .tests
-                .is_empty()
-        );
+        assert!(read(dir.path(), "src/plain.rs", 4).unwrap().runs.is_empty());
     }
 
     #[test]

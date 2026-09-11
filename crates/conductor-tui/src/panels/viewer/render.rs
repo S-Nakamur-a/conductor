@@ -40,7 +40,7 @@ const BADGE: usize = 2;
 
 /// 実行ボタンの桁を開けるか。当たり判定 (gutter_zone) も同じ答えを読む。
 pub fn badge_width(panel: &ViewerPanel) -> usize {
-    if panel.diff.active || panel.content.tests.is_empty() {
+    if panel.diff.active || panel.content.runs.is_empty() {
         0
     } else {
         BADGE
@@ -540,7 +540,7 @@ fn gutter_spans(
     let muted = Style::default().fg(theme.muted);
     let mut spans = vec![Span::styled(format!("{line_1:>digits$}{marker}"), muted)];
     if badge > 0 {
-        spans.push(match panel.content.tests.contains_key(&line_1) {
+        spans.push(match panel.content.runs.contains_key(&line_1) {
             true => Span::styled(
                 conductor_core::icons::RUN_TEST.labeled(icons),
                 Style::default()
@@ -1331,17 +1331,17 @@ mod tests {
             ["1  \u{2502} fn a() {}"]
         );
 
-        let mut with_tests = panel(&["fn a() {}", "fn b() {}"]);
-        with_tests.content.tests.insert(
+        let mut with_runs = panel(&["fn a() {}", "fn b() {}"]);
+        with_runs.content.runs.insert(
             2,
-            conductor_core::test_run::TestRun {
-                kind: conductor_core::test_run::TestRunKind::Func,
+            conductor_core::runnable::Runnable {
+                kind: conductor_core::runnable::RunnableKind::Func,
                 label: "b".into(),
                 command: "cargo test b".into(),
             },
         );
         let lines = texts(&body(
-            &with_tests,
+            &with_runs,
             &ReviewState::default(),
             &Theme::default(),
             IconSet::Unicode,

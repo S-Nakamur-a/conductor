@@ -10,7 +10,7 @@
 //! tree-sitter-rust でファイルをパースする。
 //!
 //! 1 始まりの行番号から、そのスコープを実行する cargo test コマンドを表す
-//! [TestRun] へのマップを作る。出すボタンは 3 種類:
+//! [Runnable] へのマップを作る。出すボタンは 3 種類:
 //!
 //! - File: 1 行目。ファイル内の全テスト (`cargo test '<mod>::'`)。
 //! - Func: テストの fn の各行。そのテスト 1 つだけ
@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use super::{TestRun, TestRunKind, shell_single_quote};
+use super::{Runnable, RunnableKind, shell_single_quote};
 
 /// ファイルが cargo test のターゲットとモジュールパスの接頭辞にどう対応するか。
 enum FileTarget {
@@ -39,10 +39,7 @@ enum FileTarget {
 ///
 /// relative_path が対応対象の .rs ファイルでない (src/ とトップレベルの
 /// tests/ の外にある) か、テストを含まない場合は空のマップを返す。
-pub fn scan_rust_test_runs(
-    file_content: &[String],
-    relative_path: &str,
-) -> HashMap<usize, TestRun> {
+pub fn scan_rust_tests(file_content: &[String], relative_path: &str) -> HashMap<usize, Runnable> {
     let mut runs = HashMap::new();
 
     let Some(target) = file_target(relative_path) else {
@@ -72,8 +69,8 @@ pub fn scan_rust_test_runs(
     // 1 行目にファイル単位のボタンを置くが、たまたま 1 行目にある本物の
     // 関数・モジュールのボタンは決して潰さない (or_insert)。
     if found {
-        runs.entry(1).or_insert_with(|| TestRun {
-            kind: TestRunKind::File,
+        runs.entry(1).or_insert_with(|| Runnable {
+            kind: RunnableKind::File,
             label: file_label(relative_path),
             command: ctx.file_command(),
         });
@@ -167,7 +164,7 @@ fn scan_node(
     source: &str,
     mod_stack: &mut Vec<String>,
     ctx: &Ctx,
-    runs: &mut HashMap<usize, TestRun>,
+    runs: &mut HashMap<usize, Runnable>,
 ) -> bool {
     let mut found = false;
     let mut cursor = node.walk();
@@ -181,8 +178,8 @@ fn scan_node(
                     let name = node_text(name_node, source).to_string();
                     let line = child.start_position().row + 1;
                     let command = ctx.func_command(&ctx.full_path(mod_stack, &name));
-                    runs.entry(line).or_insert(TestRun {
-                        kind: TestRunKind::Func,
+                    runs.entry(line).or_insert(Runnable {
+                        kind: RunnableKind::Func,
                         label: name,
                         command,
                     });
@@ -202,8 +199,8 @@ fn scan_node(
                     found = true;
                     let line = child.start_position().row + 1;
                     let command = ctx.module_command(&ctx.module_prefix(mod_stack));
-                    runs.entry(line).or_insert(TestRun {
-                        kind: TestRunKind::Module,
+                    runs.entry(line).or_insert(Runnable {
+                        kind: RunnableKind::Module,
                         label: name,
                         command,
                     });
