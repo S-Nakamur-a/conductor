@@ -32,7 +32,7 @@ pub(super) struct Root {
     pub(super) key: Option<String>,
     pub(super) regenerator: Regenerator,
     /// 走っている 1 世代の顛末。記録に残すためだけに持つ。
-    run: Run,
+    pub(super) run: Run,
 }
 
 impl Root {
@@ -96,7 +96,7 @@ impl Root {
 
 /// 生成 1 世代ぶんの計測。
 #[derive(Default)]
-struct Run {
+pub(super) struct Run {
     trigger: Option<Trigger>,
     cause: Option<PathBuf>,
     asked_at: Option<Instant>,
@@ -108,6 +108,9 @@ struct Run {
     /// 件数を出すと編集 2 回が 6 に見える。
     changed_during: HashSet<PathBuf>,
     next_cause: Option<PathBuf>,
+    /// producer を起こしたときの鍵。走っている間に編集が入ると `Root::key` は落ちるが、
+    /// 置かれる成果物の名前はこちらのまま。
+    pub(super) key: Option<String>,
 }
 
 impl Run {
@@ -275,8 +278,9 @@ impl SemanticIndex {
         // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、同じ周に 2 本が
         // 終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
-            // 鍵の無いルートは進めない (Root::key)。
-            let key = root.key.clone()?;
+            // 鍵が要るのは producer を起こすときだけ。走っているぶんまで止めると、生成中の
+            // 編集で鍵が落ちたルートが顛末を拾えず、記録も掃除も済まないまま二度と終われない。
+            let key = root.key.clone().or_else(|| root.run.key.clone())?;
             // この内容の索引はもう置いてある。producer を起こしても同じものが出るし、編集で
             // 行ったり来たりするたびに丸ごと 1 本ぶん払うことになる。手で頼まれたときは
             // 通さない — 押した人は「もうある」ではなく作り直しを待っている。
@@ -294,6 +298,7 @@ impl SemanticIndex {
             // producer が立ったのはこの tick の中なので、前後で見て時刻を取る。
             if root.regenerator.is_running() && root.run.started_at.is_none() {
                 root.run.started_at = Some(Instant::now());
+                root.run.key = Some(key.clone());
                 // producer は最後に出自の表を置き換えるので、いま読めば前の世代のもの。
                 root.run.before = root.at.newest_provenance(&dir);
             }
