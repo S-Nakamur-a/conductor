@@ -34,6 +34,15 @@ pub struct Index {
     symbols_dirty_since: Option<Instant>,
 }
 
+impl Index {
+    /// 世代を進めると結果は svc が捨てるので、待ち続けるとどちらの索引も
+    /// 二度と作り直されない。世代を進める側から呼ぶ。
+    pub fn forget_in_flight(&mut self) {
+        self.surveying = false;
+        self.building_symbols = false;
+    }
+}
+
 impl Default for Index {
     fn default() -> Self {
         Self {
@@ -274,6 +283,36 @@ mod tests {
             .count()
     }
 
+    fn builds(effects: &[Effect]) -> usize {
+        effects
+            .iter()
+            .filter(|e| matches!(e, Effect::Spawn(Task::BuildSymbols(_))))
+            .count()
+    }
+
+    /// 選び直しは根が変わらなくても世代を進める。
+    #[test]
+    fn リポジトリを選び直しても索引は動き続ける() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+
+        let first = tick(&mut ws);
+        assert_eq!((surveys(&first), builds(&first)), (1, 1));
+        let again = tick(&mut ws);
+        assert_eq!((surveys(&again), builds(&again)), (0, 0), "2 本目を頼んだ");
+
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(repo.root())]);
+
+        let after = tick(&mut ws);
+        assert_eq!(
+            (surveys(&after), builds(&after)),
+            (1, 1),
+            "捨てられた仕事を待ち続けている"
+        );
+        // 撒いたワーカーを残すと、一時リポジトリの後始末と競う。
+        crate::testing::pump(&mut ws, &mut svc);
+    }
+
     /// 飛んでいる間にもう 1 本頼むと、フレームごとにワーカーが積み上がる。
     #[test]
     fn 調査は同時に1本しか頼まない() {
@@ -356,12 +395,6 @@ mod tests {
     fn 変更のあとは静穏を待ってから作り直す() {
         let dir = tree("quiet");
         let mut ws = workspace_at(dir.path());
-        let builds = |effects: &[Effect]| {
-            effects
-                .iter()
-                .filter(|e| matches!(e, Effect::Spawn(Task::BuildSymbols(_))))
-                .count()
-        };
 
         // 最初の 1 本は索引がまだ無いので静穏を待たない。
         assert_eq!(builds(&tick(&mut ws)), 1);

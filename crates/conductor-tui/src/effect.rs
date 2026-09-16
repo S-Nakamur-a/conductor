@@ -353,6 +353,7 @@ fn switch_repo(
     };
     // 世代を進めてから作り直す。飛んでいる Task の結果が新しいツリーに着地しない。
     svc.bump_generation();
+    ws.index.forget_in_flight();
     let known = std::mem::take(&mut ws.repo.known);
     ws.repo = RepoState {
         root: root.clone(),
