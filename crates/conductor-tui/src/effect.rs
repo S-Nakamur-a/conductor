@@ -351,9 +351,16 @@ fn switch_repo(
             )];
         }
     };
-    // 世代を進めてから作り直す。飛んでいる Task の結果が新しいツリーに着地しない。
+    // 索引が鍵を結び付けているのは Viewer の根であって、リポジトリの根ではない。
+    // worktree を見ている最中に同じリポジトリを選び直すと、根は動く。
+    let moving = ws.panels.viewer.root() != root;
     svc.bump_generation();
     ws.index.forget_in_flight();
+    if moving {
+        let repo = ws.repo.root.clone();
+        ws.index.semantic.abort_regeneration(&repo);
+    }
+    let stopped = ws.panels.revidere.abort();
     let known = std::mem::take(&mut ws.repo.known);
     ws.repo = RepoState {
         root: root.clone(),
@@ -369,9 +376,12 @@ fn switch_repo(
     effects.extend(ws.panels.explorer.set_root(root, &ws.repo.main_branch));
     effects.push(Effect::Spawn(Task::ListWorktrees));
     effects.push(Effect::Spawn(Task::LoadGrabState));
-    effects.push(Effect::Status(
-        StatusLevel::Success,
-        format!("switched to {name}"),
-    ));
+    // 止めた解析は畳んで伝える。ステータスは 1 枠しかないので、別に出しても後勝ちで消える。
+    let mut message = format!("switched to {name}");
+    if stopped > 0 {
+        let unit = if stopped == 1 { "review" } else { "reviews" };
+        message.push_str(&format!(" (cancelled {stopped} running {unit})"));
+    }
+    effects.push(Effect::Status(StatusLevel::Success, message));
     effects
 }

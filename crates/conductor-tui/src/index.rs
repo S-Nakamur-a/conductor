@@ -38,6 +38,12 @@ impl Index {
     /// 世代を進めると結果は svc が捨てるので、待ち続けるとどちらの索引も
     /// 二度と作り直されない。世代を進める側から呼ぶ。
     pub fn forget_in_flight(&mut self) {
+        // どちらの仕事も撒いた時点で理由の札を降ろしている。戻さないと、捨てられた結果が
+        // 運んでいた依頼だけが消えて、次の編集まで古い索引で答え続ける。
+        self.reload |= self.surveying;
+        if self.building_symbols {
+            self.symbols_dirty_since.get_or_insert_with(Instant::now);
+        }
         self.surveying = false;
         self.building_symbols = false;
     }
@@ -290,6 +296,51 @@ mod tests {
             .count()
     }
 
+    #[test]
+    fn 忘れても読み直しと作り直しの理由は残る() {
+        let mut index = Index {
+            surveying: true,
+            building_symbols: true,
+            ..Default::default()
+        };
+
+        index.forget_in_flight();
+
+        assert!(index.reload, "調査が運んでいた読み直しの依頼が消えた");
+        assert!(
+            index.symbols_dirty_since.is_some(),
+            "構文層を作り直す理由が消えた"
+        );
+    }
+
+    /// 待っている世代を捨てていいのはツリーが動くときだけ。同じ根なら結果はそのまま使える。
+    #[test]
+    fn 同じツリーを選び直したら待っている生成を捨てない() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let tree = repo.root();
+        ws.panels.viewer.set_root(tree.clone());
+        std::fs::write(tree.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir_all(tree.join("src")).unwrap();
+        std::fs::write(tree.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+
+        let survey =
+            conductor_core::semantic_index::survey(&tree, None, Some(Path::new("src/lib.rs")), &[]);
+        ws.index.semantic.install(survey, &tree);
+        ws.index
+            .semantic
+            .note_change(&tree.join("src/lib.rs"), &tree);
+        assert!(ws.index.semantic.is_pending(), "前提: 静穏を待っている");
+
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(tree.clone())]);
+
+        assert!(
+            ws.index.semantic.is_pending(),
+            "ツリーが動いていないのに待っている生成を捨てた"
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+    }
+
     /// 選び直しは根が変わらなくても世代を進める。
     #[test]
     fn リポジトリを選び直しても索引は動き続ける() {
@@ -310,6 +361,35 @@ mod tests {
             "捨てられた仕事を待ち続けている"
         );
         // 撒いたワーカーを残すと、一時リポジトリの後始末と競う。
+        crate::testing::pump(&mut ws, &mut svc);
+    }
+
+    #[test]
+    fn リポジトリを選び直したら走っている解析を残さない() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let cancel: std::sync::Arc<std::sync::atomic::AtomicBool> = Default::default();
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: repo.root(),
+            branch: "feature/x".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: cancel.clone(),
+        });
+        assert!(ws.panels.revidere.is_running("feature/x"));
+
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(repo.root())]);
+
+        assert!(
+            !ws.panels.revidere.is_running("feature/x"),
+            "受け取り手が消えたのに解析中を名乗り続けている"
+        );
+        assert!(
+            cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "旗を降ろしただけで AI コマンドを止めていない"
+        );
         crate::testing::pump(&mut ws, &mut svc);
     }
 

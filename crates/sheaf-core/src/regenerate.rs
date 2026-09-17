@@ -19,7 +19,7 @@ use job::{Job, kill_group};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// いま何時か。静穏時間と producer の上限を測るのに使う。
 ///
@@ -150,8 +150,10 @@ pub struct Regenerator {
     disabled: bool,
     /// 生成中に来た変更。走り終えてから 1 世代にまとめて作り直す。
     restart: bool,
-    /// 引き金を数えるかどうかの判定に使う。ツリーごとに 1 回だけ作る。
-    ignores: Option<(PathBuf, ignore::gitignore::Gitignore)>,
+    /// 手で頼まれたぶんの作り直し。静穏を待たずに始める。
+    restart_now: bool,
+    /// 引き金を数えるかどうかの判定に使う。ツリーと `.gitignore` の更新時刻の組ごとに作り直す。
+    ignores: Option<(PathBuf, Option<SystemTime>, ignore::gitignore::Gitignore)>,
     clock: Clock,
 }
 
@@ -171,6 +173,7 @@ impl Regenerator {
             group: Arc::new(Mutex::new(None)),
             disabled: false,
             restart: false,
+            restart_now: false,
             ignores: None,
             clock: Clock::default(),
         }
@@ -209,7 +212,15 @@ impl Regenerator {
     /// 静穏時間を待たずに始める。手で頼まれたぶんの口。[`request`](Self::request) が待つのは
     /// 起動と生成が重なるのを避けるためで、押した本人が結果を待つ場面には当たらない。
     pub fn request_now(&mut self) {
-        if self.disabled || matches!(self.state, State::Running) {
+        if self.disabled {
+            return;
+        }
+        if matches!(self.state, State::Running) {
+            // 走っている世代は押した時点の内容ではない。捨てると押した人には何も
+            // 起きなかったように見えるので、終わったあとにもう 1 本走らせる。その後の
+            // 編集では待ち直さない — 押した人はもう待っている。
+            self.restart = true;
+            self.restart_now = true;
             return;
         }
         self.state = State::Due;
@@ -219,12 +230,15 @@ impl Regenerator {
     ///
     /// 索引に載らないファイルは数えない。ビルド成果物は数秒おきに書き換わるので、数えると
     /// 静穏時間が永久に来ない。生成中に来たぶんは、走り終えてから 1 世代にまとめて作り直す。
-    pub fn note_change(&mut self, changed: &Path, root: &Path) {
+    ///
+    /// 数えたかを返す。呼ぶ側も「この変更で索引の中身が動いたか」を同じ判定で知る必要が
+    /// あり、別に持つと ignore の綴りが 2 つに割れる。
+    pub fn note_change(&mut self, changed: &Path, root: &Path) -> bool {
         if self.disabled || root.as_os_str().is_empty() || !changed.starts_with(root) {
-            return;
+            return false;
         }
         if self.is_ignored(changed, root) {
-            return;
+            return false;
         }
         match self.state {
             State::Running => self.restart = true,
@@ -236,12 +250,25 @@ impl Regenerator {
                 }
             }
         }
+        true
+    }
+
+    /// そのディレクトリを歩くか。`.gitignore` の置き場所が索引の対象かを、呼ぶ側が
+    /// 同じ規則で引くための口。
+    pub fn walks(&mut self, dir: &Path, root: &Path) -> bool {
+        !self.ignored(dir, root, true)
     }
 
     /// 出自の対象にならないファイルか。読むのは root 直下の `.gitignore` 1 枚だけで、
     /// [`snapshot`] はサブディレクトリの `.gitignore` も読む。ずれる向きは
     /// 「無駄に作り直す」側だけなので、答えは変わらない。
     fn is_ignored(&mut self, changed: &Path, root: &Path) -> bool {
+        self.ignored(changed, root, false)
+    }
+
+    /// ディレクトリ指定の綴り (`venv/`) は葉とディレクトリで当たり方が違うので、
+    /// どちらとして引くかを呼ぶ側が決める。
+    fn ignored(&mut self, changed: &Path, root: &Path, is_dir: bool) -> bool {
         let Ok(rel) = changed.strip_prefix(root) else {
             return true;
         };
@@ -251,16 +278,24 @@ impl Regenerator {
         {
             return true;
         }
-        if self.ignores.as_ref().is_none_or(|(at, _)| at != root) {
+        // 答えが鍵を落とすかを決めるので、書き換えに追随しないと古い判定のまま凍る。
+        let stamp = std::fs::metadata(root.join(".gitignore"))
+            .and_then(|m| m.modified())
+            .ok();
+        if self
+            .ignores
+            .as_ref()
+            .is_none_or(|(at, seen, _)| at != root || *seen != stamp)
+        {
             let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
             builder.add(root.join(".gitignore"));
             let Ok(built) = builder.build() else {
                 return false;
             };
-            self.ignores = Some((root.to_path_buf(), built));
+            self.ignores = Some((root.to_path_buf(), stamp, built));
         }
-        let (_, matcher) = self.ignores.as_ref().expect("直前に入れた");
-        matcher.matched_path_or_any_parents(rel, false).is_ignore()
+        let (_, _, matcher) = self.ignores.as_ref().expect("直前に入れた");
+        matcher.matched_path_or_any_parents(rel, is_dir).is_ignore()
     }
 
     /// 走っている生成を止める。対象のツリーが変わったときと、終了するとき。
@@ -269,6 +304,7 @@ impl Regenerator {
         kill_group(&self.group);
         self.rx = None;
         self.restart = false;
+        self.restart_now = false;
         self.state = State::Idle;
     }
 
@@ -283,11 +319,14 @@ impl Regenerator {
                     self.rx = None;
                     // 走っている間に来た変更は、この世代の索引には入っていない。
                     let changed_while_running = std::mem::take(&mut self.restart);
+                    let asked_now = std::mem::take(&mut self.restart_now);
                     // ロックを取れなかっただけなら、対象は変わっていないのに索引だけが
                     // 古いままになる。待機に戻して静穏時間のあとにやり直さないと、
                     // 次にそのツリーへ編集が入るまで索引されない。
                     let busy = matches!(outcome, Outcome::Busy);
-                    self.state = if changed_while_running || busy {
+                    self.state = if asked_now {
+                        State::Due
+                    } else if changed_while_running || busy {
                         State::Pending {
                             last_change: self.clock.now(),
                         }
@@ -296,6 +335,8 @@ impl Regenerator {
                     };
                     if let Outcome::Unavailable(_) = outcome {
                         self.disabled = true;
+                        // 待ちを残すと、起こせないルートが永久に「作り直し中」を名乗る。
+                        self.state = State::Idle;
                     }
                     return Some(outcome.into());
                 }
@@ -303,6 +344,13 @@ impl Regenerator {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.rx = None;
                     self.state = State::Idle;
+                    // 続きは頼めない。残すと、次に普通に走り終えた世代のあとで誰も
+                    // 押していない作り直しが始まる。
+                    self.restart = false;
+                    self.restart_now = false;
+                    // 黙って畳むと記録にその世代の行が 1 行も出ず、画面は成功の
+                    // 演出だけ出す。
+                    return Some(Regenerated::Failed("producer の後始末が落ちた".into()));
                 }
             }
         }
