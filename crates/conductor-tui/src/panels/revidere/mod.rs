@@ -169,12 +169,15 @@ impl RevidereState {
         }
     }
 
-    /// 終了時に走っている解析を全部止める。これが無いと、メインループが止まった
-    /// あとも AI コマンドが孤児として走り続ける。
-    pub fn abort(&mut self) {
+    /// 走っている解析を全部止める。終了するときと、結果を受け取れなくなったとき。
+    /// 止めないと、受け取り手のいない AI コマンドが走り続け、そのブランチは
+    /// 「解析中」を名乗ったまま二度と解析できない。止めた本数を返す。
+    pub fn abort(&mut self) -> usize {
+        let stopped = self.running.len();
         for (_, cancel) in self.running.drain() {
             cancel.store(true, Ordering::Relaxed);
         }
+        stopped
     }
 
     /// 解析 1 本の終わり。文言にブランチ名を入れるのは、複数の worktree で同時に

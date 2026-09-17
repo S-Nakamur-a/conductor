@@ -231,7 +231,9 @@ impl IndexRoot {
             .into_iter()
             .skip(GENERATIONS)
             .map(|(_, index)| index)
-            .chain(std::iter::once(dir.join(format!("{}.scip", self.stem()))));
+            .chain(std::iter::once(dir.join(format!("{}.scip", self.stem()))))
+            // 言語ごとに分ける前は幹も無かった。
+            .chain(std::iter::once(dir.join("index.scip")));
         for index in stale {
             let _ = std::fs::remove_file(&index);
             let _ = std::fs::remove_file(index.with_extension("hashes"));

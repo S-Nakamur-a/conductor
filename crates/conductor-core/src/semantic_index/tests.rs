@@ -672,6 +672,35 @@ impl Producer for SlowProducer {
     }
 }
 
+/// 渡された先に索引を置いてすぐ終わる producer。生成が完走した直後を作る。
+struct FastProducer(PathBuf);
+
+fn fast_producer(dir: &Path) -> Arc<dyn Producer> {
+    // 空の索引は Document 0 件として失敗になる。鍵の行き先を見たいので中身が要る。
+    let seed = dir.join("seed.scip");
+    write_index(&seed);
+    let script = dir.join("fast-producer.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\ncp '{}' \"$1\"\n", seed.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+    Arc::new(FastProducer(script))
+}
+
+impl Producer for FastProducer {
+    fn command(&self, out: &Path) -> Vec<String> {
+        vec![
+            self.0.to_string_lossy().into_owned(),
+            out.to_string_lossy().into_owned(),
+        ]
+    }
+}
+
 #[test]
 fn tick_regenerationは生成が走っていても即座に返る() {
     // 「バックグラウンドでやっている」ことの回帰ガード。索引の読み込みや生成の待ち合わせが
@@ -725,6 +754,65 @@ fn tick_regenerationは生成が走っていても即座に返る() {
     );
 }
 
+#[test]
+fn 生成中に編集が入っても顛末を拾える() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        at("", Language::Rust),
+        sheaf_core::Regenerator::new(fast_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Manual, None);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !semantic.is_generating() {
+        assert!(
+            semantic.tick_regeneration(dir.path(), dir.path()).is_none(),
+            "始まる前に終わっている"
+        );
+        assert!(Instant::now() < deadline, "生成が始まらない");
+    }
+
+    semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
+    assert!(
+        semantic.roots[0].key.is_none(),
+        "この検査は鍵が落ちた状態を作れていない"
+    );
+    assert_eq!(
+        semantic.roots[0].run.key.as_deref(),
+        Some(KEY),
+        "走っている世代の鍵まで落ちている"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let finished = loop {
+        if let Some(finished) = semantic.tick_regeneration(dir.path(), dir.path()) {
+            break finished;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "producer は終わっているのに顛末を拾えない"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        matches!(finished.outcome, sheaf_core::Regenerated::Ready { .. }),
+        "書けているのに失敗として拾っている"
+    );
+    assert!(
+        dir.path()
+            .join(format!(".conductor/index.rust.{KEY}.scip"))
+            .exists(),
+        "起動時とは別の鍵で置かれている"
+    );
+    assert!(!semantic.is_generating(), "走ったままになっている");
+}
+
 /// 「もうある」の門を手動にも通すと、画面は Rebuilding と言ったまま何も起きない。
 #[test]
 fn 手動の作り直しは同じ内容の索引があっても走る() {
@@ -746,6 +834,162 @@ fn 手動の作り直しは同じ内容の索引があっても走る() {
     assert!(
         semantic.is_generating(),
         "同じ内容の索引があるのを理由に手動の作り直しが止まった"
+    );
+    semantic.abort_regeneration(dir.path());
+}
+
+#[test]
+fn 編集を待っている最中に手で頼んでも走る() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    let conductor = dir.path().join(".conductor");
+    std::fs::create_dir_all(&conductor).unwrap();
+    let root = at("", Language::Rust);
+    std::fs::write(root.target(&conductor, dir.path(), KEY).index, b"").unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        root,
+        sheaf_core::Regenerator::new(slow_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Change, None);
+    semantic.roots[0].request(Trigger::Manual, None);
+
+    assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+    assert!(
+        semantic.is_generating(),
+        "待っている世代があると手動の作り直しが捨てられる"
+    );
+    semantic.abort_regeneration(dir.path());
+}
+
+#[test]
+fn 走っている最中に手で頼んだら終わってからもう1本走る() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        at("", Language::Rust),
+        sheaf_core::Regenerator::new(fast_producer(dir.path())),
+        KEY,
+    );
+    // 編集由来の世代を走らせる。手で頼んだものが「もうこの世代で済んでいる」ことに
+    // ならないよう、始まりのきっかけは手動以外にする。
+    semantic.roots[0].request(Trigger::Change, Some(PathBuf::from("src/lib.rs")));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !semantic.is_generating() {
+        assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+        assert!(Instant::now() < deadline, "生成が始まらない");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // 索引中の保存で鍵が落ちた状態。Viewer はここで Rebuild を勧める。
+    semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
+    semantic.roots[0].request(Trigger::Manual, None);
+    assert_eq!(
+        semantic.roots[0].run.key.as_deref(),
+        Some(KEY),
+        "手で頼んだら走っている世代の鍵まで消えた"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let finished = loop {
+        if let Some(finished) = semantic.tick_regeneration(dir.path(), dir.path()) {
+            break finished;
+        }
+        assert!(Instant::now() < deadline, "顛末を拾えない");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+
+    assert!(
+        !finished.manual,
+        "押す前に始まった世代が手動として報告された"
+    );
+    assert!(
+        semantic.is_pending(),
+        "走っている最中に押したぶんが捨てられた"
+    );
+    assert_eq!(
+        semantic.roots[0].run.trigger,
+        Some(Trigger::Manual),
+        "次の世代が手動として始まっていない"
+    );
+}
+
+/// 手動は 1 回ぶん。次の世代まで残すと、誰も押していないのに「もうある」門を素通りする。
+#[test]
+fn 手で頼んだきっかけは次の世代に残らない() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        at("", Language::Rust),
+        sheaf_core::Regenerator::new(fast_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Manual, None);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !semantic.is_generating() {
+        assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+        assert!(Instant::now() < deadline, "生成が始まらない");
+    }
+    // 走っている間の保存。押した人はもういない。
+    semantic.note_change(&dir.path().join("src/lib.rs"), dir.path());
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while semantic.tick_regeneration(dir.path(), dir.path()).is_none() {
+        assert!(Instant::now() < deadline, "顛末を拾えない");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        semantic.roots[0].run.trigger,
+        Some(Trigger::Change),
+        "済んだ手動を次の世代が名乗っている"
+    );
+}
+
+/// 押した本人が待っている。編集が続く限り静穏に載せ替えると永久に始まらない。
+#[test]
+fn 走っている最中に手で頼んだら静穏を待たない() {
+    const KEY: &str = "0123456789ab";
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", "fn f() {}\n")]);
+    std::fs::create_dir_all(dir.path().join(".conductor")).unwrap();
+
+    let mut semantic = SemanticIndex::with_root(
+        dir.path(),
+        at("", Language::Rust),
+        sheaf_core::Regenerator::new(fast_producer(dir.path())),
+        KEY,
+    );
+    semantic.roots[0].request(Trigger::Manual, None);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !semantic.is_generating() {
+        assert!(semantic.tick_regeneration(dir.path(), dir.path()).is_none());
+        assert!(Instant::now() < deadline, "生成が始まらない");
+    }
+    semantic.roots[0].request(Trigger::Manual, None);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while semantic.tick_regeneration(dir.path(), dir.path()).is_none() {
+        assert!(Instant::now() < deadline, "顛末を拾えない");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // 静穏に載ると、次の tick では始まらない。
+    let started = Instant::now();
+    semantic.tick_regeneration(dir.path(), dir.path());
+    assert!(
+        semantic.is_generating(),
+        "押したのに静穏 3 秒を待たされている ({:?})",
+        started.elapsed()
     );
     semantic.abort_regeneration(dir.path());
 }
@@ -824,6 +1068,27 @@ fn 索引に載らないファイルの変更では作り直さない() {
 }
 
 #[test]
+fn 目印が消えたルートは調べ直しを頼み続けない() {
+    let dir = nested_go_tree();
+    let mut semantic = SemanticIndex::default();
+    let all = roots::discover(dir.path());
+    semantic.install(survey(dir.path(), None, None, &all), dir.path());
+    assert_eq!(semantic.roots.len(), 2, "内側のルートが入っていない");
+
+    let inner = dir.path().join("services/api/go.mod");
+    std::fs::remove_file(&inner).unwrap();
+    semantic.note_change(&inner, dir.path());
+    let wanted = semantic.needs_survey(dir.path()).expect("鍵が落ちている");
+
+    semantic.install(survey(dir.path(), None, None, &wanted), dir.path());
+
+    assert!(
+        semantic.needs_survey(dir.path()).is_none(),
+        "消えたルートが鍵を待ち続けている"
+    );
+}
+
+#[test]
 fn gitignoreされた変更は作り直しを起こさない() {
     // 索引ルートの中にあるので owning_root は当たるが、producer は読まない。
     // 通すと target/ の書き込みが静穏タイマーを永久に押し戻す。
@@ -835,9 +1100,51 @@ fn gitignoreされた変更は作り直しを起こさない() {
 
     semantic.note_change(&dir.path().join("build/gen.go"), dir.path());
     assert!(pending_roots(&semantic).is_empty());
+    assert!(
+        semantic.needs_survey(dir.path()).is_none(),
+        "読まないファイルの書き込みで調べ直しに行く"
+    );
 
     semantic.note_change(&dir.path().join("main.go"), dir.path());
     assert_eq!(pending_roots(&semantic), [PathBuf::from("")]);
+}
+
+/// gitignore 自身は歩く対象を決めるので、書き換わると鍵が動く。
+#[test]
+fn gitignoreを書き換えたら鍵を引き直す() {
+    let dir = nested_go_tree();
+    std::fs::write(dir.path().join(".gitignore"), "/build\n").unwrap();
+    let mut semantic = surveyed(dir.path(), Some("main.go"));
+    assert!(
+        semantic.needs_survey(dir.path()).is_none(),
+        "前提: 鍵がある"
+    );
+
+    std::fs::write(dir.path().join(".gitignore"), "").unwrap();
+    semantic.note_change(&dir.path().join(".gitignore"), dir.path());
+
+    assert!(
+        semantic.needs_survey(dir.path()).is_some(),
+        "歩く対象が変わったのに古い鍵のまま据え置いている"
+    );
+}
+
+/// 歩かれていない場所の gitignore は鍵に効かない。落とすと調査が空回りする。
+#[test]
+fn 索引ルートの外のgitignoreでは鍵を落とさない() {
+    // ディレクトリ指定の綴り。葉として引くと当たらないので、当たり方を間違えやすい。
+    let dir = nested_go_tree();
+    std::fs::write(dir.path().join(".gitignore"), "venv/\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("venv")).unwrap();
+    std::fs::write(dir.path().join("venv/.gitignore"), "*\n").unwrap();
+    let mut semantic = surveyed(dir.path(), Some("main.go"));
+
+    semantic.note_change(&dir.path().join("venv/.gitignore"), dir.path());
+
+    assert!(
+        semantic.needs_survey(dir.path()).is_none(),
+        "歩かない場所の gitignore で調べ直しに行く"
+    );
 }
 
 #[test]
@@ -891,6 +1198,41 @@ fn 世代は上限まで残して古いものから落とす() {
 
     at("", Language::Rust).prune(&conductor_dir);
     assert_eq!(generation_count(&conductor_dir), 4);
+}
+
+#[test]
+fn 鍵が名前に入る前の索引も落とす() {
+    // 索引を残さず終わった世代の .log は残す。producer が失敗した理由はそこにしか無く、
+    // 履歴の failed 行がその名前で案内する。
+    let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
+    let conductor_dir = dir.path().join(".conductor");
+    place_index(dir.path());
+
+    // 実物の残骸は索引・出自の表・ログの 3 点セット。
+    let legacy: Vec<PathBuf> = ["scip", "hashes", "log"]
+        .iter()
+        .map(|ext| conductor_dir.join(format!("index.{ext}")))
+        .collect();
+    for path in &legacy {
+        std::fs::write(path, b"").unwrap();
+    }
+    let failed = conductor_dir.join("index.rust.aaaaaaaaaaaa.log");
+    std::fs::write(&failed, b"").unwrap();
+    let kept = artifact(&conductor_dir, "hashes");
+    assert!(kept.exists(), "前提: place_index が出自の表を置いている");
+
+    at("", Language::Rust).prune(&conductor_dir);
+
+    for path in &legacy {
+        assert!(!path.exists(), "鍵が名前に入る前の残骸が残った: {path:?}");
+    }
+    assert!(failed.exists(), "失敗した生成の唯一の診断材料を消している");
+    assert!(kept.exists(), "残す世代の出自の表を巻き添えにした");
+    assert_eq!(
+        generation_count(&conductor_dir),
+        1,
+        "残すべき世代まで落ちている"
+    );
 }
 
 #[test]

@@ -32,7 +32,7 @@ pub(super) struct Root {
     pub(super) key: Option<String>,
     pub(super) regenerator: Regenerator,
     /// 走っている 1 世代の顛末。記録に残すためだけに持つ。
-    run: Run,
+    pub(super) run: Run,
 }
 
 impl Root {
@@ -41,9 +41,24 @@ impl Root {
     }
 
     /// 既に待っている/走っている世代のきっかけは上書きしない (最初に頼んだものがその理由)。
+    /// 手で頼まれたぶんだけは上書きする — 待っている世代を編集由来のまま置くと、
+    /// tick_regeneration の「もうある」門が手動でないものとして弾いて何も起きない。
     pub(super) fn request(&mut self, trigger: Trigger, cause: Option<PathBuf>) {
         if !self.is_working() {
             self.run = Run::asked(trigger, cause);
+        } else if trigger == Trigger::Manual {
+            if self.regenerator.is_running() {
+                self.run.next_trigger = Some(Trigger::Manual);
+                // 押した人の文脈を優先する。走行中の編集の cause で上書きすると、
+                // 手動の行が「押したとき読んでいたファイル」を指さなくなる。
+                self.run.next_cause = cause.or_else(|| self.run.next_cause.take());
+            } else {
+                // 待っているだけなら、この要求のものとして数え直す。待ち時間を最初の
+                // 編集から数えると、押した本人が待っていない時間が手動の行に乗る。
+                self.run.trigger = Some(Trigger::Manual);
+                self.run.cause = cause;
+                self.run.asked_at = Some(Instant::now());
+            }
         }
         match trigger {
             Trigger::Manual => self.regenerator.request_now(),
@@ -64,13 +79,22 @@ impl Root {
         // 走らせる。その世代のきっかけを引き継がないと、記録が「きっかけ不明・待ち時間 0 秒」
         // になる。
         self.run = if self.regenerator.is_pending() {
-            match self.run.next_cause.take() {
-                Some(cause) => Run::asked(Trigger::Change, Some(cause)),
-                None => Run::asked(
-                    self.run.trigger.unwrap_or(Trigger::Change),
-                    self.run.cause.clone(),
-                ),
-            }
+            // 走っている間に来た要求はここで初めて自分の世代を持つ。済んだきっかけは
+            // 引き継がない — 手動を残すと、以後どの世代も「もうある」門を素通りして、
+            // 誰も押していないのに producer が走り続ける。
+            let unserved = matches!(outcome, Regenerated::Busy);
+            let trigger = self
+                .run
+                .next_trigger
+                .take()
+                .or_else(|| unserved.then_some(self.run.trigger).flatten())
+                .unwrap_or(Trigger::Change);
+            let cause = self
+                .run
+                .next_cause
+                .take()
+                .or_else(|| self.run.cause.clone());
+            Run::asked(trigger, cause)
         } else {
             Run::default()
         };
@@ -96,8 +120,8 @@ impl Root {
 
 /// 生成 1 世代ぶんの計測。
 #[derive(Default)]
-struct Run {
-    trigger: Option<Trigger>,
+pub(super) struct Run {
+    pub(super) trigger: Option<Trigger>,
     cause: Option<PathBuf>,
     asked_at: Option<Instant>,
     started_at: Option<Instant>,
@@ -108,6 +132,12 @@ struct Run {
     /// 件数を出すと編集 2 回が 6 に見える。
     changed_during: HashSet<PathBuf>,
     next_cause: Option<PathBuf>,
+    /// 走っている間に来た要求のきっかけ。走っている世代はそれで始まったものではないので、
+    /// 今の記録には混ぜず次へ回す。
+    next_trigger: Option<Trigger>,
+    /// producer を起こしたときの鍵。走っている間に編集が入ると `Root::key` は落ちるが、
+    /// 置かれる成果物の名前はこちらのまま。
+    pub(super) key: Option<String>,
 }
 
 impl Run {
@@ -240,15 +270,41 @@ impl SemanticIndex {
         let Ok(rel) = changed.strip_prefix(tree_root) else {
             return;
         };
+        // gitignore は歩く対象を変えるので、載る言語が無くても鍵が動く。動くのは、それを
+        // 含むルートと、その下にあるルートだけ。歩かれない場所のもの (venv/.gitignore など)
+        // では動かない。生成は頼まない — 次の調査が鍵を出し直せば済む。
+        if rel.file_name() == Some(std::ffi::OsStr::new(".gitignore")) {
+            let at = rel.parent().unwrap_or(Path::new("")).to_path_buf();
+            let dir = tree_root.join(&at);
+            for i in 0..self.roots.len() {
+                let subroot = self.roots[i].at.subroot.clone();
+                // ルートより上にあるものはルート全体の歩き方を決めるので、そのまま効く。
+                // 中にあるものは、その場所自体が歩かれているときだけ効く。
+                let hits = if subroot.starts_with(&at) {
+                    true
+                } else {
+                    let root_at = tree_root.join(&subroot);
+                    at.starts_with(&subroot) && self.roots[i].regenerator.walks(&dir, &root_at)
+                };
+                if hits {
+                    self.roots[i].key = None;
+                }
+            }
+            return;
+        }
         let Some(index) = self.owning_root(rel) else {
             return;
         };
         let at = tree_root.join(&self.roots[index].at.subroot);
         let root = &mut self.roots[index];
+        let was_working = root.is_working();
+        // 索引に載らないファイルでは鍵も動かない。落とすと target/ の書き換えのたびに
+        // 調査が要る状態になり、ビルド中はツリー走査が回り続ける。
+        if !root.regenerator.note_change(changed, &at) {
+            return;
+        }
         // 内容が動いたので鍵も動く。生成を始めない理由は Root::key。
         root.key = None;
-        let was_working = root.is_working();
-        root.regenerator.note_change(changed, &at);
         if !root.is_working() {
             return;
         }
@@ -272,11 +328,18 @@ impl SemanticIndex {
             return None;
         }
         let dir = self.conductor_dir(repo_root)?.to_path_buf();
+        // 調査が届くまでは前のツリーの鍵しか持っていない。その鍵で起こすと、動いた先の
+        // 内容が古い名前で置かれ、戻ったときに「もうある」で止まって自動では治らない。
+        let settled = self.tree == tree_root;
         // 1 周で返すのは 1 本ぶん。生成はロックで直列化されているので、同じ周に 2 本が
         // 終わることはほとんど無い。
         self.roots.iter_mut().find_map(|root| {
-            // 鍵の無いルートは進めない (Root::key)。
-            let key = root.key.clone()?;
+            // 鍵が要るのは producer を起こすときだけ。走っているぶんまで止めると、生成中の
+            // 編集で鍵が落ちたルートが顛末を拾えず、記録も掃除も済まないまま二度と終われない。
+            let key = root.key.clone().or_else(|| root.run.key.clone())?;
+            if !settled && !root.regenerator.is_running() {
+                return None;
+            }
             // この内容の索引はもう置いてある。producer を起こしても同じものが出るし、編集で
             // 行ったり来たりするたびに丸ごと 1 本ぶん払うことになる。手で頼まれたときは
             // 通さない — 押した人は「もうある」ではなく作り直しを待っている。
@@ -294,6 +357,7 @@ impl SemanticIndex {
             // producer が立ったのはこの tick の中なので、前後で見て時刻を取る。
             if root.regenerator.is_running() && root.run.started_at.is_none() {
                 root.run.started_at = Some(Instant::now());
+                root.run.key = Some(key.clone());
                 // producer は最後に出自の表を置き換えるので、いま読めば前の世代のもの。
                 root.run.before = root.at.newest_provenance(&dir);
             }
@@ -345,6 +409,17 @@ impl SemanticIndex {
         // 載らなかったなら、そのファイルはどの索引ルートにも属さない。立てたままだと調査が
         // 毎フレーム走る。
         self.unsurveyed_reading = false;
+        // 目印が消えたルートは調べ直しても鍵が出ない。残すと needs_survey が毎フレーム
+        // そのルートを名指しし続ける。落としすぎても、読み直せば対象外として調べ直しの
+        // 口が開く (下の None 分岐と同じ)。
+        let before = self.roots.len();
+        // 走っているものは残す。落とすと Drop が producer を殺し、その世代は記録に
+        // 1 行も残らない。本当に消えたなら走り終えた次の調査で落ちる。
+        self.roots
+            .retain(|root| survey.found.contains(&root.at) || root.regenerator.is_running());
+        if self.roots.len() != before {
+            self.reading = None;
+        }
         for (at, key) in survey.roots {
             match self.roots.iter_mut().find(|r| r.at == at) {
                 // 走っている生成はそのまま続ける。鍵だけ差し替えると、置かれる索引の名前と
@@ -378,6 +453,11 @@ impl SemanticIndex {
     }
 
     /// 走っている生成を止める。止めた時点までの producer の時間は捨てるので、記録に残す。
+    /// 待っているだけの世代も捨てる — 静穏が明けるのは切り替えた後で、そのとき組む
+    /// 置き場所は新しいツリーのものになる。
+    ///
+    /// 呼ぶのはツリーが動くときだけ。動かないなら結果はそのまま使えるので、止めると
+    /// 誰も頼み直さないまま生成が消える。
     pub fn abort_regeneration(&mut self, repo_root: &Path) {
         let dir = self.conductor_dir(repo_root).map(Path::to_path_buf);
         for root in &mut self.roots {
@@ -400,8 +480,8 @@ impl SemanticIndex {
         self.slot.accept(requested, current, store)
     }
 
-    #[cfg(test)]
-    pub(super) fn is_pending(&self) -> bool {
+    /// 静穏を待っている生成があるか。producer はまだ立っていない。
+    pub fn is_pending(&self) -> bool {
         self.roots.iter().any(|r| r.regenerator.is_pending())
     }
 

@@ -18,6 +18,9 @@ pub struct Survey {
     /// 調べたツリー。取り込む側が、その間に移っていないか見るのに使う。
     pub tree: PathBuf,
     pub roots: Vec<(IndexRoot, String)>,
+    /// 歩いて見つかったルート全部。鍵を出さなかったものも入る。`roots` だけでは
+    /// 「目印が消えた」と「今回は鍵を出さなかった」の区別がつかない。
+    pub found: Vec<IndexRoot>,
 }
 
 /// `tree_root` の索引ルートを列挙し、鍵を計算する。
@@ -45,6 +48,7 @@ pub fn survey(
     Survey {
         tree: tree_root.to_path_buf(),
         roots,
+        found,
     }
 }
 
