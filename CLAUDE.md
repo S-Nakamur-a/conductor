@@ -392,6 +392,11 @@ git, and any rework of theme / keymap / text_input / config.
   pointer is inside its rectangle.
 - **Status messages:** `Effect::Status(level, text)`
 - **Doc comments:** `//!` at module level, `///` on public items
+- **A regression test is not done until you have seen it fail.** Back the fix out (keep a
+  copy, restore it right away), run the one test, and confirm the panic — a green test can
+  pin nothing. One test here passed against a deliberately broken `state.rs` because
+  `source_delta` returns `Sources::First` before it ever looks at the key; another passed
+  because the root it meant to exercise was never in `self.roots` to begin with.
 - **Tests never wait on "quiet for N ms".** Use `conductor_tui::testing::wait_for(cond)`
   or `pump` (waits for `Services::in_flight() == 0`). A quiet-time wait only fails on a
   loaded machine; to prove a flake is pre-existing, check main out with
