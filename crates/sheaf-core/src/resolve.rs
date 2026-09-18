@@ -5,7 +5,7 @@
 //! 同じ位置で定義を返す）。したがって切り替えの判定は位置ごとに行う。
 
 use crate::store::{Implemented, Resolved};
-use crate::syntactic::{SyntacticAnswer, SyntacticLayer, Token};
+use crate::syntactic::{SyntacticLayer, Token};
 use crate::{Definition, Enclosures, Implementations, References, Store, SymbolDetail};
 use std::path::Path;
 
@@ -26,9 +26,9 @@ pub fn definition_at(
             Some(Resolved::Direct(locations)) => Definition::Exact(locations),
             Some(Resolved::Enclosing(found)) => Definition::Enclosing(found),
             // 索引に無い語と、内容が変わったファイルはここに落ちる。
-            None => fall_back(syntactic, &abs, line, col),
+            None => Definition::Unresolved,
         },
-        Token::Unknown => fall_back(syntactic, &abs, line, col),
+        Token::Unknown => Definition::Unresolved,
     }
 }
 
@@ -87,18 +87,11 @@ pub fn implementations_at(
     }
 }
 
-fn fall_back(syntactic: &dyn SyntacticLayer, abs: &Path, line: u32, col: u32) -> Definition {
-    match syntactic.definition_at(abs, line, col) {
-        SyntacticAnswer::Found(locations) => Definition::Syntactic(locations),
-        SyntacticAnswer::NotCode => Definition::NotCode,
-    }
-}
-
 /// その位置にある語への参照を答える。
 ///
 /// `rel` はソースツリーのルートからの相対パス。行・列はともに 0 始まり。
-/// 索引が依拠するファイルのどれか 1 つでも変わっていれば構文層に回す。件数そのものが
-/// 信用できなくなるので、残っている分だけを返すことはしない。
+/// 索引が依拠するファイルのどれか 1 つでも変わっていれば [`References::Unresolved`]。
+/// 件数そのものが信用できなくなるので、残っている分だけを返すことはしない。
 pub fn references_at(
     store: &Store,
     syntactic: &dyn SyntacticLayer,
@@ -111,20 +104,8 @@ pub fn references_at(
         Token::NotWord => References::NotCode,
         Token::Word(span) => match store.references_in(rel, span) {
             Some(found) => References::Exact(found),
-            None => fall_back_references(syntactic, &abs, line, col),
+            None => References::Unresolved,
         },
-        Token::Unknown => fall_back_references(syntactic, &abs, line, col),
-    }
-}
-
-fn fall_back_references(
-    syntactic: &dyn SyntacticLayer,
-    abs: &Path,
-    line: u32,
-    col: u32,
-) -> References {
-    match syntactic.references_at(abs, line, col) {
-        SyntacticAnswer::Found(locations) => References::Syntactic(locations),
-        SyntacticAnswer::NotCode => References::NotCode,
+        Token::Unknown => References::Unresolved,
     }
 }

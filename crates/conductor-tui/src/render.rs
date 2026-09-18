@@ -455,10 +455,6 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
             crate::modal::references::lines(list, &ctx, big),
             crate::modal::references::title(list),
         ),
-        Modal::SymbolActions(actions) => full(
-            crate::modal::symbol_actions::lines(actions, &ctx),
-            crate::modal::symbol_actions::title(actions),
-        ),
         Modal::Update(update) => (
             crate::modal::update::title(update),
             crate::modal::update::lines(update, &ctx),

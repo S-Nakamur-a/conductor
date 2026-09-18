@@ -119,24 +119,26 @@ sheaf-core holds a SCIP index split per file, keyed by content hash, and answers
 position queries (go-to-definition, find-references, go-to-implementation)
 **with a confidence level attached**. It was developed in its own repository
 (`../sheaf`) and vendored here as a workspace member. `semantic_index/` is
-conductor-core's side of the seam; `conductor-tui/src/index.rs` keeps both indexes
-and turns the heavy work into Tasks.
+conductor-core's side of the seam; `conductor-tui/src/index.rs` owns it and turns
+the heavy work into Tasks.
 
-**tree-sitter is not replaced — it is the layer underneath.** sheaf-core defines
+**tree-sitter answers where the words are, and nothing else.** sheaf-core defines
 the syntactic layer as a trait and ships no implementation, and will not consult
 the index unless `token_at` answers. `semantic_index::bridge::Bridge` implements
-that trait over `CodeMask` + `SymbolIndex`, so every position the index cannot
-answer lands on today's answer, marked `Definition::Syntactic` rather than
-`Exact`. Deliberately still tree-sitter-only: the symbol-action overlay, `gi`
-when the index is silent, and the hover popup's reference count
-(`count_references_upto`, capped at 50 — it runs on the UI thread).
+that one method over `CodeMask` (`conductor_core::syntax`). There is no name-based
+fallback: a position the index cannot answer comes back `Definition::Unresolved`,
+and `code_nav::unresolved` says why and when it will be answerable (indexing now /
+waiting for edits to settle / **Repo ▸ Rebuild Code Index**). Guessing by name
+looked like an answer and was not — hovering `rollbar` in a Go file printed a
+TypeScript `const rollbar = useRollbar()` as the declaration, measured on a real
+monorepo. Silence the user can act on beats a confident wrong jump.
 
 Invariants. Breaking any of these turns a weak answer into a confident one:
 
 - **The confidence cannot be bypassed.** `Definition` / `References` keep the
   positions inside their variants, so there is no way to get a `Location` without
-  deciding which variant you got, and `Syntactic(vec![])` ("looked, found
-  nothing") is distinct from `NotCode`. `lib.rs` pins this with
+  deciding which variant you got, and `Unresolved` ("a word, but no answer yet")
+  is distinct from `NotCode` ("not a word at all"). `lib.rs` pins this with
   ```compile_fail``` doctests — check they still fail to compile.
 - **Provenance is all-or-nothing.** If any file an answer depended on changed
   since index time, the whole answer is dropped and the query falls through.
@@ -267,18 +269,6 @@ first.
 sheaf-core's comments, test names, and error messages are Japanese, and its
 public API deliberately exposes no `protobuf` / `scip` types.
 
-**A name-only answer never crosses languages.** `SymbolIndex::find_definitions`
-takes the file being read and drops candidates whose language differs
-(`symbol_index::same_language`; an unclassifiable extension is kept, because
-dropping it would silently remove answers that work today). Without it, hovering
-`rollbar` in a Go file answered with a TypeScript `const rollbar = useRollbar()`
-and printed its declaration as if it were the answer — measured on a real
-monorepo, and the symptom that started this work. Note what the index alone does
-*not* fix: a third-party package has no definition inside the tree, so those
-positions fall through to this layer no matter how good the index is. The right
-answer there is silence (`No definition indexed for 'rollbar'`), which is what
-the filter produces.
-
 ## Architecture
 
 ### Crates
@@ -311,7 +301,7 @@ the panels, a `Vec<Modal>` and the chrome (status, menu state, layout ratios).
 - **Panels are not a trait.** The five are shaped too differently (revidere sits
   outside the accordion, terminal owns PTYs); a trait would return `Any` through `dyn`.
 - **Modals are a stack, and only the top receives input.** Popups that do *not*
-  take all input (hover, symbol actions, references, inline threads) belong to
+  take all input (hover, references, inline threads) belong to
   the panel's own state instead.
 - `Ctx` is the read-only side (theme, keymap, config, repo, review, index, root,
   focus, key context, version), built in one place: `Workspace::split`.

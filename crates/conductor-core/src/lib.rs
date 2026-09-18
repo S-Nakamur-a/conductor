@@ -12,7 +12,7 @@ pub mod icons;
 pub mod keymap;
 pub mod repo_path;
 pub mod review_store;
-pub mod symbol_index;
+pub mod syntax;
 pub mod text_input;
 pub mod theme;
 

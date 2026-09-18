@@ -4,7 +4,7 @@
 //! ロックはリポジトリに 1 つ。producer 1 本でメモリの大半を食うので、ルートごとに
 //! 分けると同時に立つ本数の上限が黙って消える。
 
-pub use crate::symbol_index::Language;
+pub use crate::syntax::Language;
 use sheaf_core::{IndexSource, Producer, RustAnalyzer, ScipGo, ScipTypescript, Target};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

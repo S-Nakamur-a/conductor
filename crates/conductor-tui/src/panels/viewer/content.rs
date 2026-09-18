@@ -8,7 +8,7 @@ use std::path::Path;
 
 use conductor_core::diff_state::DiffSource;
 use conductor_core::runnable::{Runnable, scan_go_tests, scan_make_targets, scan_rust_tests};
-use conductor_core::symbol_index::CodeMask;
+use conductor_core::syntax::CodeMask;
 use ratatui::style::Style;
 use ratatui::text::Line;
 

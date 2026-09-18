@@ -12,7 +12,7 @@ use super::history::{self, Outcome, SourceDelta, Sources, Trigger};
 use super::roots::{self, IndexRoot, Language};
 use super::survey::load;
 use super::*;
-use crate::symbol_index::{CodeMask, SymbolIndex};
+use crate::syntax::CodeMask;
 
 // ---------------------------------------------------------------- 素材
 
@@ -198,12 +198,10 @@ fn definition_at(store: &Store, tree_root: &Path, rel: &str, line: u32, col: u32
     let abs = tree_root.join(rel);
     let source = std::fs::read_to_string(&abs).unwrap();
     let mask = CodeMask::compute(&source, rel);
-    let index = SymbolIndex::new(tree_root.to_path_buf());
     let bridge = Bridge {
         abs_path: &abs,
         source: &source,
         mask: &mask,
-        index: &index,
     };
     sheaf_core::definition_at(store, &bridge, Path::new(rel), line, col)
 }
@@ -1752,13 +1750,11 @@ fn caller() {
 }
 ";
 
-/// BRIDGE_SOURCE を 1 ファイル書き出してビルドした索引と、対応する CodeMask。
-fn bridge_fixture() -> (tempfile::TempDir, SymbolIndex, CodeMask) {
+/// BRIDGE_SOURCE を 1 ファイル書き出したツリーと、対応する CodeMask。
+fn bridge_fixture() -> (tempfile::TempDir, CodeMask) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("lib.rs"), BRIDGE_SOURCE).unwrap();
-    let index = SymbolIndex::new(dir.path().to_path_buf());
-    index.build();
-    (dir, index, CodeMask::compute(BRIDGE_SOURCE, "lib.rs"))
+    (dir, CodeMask::compute(BRIDGE_SOURCE, "lib.rs"))
 }
 
 /// 語として答えたときに span が覆うテキスト。
@@ -1772,13 +1768,12 @@ enum Expect {
 fn 語として答えるのはコード上の識別子だけ() {
     use sheaf_core::{SyntacticLayer, Token};
 
-    let (dir, index, mask) = bridge_fixture();
+    let (dir, mask) = bridge_fixture();
     let path = dir.path().join("lib.rs");
     let bridge = Bridge {
         abs_path: &path,
         source: BRIDGE_SOURCE,
         mask: &mask,
-        index: &index,
     };
 
     let cases = [
@@ -1818,75 +1813,6 @@ fn 語として答えるのはコード上の識別子だけ() {
             (_, got) => panic!("{why}: {got:?}"),
         }
     }
-}
-
-#[test]
-fn シンボル行の1始まりを0始まりの位置に直す() {
-    use sheaf_core::{SyntacticAnswer, SyntacticLayer};
-
-    let (dir, index, mask) = bridge_fixture();
-    let path = dir.path().join("lib.rs");
-    let bridge = Bridge {
-        abs_path: &path,
-        source: BRIDGE_SOURCE,
-        mask: &mask,
-        index: &index,
-    };
-    let (line, col) = site(BRIDGE_SOURCE, "let x = value();");
-    let col = col + "let x = ".len() as u32;
-
-    let symbol = index
-        .find_definitions("value", Path::new("lib.rs"))
-        .into_iter()
-        .next()
-        .expect("value の定義が索引に無い");
-    assert_eq!(
-        symbol.line, 1,
-        "fixture の前提: fn value() は 1 始まりで 1 行目"
-    );
-
-    match bridge.definition_at(&path, line, col) {
-        SyntacticAnswer::Found(locations) => {
-            assert_eq!(locations.len(), 1);
-            assert_eq!(locations[0].line, symbol.line as u32 - 1);
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn 別の言語の同名の定義には落とさない() {
-    use sheaf_core::{SyntacticAnswer, SyntacticLayer};
-
-    // tree-sitter の索引は名前でしか引けないので、Go の rollbar が TypeScript の
-    // const rollbar に当たりうる。
-    let go = "package main\n\nfunc use() { rollbar.SetToken(\"x\") }\n";
-    let dir = tree(&[
-        ("main.go", go),
-        ("page.tsx", "const rollbar = useRollbar();\n"),
-    ]);
-    let index = SymbolIndex::new(dir.path().to_path_buf());
-    index.build();
-
-    let path = dir.path().join("main.go");
-    let mask = CodeMask::compute(go, "main.go");
-    let bridge = Bridge {
-        abs_path: &path,
-        source: go,
-        mask: &mask,
-        index: &index,
-    };
-    let (line, col) = site(go, "rollbar");
-
-    let SyntacticAnswer::Found(locations) = bridge.definition_at(&path, line, col) else {
-        panic!("識別子として認識されていない");
-    };
-    assert!(
-        locations
-            .iter()
-            .all(|l| l.path.extension().is_none_or(|e| e != "tsx")),
-        "Go のファイルから TypeScript の定義に落ちた: {locations:?}"
-    );
 }
 
 #[test]
@@ -2000,7 +1926,7 @@ fn 実索引は行を囲むものを答える() {
 #[test]
 #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
 fn 実索引は実ファイルに答え説明と飛び先を持つ() {
-    use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
+    use crate::syntax::{code_identifiers_on_line, occurrence_span_in_source};
 
     let repo_root = test_repo();
     let store = load(&repo_root, &repo_root).expect("索引と出自の申告が揃っている");
@@ -2014,12 +1940,10 @@ fn 実索引は実ファイルに答え説明と飛び先を持つ() {
         let abs = repo_root.join(&rel);
         let source = std::fs::read_to_string(&abs).unwrap();
         let mask = CodeMask::compute(&source, &rel.to_string_lossy());
-        let index = SymbolIndex::new(repo_root.clone());
         let bridge = Bridge {
             abs_path: &abs,
             source: &source,
             mask: &mask,
-            index: &index,
         };
         for (line, text) in source.lines().enumerate() {
             for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {

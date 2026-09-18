@@ -29,7 +29,6 @@ pub mod publish;
 pub mod references;
 pub mod repo;
 pub mod session;
-pub mod symbol_actions;
 pub mod theme;
 pub mod update;
 
@@ -54,7 +53,6 @@ pub enum Modal {
     Publish(publish::Publish),
     Update(update::Update),
     References(references::References),
-    SymbolActions(symbol_actions::SymbolActions),
 }
 
 /// 1 行のテキスト入力。確定した文字列は選択中の [Mode] が Effect に変える。
@@ -317,8 +315,7 @@ impl Modal {
             | Modal::CherryPick(_)
             | Modal::Publish(_)
             | Modal::Update(_)
-            | Modal::References(_)
-            | Modal::SymbolActions(_) => {}
+            | Modal::References(_) => {}
         }
     }
 
@@ -337,7 +334,6 @@ impl Modal {
             Modal::Publish(confirm) => confirm.update(key, ctx),
             Modal::Update(update) => update.update(key, ctx),
             Modal::References(list) => list.update(key, ctx),
-            Modal::SymbolActions(actions) => actions.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Tab if prompt.has_modes() => {

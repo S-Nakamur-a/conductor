@@ -7,7 +7,6 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use conductor_core::symbol_index::SymbolIndex;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -27,10 +26,6 @@ const MAX_DEFINITION_LINES: usize = 24;
 /// 定義本体の閉じ波括弧を探して読む最大行数。ここに収まらない宣言は波括弧の
 /// 数え上げが信用できないので、本体を出すのをやめる。
 const MAX_DEFINITION_SCAN: usize = 512;
-/// UI スレッドで走る経路なので作業量に上限を置く (`new` の正確な件数は実測
-/// 157ms = 10 フレーム落ち)。
-const REF_CAP: usize = 50;
-
 /// マウスが止まるのを待っている候補。
 #[derive(Debug)]
 pub struct Pending {
@@ -58,18 +53,15 @@ pub struct Hover {
     pub line: usize,
     pub doc: Vec<String>,
     pub signature: Vec<String>,
-    /// 名前に一致した定義の数。2 以上なら、出しているのはそのうちの 1 つ。
+    /// 索引が答えた定義の数。2 以上なら、出しているのはそのうちの 1 つ。
     pub def_count: usize,
-    pub refs: usize,
-    /// 上限で数えるのを止めたか。
-    pub refs_capped: bool,
+    /// 索引が答えた参照。押すとこれがそのまま一覧になるので、件数と中身がずれない。
+    pub refs: Vec<crate::modal::references::Reference>,
     /// 聞かれた位置が定義そのものだった。字面の写しにしかならないので描画側が省く。
     pub on_definition_line: bool,
     /// 宣言が索引由来か。型が解決済みで字面とは違うものを見せているので、
     /// 定義行の上でも省かない。
     pub signature_from_index: bool,
-    /// この定義位置を答えた層。
-    pub by: super::code_nav::By,
     /// ポップアップを置く画面上の位置。
     pub anchor: (u16, u16),
     /// マウスが離れた時刻。猶予を数える。
@@ -98,38 +90,16 @@ pub struct DefSite {
     pub path: String,
     /// 1 始まり。
     pub line: usize,
-    /// 名前で引いたときの種別。位置しか分からないときは空。
-    pub kind: String,
     pub def_count: usize,
     pub detail: Option<Indexed>,
 }
 
-/// 名前で定義位置を決める。複数あれば読んでいるファイルの中のものを優先する。
-pub fn resolve_def_site(index: &SymbolIndex, word: &str, reading: Option<&str>) -> Option<DefSite> {
-    if !index.is_available() {
-        return None;
-    }
-    let defs = index.find_definitions(word, Path::new(reading.unwrap_or("")));
-    let def = defs
-        .iter()
-        .find(|d| Some(d.file_path.as_str()) == reading)
-        .or_else(|| defs.first())?;
-    Some(DefSite {
-        path: def.file_path.clone(),
-        line: def.line,
-        kind: format!("{:?}", def.kind),
-        def_count: defs.len(),
-        detail: None,
-    })
-}
-
 /// 定義位置からポップアップの中身を組み立てる。読めない・行が範囲外なら黙って `None`。
 pub fn build(
-    index: &SymbolIndex,
     root: &Path,
     word: &str,
     def: DefSite,
-    by: super::code_nav::By,
+    refs: Vec<crate::modal::references::Reference>,
     anchor: (u16, u16),
 ) -> Option<Hover> {
     let source = std::fs::read_to_string(root.join(&def.path)).ok()?;
@@ -139,10 +109,7 @@ pub fn build(
         return None;
     }
     let indexed = def.detail.filter(|d| !d.is_empty());
-    let kind = match indexed.as_ref().map(|d| d.kind.as_str()) {
-        Some(k) if !k.is_empty() => k.to_string(),
-        _ => def.kind,
-    };
+    let kind = indexed.as_ref().map(|d| d.kind.clone()).unwrap_or_default();
     let doc = match indexed.as_ref().filter(|d| !d.doc.is_empty()) {
         Some(d) => d.doc.clone(),
         None => extract_doc(&lines, def_idx),
@@ -161,8 +128,6 @@ pub fn build(
             None => extract_signature(&lines, def_idx),
         },
     };
-    let (refs, refs_capped) = index.count_references_upto(word, root, REF_CAP);
-
     Some(Hover {
         word: word.to_string(),
         kind,
@@ -173,10 +138,8 @@ pub fn build(
         signature,
         def_count: def.def_count,
         refs,
-        refs_capped,
         on_definition_line: false,
         signature_from_index,
-        by,
         anchor,
         left_at: None,
         pinned: false,
@@ -415,7 +378,7 @@ pub fn popup(
         def_label,
         Style::default().fg(theme.fg),
     ))));
-    if hover.refs > 0 {
+    if !hover.refs.is_empty() {
         footer.push(Row::Refs(Line::from(Span::styled(
             refs_label,
             Style::default()
@@ -516,14 +479,11 @@ fn def_label(hover: &Hover) -> String {
     if hover.def_count > 1 {
         label.push_str(&format!("  (+{} defs)", hover.def_count - 1));
     }
-    label.push_str(&format!("  [{}]", hover.by.label()));
     label
 }
 
-/// `+` は数え終えていない印。ありふれた名前でちょうど 50 件だったように見せない。
 fn refs_label(hover: &Hover) -> String {
-    let plus = if hover.refs_capped { "+" } else { "" };
-    format!("\u{25b8} {}{plus} refs", hover.refs)
+    format!("\u{25b8} {} refs", hover.refs.len())
 }
 
 /// 所属を左、種別を右に置いた見出し。どちらも無ければ空。
@@ -716,6 +676,14 @@ mod tests {
         }
     }
 
+    fn hit(path: &str, line: usize) -> crate::modal::references::Reference {
+        crate::modal::references::Reference {
+            file_path: path.to_string(),
+            line,
+            content: String::new(),
+        }
+    }
+
     fn hover_fixture() -> Hover {
         Hover {
             word: "add".into(),
@@ -726,11 +694,9 @@ mod tests {
             doc: vec!["Adds.".into()],
             signature: vec!["pub fn add(a: i64) -> i64".into()],
             def_count: 1,
-            refs: 2,
-            refs_capped: false,
+            refs: vec![hit("lib.rs", 8), hit("main.rs", 2)],
             on_definition_line: false,
             signature_from_index: false,
-            by: crate::panels::viewer::code_nav::By::TreeSitter,
             anchor: (10, 10),
             left_at: None,
             pinned: false,
@@ -819,39 +785,12 @@ mod tests {
     /// gd は名乗るのに同じ位置を説明するホバーが黙ると、名前一致で拾った宣言が
     /// 索引の答えと同じ見た目になる。
     #[test]
-    fn 定義位置の行はどの層の答えかを名乗る() {
-        use crate::panels::viewer::code_nav::By;
-        let mut hover = hover_fixture();
-        assert!(
-            def_label(&hover).ends_with("[tree-sitter]"),
-            "{}",
-            def_label(&hover)
-        );
-        hover.by = By::Index;
-        assert!(
-            def_label(&hover).ends_with("[index]"),
-            "{}",
-            def_label(&hover)
-        );
-    }
-
-    #[test]
     fn 参照が無ければ参照の行そのものを出さない() {
         let mut hover = hover_fixture();
-        hover.refs = 0;
+        hover.refs.clear();
         let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 80, 30), None);
         assert_eq!(popup.refs_row, Rect::default());
         assert!(!texts(&popup).iter().any(|r| r.contains("refs")));
-    }
-
-    #[test]
-    fn 数え切れなかった参照は件数に印を付ける() {
-        let mut hover = hover_fixture();
-        hover.refs = REF_CAP;
-        hover.refs_capped = true;
-        assert_eq!(refs_label(&hover), "\u{25b8} 50+ refs");
-        hover.refs_capped = false;
-        assert_eq!(refs_label(&hover), "\u{25b8} 50 refs");
     }
 
     #[test]

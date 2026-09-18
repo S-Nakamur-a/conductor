@@ -84,7 +84,7 @@ const IFACE_LIB: &str = "trait Iface { fn M(); }\nimpl Iface for Impl { fn M() {
 const IFACE_CALLER: &str = "fn a(x: &dyn Iface) { x.M(); }\n";
 
 #[test]
-fn 経由先の参照が載るファイルが変わったら構文層に回る() {
+fn 経由先の参照が載るファイルが変わったら答えられないと言う() {
     // インタフェース経由の参照先も依拠集合に入る。規則を直接参照と分けると、
     // 空が「無い」なのか「言えない」なのかを利用側が区別できなくなる。
     let root = workdir("iface-stale");
@@ -125,7 +125,7 @@ fn 経由先の参照が載るファイルが変わったら構文層に回る()
     .unwrap();
     assert_eq!(
         references_at(&stale, &silent(), Path::new("src/lib.rs"), 1, 25),
-        References::NotCode,
+        References::Unresolved,
         "経由先のファイルが古いのに Exact を返した"
     );
 }

@@ -20,7 +20,6 @@ use conductor_core::review_store::{
 };
 use conductor_core::semantic_index::{self, IndexRoot};
 use conductor_core::smart_worktree;
-use conductor_core::symbol_index::SymbolIndex;
 use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
@@ -197,8 +196,6 @@ pub enum Task {
         /// 鍵を失ったルート。名指ししないと調査に選ばれず、毎周調査を頼み続ける。
         wanted: Vec<IndexRoot>,
     },
-    /// tree-sitter の索引を作る。渡した handle は呼び出し側と同じ索引を指す。
-    BuildSymbols(SymbolIndex),
 
     /// レビューの成果物を読み、読む順まで組む。git diff を取り直すので UI では読まない。
     LoadRevidere {
@@ -387,7 +384,6 @@ pub enum TaskResult {
     },
     UpdateProgress(UpdateStage),
     IndexLoaded(Box<crate::index::Load>),
-    SymbolsBuilt(usize),
     RevidereLoaded(Box<artifact::Outcome>),
     Analyzed {
         branch: String,
@@ -666,10 +662,6 @@ impl Task {
                     TaskResult::IndexLoaded,
                 );
             }
-            Task::BuildSymbols(index) => {
-                svc.spawn(move || index.build(), TaskResult::SymbolsBuilt);
-            }
-
             Task::LoadRevidere { worktree, scope } => {
                 svc.spawn(
                     move || Box::new(artifact::load(&worktree, scope)),

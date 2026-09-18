@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use conductor_core::symbol_index::language_for_ext;
+use conductor_core::syntax::language_for_ext;
 
 /// 畳める 1 ブロック。行番号はどちらも 1 始まり。
 ///
