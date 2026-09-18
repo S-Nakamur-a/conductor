@@ -621,7 +621,7 @@ impl ViewerPanel {
         self.note_pointer(over);
     }
 
-    /// ポップアップを押した。宣言か定義位置なら飛び、参照数なら一覧を開く。
+    /// ポップアップを押した。宣言か定義位置なら飛ぶ。
     pub fn click_hover(&mut self, col: u16, row: u16, ctx: &Ctx) -> Option<Vec<Effect>> {
         let hover = self.nav.hover.as_ref()?;
         let popup = hover::popup(hover, ctx.theme, self.body, self.highlighter_ref());
@@ -1199,8 +1199,6 @@ pub fn caller() { target(); }
         );
     }
 
-    /// 索引が答えた 0 件と、索引が答えられないことを同じ文言にすると、効かない
-    /// 作り直しを勧め続けることになる。
     #[test]
     fn 誰も呼んでいない関数は作り直しを勧めない() {
         let mut h = Harness::new();

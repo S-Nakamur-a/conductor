@@ -395,8 +395,8 @@ git, and any rework of theme / keymap / text_input / config.
   references instead. **Looking and going are split**: the hover popup only describes
   (kind, signature, doc, `path:line`), because a reference count costs an index query
   the UI thread pays on every pointer rest — measured 8–27ms for `Theme` (257
-  references over 47 files). Both of its rows jump, and it stays put while the pointer
-  is inside its rectangle.
+  references over 47 files). The declaration block and the `path:line` row both jump,
+  and it stays put while the pointer is inside its rectangle.
 - **A drag selection is bounded by where it started, not by where it is.** `Selection`
   carries the column range decided at mouse-down (`within_columns`), so `highlight`,
   `text` and `extend` all agree without any of them knowing about the Viewer. Pressing

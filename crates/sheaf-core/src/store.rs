@@ -707,7 +707,6 @@ impl Store {
 
         // 符号が見つかったなら 0 件も索引の答え。`None` に畳むと「誰も呼んでいない」が
         // 「索引が答えられない」と区別できなくなり、利用側が効かない作り直しを勧める。
-        // 符号そのものが無い位置は、索引がその語を知らないので `None` のまま。
         (!symbols.is_empty()).then_some(Found {
             direct: out,
             via_interface,

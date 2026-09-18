@@ -174,7 +174,7 @@ pub enum Enclosures {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum References {
-    /// 意味索引が答えた。依拠した全ファイルが索引生成時のまま。
+    /// 意味索引が答えた。依拠した全ファイルが索引生成時のまま。空なら参照が無い。
     Exact(Found),
     /// 語ではあるが索引が答えられない。[`Definition::Unresolved`] と同じ理由で位置を持たない。
     Unresolved,

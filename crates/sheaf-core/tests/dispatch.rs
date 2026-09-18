@@ -194,7 +194,7 @@ fn go_store(tag: &str) -> Store {
     }
 }
 
-/// 索引が答えたかどうか。答えないのは、直接参照もインタフェース経由も 0 件のとき。
+/// 索引が答えたかどうか。答えないのは、その位置の符号を索引が知らないとき。
 fn answered(store: &Store, rel: &str, line: u32, col: u32) -> bool {
     matches!(
         references_at(store, &silent(), Path::new(rel), line, col),
@@ -368,7 +368,7 @@ fn 実リポジトリ_実装関係の辺を持たないメソッドは経由を�
         ]
     );
 
-    // 直接参照もインタフェース経由も 0 件なら索引は答えない。
+    // 符号が引けていれば索引は答える。中身が 0 件なのと、答えられないのは別。
     for (rel, line, col) in [
         (
             "internal/pkg/repository/sql_career_profile_experience_repository.go",
@@ -397,8 +397,12 @@ fn 実リポジトリ_実装関係の辺を持たないメソッドは経由を�
         ),
     ] {
         assert!(
-            !answered(&store, rel, line, col),
-            "{rel}:{line} で索引が答えてしまった"
+            answered(&store, rel, line, col),
+            "{rel}:{line} で索引が黙った"
+        );
+        assert!(
+            direct(&store, rel, line, col).is_empty(),
+            "{rel}:{line} に直接参照があった"
         );
     }
 }

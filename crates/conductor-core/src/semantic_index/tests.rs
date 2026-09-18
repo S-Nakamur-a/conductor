@@ -1917,8 +1917,7 @@ fn 実索引は行を囲むものを答える() {
     assert!(checked > 0, "索引が囲みを 1 件も答えなかった");
 }
 
-/// 参照は gr と「定義の上での Cmd+click」で引く。押した本人が待っているので、
-/// gd と同じ 100ms を上限に置く。
+/// 押した本人が待っているので、gd と同じ 100ms を上限に置く。
 #[test]
 #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
 fn 実索引_参照検索は操作の予算に収まる() {
@@ -1941,9 +1940,13 @@ fn 実索引_参照検索は操作の予算に収まる() {
         };
         for (line, text) in source.lines().enumerate() {
             for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {
-                let Some((start, _)) = occurrence_span_in_source(text, k) else {
+                let Some((start, end)) = occurrence_span_in_source(text, k) else {
                     continue;
                 };
+                // ずれた位置は速く返るので、測ると予算が甘く出る。
+                if text.get(start..end) != Some(word.as_str()) {
+                    continue;
+                }
                 asked += 1;
                 let started = Instant::now();
                 let answer =
