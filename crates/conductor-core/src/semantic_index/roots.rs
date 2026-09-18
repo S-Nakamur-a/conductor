@@ -22,7 +22,7 @@ impl Language {
     }
 
     /// 索引を作る道具。生成・出自の読み書き・投入の 3 箇所で同じものを指す必要がある。
-    /// sheaf は別の道具が書いた出自の表を読まないので、ずれると全部が構文層に落ちる。
+    /// sheaf は別の道具が書いた出自の表を読まないので、ずれると全部が答えられなくなる。
     pub fn producer(self) -> Arc<dyn Producer> {
         match self {
             Language::Rust => Arc::new(RustAnalyzer),

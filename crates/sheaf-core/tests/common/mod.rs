@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 /// 構文層の賢さに依存していないことの検査になる。
 pub struct Rough;
 
-/// 構文層は語の位置しか答えない。索引が引けなければそこで打ち切りになる。
 pub fn silent() -> Rough {
     Rough
 }

@@ -30,19 +30,9 @@ pub fn identifier_occurrences(line: &str) -> impl Iterator<Item = (usize, usize,
 pub struct CodeMask {
     /// lines[i] のビット k が立っていれば、行 i + 1 の k 番目の識別子はコード。
     lines: Vec<u128>,
-    supported: bool,
 }
 
 impl CodeMask {
-    /// このファイルの言語を解析できたか。
-    ///
-    /// 「コードの識別子が 1 つもない」とは扱いが逆になる。ジャンプの提示は 1 語への
-    /// 主張なので沈黙が安全だが、参照の一覧はリポジトリ全体への主張なので、
-    /// 空の結果は「存在しない」と読まれる。検索側はフィルタなしの一致に落ちる。
-    pub fn is_supported(&self) -> bool {
-        self.supported
-    }
-
     /// 行 line_1 (1 始まり) の occurrence 番目 (0 始まり) の識別子がコードの位置にあるか。
     /// 範囲外の行、上限を超えた出現、解析できなかったファイルはすべて false。
     pub fn is_code(&self, line_1: usize, occurrence: usize) -> bool {
@@ -106,10 +96,7 @@ impl CodeMask {
             line_start += line.len();
         }
 
-        Self {
-            lines,
-            supported: true,
-        }
+        Self { lines }
     }
 }
 

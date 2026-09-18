@@ -369,8 +369,6 @@ impl ViewerPanel {
         let (hits, note) = match answer {
             None | Some(References::Unresolved) => return unresolved(ctx, word),
             Some(References::NotCode) => return no_symbol(),
-            // via_interface はそこへ実行が届くとは限らない (実測で 9 件中 8 件が静的に
-            // 別の実装へ解決される例がある)。直接参照の後ろに、数を分けて並べる。
             Some(References::Exact(found)) => reference_hits(ctx.root, &found),
         };
         let by = By::Index;
@@ -389,7 +387,7 @@ impl ViewerPanel {
         ]
     }
 
-    /// どの層が答えたかを必ず名乗る。
+    /// 索引のどの答えかを必ず名乗る。
     fn land(&mut self, word: &str, hits: Vec<Reference>, by: By, what: &str) -> Vec<Effect> {
         match hits.as_slice() {
             [] => warn(format!("No {what} found for '{word}' [{}]", by.label())),
@@ -659,7 +657,7 @@ impl ViewerPanel {
 
     // ── 索引への問い合わせ ────────────────────────────────────────────────
 
-    /// 索引に位置で聞く。索引が無ければ `None` で、呼び出し側は構文層の経路へ落ちる。
+    /// 索引に位置で聞く。索引が無ければ `None` (呼び出し側は `unresolved` を出す)。
     fn ask<T>(
         &self,
         ctx: &Ctx,
@@ -874,8 +872,6 @@ fn definition_answer(answer: Definition) -> Answered<Vec<Location>> {
     }
 }
 
-/// `Exact` と `Derived` は別の主張。`relationships` に書いてあったものと、符号の綴りから
-/// 導いただけのものを同じ言葉で見せると、後者が producer の申告と同じ確度に見える。
 fn implementation_answer(answer: Implementations) -> Answered<Vec<sheaf_core::Implementation>> {
     match answer {
         Implementations::NotCode => Answered::NotCode,
@@ -886,9 +882,6 @@ fn implementation_answer(answer: Implementations) -> Answered<Vec<sheaf_core::Im
 }
 
 /// 索引が答えられないことを、理由と、いつなら答えられるかとともに言う。
-///
-/// 黙って名前で当てにいくと、同名の別物へ飛んだことが画面から読めない。答えられない
-/// あいだは答えず、代わりに待てばよいのか押せばよいのかをここで示す。
 fn unresolved(ctx: &Ctx, word: &str) -> Vec<Effect> {
     let index = &ctx.index.semantic;
     let why = if index.is_generating() {
@@ -1012,11 +1005,7 @@ pub fn caller() { target(); }
 
         let dir = tempfile::TempDir::new().unwrap();
         // .conductor/ の置き場は commondir() から辿るので、git のツリーでないと見つからない。
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(dir.path())
-            .status()
-            .unwrap();
+        git2::Repository::init(dir.path()).unwrap();
         std::fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname = \"demo\"\n",
@@ -1223,6 +1212,30 @@ pub fn caller() { target(); }
             matches!(h.ws.modals.last(), Some(Modal::References(_))),
             "{:?}",
             h.ws.modals.last()
+        );
+    }
+
+    /// 索引が答えた 0 件と、索引が答えられないことを同じ文言にすると、効かない
+    /// 作り直しを勧め続けることになる。
+    #[test]
+    fn 誰も呼んでいない関数は作り直しを勧めない() {
+        let mut h = Harness::new();
+        // caller はどこからも参照されていない。その定義行で gd を押すと参照一覧へ回る。
+        h.ws.panels.viewer.scroll.line = 1;
+        h.ch('g');
+        h.ch('d');
+        h.ch('a');
+
+        let status = h.ws.chrome.status.as_ref().expect("何も言わずに黙った");
+        assert!(
+            status.text.contains("No references found"),
+            "索引が 0 件と答えたのに別のことを言っている: {}",
+            status.text
+        );
+        assert!(
+            !status.text.contains("Rebuild"),
+            "効かない作り直しを勧めている: {}",
+            status.text
         );
     }
 

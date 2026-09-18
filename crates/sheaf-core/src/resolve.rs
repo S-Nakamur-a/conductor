@@ -1,8 +1,8 @@
-//! 意味層と構文層の切り替え。
+//! 位置ごとに索引へ聞き、答えられない位置を Unresolved にする場所。
 //!
 //! 索引が最新でも occurrence が存在しない位置がある（Rust の `format!("{x}")` の
 //! インライン引数がそれで、実測でひとつも occurrence が無い一方、rust-analyzer は
-//! 同じ位置で定義を返す）。したがって切り替えの判定は位置ごとに行う。
+//! 同じ位置で定義を返す）。したがって判定は位置ごとに行う。
 
 use crate::store::{Implemented, Resolved};
 use crate::syntactic::{SyntacticLayer, Token};
@@ -37,8 +37,8 @@ pub fn definition_at(
 ///
 /// 索引が最新でない、その位置に occurrence が無い、識別子ではない、のいずれでも
 /// 空を返す。[`definition_at`] が [`Definition::Exact`] を返した位置でだけ使うこと --
-/// 構文層に落ちた答えの横に索引由来の綴りを並べると、出どころの違う 2 つが
-/// 1 つの説明に見える。
+/// 索引が位置を答えなかった語に索引由来の綴りを並べると、別の語の説明が飛び先の
+/// 説明として読める。
 pub fn describe_at(
     store: &Store,
     syntactic: &dyn SyntacticLayer,
@@ -65,9 +65,7 @@ pub fn enclosures_at(store: &Store, rel: &Path, line: u32) -> Enclosures {
 
 /// その位置の語が trait なら、それを実装している impl ブロック。
 ///
-/// 索引が答えられなければ [`Implementations::Unknown`] を返す。ここだけは構文層に
-/// 落とさない -- 実装の探索は名前の一致で当てにいく作業で、位置から始まる問いの
-/// 答えとしては別物になる。落とすかどうかは呼び出し側が決める。
+/// 索引が答えられなければ [`Implementations::Unknown`] を返す。
 pub fn implementations_at(
     store: &Store,
     syntactic: &dyn SyntacticLayer,

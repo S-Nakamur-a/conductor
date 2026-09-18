@@ -214,7 +214,7 @@ impl SemanticIndex {
         let Some(index) = self.owning_root(rel) else {
             // 調査が鍵を出すのは成果物の置いてあるルートだけなので、一度も索引されていない
             // ルートはここに来る。頼まないと鍵を持てないまま生成も始まらず、そのルートは
-            // 永久に構文層のままになる。
+            // 永久に答えられないままになる。
             self.unsurveyed_reading = roots::Language::of_file(rel).is_some();
             return settle(self, Reading::NotIndexed);
         };

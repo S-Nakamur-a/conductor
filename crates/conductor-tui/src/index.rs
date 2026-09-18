@@ -92,7 +92,7 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 
     if let Some(rel) = &reading {
         let answer = ws.index.semantic.note_open(rel, &repo, &tree);
-        // 索引がこのファイルを説明できないと黙って構文層に落ちる。言わないと
+        // 索引がこのファイルを説明できないとジャンプが黙って答えなくなる。言わないと
         // 「ジャンプが甘い」としか見えないので、開いたときに 1 度だけ出す。
         if answer == Reading::Stale {
             effects.push(Effect::Status(

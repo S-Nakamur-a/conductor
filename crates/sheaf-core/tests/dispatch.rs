@@ -368,7 +368,7 @@ fn 実リポジトリ_実装関係の辺を持たないメソッドは経由を�
         ]
     );
 
-    // 直接参照もインタフェース経由も 0 件なら索引は答えない（構文層に回る）。
+    // 直接参照もインタフェース経由も 0 件なら索引は答えない。
     for (rel, line, col) in [
         (
             "internal/pkg/repository/sql_career_profile_experience_repository.go",

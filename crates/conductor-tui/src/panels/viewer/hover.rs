@@ -26,6 +26,7 @@ const MAX_DEFINITION_LINES: usize = 24;
 /// 定義本体の閉じ波括弧を探して読む最大行数。ここに収まらない宣言は波括弧の
 /// 数え上げが信用できないので、本体を出すのをやめる。
 const MAX_DEFINITION_SCAN: usize = 512;
+
 /// マウスが止まるのを待っている候補。
 #[derive(Debug)]
 pub struct Pending {
@@ -782,8 +783,6 @@ mod tests {
         );
     }
 
-    /// gd は名乗るのに同じ位置を説明するホバーが黙ると、名前一致で拾った宣言が
-    /// 索引の答えと同じ見た目になる。
     #[test]
     fn 参照が無ければ参照の行そのものを出さない() {
         let mut hover = hover_fixture();

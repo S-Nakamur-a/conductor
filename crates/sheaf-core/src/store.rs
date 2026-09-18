@@ -705,7 +705,10 @@ impl Store {
         out.sort_by(|a, b| position_key(a).cmp(&position_key(b)));
         via_interface.sort_by(|a, b| position_key(&a.reference).cmp(&position_key(&b.reference)));
 
-        (!out.is_empty() || !via_interface.is_empty()).then_some(Found {
+        // 符号が見つかったなら 0 件も索引の答え。`None` に畳むと「誰も呼んでいない」が
+        // 「索引が答えられない」と区別できなくなり、利用側が効かない作り直しを勧める。
+        // 符号そのものが無い位置は、索引がその語を知らないので `None` のまま。
+        (!symbols.is_empty()).then_some(Found {
             direct: out,
             via_interface,
         })
@@ -723,7 +726,7 @@ impl Store {
     /// `false` はそのファイルについて `Exact` が一切返らないことを意味する。
     /// 索引に無いファイルも `false` になる (どちらも「索引はこの内容を説明できない」で、
     /// 呼び出し側にとっては同じ)。組み込む側がこれを見るのは、索引が古いことを
-    /// 画面に出すため。出さないと、ジャンプが構文層に落ちたことに気づけない。
+    /// 画面に出すため。出さないと、ジャンプが答えなくなった理由が分からない。
     pub fn is_current(&self, rel: &Path) -> bool {
         let Some(recorded) = self.docs.get(rel).and_then(|e| e.source_hash.as_ref()) else {
             return false;

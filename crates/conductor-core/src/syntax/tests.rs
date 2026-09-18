@@ -187,7 +187,6 @@ fn f(widget: u32) {
     ];
     for (label, path, src, rows) in cases {
         let mask = CodeMask::compute(src, path);
-        assert!(mask.is_supported(), "{label}");
         for (line, expected) in rows {
             assert_eq!(row(&mask, src, *line), *expected, "{label}: 行 {line}");
         }
@@ -225,7 +224,6 @@ fn 出現番号はタブ展開を生き延びる() {
 #[test]
 fn 対応しない言語は何も提示しない() {
     let mask = CodeMask::compute("def build(x):\n    return x\n", "script.py");
-    assert!(!mask.is_supported());
     assert!(!mask.is_code(1, 0));
     assert!(!mask.is_code(2, 0));
 }

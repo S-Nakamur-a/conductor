@@ -441,7 +441,7 @@ fn 索引と出自の表が揃わなければ読まない() {
 #[test]
 fn 索引ルートが複数あればすべて畳んで読む() {
     // 1 世代が作るのは 1 ルートぶん。それをそのまま投入すると、他のルートの索引が黙って
-    // 落ちて、そこは以後ずっと構文層で答えることになる。
+    // 落ちて、そこは以後ずっと答えられなくなる。
     let dir = nested_go_tree();
     let conductor_dir = dir.path().join(".conductor");
     for (subroot, docs) in [("", ["main.go"]), ("services/api", ["api.go"])] {
@@ -629,7 +629,7 @@ fn 出自の表が鮮度をファイル単位で決める() {
 #[test]
 fn 出自の表は綴りも値もそのまま往復する() {
     // 表の鍵は SCIP の relative_path と突き合わせられる。綴りがずれると一致するファイルが
-    // 1 つも無くなり、全部が構文層に落ちる。誤答にはならないので気づけず、テストも緑のまま。
+    // 1 つも無くなり、全部が答えられなくなる。誤答にはならないので気づけず、テストも緑のまま。
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.hashes");
     let hash = sheaf_core::blob_hash(b"fn f() {}\n");
@@ -1282,7 +1282,7 @@ fn 索引が今の内容を説明できているときは何も言わない() {
 #[test]
 fn 内容の変わったツリーを読んだら作りに行く() {
     // 索引は内容ごとに名前が分かれるので、内容が動けばその内容の索引はまだ無い。待つのでは
-    // なく作りに行かないと、worktree を移るたびに構文層のまま据え置かれる。
+    // なく作りに行かないと、worktree を移るたびに答えられないまま据え置かれる。
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
     place_index(dir.path());
     std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
@@ -1343,7 +1343,7 @@ fn 読んでいるファイルが説明できているなら内容が動いて�
 #[test]
 fn 索引が説明できないファイルを読んでいることを伝える() {
     // 索引はいまの内容のものなのに、このファイルだけ載っていない。作り直しても同じものが
-    // 出るので、黙って構文層に落ちる。言わないと「ジャンプが甘い」としか見えない。
+    // 出るので、ジャンプが黙って答えなくなる。言わないと「ジャンプが甘い」としか見えない。
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
     let conductor_dir = dir.path().join(".conductor");
     std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1388,7 +1388,7 @@ fn 索引をまだ読み込めていないうちは答えを確定させない()
 fn 調査に載っていないルートのファイルを読んだら調査をやり直す() {
     // 調査が鍵を出すのは成果物の置いてあるルートだけなので、まだ一度も索引されていない
     // ルートは列挙に載らない。やり直させないと、そのルートは鍵を持てないまま生成も始まらず、
-    // ホバーが永久に構文層に落ちる。
+    // ホバーが永久に答えられなくなる。
     let dir = nested_go_tree();
     let mut semantic = surveyed(dir.path(), None);
     let rel = Path::new("services/api/api.go");
@@ -1733,7 +1733,7 @@ fn 暦の変換が既知の日付と合う() {
     assert_eq!(history::civil_from_days(19_783), (2024, 3, 1));
 }
 
-// ---------------------------------------------------------------- 構文層 (Bridge)
+// ------------------------------------------------------------ 語の切り出し (Bridge)
 
 const BRIDGE_SOURCE: &str = "\
 fn value() {}
@@ -1915,6 +1915,62 @@ fn 実索引は行を囲むものを答える() {
         }
     }
     assert!(checked > 0, "索引が囲みを 1 件も答えなかった");
+}
+
+/// ホバーは UI スレッドで参照を引く。ポインタが 350ms 静止してから 1 回なので 1 フレームに
+/// 収まる必要は無いが、押してから出るまでの間が体感に出ない上限は要る。gd と同じ 100ms を
+/// 置く。実測 16,278 問い合わせの最遅は 43ms (`Position`)。
+#[test]
+#[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
+fn 実索引_ホバーの参照は操作の予算に収まる() {
+    use crate::syntax::{code_identifiers_on_line, occurrence_span_in_source};
+
+    let repo_root = test_repo();
+    let store = load(&repo_root, &repo_root).expect("索引と出自の申告が揃っている");
+
+    let (mut asked, mut answered) = (0usize, 0usize);
+    let mut slowest = (Duration::ZERO, String::new());
+
+    for rel in covered_rust_files(&repo_root, &store, 40) {
+        let abs = repo_root.join(&rel);
+        let source = std::fs::read_to_string(&abs).unwrap();
+        let mask = CodeMask::compute(&source, &rel.to_string_lossy());
+        let bridge = Bridge {
+            abs_path: &abs,
+            source: &source,
+            mask: &mask,
+        };
+        for (line, text) in source.lines().enumerate() {
+            for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {
+                let Some((start, _)) = occurrence_span_in_source(text, k) else {
+                    continue;
+                };
+                asked += 1;
+                let started = Instant::now();
+                let answer =
+                    sheaf_core::references_at(&store, &bridge, &rel, line as u32, start as u32);
+                let took = started.elapsed();
+                if took > slowest.0 {
+                    slowest = (took, format!("{}:{line} {word}", rel.display()));
+                }
+                if matches!(answer, sheaf_core::References::Exact(_)) {
+                    answered += 1;
+                }
+            }
+        }
+    }
+
+    println!(
+        "問い合わせ {asked} / Exact {answered} / 最遅 {:?} {}",
+        slowest.0, slowest.1
+    );
+    assert!(answered > 100, "索引がほとんど答えていない: {answered}");
+    assert!(
+        slowest.0 < Duration::from_millis(100),
+        "1 クエリがホバーの予算 (100ms) を超えた: {:?} ({})",
+        slowest.0,
+        slowest.1
+    );
 }
 
 /// 呼び出し口が選ばせうる位置を、リポジトリの実ファイルで全部叩く。索引が実際にどれだけ
