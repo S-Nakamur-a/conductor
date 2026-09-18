@@ -1917,12 +1917,11 @@ fn 実索引は行を囲むものを答える() {
     assert!(checked > 0, "索引が囲みを 1 件も答えなかった");
 }
 
-/// ホバーは UI スレッドで参照を引く。ポインタが 350ms 静止してから 1 回なので 1 フレームに
-/// 収まる必要は無いが、押してから出るまでの間が体感に出ない上限は要る。gd と同じ 100ms を
-/// 置く。実測 16,278 問い合わせの最遅は 43ms (`Position`)。
+/// 参照は gr と「定義の上での Cmd+click」で引く。押した本人が待っているので、
+/// gd と同じ 100ms を上限に置く。
 #[test]
 #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
-fn 実索引_ホバーの参照は操作の予算に収まる() {
+fn 実索引_参照検索は操作の予算に収まる() {
     use crate::syntax::{code_identifiers_on_line, occurrence_span_in_source};
 
     let repo_root = test_repo();
@@ -1967,7 +1966,7 @@ fn 実索引_ホバーの参照は操作の予算に収まる() {
     assert!(answered > 100, "索引がほとんど答えていない: {answered}");
     assert!(
         slowest.0 < Duration::from_millis(100),
-        "1 クエリがホバーの予算 (100ms) を超えた: {:?} ({})",
+        "1 クエリが gr の予算 (100ms) を超えた: {:?} ({})",
         slowest.0,
         slowest.1
     );

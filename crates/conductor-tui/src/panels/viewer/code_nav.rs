@@ -508,15 +508,9 @@ impl ViewerPanel {
         // Document をデコードすることになる。
         let described = self.ask(ctx, line_idx, occurrence, sheaf_core::describe_at);
         let site = self.indexed_def_site(ctx, line_idx, occurrence, described.as_deref())?;
-        // 件数と一覧を同じ答えから作る。押したときに引き直すと、そのあいだに索引が
-        // 入れ替わって数と中身が食い違う。
-        let refs = match self.ask(ctx, line_idx, occurrence, sheaf_core::references_at) {
-            Some(References::Exact(found)) => reference_hits(ctx.root, &found).0,
-            _ => Vec::new(),
-        };
         let same_line =
             Some(site.path.as_str()) == self.content.path.as_deref() && site.line == line_idx + 1;
-        let mut hover = hover::build(ctx.root, word, site, refs, anchor)?;
+        let mut hover = hover::build(ctx.root, word, site, anchor)?;
         hover.on_definition_line = same_line;
         hover.container = described
             .as_ref()
@@ -640,16 +634,6 @@ impl ViewerPanel {
                 path: PathBuf::from(path),
                 line,
             }]);
-        }
-        if hit(popup.refs_row) {
-            let (word, hits) = (hover.word.clone(), hover.refs.clone());
-            self.nav.hover = None;
-            return Some(vec![Effect::PushModal(Modal::References(
-                crate::modal::references::References::new(
-                    format!("{word} ({})", By::Index.label()),
-                    hits,
-                ),
-            ))]);
         }
         // ポップアップの中の空振りは飲み込む。外側なら呼び出し側の通常処理へ。
         hit(popup.rect).then(Vec::new)

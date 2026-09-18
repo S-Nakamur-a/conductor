@@ -391,10 +391,12 @@ git, and any rework of theme / keymap / text_input / config.
   `gd`/`gi`/`gr`/`gK` label every identifier on the top visible line and let you pick one
   (a single identifier jumps straight through). Picking the first one silently sent
   `pub use model::MenuItem;` to `model.rs:1` every time. Mouse Cmd+click needs no
-  picker — it already carries the clicked column. The hover popup is the mouse route:
-  the definition block at the top (kind header + signature) and the `path:line` row
-  both jump, the "N refs" row opens the list, and the popup stays put while the
-  pointer is inside its rectangle.
+  picker — it already carries the clicked column, and on a definition it opens the
+  references instead. **Looking and going are split**: the hover popup only describes
+  (kind, signature, doc, `path:line`), because a reference count costs an index query
+  the UI thread pays on every pointer rest — measured 8–27ms for `Theme` (257
+  references over 47 files). Both of its rows jump, and it stays put while the pointer
+  is inside its rectangle.
 - **A drag selection is bounded by where it started, not by where it is.** `Selection`
   carries the column range decided at mouse-down (`within_columns`), so `highlight`,
   `text` and `extend` all agree without any of them knowing about the Viewer. Pressing

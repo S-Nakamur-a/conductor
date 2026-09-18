@@ -1,4 +1,8 @@
-//! カーソル・マウスの下にあるシンボルの説明。宣言、doc コメント、参照数。
+//! カーソル・マウスの下にあるシンボルの説明。種別、宣言、doc コメント、定義の位置。
+//!
+//! 参照は出さない。数を出すには索引を引くしか無く、それは UI スレッドで実測 8〜27ms
+//! かかる (`Theme` は 257 参照 47 ファイル)。見るのはホバー、行くのは Cmd+click と gr、
+//! と持ち場を分ける -- 定義の上での Cmd+click はそのまま参照一覧になる。
 //!
 //! 索引が位置で答えた説明を優先し、無ければ定義行のソースから読み取る。索引の宣言は
 //! producer が型を解決したもので、字面の写しより中身が濃い (`let source: String` に
@@ -56,8 +60,6 @@ pub struct Hover {
     pub signature: Vec<String>,
     /// 索引が答えた定義の数。2 以上なら、出しているのはそのうちの 1 つ。
     pub def_count: usize,
-    /// 索引が答えた参照。押すとこれがそのまま一覧になるので、件数と中身がずれない。
-    pub refs: Vec<crate::modal::references::Reference>,
     /// 聞かれた位置が定義そのものだった。字面の写しにしかならないので描画側が省く。
     pub on_definition_line: bool,
     /// 宣言が索引由来か。型が解決済みで字面とは違うものを見せているので、
@@ -96,13 +98,7 @@ pub struct DefSite {
 }
 
 /// 定義位置からポップアップの中身を組み立てる。読めない・行が範囲外なら黙って `None`。
-pub fn build(
-    root: &Path,
-    word: &str,
-    def: DefSite,
-    refs: Vec<crate::modal::references::Reference>,
-    anchor: (u16, u16),
-) -> Option<Hover> {
+pub fn build(root: &Path, word: &str, def: DefSite, anchor: (u16, u16)) -> Option<Hover> {
     let source = std::fs::read_to_string(root.join(&def.path)).ok()?;
     let lines: Vec<&str> = source.lines().collect();
     let def_idx = def.line.checked_sub(1)?;
@@ -138,7 +134,6 @@ pub fn build(
         doc,
         signature,
         def_count: def.def_count,
-        refs,
         on_definition_line: false,
         signature_from_index,
         anchor,
@@ -299,8 +294,6 @@ pub struct Popup {
     pub def_block: Rect,
     /// 定義位置の行。押すとそこへ飛ぶ。
     pub def_row: Rect,
-    /// 参照数の行。押すと一覧が開く。参照が無ければ大きさ 0。
-    pub refs_row: Rect,
     /// 上から順の全行。区切り線は枠と繋がるよう枠ごと描く。
     pub rows: Vec<(Rect, Line<'static>)>,
 }
@@ -309,7 +302,6 @@ enum Row {
     Text(Line<'static>),
     Rule,
     Def(Line<'static>),
-    Refs(Line<'static>),
 }
 
 pub fn rect(hover: &Hover, theme: &Theme, host: Rect) -> Rect {
@@ -327,7 +319,6 @@ pub fn popup(
     highlighter: Option<&super::syntax::Highlighter>,
 ) -> Popup {
     let def_label = def_label(hover);
-    let refs_label = refs_label(hover);
     let header = header(hover);
     let shows_signature = hover.signature_from_index || !hover.on_definition_line;
     let signature: &[String] = if shows_signature {
@@ -335,7 +326,7 @@ pub fn popup(
     } else {
         &[]
     };
-    let content_w = [header.as_str(), &def_label, &refs_label]
+    let content_w = [header.as_str(), &def_label]
         .into_iter()
         .chain(signature.iter().map(String::as_str))
         .chain(hover.doc.iter().map(String::as_str))
@@ -379,14 +370,6 @@ pub fn popup(
         def_label,
         Style::default().fg(theme.fg),
     ))));
-    if !hover.refs.is_empty() {
-        footer.push(Row::Refs(Line::from(Span::styled(
-            refs_label,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ))));
-    }
 
     let height = (body.len() + footer.len()) as u16 + 2;
     let height = height.min(host.height.saturating_sub(2)).max(3);
@@ -412,7 +395,6 @@ pub fn popup(
     ));
     let mut rows = Vec::new();
     let mut def_row = Rect::default();
-    let mut refs_row = Rect::default();
     for (i, row) in body
         .into_iter()
         .chain(footer)
@@ -427,10 +409,6 @@ pub fn popup(
                 def_row = full(y);
                 rows.push((text(y), line));
             }
-            Row::Refs(line) => {
-                refs_row = full(y);
-                rows.push((text(y), line));
-            }
         }
     }
     let def_block = Rect::new(inner.x, inner.y, inner.width, (def_rows as u16).min(body_h));
@@ -438,7 +416,6 @@ pub fn popup(
         rect,
         def_block,
         def_row,
-        refs_row,
         rows,
     }
 }
@@ -481,10 +458,6 @@ fn def_label(hover: &Hover) -> String {
         label.push_str(&format!("  (+{} defs)", hover.def_count - 1));
     }
     label
-}
-
-fn refs_label(hover: &Hover) -> String {
-    format!("\u{25b8} {} refs", hover.refs.len())
 }
 
 /// 所属を左、種別を右に置いた見出し。どちらも無ければ空。
@@ -677,14 +650,6 @@ mod tests {
         }
     }
 
-    fn hit(path: &str, line: usize) -> crate::modal::references::Reference {
-        crate::modal::references::Reference {
-            file_path: path.to_string(),
-            line,
-            content: String::new(),
-        }
-    }
-
     fn hover_fixture() -> Hover {
         Hover {
             word: "add".into(),
@@ -695,7 +660,6 @@ mod tests {
             doc: vec!["Adds.".into()],
             signature: vec!["pub fn add(a: i64) -> i64".into()],
             def_count: 1,
-            refs: vec![hit("lib.rs", 8), hit("main.rs", 2)],
             on_definition_line: false,
             signature_from_index: false,
             anchor: (10, 10),
@@ -717,13 +681,12 @@ mod tests {
     }
 
     #[test]
-    fn フッターの2行はポップアップの中にあり互いに重ならない() {
+    fn 場所の行はポップアップの中にある() {
         let host = Rect::new(0, 0, 80, 30);
         let popup = popup(&hover_fixture(), &Theme::default(), host, None);
         assert!(popup.rect.y >= host.y && popup.rect.y + popup.rect.height <= host.y + host.height);
-        assert_eq!(popup.refs_row.y, popup.def_row.y + 1);
         assert!(popup.def_row.y >= popup.rect.y);
-        assert!(popup.refs_row.y < popup.rect.y + popup.rect.height);
+        assert!(popup.def_row.y < popup.rect.y + popup.rect.height);
     }
 
     #[test]
@@ -783,12 +746,15 @@ mod tests {
         );
     }
 
+    /// 数を出すには索引を引くしかなく、それは見ているだけの操作には重すぎる。
     #[test]
-    fn 参照が無ければ参照の行そのものを出さない() {
-        let mut hover = hover_fixture();
-        hover.refs.clear();
-        let popup = popup(&hover, &Theme::default(), Rect::new(0, 0, 80, 30), None);
-        assert_eq!(popup.refs_row, Rect::default());
+    fn ホバーは参照を出さない() {
+        let popup = popup(
+            &hover_fixture(),
+            &Theme::default(),
+            Rect::new(0, 0, 80, 30),
+            None,
+        );
         assert!(!texts(&popup).iter().any(|r| r.contains("refs")));
     }
 
