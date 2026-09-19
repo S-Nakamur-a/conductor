@@ -1,4 +1,4 @@
-.PHONY: install build dev clean fmt
+.PHONY: install build dev clean fmt wt-stamp wt-reset
 
 install:
 	cargo install --path .
@@ -14,3 +14,9 @@ clean:
 
 fmt:
 	cargo fmt --all
+
+wt-stamp:
+	python3 scripts/wt-version.py stamp
+
+wt-reset:
+	python3 scripts/wt-version.py reset
