@@ -163,6 +163,28 @@ The root package is a five-line `main.rs`; the code lives in `crates/` —
 `conductor-tui` (the screen), `conductor-mcp` (the MCP server), plus `revidere`
 (the review analyser) and `sheaf-core` (the code index).
 
+### Working in several worktrees at once
+
+Cargo puts a crate's version into the hash that names its build artifacts, so two
+worktrees holding the same version of `conductor-tui` write the *same* file into a
+shared `target-dir` — and the one that builds second silently replaces the other.
+`cargo test` then runs a binary from the wrong worktree and reports `ok`, so the
+green tells you nothing.
+
+Give each worktree its own versions right after you create it:
+
+```sh
+make wt-stamp   # crates/*/Cargo.toml -> <version>-wt.<worktree dir name>
+make wt-reset   # strip it again, before you open the pull request
+```
+
+Commit the stamp as the first commit on the branch rather than leaving it
+uncommitted — `git rebase` refuses to run with *any* unstaged change, so a
+permanently dirty `Cargo.toml` blocks every rebase. The root `conductor` version is
+left alone, which keeps `conductor -V` honest; a dependency's version already
+propagates into everything downstream of it. Third-party crates keep their versions
+and so stay shared in the cache — only the seven workspace crates rebuild.
+
 CI checks formatting and clippy on every pull request. `.githooks/pre-commit`
 runs the same `cargo fmt --all -- --check` locally if you want to catch it before
 pushing — wiring it up is left to you, since hook setups vary. Pointing git at it

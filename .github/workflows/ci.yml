@@ -11,6 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # worktree を分けるための -wt.<名前> は手元だけのもの。戻し忘れると、
+      # その版を名乗る成果物が main に載る (make wt-reset)。
+      - name: No worktree version stamp
+        run: |
+          if grep -n '^version = .*-wt\.' crates/*/Cargo.toml; then
+            echo "::error::make wt-reset を実行してから push してください"
+            exit 1
+          fi
+
       # fmt を先に置くのはビルドが要らず、失敗したときに clippy を待たせないため。
       - name: Format
         run: cargo fmt --all -- --check

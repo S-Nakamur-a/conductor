@@ -16,6 +16,21 @@ Set `RUST_LOG=debug` for logging.
 root `conductor` package, which is a five-line `main.rs`; everything else is in
 `crates/`. `default-members` is left alone so `cargo run` stays unambiguous.
 
+**A green test run from a second worktree proves nothing until `make wt-stamp` has
+run there.** A crate's version feeds the hash that names its artifacts, so two
+worktrees at the same `conductor-tui = 0.1.0` write the same
+`deps/conductor_tui-<hash>` into the shared `target-dir`, and the later build
+replaces the earlier one. `cargo test` runs whatever is at that path and exits 0:
+measured here, the same filename answered 586 tests at one moment and 581 — another
+branch's suite — the next. The false *errors* this also produces (`unresolved
+import` in a crate you never touched) are the same cause, and `touch` only wins the
+race back. `make wt-stamp` appends `-wt.<worktree dir name>` to the seven
+`crates/*/Cargo.toml` versions; `make wt-reset` strips it before the pull request.
+Commit the stamp — `git rebase` refuses to start with any unstaged change. Leave the
+root version alone: a dependency's version already propagates downstream, so `-V`
+can stay honest. When a count moves for no reason, check the count before you
+re-diagnose the code.
+
 CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace -- -D warnings`
 on every pull request — a warning is a failure, including one inherited from main. `.githooks/pre-commit` runs the same fmt check locally, but wiring
 it up is each developer's own business — the repository does not install it.
