@@ -398,7 +398,7 @@ impl Workspace {
             TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
                 self.panels.viewer.apply_result(result)
             }
-            TaskResult::IndexLoaded(_) | TaskResult::SymbolsBuilt(_) => {
+            TaskResult::IndexLoaded(_) => {
                 crate::index::accept(self, result);
                 Vec::new()
             }

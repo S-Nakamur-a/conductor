@@ -4,8 +4,8 @@
 
 mod common;
 
-use common::{Rough, doc, index, load_one, provenance, silent, workdir_with_src};
-use sheaf_core::{Found, Location, References, SyntacticAnswer, references_at};
+use common::{doc, index, load_one, provenance, silent, workdir_with_src};
+use sheaf_core::{Found, Location, References, references_at};
 use std::path::{Path, PathBuf};
 
 const SYMBOL: &str = "scip-test cargo demo 0.1.0 greet().";
@@ -51,13 +51,10 @@ fn 参照の答えは確信度で分かれる() {
     )
     .unwrap();
 
-    let fallback = vec![at("src/caller.rs", 0, 9)];
-
-    for (why, store, syntactic, col, want) in [
+    for (why, store, col, want) in [
         (
             "索引が答えられる位置",
             &fresh,
-            silent(),
             7,
             References::Exact(Found {
                 direct: vec![at("src/caller.rs", 0, 9), at("src/caller.rs", 1, 9)],
@@ -67,14 +64,13 @@ fn 参照の答えは確信度で分かれる() {
         (
             "参照側のファイルが変わった",
             &stale,
-            Rough::new(SyntacticAnswer::Found(fallback.clone())),
             7,
-            References::Syntactic(fallback.clone()),
+            References::Unresolved,
         ),
         // `pub fn greet() {}` の空白。
-        ("識別子でない位置", &fresh, silent(), 3, References::NotCode),
+        ("識別子でない位置", &fresh, 3, References::NotCode),
     ] {
-        let answer = references_at(store, &syntactic, Path::new("src/lib.rs"), 0, col);
+        let answer = references_at(store, &silent(), Path::new("src/lib.rs"), 0, col);
         assert_eq!(answer, want, "{why}");
     }
 }

@@ -1,12 +1,12 @@
 //! 拡張子から言語と tree-sitter 文法を引く唯一の場所。
 //!
-//! 索引の構築、コードマスク、折りたたみ、言語の一致判定が別々に拡張子を
-//! 見ていると、対応言語が片方だけ増えたときに、同じファイルがジャンプは
-//! できるのに畳めない (あるいはその逆) という状態になる。
+//! コードマスク、折りたたみ、producer の選択が別々に拡張子を見ていると、
+//! 対応言語が片方だけ増えたときに、同じファイルが畳めるのに索引されない
+//! (あるいはその逆) という状態になる。
 
 use std::path::Path;
 
-/// 名前の一致を絞る単位。TypeScript と JavaScript は互いに引き合うので同じ言語。
+/// 索引 producer を選ぶ単位。TypeScript と JavaScript は同じ producer が読む。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     Rust,
@@ -18,17 +18,6 @@ impl Language {
     /// 分類できない拡張子は `None`。
     pub fn of_path(path: &Path) -> Option<Self> {
         Grammar::of_path(path).map(Grammar::language)
-    }
-}
-
-/// 名前しか根拠が無い答えを、問い合わせ元と同じ言語のファイルに限る判定。
-///
-/// 索引は名前でしか引けないので、`.go` の `rollbar` が `.tsx` の `const rollbar` に
-/// 当たる。分類できない拡張子は通す。落とすと、いま答えているものまで黙って消える。
-pub fn same_language(asking: &Path, candidate: &Path) -> bool {
-    match (Language::of_path(asking), Language::of_path(candidate)) {
-        (Some(here), Some(there)) => here == there,
-        _ => true,
     }
 }
 

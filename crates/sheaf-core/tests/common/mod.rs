@@ -7,35 +7,17 @@ use scip::types::{
     Document, Index, Metadata, Occurrence, PositionEncoding, SymbolInformation, TextEncoding,
     ToolInfo,
 };
-use sheaf_core::{IndexSource, Span, Store, SyntacticAnswer, SyntacticLayer, Token, blob_hash};
-use std::cell::RefCell;
+use sheaf_core::{IndexSource, Span, Store, SyntacticLayer, Token, blob_hash};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// 語の切り出しをわざと素朴にした構文層。英数字・下線・非 ASCII が続く範囲を 1 語とし、
 /// コメントも文字列も予約語も区別しない。この雑な層で通ることが、索引側の規則が
 /// 構文層の賢さに依存していないことの検査になる。
-pub struct Rough {
-    calls: RefCell<Vec<(PathBuf, u32, u32)>>,
-    answer: SyntacticAnswer,
-}
+pub struct Rough;
 
-impl Rough {
-    pub fn new(answer: SyntacticAnswer) -> Self {
-        Rough {
-            calls: RefCell::new(Vec::new()),
-            answer,
-        }
-    }
-
-    pub fn calls(&self) -> Vec<(PathBuf, u32, u32)> {
-        self.calls.borrow().clone()
-    }
-}
-
-/// 索引だけで何が引けるかを見るときの構文層。
 pub fn silent() -> Rough {
-    Rough::new(SyntacticAnswer::NotCode)
+    Rough
 }
 
 fn is_word_byte(b: u8) -> bool {
@@ -68,20 +50,6 @@ impl SyntacticLayer for Rough {
             end_line: line,
             end_col: end as u32,
         })
-    }
-
-    fn definition_at(&self, path: &Path, line: u32, col: u32) -> SyntacticAnswer {
-        self.calls
-            .borrow_mut()
-            .push((path.to_path_buf(), line, col));
-        self.answer.clone()
-    }
-
-    fn references_at(&self, path: &Path, line: u32, col: u32) -> SyntacticAnswer {
-        self.calls
-            .borrow_mut()
-            .push((path.to_path_buf(), line, col));
-        self.answer.clone()
     }
 }
 

@@ -84,7 +84,7 @@ const IFACE_LIB: &str = "trait Iface { fn M(); }\nimpl Iface for Impl { fn M() {
 const IFACE_CALLER: &str = "fn a(x: &dyn Iface) { x.M(); }\n";
 
 #[test]
-fn 経由先の参照が載るファイルが変わったら構文層に回る() {
+fn 経由先の参照が載るファイルが変わったら答えられないと言う() {
     // インタフェース経由の参照先も依拠集合に入る。規則を直接参照と分けると、
     // 空が「無い」なのか「言えない」なのかを利用側が区別できなくなる。
     let root = workdir("iface-stale");
@@ -125,7 +125,7 @@ fn 経由先の参照が載るファイルが変わったら構文層に回る()
     .unwrap();
     assert_eq!(
         references_at(&stale, &silent(), Path::new("src/lib.rs"), 1, 25),
-        References::NotCode,
+        References::Unresolved,
         "経由先のファイルが古いのに Exact を返した"
     );
 }
@@ -194,7 +194,7 @@ fn go_store(tag: &str) -> Store {
     }
 }
 
-/// 索引が答えたかどうか。答えないのは、直接参照もインタフェース経由も 0 件のとき。
+/// 索引が答えたかどうか。答えないのは、その位置の符号を索引が知らないとき。
 fn answered(store: &Store, rel: &str, line: u32, col: u32) -> bool {
     matches!(
         references_at(store, &silent(), Path::new(rel), line, col),
@@ -368,7 +368,7 @@ fn 実リポジトリ_実装関係の辺を持たないメソッドは経由を�
         ]
     );
 
-    // 直接参照もインタフェース経由も 0 件なら索引は答えない（構文層に回る）。
+    // 符号が引けていれば索引は答える。中身が 0 件なのと、答えられないのは別。
     for (rel, line, col) in [
         (
             "internal/pkg/repository/sql_career_profile_experience_repository.go",
@@ -397,8 +397,12 @@ fn 実リポジトリ_実装関係の辺を持たないメソッドは経由を�
         ),
     ] {
         assert!(
-            !answered(&store, rel, line, col),
-            "{rel}:{line} で索引が答えてしまった"
+            answered(&store, rel, line, col),
+            "{rel}:{line} で索引が黙った"
+        );
+        assert!(
+            direct(&store, rel, line, col).is_empty(),
+            "{rel}:{line} に直接参照があった"
         );
     }
 }

@@ -185,7 +185,7 @@ fn 接ぎ木でルート内に入ったdocumentは出自が合わなければexa
     let answer = definition_at(&without, &silent(), Path::new("shared/util.go"), 2, 5);
     assert_eq!(
         answer,
-        Definition::NotCode,
+        Definition::Unresolved,
         "出自の無い Document を Exact で返した: {answer:?}"
     );
 

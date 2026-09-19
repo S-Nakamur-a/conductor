@@ -1,13 +1,11 @@
-//! 2 つの索引の持ち場と、その作り直しを 1 周進める場所。
+//! 意味索引の持ち場と、その作り直しを 1 周進める場所。
 //!
 //! 判断は core 側の状態機械が持っている。ここがやるのは、重い仕事を Task へ出し、
 //! 帰ってきたものを取り込み、結果を画面の語彙 (ステータス・枠の演出) に直すこと。
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use conductor_core::semantic_index::{Reading, Regenerated, SemanticIndex, Survey};
-use conductor_core::symbol_index::SymbolIndex;
 use sheaf_core::Store;
 
 use crate::effect::Effect;
@@ -16,49 +14,25 @@ use crate::layout::Region;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{StatusLevel, Workspace};
 
-/// tree-sitter の索引を作り直すまでの静穏時間。編集 1 打ごとにツリーを歩かない。
-const SYMBOLS_QUIET: Duration = Duration::from_millis(500);
-
+#[derive(Default)]
 pub struct Index {
-    /// 名前で引く構文層。意味索引が答えられない位置がここへ落ちる。
-    pub symbols: SymbolIndex,
     /// SCIP の意味層。確信度つきで答える。
     pub semantic: SemanticIndex,
     /// 走っている調査。1 本に絞る — ツリーを歩くのは実測で列挙 149ms、鍵 1 本 110ms。
     surveying: bool,
-    building_symbols: bool,
     /// 生成が置いた成果物をまだ読んでいない。調査の側からは「変わっていない」ように
     /// 見えるので、読み直しの理由はここに持つ。
     reload: bool,
-    /// 変更が入った時刻。
-    symbols_dirty_since: Option<Instant>,
 }
 
 impl Index {
-    /// 世代を進めると結果は svc が捨てるので、待ち続けるとどちらの索引も
-    /// 二度と作り直されない。世代を進める側から呼ぶ。
+    /// 世代を進めると結果は svc が捨てるので、待ち続けると索引が二度と作り直されない。
+    /// 世代を進める側から呼ぶ。
     pub fn forget_in_flight(&mut self) {
-        // どちらの仕事も撒いた時点で理由の札を降ろしている。戻さないと、捨てられた結果が
+        // 調査は撒いた時点で理由の札を降ろしている。戻さないと、捨てられた結果が
         // 運んでいた依頼だけが消えて、次の編集まで古い索引で答え続ける。
         self.reload |= self.surveying;
-        if self.building_symbols {
-            self.symbols_dirty_since.get_or_insert_with(Instant::now);
-        }
         self.surveying = false;
-        self.building_symbols = false;
-    }
-}
-
-impl Default for Index {
-    fn default() -> Self {
-        Self {
-            symbols: SymbolIndex::new(PathBuf::new()),
-            semantic: SemanticIndex::default(),
-            surveying: false,
-            building_symbols: false,
-            reload: false,
-            symbols_dirty_since: None,
-        }
     }
 }
 
@@ -83,13 +57,9 @@ impl std::fmt::Debug for Load {
     }
 }
 
-/// 作り直しの引き金は索引ごとに違うので、両方へ伝える。
 pub fn note_change(ws: &mut Workspace, path: &Path) {
     let tree = ws.panels.viewer.root().to_path_buf();
     ws.index.semantic.note_change(path, &tree);
-    ws.index
-        .symbols_dirty_since
-        .get_or_insert_with(Instant::now);
 }
 
 /// 毎フレーム 1 周進める。
@@ -104,7 +74,7 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
     let repo = ws.repo.root.clone();
     let reading = ws.panels.viewer.active_path().map(PathBuf::from);
 
-    let mut effects = build_symbols(ws, &tree);
+    let mut effects = Vec::new();
     let wanted = ws.index.semantic.needs_survey(&tree);
     if !ws.index.surveying
         && let Some(wanted) = wanted.or_else(|| ws.index.reload.then(Vec::new))
@@ -122,7 +92,7 @@ pub fn tick(ws: &mut Workspace) -> Vec<Effect> {
 
     if let Some(rel) = &reading {
         let answer = ws.index.semantic.note_open(rel, &repo, &tree);
-        // 索引がこのファイルを説明できないと黙って構文層に落ちる。言わないと
+        // 索引がこのファイルを説明できないとジャンプが黙って答えなくなる。言わないと
         // 「ジャンプが甘い」としか見えないので、開いたときに 1 度だけ出す。
         if answer == Reading::Stale {
             effects.push(Effect::Status(
@@ -162,27 +132,6 @@ fn sync_generation_fx(fx: &mut Fx, generating: bool) -> Option<Effect> {
         fx.play(Kind::Flash, viewer);
         None
     }
-}
-
-/// 静穏が明けていれば tree-sitter の索引を作り直させる。
-///
-/// 走っているビルドは置き換えない。worktree の一覧はスクロールできる速さで動くので、
-/// 置き換えると 10 個通過するだけで 10 本のツリー走査が並ぶ。
-fn build_symbols(ws: &mut Workspace, tree: &Path) -> Vec<Effect> {
-    ws.index.symbols.set_root(tree.to_path_buf());
-    if ws.index.building_symbols {
-        return Vec::new();
-    }
-    let quiet = ws
-        .index
-        .symbols_dirty_since
-        .is_some_and(|at| at.elapsed() >= SYMBOLS_QUIET);
-    if !quiet && ws.index.symbols.is_available() {
-        return Vec::new();
-    }
-    ws.index.symbols_dirty_since = None;
-    ws.index.building_symbols = true;
-    vec![Effect::Spawn(Task::BuildSymbols(ws.index.symbols.clone()))]
 }
 
 fn finish_regeneration(ws: &mut Workspace, repo: &Path, tree: &Path) -> Vec<Effect> {
@@ -246,17 +195,10 @@ pub fn accept_load(ws: &mut Workspace, load: Load) {
     }
 }
 
-pub fn accept_symbols(ws: &mut Workspace, count: usize) {
-    ws.index.building_symbols = false;
-    log::info!("symbol index built: {count} symbols");
-}
-
 /// svc から届いた結果のうち、索引のものを取り込む。
 pub fn accept(ws: &mut Workspace, result: TaskResult) {
-    match result {
-        TaskResult::IndexLoaded(load) => accept_load(ws, *load),
-        TaskResult::SymbolsBuilt(count) => accept_symbols(ws, count),
-        _ => {}
+    if let TaskResult::IndexLoaded(load) = result {
+        accept_load(ws, *load);
     }
 }
 
@@ -289,28 +231,16 @@ mod tests {
             .count()
     }
 
-    fn builds(effects: &[Effect]) -> usize {
-        effects
-            .iter()
-            .filter(|e| matches!(e, Effect::Spawn(Task::BuildSymbols(_))))
-            .count()
-    }
-
     #[test]
-    fn 忘れても読み直しと作り直しの理由は残る() {
+    fn 忘れても読み直しの理由は残る() {
         let mut index = Index {
             surveying: true,
-            building_symbols: true,
             ..Default::default()
         };
 
         index.forget_in_flight();
 
         assert!(index.reload, "調査が運んでいた読み直しの依頼が消えた");
-        assert!(
-            index.symbols_dirty_since.is_some(),
-            "構文層を作り直す理由が消えた"
-        );
     }
 
     /// 待っている世代を捨てていいのはツリーが動くときだけ。同じ根なら結果はそのまま使える。
@@ -347,19 +277,12 @@ mod tests {
         let repo = crate::testing::TestRepo::new();
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
 
-        let first = tick(&mut ws);
-        assert_eq!((surveys(&first), builds(&first)), (1, 1));
-        let again = tick(&mut ws);
-        assert_eq!((surveys(&again), builds(&again)), (0, 0), "2 本目を頼んだ");
+        assert_eq!(surveys(&tick(&mut ws)), 1);
+        assert_eq!(surveys(&tick(&mut ws)), 0, "2 本目を頼んだ");
 
         crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(repo.root())]);
 
-        let after = tick(&mut ws);
-        assert_eq!(
-            (surveys(&after), builds(&after)),
-            (1, 1),
-            "捨てられた仕事を待ち続けている"
-        );
+        assert_eq!(surveys(&tick(&mut ws)), 1, "捨てられた仕事を待ち続けている");
         // 撒いたワーカーを残すと、一時リポジトリの後始末と競う。
         crate::testing::pump(&mut ws, &mut svc);
     }
@@ -469,22 +392,5 @@ mod tests {
         let mut ws = Workspace::for_test();
         ws.panels.viewer.set_root(PathBuf::new());
         assert!(tick(&mut ws).is_empty());
-    }
-
-    #[test]
-    fn 変更のあとは静穏を待ってから作り直す() {
-        let dir = tree("quiet");
-        let mut ws = workspace_at(dir.path());
-
-        // 最初の 1 本は索引がまだ無いので静穏を待たない。
-        assert_eq!(builds(&tick(&mut ws)), 1);
-        accept_symbols(&mut ws, 1);
-        ws.index.symbols.build();
-
-        note_change(&mut ws, &dir.path().join("src/lib.rs"));
-        assert_eq!(builds(&tick(&mut ws)), 0, "静穏を待たずに走った");
-
-        ws.index.symbols_dirty_since = Some(Instant::now() - SYMBOLS_QUIET);
-        assert_eq!(builds(&tick(&mut ws)), 1);
     }
 }

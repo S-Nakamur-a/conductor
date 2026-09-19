@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 
-use conductor_core::symbol_index::Reference;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,6 +12,16 @@ use ratatui::text::{Line, Span};
 use super::picker::{Cursor, scroll_for};
 use crate::effect::Effect;
 use crate::workspace::Ctx;
+
+/// 一覧に出す 1 件。索引の答えを、飛び先と本文の組に均したもの。
+#[derive(Debug, Clone)]
+pub struct Reference {
+    /// ツリーのルートからの相対パス。
+    pub file_path: String,
+    /// 1 始まり。
+    pub line: usize,
+    pub content: String,
+}
 
 #[derive(Debug)]
 pub struct References {

@@ -269,7 +269,7 @@ fn 変更したファイルも再生成が終われば_exact_に戻る() {
     let store = reload(&target, &*producer);
     assert!(
         store.definitions_in(rel, span).is_some(),
-        "作り直したのに構文層のままになっている"
+        "作り直したのに答えられないままになっている"
     );
 }
 

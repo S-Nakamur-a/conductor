@@ -83,7 +83,7 @@ impl Job {
         // go.mod が見つからないなど、対象を認識できない producer は終了コード 0 で
         // Document 0 件の索引を書くことがある。exit status しか見ないここまでの
         // 検査ではこれを正常な生成と区別できず、放置すると空の索引が古い索引を
-        // 上書きして、以後のクエリが無言で構文層に落ち続ける。
+        // 上書きして、以後のクエリが無言で答えなくなり続ける。
         if store.is_empty() {
             return Outcome::Failed("producer が空の索引を書いた（Document 0 件）".into());
         }

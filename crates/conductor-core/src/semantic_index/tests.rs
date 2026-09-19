@@ -12,7 +12,7 @@ use super::history::{self, Outcome, SourceDelta, Sources, Trigger};
 use super::roots::{self, IndexRoot, Language};
 use super::survey::load;
 use super::*;
-use crate::symbol_index::{CodeMask, SymbolIndex};
+use crate::syntax::CodeMask;
 
 // ---------------------------------------------------------------- 素材
 
@@ -198,12 +198,10 @@ fn definition_at(store: &Store, tree_root: &Path, rel: &str, line: u32, col: u32
     let abs = tree_root.join(rel);
     let source = std::fs::read_to_string(&abs).unwrap();
     let mask = CodeMask::compute(&source, rel);
-    let index = SymbolIndex::new(tree_root.to_path_buf());
     let bridge = Bridge {
         abs_path: &abs,
         source: &source,
         mask: &mask,
-        index: &index,
     };
     sheaf_core::definition_at(store, &bridge, Path::new(rel), line, col)
 }
@@ -443,7 +441,7 @@ fn 索引と出自の表が揃わなければ読まない() {
 #[test]
 fn 索引ルートが複数あればすべて畳んで読む() {
     // 1 世代が作るのは 1 ルートぶん。それをそのまま投入すると、他のルートの索引が黙って
-    // 落ちて、そこは以後ずっと構文層で答えることになる。
+    // 落ちて、そこは以後ずっと答えられなくなる。
     let dir = nested_go_tree();
     let conductor_dir = dir.path().join(".conductor");
     for (subroot, docs) in [("", ["main.go"]), ("services/api", ["api.go"])] {
@@ -631,7 +629,7 @@ fn 出自の表が鮮度をファイル単位で決める() {
 #[test]
 fn 出自の表は綴りも値もそのまま往復する() {
     // 表の鍵は SCIP の relative_path と突き合わせられる。綴りがずれると一致するファイルが
-    // 1 つも無くなり、全部が構文層に落ちる。誤答にはならないので気づけず、テストも緑のまま。
+    // 1 つも無くなり、全部が答えられなくなる。誤答にはならないので気づけず、テストも緑のまま。
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("index.hashes");
     let hash = sheaf_core::blob_hash(b"fn f() {}\n");
@@ -1008,6 +1006,45 @@ fn 索引ルートの無いツリーでは生成を起こさない() {
     );
 }
 
+/// リポジトリ全体の any で答えると、待っても答えの来ない位置が「作っている最中」を名乗る。
+#[test]
+fn 何を待っているかはファイルを覆うルートだけを見る() {
+    let (dir, _) = repo_with(&[
+        CARGO_TOML,
+        ("src/lib.rs", SOURCE),
+        ("svc/go.mod", "module demo/svc\n"),
+        ("svc/main.go", "package main\n"),
+    ]);
+    let mut semantic = SemanticIndex::default();
+    let conductor = dir.path().join(".conductor");
+    semantic.install(
+        survey(
+            dir.path(),
+            Some(&conductor),
+            None,
+            &[at("", Language::Rust), at("svc", Language::Go)],
+        ),
+        dir.path(),
+    );
+
+    semantic.note_change(&dir.path().join("svc/main.go"), dir.path());
+
+    assert!(semantic.is_pending(), "前提: Go のルートが静穏を待っている");
+    assert_eq!(
+        semantic.waiting_on(Path::new("svc/main.go")),
+        Waiting::Settling
+    );
+    assert_eq!(
+        semantic.waiting_on(Path::new("src/lib.rs")),
+        Waiting::Nothing,
+        "別のルートの待ちを自分のものとして名乗った"
+    );
+    assert_eq!(
+        semantic.waiting_on(Path::new("README.md")),
+        Waiting::NotIndexed
+    );
+}
+
 #[test]
 fn goのツリーにはscip_goを向ける() {
     // ここが Rust 決め打ちだと、Go のリポジトリは索引が 1 本も無いまま tree-sitter の名前
@@ -1284,7 +1321,7 @@ fn 索引が今の内容を説明できているときは何も言わない() {
 #[test]
 fn 内容の変わったツリーを読んだら作りに行く() {
     // 索引は内容ごとに名前が分かれるので、内容が動けばその内容の索引はまだ無い。待つのでは
-    // なく作りに行かないと、worktree を移るたびに構文層のまま据え置かれる。
+    // なく作りに行かないと、worktree を移るたびに答えられないまま据え置かれる。
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
     place_index(dir.path());
     std::fs::write(dir.path().join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
@@ -1345,7 +1382,7 @@ fn 読んでいるファイルが説明できているなら内容が動いて�
 #[test]
 fn 索引が説明できないファイルを読んでいることを伝える() {
     // 索引はいまの内容のものなのに、このファイルだけ載っていない。作り直しても同じものが
-    // 出るので、黙って構文層に落ちる。言わないと「ジャンプが甘い」としか見えない。
+    // 出るので、ジャンプが黙って答えなくなる。言わないと「ジャンプが甘い」としか見えない。
     let (dir, _) = repo_with(&[CARGO_TOML, ("src/lib.rs", SOURCE)]);
     let conductor_dir = dir.path().join(".conductor");
     std::fs::create_dir_all(&conductor_dir).unwrap();
@@ -1390,7 +1427,7 @@ fn 索引をまだ読み込めていないうちは答えを確定させない()
 fn 調査に載っていないルートのファイルを読んだら調査をやり直す() {
     // 調査が鍵を出すのは成果物の置いてあるルートだけなので、まだ一度も索引されていない
     // ルートは列挙に載らない。やり直させないと、そのルートは鍵を持てないまま生成も始まらず、
-    // ホバーが永久に構文層に落ちる。
+    // ホバーが永久に答えられなくなる。
     let dir = nested_go_tree();
     let mut semantic = surveyed(dir.path(), None);
     let rel = Path::new("services/api/api.go");
@@ -1735,7 +1772,7 @@ fn 暦の変換が既知の日付と合う() {
     assert_eq!(history::civil_from_days(19_783), (2024, 3, 1));
 }
 
-// ---------------------------------------------------------------- 構文層 (Bridge)
+// ------------------------------------------------------------ 語の切り出し (Bridge)
 
 const BRIDGE_SOURCE: &str = "\
 fn value() {}
@@ -1752,13 +1789,11 @@ fn caller() {
 }
 ";
 
-/// BRIDGE_SOURCE を 1 ファイル書き出してビルドした索引と、対応する CodeMask。
-fn bridge_fixture() -> (tempfile::TempDir, SymbolIndex, CodeMask) {
+/// BRIDGE_SOURCE を 1 ファイル書き出したツリーと、対応する CodeMask。
+fn bridge_fixture() -> (tempfile::TempDir, CodeMask) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("lib.rs"), BRIDGE_SOURCE).unwrap();
-    let index = SymbolIndex::new(dir.path().to_path_buf());
-    index.build();
-    (dir, index, CodeMask::compute(BRIDGE_SOURCE, "lib.rs"))
+    (dir, CodeMask::compute(BRIDGE_SOURCE, "lib.rs"))
 }
 
 /// 語として答えたときに span が覆うテキスト。
@@ -1772,13 +1807,12 @@ enum Expect {
 fn 語として答えるのはコード上の識別子だけ() {
     use sheaf_core::{SyntacticLayer, Token};
 
-    let (dir, index, mask) = bridge_fixture();
+    let (dir, mask) = bridge_fixture();
     let path = dir.path().join("lib.rs");
     let bridge = Bridge {
         abs_path: &path,
         source: BRIDGE_SOURCE,
         mask: &mask,
-        index: &index,
     };
 
     let cases = [
@@ -1818,75 +1852,6 @@ fn 語として答えるのはコード上の識別子だけ() {
             (_, got) => panic!("{why}: {got:?}"),
         }
     }
-}
-
-#[test]
-fn シンボル行の1始まりを0始まりの位置に直す() {
-    use sheaf_core::{SyntacticAnswer, SyntacticLayer};
-
-    let (dir, index, mask) = bridge_fixture();
-    let path = dir.path().join("lib.rs");
-    let bridge = Bridge {
-        abs_path: &path,
-        source: BRIDGE_SOURCE,
-        mask: &mask,
-        index: &index,
-    };
-    let (line, col) = site(BRIDGE_SOURCE, "let x = value();");
-    let col = col + "let x = ".len() as u32;
-
-    let symbol = index
-        .find_definitions("value", Path::new("lib.rs"))
-        .into_iter()
-        .next()
-        .expect("value の定義が索引に無い");
-    assert_eq!(
-        symbol.line, 1,
-        "fixture の前提: fn value() は 1 始まりで 1 行目"
-    );
-
-    match bridge.definition_at(&path, line, col) {
-        SyntacticAnswer::Found(locations) => {
-            assert_eq!(locations.len(), 1);
-            assert_eq!(locations[0].line, symbol.line as u32 - 1);
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn 別の言語の同名の定義には落とさない() {
-    use sheaf_core::{SyntacticAnswer, SyntacticLayer};
-
-    // tree-sitter の索引は名前でしか引けないので、Go の rollbar が TypeScript の
-    // const rollbar に当たりうる。
-    let go = "package main\n\nfunc use() { rollbar.SetToken(\"x\") }\n";
-    let dir = tree(&[
-        ("main.go", go),
-        ("page.tsx", "const rollbar = useRollbar();\n"),
-    ]);
-    let index = SymbolIndex::new(dir.path().to_path_buf());
-    index.build();
-
-    let path = dir.path().join("main.go");
-    let mask = CodeMask::compute(go, "main.go");
-    let bridge = Bridge {
-        abs_path: &path,
-        source: go,
-        mask: &mask,
-        index: &index,
-    };
-    let (line, col) = site(go, "rollbar");
-
-    let SyntacticAnswer::Found(locations) = bridge.definition_at(&path, line, col) else {
-        panic!("識別子として認識されていない");
-    };
-    assert!(
-        locations
-            .iter()
-            .all(|l| l.path.extension().is_none_or(|e| e != "tsx")),
-        "Go のファイルから TypeScript の定義に落ちた: {locations:?}"
-    );
 }
 
 #[test]
@@ -1991,6 +1956,64 @@ fn 実索引は行を囲むものを答える() {
     assert!(checked > 0, "索引が囲みを 1 件も答えなかった");
 }
 
+/// 押した本人が待っているので、gd と同じ 100ms を上限に置く。
+#[test]
+#[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
+fn 実索引_参照検索は操作の予算に収まる() {
+    use crate::syntax::{code_identifiers_on_line, occurrence_span_in_source};
+
+    let repo_root = test_repo();
+    let store = load(&repo_root, &repo_root).expect("索引と出自の申告が揃っている");
+
+    let (mut asked, mut answered) = (0usize, 0usize);
+    let mut slowest = (Duration::ZERO, String::new());
+
+    for rel in covered_rust_files(&repo_root, &store, 40) {
+        let abs = repo_root.join(&rel);
+        let source = std::fs::read_to_string(&abs).unwrap();
+        let mask = CodeMask::compute(&source, &rel.to_string_lossy());
+        let bridge = Bridge {
+            abs_path: &abs,
+            source: &source,
+            mask: &mask,
+        };
+        for (line, text) in source.lines().enumerate() {
+            for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {
+                let Some((start, end)) = occurrence_span_in_source(text, k) else {
+                    continue;
+                };
+                // ずれた位置は速く返るので、測ると予算が甘く出る。
+                if text.get(start..end) != Some(word.as_str()) {
+                    continue;
+                }
+                asked += 1;
+                let started = Instant::now();
+                let answer =
+                    sheaf_core::references_at(&store, &bridge, &rel, line as u32, start as u32);
+                let took = started.elapsed();
+                if took > slowest.0 {
+                    slowest = (took, format!("{}:{line} {word}", rel.display()));
+                }
+                if matches!(answer, sheaf_core::References::Exact(_)) {
+                    answered += 1;
+                }
+            }
+        }
+    }
+
+    println!(
+        "問い合わせ {asked} / Exact {answered} / 最遅 {:?} {}",
+        slowest.0, slowest.1
+    );
+    assert!(answered > 100, "索引がほとんど答えていない: {answered}");
+    assert!(
+        slowest.0 < Duration::from_millis(100),
+        "1 クエリが gr の予算 (100ms) を超えた: {:?} ({})",
+        slowest.0,
+        slowest.1
+    );
+}
+
 /// 呼び出し口が選ばせうる位置を、リポジトリの実ファイルで全部叩く。索引が実際にどれだけ
 /// 答えるか、答えたものが説明を持つか、飛び先が実在するかを一度に見る。
 ///
@@ -2000,7 +2023,7 @@ fn 実索引は行を囲むものを答える() {
 #[test]
 #[ignore = ".conductor/ に索引を置いたリポジトリが要る"]
 fn 実索引は実ファイルに答え説明と飛び先を持つ() {
-    use crate::symbol_index::{code_identifiers_on_line, occurrence_span_in_source};
+    use crate::syntax::{code_identifiers_on_line, occurrence_span_in_source};
 
     let repo_root = test_repo();
     let store = load(&repo_root, &repo_root).expect("索引と出自の申告が揃っている");
@@ -2014,12 +2037,10 @@ fn 実索引は実ファイルに答え説明と飛び先を持つ() {
         let abs = repo_root.join(&rel);
         let source = std::fs::read_to_string(&abs).unwrap();
         let mask = CodeMask::compute(&source, &rel.to_string_lossy());
-        let index = SymbolIndex::new(repo_root.clone());
         let bridge = Bridge {
             abs_path: &abs,
             source: &source,
             mask: &mask,
-            index: &index,
         };
         for (line, text) in source.lines().enumerate() {
             for (k, _, word) in code_identifiers_on_line(text, line + 1, &mask) {

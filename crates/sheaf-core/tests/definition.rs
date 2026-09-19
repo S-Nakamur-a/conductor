@@ -6,11 +6,11 @@
 mod common;
 
 use common::{
-    Rough, doc, hashes_of, index, load_as_indexed_tree, load_one, real_index, silent, source,
+    doc, hashes_of, index, load_as_indexed_tree, load_one, real_index, silent, source,
     workdir_with_src,
 };
 use scip::types::TextEncoding;
-use sheaf_core::{Definition, Location, Store, SyntacticAnswer, definition_at};
+use sheaf_core::{Definition, Location, Store, definition_at};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -71,38 +71,27 @@ fn 索引が答えられる位置は語のどの列から聞いても_exact_を�
     }]);
 
     for (why, col) in [("語の先頭", 14), ("語の途中", 17)] {
-        let syntactic = silent();
-        let answer = definition_at(&store, &syntactic, Path::new("src/lib.rs"), 1, col);
+        let answer = definition_at(&store, &silent(), Path::new("src/lib.rs"), 1, col);
         assert_eq!(answer, want, "{why}");
-        assert!(
-            syntactic.calls().is_empty(),
-            "{why}: 索引が答えたのに構文層が呼ばれている"
-        );
     }
 }
 
 #[test]
-fn 索引が空なら構文層の答えを返す() {
+fn 索引が空なら答えられないと言う() {
     let root = workdir_with_src("noindex");
     std::fs::write(root.join("src/lib.rs"), SOURCE).unwrap();
     let index_path = index().write(&root.join("empty.scip"));
 
     let store = load_as_indexed_tree(&index_path, &root).unwrap();
     assert!(store.is_empty());
-    let syntactic = Rough::new(SyntacticAnswer::Found(vec![Location {
-        path: PathBuf::from("src/lib.rs"),
-        line: 0,
-        col: 7,
-    }]));
 
-    let answer = definition_at(&store, &syntactic, Path::new("src/lib.rs"), 1, 14);
+    let answer = definition_at(&store, &silent(), Path::new("src/lib.rs"), 1, 14);
 
-    assert!(matches!(answer, Definition::Syntactic(_)), "{answer:?}");
-    assert_eq!(syntactic.calls().len(), 1, "構文層が呼ばれていない");
+    assert_eq!(answer, Definition::Unresolved);
 }
 
 #[test]
-fn 索引が答えられない位置は構文層に回る() {
+fn 索引が答えられない位置は答えられないと言う() {
     // Exact は「依拠したファイルがすべて索引生成時のまま」という主張なので、
     // 飛び先が変わっただけでも答えを丸ごと捨てる。「知らない」も「変わっていない」に丸めない。
     let gap = utf8_index("gap");
@@ -161,10 +150,8 @@ fn 索引が答えられない位置は構文層に回る() {
             14,
         ),
     ] {
-        let syntactic = silent();
-        let answer = definition_at(store, &syntactic, Path::new(rel), line, col);
-        assert_eq!(answer, Definition::NotCode, "{why}");
-        assert_eq!(syntactic.calls().len(), 1, "{why}: 構文層に回っていない");
+        let answer = definition_at(store, &silent(), Path::new(rel), line, col);
+        assert_eq!(answer, Definition::Unresolved, "{why}");
     }
 }
 
@@ -191,7 +178,7 @@ fn 別のツリーでは内容が一致したファイルだけ_exact_を返す(
     std::fs::write(same.join("src/caller.rs"), "fn caller() { greet(); }\n").unwrap();
 
     for (why, root, want) in [
-        ("飛び先が編集されたツリー", &moved, Definition::NotCode),
+        ("飛び先が編集されたツリー", &moved, Definition::Unresolved),
         (
             "内容が一致したツリー",
             &same,
@@ -247,11 +234,13 @@ fn 候補の一部だけが古いときは部分的な_exact_を返さない() {
     );
 
     std::fs::write(root.join("src/b.rs"), "// 動かした\npub struct B;\n").unwrap();
-    let syntactic = silent();
-    let partial = definition_at(&store, &syntactic, Path::new("src/use.rs"), 0, 9);
+    let partial = definition_at(&store, &silent(), Path::new("src/use.rs"), 0, 9);
 
-    assert_eq!(partial, Definition::NotCode, "部分的な Exact を返している");
-    assert_eq!(syntactic.calls().len(), 1, "構文層に回っていない");
+    assert_eq!(
+        partial,
+        Definition::Unresolved,
+        "部分的な Exact を返している"
+    );
 }
 
 #[test]
@@ -403,7 +392,7 @@ fn 未指定エンコーディングでは手前に非_ascii_がある語だけ�
             "src/shift.ts",
             3,
             44,
-            Definition::NotCode,
+            Definition::Unresolved,
         ),
         (
             "t2 の参照も手前に日本語がある",
@@ -411,7 +400,7 @@ fn 未指定エンコーディングでは手前に非_ascii_がある語だけ�
             "src/shift.ts",
             3,
             66,
-            Definition::NotCode,
+            Definition::Unresolved,
         ),
         (
             "aVeryLongIdentifier の定義行は手前が ASCII だけ",
@@ -443,7 +432,7 @@ fn 未指定エンコーディングでは手前に非_ascii_がある語だけ�
             "src/jp.ts",
             4,
             63,
-            Definition::NotCode,
+            Definition::Unresolved,
         ),
     ] {
         let answer = definition_at(store, &silent(), Path::new(rel), line, col);
@@ -518,10 +507,9 @@ fn 同じ範囲に2つのシンボルが乗る位置は両方返す() {
 
 #[test]
 #[ignore = "実索引が要る"]
-fn 実索引_format_のインライン引数は構文層に回る() {
+fn 実索引_format_のインライン引数は答えられない() {
     let (index_path, root) = real_index();
     let store = load_as_indexed_tree(&index_path, &root).unwrap();
-    let syntactic = silent();
 
     // let remote = format!("origin/{main_branch}"); の main_branch。
     // SCIP はこの位置に occurrence を持たないが、rust-analyzer は定義を返す。
@@ -539,14 +527,9 @@ fn 実索引_format_のインライン引数は構文層に回る() {
         "同じ行の索引が効いていない。鮮度の問題と区別できない: {control:?}"
     );
 
-    let answer = definition_at(&store, &syntactic, rel, line_idx as u32, col);
+    let answer = definition_at(&store, &silent(), rel, line_idx as u32, col);
 
-    assert_eq!(answer, Definition::NotCode);
-    assert_eq!(
-        syntactic.calls(),
-        vec![(root.join(rel), line_idx as u32, col)],
-        "構文層が呼ばれていない"
-    );
+    assert_eq!(answer, Definition::Unresolved);
 }
 
 #[test]
@@ -559,7 +542,6 @@ fn 実索引_コメント行は意味索引の答えにならない() {
     let rel = Path::new("src/git_engine/worktree_create.rs");
     let src = std::fs::read_to_string(root.join(rel)).unwrap();
 
-    let syntactic = silent();
     let mut checked = 0;
     let mut wrong = Vec::new();
     for (line_idx, line) in src.lines().enumerate() {
@@ -569,7 +551,7 @@ fn 実索引_コメント行は意味索引の答えにならない() {
         for col in 0..line.len() as u32 {
             checked += 1;
             if let Definition::Exact(locs) =
-                definition_at(&store, &syntactic, rel, line_idx as u32, col)
+                definition_at(&store, &silent(), rel, line_idx as u32, col)
             {
                 wrong.push((line_idx, col, locs));
             }

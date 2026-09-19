@@ -47,4 +47,6 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [dev-dependencies]
 tempfile = "3"
 toml = "1"
+scip = "0.9"
+protobuf = "3.7"
 revidere-fixtures = { path = "../revidere-fixtures" }

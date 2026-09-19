@@ -4,7 +4,7 @@
 //! ロックはリポジトリに 1 つ。producer 1 本でメモリの大半を食うので、ルートごとに
 //! 分けると同時に立つ本数の上限が黙って消える。
 
-pub use crate::symbol_index::Language;
+pub use crate::syntax::Language;
 use sheaf_core::{IndexSource, Producer, RustAnalyzer, ScipGo, ScipTypescript, Target};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ impl Language {
     }
 
     /// 索引を作る道具。生成・出自の読み書き・投入の 3 箇所で同じものを指す必要がある。
-    /// sheaf は別の道具が書いた出自の表を読まないので、ずれると全部が構文層に落ちる。
+    /// sheaf は別の道具が書いた出自の表を読まないので、ずれると全部が答えられなくなる。
     pub fn producer(self) -> Arc<dyn Producer> {
         match self {
             Language::Rust => Arc::new(RustAnalyzer),

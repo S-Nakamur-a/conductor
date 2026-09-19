@@ -17,7 +17,7 @@ pub use regenerate::{
 };
 pub use resolve::{definition_at, describe_at, enclosures_at, implementations_at, references_at};
 pub use store::{IndexSource, Slot, Store};
-pub use syntactic::{SyntacticAnswer, SyntacticLayer, Token};
+pub use syntactic::{SyntacticLayer, Token};
 
 use std::path::PathBuf;
 
@@ -53,7 +53,7 @@ pub struct Span {
 /// match answer {
 ///     Definition::Exact(locs) => println!("{} 件（索引由来）", locs.len()),
 ///     Definition::Enclosing(found) => println!("{} を囲む型なら分かる", found.len()),
-///     Definition::Syntactic(locs) => println!("{} 件（構文由来）", locs.len()),
+///     Definition::Unresolved => println!("いまは答えられない"),
 ///     Definition::NotCode => println!("識別子ではない"),
 /// }
 /// ```
@@ -96,11 +96,14 @@ pub enum Definition {
     /// 飛び先はクリックした語の定義ではない。[`Exact`](Definition::Exact) と混ぜると、
     /// 弱い主張が強い主張に紛れるので、別の型で持たせてある。
     Enclosing(Vec<Enclosing>),
-    /// 構文層が答えた。候補は 0〜N 件。
-    Syntactic(Vec<Location>),
+    /// 語ではあるが索引が答えられない。索引がまだ無い、生成中、あるいはこのファイルを
+    /// 載せていない。
+    ///
+    /// 位置を持たない (理由は [`SyntacticLayer`])。利用側は「いつなら答えられるか」を言うこと。
+    Unresolved,
     /// その位置に識別子が無い。コメントや文字列リテラルの地の文。
     ///
-    /// `Syntactic(vec![])`（探したが見つからない）とは別物として持つ。
+    /// [`Unresolved`](Definition::Unresolved)（語ではあるが答えられない）とは別物として持つ。
     /// 誤った回答をしないためには、問いが成立していないことも言える必要がある。
     NotCode,
 }
@@ -148,7 +151,7 @@ pub enum Enclosures {
 /// # let answer = References::NotCode;
 /// match answer {
 ///     References::Exact(found) => println!("{} 件（直接）", found.direct.len()),
-///     References::Syntactic(locs) => println!("{} 件（構文由来）", locs.len()),
+///     References::Unresolved => println!("いまは答えられない"),
 ///     References::NotCode => println!("識別子ではない"),
 /// }
 /// ```
@@ -171,10 +174,10 @@ pub enum Enclosures {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum References {
-    /// 意味索引が答えた。依拠した全ファイルが索引生成時のまま。
+    /// 意味索引が答えた。依拠した全ファイルが索引生成時のまま。空なら参照が無い。
     Exact(Found),
-    /// 構文層が答えた。
-    Syntactic(Vec<Location>),
+    /// 語ではあるが索引が答えられない。[`Definition::Unresolved`] と同じ理由で位置を持たない。
+    Unresolved,
     /// その位置に識別子が無い。
     NotCode,
 }

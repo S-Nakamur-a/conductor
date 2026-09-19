@@ -49,6 +49,22 @@ pub enum Reading {
     NotIndexed,
 }
 
+/// そのファイルの索引が、いま何を待っているか。
+///
+/// [`Reading`] と違って状態を動かさない。リポジトリ全体の any で答えると、monorepo で
+/// 別のルートの producer が走っているあいだ、無関係なファイルが「作っている最中」を名乗る。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Waiting {
+    /// そのルートの producer が走っている。
+    Building,
+    /// 編集が収まるのを待っている。
+    Settling,
+    /// 待つものは無い。
+    Nothing,
+    /// 索引の対象ではない。目印になるファイルを持つルートがこのファイルを覆っていない。
+    NotIndexed,
+}
+
 /// 種別を、ホバーの見出しに置く 1 語にする。
 ///
 /// 綴りを Rust の宣言キーワードに寄せてあるのは、本文に索引の書いた宣言がそのまま並ぶため。

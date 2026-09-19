@@ -77,7 +77,7 @@ fn 定義位置を持たない符号は囲んでいる型に落ちる() {
 }
 
 #[test]
-fn 型に落とせない条件では構文層に回る() {
+fn 型に落とせない条件では答えられないと言う() {
     // 座標を作る規則なので、作った先が無いことは普通に起きる (impl が型とは別の
     // モジュールにあるとき)。そこで無理に何かを返さない。
     let missing = build("miss", false, &[]);
@@ -94,7 +94,7 @@ fn 型に落とせない条件では構文層に回る() {
         ),
     ] {
         let answer = definition_at(&store, &silent(), Path::new("src/caller.rs"), 0, 19);
-        assert_eq!(answer, Definition::NotCode, "{why}");
+        assert_eq!(answer, Definition::Unresolved, "{why}");
     }
 }
 

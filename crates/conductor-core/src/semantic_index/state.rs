@@ -11,7 +11,7 @@ use sheaf_core::{Regenerated, Regenerator, Slot, Store};
 
 use super::history::{self, Trigger};
 use super::roots::{self, IndexRoot};
-use super::{Reading, Survey, main_conductor_dir};
+use super::{Reading, Survey, Waiting, main_conductor_dir};
 
 /// 終わった生成 1 世代。
 ///
@@ -214,7 +214,7 @@ impl SemanticIndex {
         let Some(index) = self.owning_root(rel) else {
             // 調査が鍵を出すのは成果物の置いてあるルートだけなので、一度も索引されていない
             // ルートはここに来る。頼まないと鍵を持てないまま生成も始まらず、そのルートは
-            // 永久に構文層のままになる。
+            // 永久に答えられないままになる。
             self.unsurveyed_reading = roots::Language::of_file(rel).is_some();
             return settle(self, Reading::NotIndexed);
         };
@@ -478,6 +478,21 @@ impl SemanticIndex {
     /// それを見て読み直しを起こす。
     pub fn accept(&mut self, requested: &Path, current: &Path, store: Option<Store>) -> bool {
         self.slot.accept(requested, current, store)
+    }
+
+    /// そのファイルを覆うルートが、いま何を待っているか。状態は動かさない。
+    pub fn waiting_on(&self, rel: &Path) -> Waiting {
+        let Some(i) = self.owning_root(rel) else {
+            return Waiting::NotIndexed;
+        };
+        let at = &self.roots[i].regenerator;
+        if at.is_running() {
+            Waiting::Building
+        } else if at.is_pending() {
+            Waiting::Settling
+        } else {
+            Waiting::Nothing
+        }
     }
 
     /// 静穏を待っている生成があるか。producer はまだ立っていない。
