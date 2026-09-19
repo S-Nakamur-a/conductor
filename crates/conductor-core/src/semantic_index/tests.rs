@@ -1006,6 +1006,45 @@ fn 索引ルートの無いツリーでは生成を起こさない() {
     );
 }
 
+/// リポジトリ全体の any で答えると、待っても答えの来ない位置が「作っている最中」を名乗る。
+#[test]
+fn 何を待っているかはファイルを覆うルートだけを見る() {
+    let (dir, _) = repo_with(&[
+        CARGO_TOML,
+        ("src/lib.rs", SOURCE),
+        ("svc/go.mod", "module demo/svc\n"),
+        ("svc/main.go", "package main\n"),
+    ]);
+    let mut semantic = SemanticIndex::default();
+    let conductor = dir.path().join(".conductor");
+    semantic.install(
+        survey(
+            dir.path(),
+            Some(&conductor),
+            None,
+            &[at("", Language::Rust), at("svc", Language::Go)],
+        ),
+        dir.path(),
+    );
+
+    semantic.note_change(&dir.path().join("svc/main.go"), dir.path());
+
+    assert!(semantic.is_pending(), "前提: Go のルートが静穏を待っている");
+    assert_eq!(
+        semantic.waiting_on(Path::new("svc/main.go")),
+        Waiting::Settling
+    );
+    assert_eq!(
+        semantic.waiting_on(Path::new("src/lib.rs")),
+        Waiting::Nothing,
+        "別のルートの待ちを自分のものとして名乗った"
+    );
+    assert_eq!(
+        semantic.waiting_on(Path::new("README.md")),
+        Waiting::NotIndexed
+    );
+}
+
 #[test]
 fn goのツリーにはscip_goを向ける() {
     // ここが Rust 決め打ちだと、Go のリポジトリは索引が 1 本も無いまま tree-sitter の名前

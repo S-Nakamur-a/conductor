@@ -12,7 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Position;
 use sheaf_core::{Definition, Found, Implementations, Location, References, Store, SymbolDetail};
 
-use conductor_core::semantic_index::{Bridge, kind_label};
+use conductor_core::semantic_index::{Bridge, Waiting, kind_label};
 
 use super::hover::{self, DefSite, Hover, Indexed, Pending};
 use super::{ViewerPanel, render};
@@ -38,10 +38,12 @@ pub enum By {
 }
 
 impl By {
-    pub fn label(self) -> &'static str {
+    /// 索引が書いていたとおりの答えには何も付けない。毎回同じ札が付くと、弱い答えのときだけ
+    /// 付く札が目に入らなくなる。先頭の空白を含む。
+    pub fn tag(self) -> &'static str {
         match self {
-            By::Index => "index",
-            By::Derived => "index, by name",
+            By::Index => "",
+            By::Derived => " [index, by name]",
         }
     }
 }
@@ -316,17 +318,54 @@ impl ViewerPanel {
         ctx: &Ctx,
     ) -> Vec<Effect> {
         let Some(answer) = self.ask(ctx, line_idx, occurrence, sheaf_core::definition_at) else {
-            return unresolved(ctx, word);
+            return self.unresolved(ctx, word);
         };
         // 定義の上で押したなら、行きたいのは定義ではなく使われている場所。
         if self.answer_is_here(&answer, line_idx) {
             return self.find_references(line_idx, occurrence, word, ctx);
         }
-        match definition_answer(answer) {
-            Answered::Found(at, by, what) => self.land(word, locations(ctx.root, &at), by, what),
+        self.settle(definition_answer(answer), word, ctx, |at| {
+            locations(ctx.root, &at)
+        })
+    }
+
+    /// 索引の答えを画面に落とす。飛び先の作り方だけが問い合わせごとに違う。
+    fn settle<T>(
+        &mut self,
+        answered: Answered<T>,
+        word: &str,
+        ctx: &Ctx,
+        hits: impl FnOnce(T) -> Vec<Reference>,
+    ) -> Vec<Effect> {
+        match answered {
+            Answered::Found(found, by, what) => self.land(word, hits(found), by, what),
             Answered::NotCode => no_symbol(),
-            Answered::Unresolved => unresolved(ctx, word),
+            Answered::Unresolved => self.unresolved(ctx, word),
         }
+    }
+
+    /// 索引が答えられないことを、理由と、いつなら答えられるかとともに言う。
+    ///
+    /// 待ちは開いているファイルのルートだけを見る。リポジトリ全体で見ると、monorepo で
+    /// 別のルートを作っているあいだ、待っても答えの来ない位置が「作っている最中」を名乗る。
+    fn unresolved(&self, ctx: &Ctx, word: &str) -> Vec<Effect> {
+        let index = &ctx.index.semantic;
+        let why = match self.content.path.as_deref().map(Path::new) {
+            Some(rel) => match index.waiting_on(rel) {
+                Waiting::Building => "indexing now",
+                Waiting::Settling => "indexing starts when edits settle",
+                Waiting::NotIndexed => "this tree is not indexed",
+                // 索引はこのファイルを覆っているのに答えが無い。std や第三者クレートの
+                // 符号か、依拠する別のファイルが変わったか。前者は作り直しても変わらない
+                // ので勧めない。
+                Waiting::Nothing if index.store(ctx.root).is_some() => {
+                    "the index has no answer here"
+                }
+                Waiting::Nothing => "not indexed yet \u{2014} Repo \u{25b8} Rebuild Code Index",
+            },
+            None => "no file open",
+        };
+        warn(format!("No indexed answer for '{word}' ({why})"))
     }
 
     fn go_to_implementation(
@@ -338,24 +377,20 @@ impl ViewerPanel {
     ) -> Vec<Effect> {
         let Some(answer) = self.ask(ctx, line_idx, occurrence, sheaf_core::implementations_at)
         else {
-            return unresolved(ctx, word);
-        };
-        let (found, by, what) = match implementation_answer(answer) {
-            Answered::Found(found, by, what) => (found, by, what),
-            Answered::NotCode => return no_symbol(),
-            Answered::Unresolved => return unresolved(ctx, word),
+            return self.unresolved(ctx, word);
         };
         // impl ブロックの符号が無い形では着地点が最初のメソッドになる。行そのものより
         // 「どの型の実装か」が要る情報なので、一覧にはその型を並べる。
-        let hits = found
-            .iter()
-            .map(|imp| Reference {
-                file_path: imp.site.path.to_string_lossy().into_owned(),
-                line: imp.site.line as usize + 1,
-                content: format!("impl {word} for {}", imp.ty),
-            })
-            .collect();
-        self.land(word, hits, by, what)
+        self.settle(implementation_answer(answer), word, ctx, |found| {
+            found
+                .iter()
+                .map(|imp| Reference {
+                    file_path: imp.site.path.to_string_lossy().into_owned(),
+                    line: imp.site.line as usize + 1,
+                    content: format!("impl {word} for {}", imp.ty),
+                })
+                .collect()
+        })
     }
 
     fn find_references(
@@ -367,19 +402,18 @@ impl ViewerPanel {
     ) -> Vec<Effect> {
         let answer = self.ask(ctx, line_idx, occurrence, sheaf_core::references_at);
         let (hits, note) = match answer {
-            None | Some(References::Unresolved) => return unresolved(ctx, word),
+            None | Some(References::Unresolved) => return self.unresolved(ctx, word),
             Some(References::NotCode) => return no_symbol(),
             Some(References::Exact(found)) => reference_hits(ctx.root, &found),
         };
-        let by = By::Index;
         if hits.is_empty() {
-            return warn(format!("No references found for '{word}' [{}]", by.label()));
+            return warn(format!("No references found for '{word}'"));
         }
-        let title = format!("{word} ({}{note})", by.label());
+        let title = format!("{word}{note}");
         vec![
             Effect::Status(
                 StatusLevel::Info,
-                format!("{} references for '{word}' [{}]", hits.len(), by.label()),
+                format!("{} references for '{word}'", hits.len()),
             ),
             Effect::PushModal(Modal::References(
                 crate::modal::references::References::new(title, hits),
@@ -390,16 +424,13 @@ impl ViewerPanel {
     /// 索引のどの答えかを必ず名乗る。
     fn land(&mut self, word: &str, hits: Vec<Reference>, by: By, what: &str) -> Vec<Effect> {
         match hits.as_slice() {
-            [] => warn(format!("No {what} found for '{word}' [{}]", by.label())),
+            [] => warn(format!("No {what} found for '{word}'{}", by.tag())),
             [only] => {
                 let (path, line) = (only.file_path.clone(), only.line);
                 let mut effects = self.jump_to(&path, line);
                 effects.push(Effect::Status(
                     StatusLevel::Success,
-                    format!(
-                        "Jumped to the {what} of '{word}' [{}] {path}:{line}",
-                        by.label()
-                    ),
+                    format!("Jumped to the {what} of '{word}'{} {path}:{line}", by.tag()),
                 ));
                 effects
             }
@@ -408,11 +439,11 @@ impl ViewerPanel {
                 vec![
                     Effect::Status(
                         StatusLevel::Info,
-                        format!("{n} {what}s found for '{word}' [{}]", by.label()),
+                        format!("{n} {what}s found for '{word}'{}", by.tag()),
                     ),
                     Effect::PushModal(Modal::References(
                         crate::modal::references::References::new(
-                            format!("{word} ({what}s, {})", by.label()),
+                            format!("{word} ({what}s){}", by.tag()),
                             hits,
                         ),
                     )),
@@ -488,10 +519,7 @@ impl ViewerPanel {
                 self.nav.hover = Some(hover);
                 Vec::new()
             }
-            None => vec![Effect::Status(
-                StatusLevel::Info,
-                format!("No definition indexed for '{word}'"),
-            )],
+            None => self.unresolved(ctx, word),
         }
     }
 
@@ -865,21 +893,6 @@ fn implementation_answer(answer: Implementations) -> Answered<Vec<sheaf_core::Im
     }
 }
 
-/// 索引が答えられないことを、理由と、いつなら答えられるかとともに言う。
-fn unresolved(ctx: &Ctx, word: &str) -> Vec<Effect> {
-    let index = &ctx.index.semantic;
-    let why = if index.is_generating() {
-        "indexing now"
-    } else if index.is_pending() {
-        "indexing starts when edits settle"
-    } else if index.store(ctx.root).is_none() {
-        "not indexed yet \u{2014} Repo \u{25b8} Rebuild Code Index"
-    } else {
-        "this file is not in the index \u{2014} Repo \u{25b8} Rebuild Code Index"
-    };
-    warn(format!("No indexed answer for '{word}' ({why})"))
-}
-
 fn no_symbol() -> Vec<Effect> {
     warn("No symbol under the cursor".to_string())
 }
@@ -959,7 +972,7 @@ pub(super) fn reference_hits(root: &Path, found: &Found) -> (Vec<Reference>, Str
     let note = if via.is_empty() {
         String::new()
     } else {
-        format!(": {} direct, {} via interface", hits.len(), via.len())
+        format!(" ({} direct, {} via interface)", hits.len(), via.len())
     };
     hits.extend(via);
     (hits, note)
@@ -1273,7 +1286,7 @@ pub fn caller() { target(); }
         assert_eq!(named(Implementations::Derived(found)), Some(By::Derived));
         assert_eq!(named(Implementations::Unknown), None);
         assert_eq!(named(Implementations::NotCode), None);
-        assert_ne!(By::Index.label(), By::Derived.label());
+        assert_ne!(By::Index.tag(), By::Derived.tag());
     }
 
     /// Exact と同じ言い回しにすると、「囲んでいる型に飛んだ」ことが画面から読めなくなる。

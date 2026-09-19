@@ -127,8 +127,12 @@ the syntactic layer as a trait and ships no implementation, and will not consult
 the index unless `token_at` answers. `semantic_index::bridge::Bridge` implements
 that one method over `CodeMask` (`conductor_core::syntax`). There is no name-based
 fallback: a position the index cannot answer comes back `Definition::Unresolved`,
-and `code_nav::unresolved` says why and when it will be answerable (indexing now /
-waiting for edits to settle / **Repo ▸ Rebuild Code Index**). Guessing by name
+and `code_nav::unresolved` says why and when it will be answerable. The wait is read
+per index root (`SemanticIndex::waiting_on`), never repo-wide — on a monorepo an any()
+tells a Rust file "indexing now" while a Go root is building, and waiting never helps.
+**Rebuild is only suggested where it can help**: with the index loaded and covering the
+file, a missing answer means a symbol defined outside the tree, and rebuilding costs
+14s / 2.36GB to change nothing. Guessing by name
 looked like an answer and was not — hovering `rollbar` in a Go file printed a
 TypeScript `const rollbar = useRollbar()` as the declaration, measured on a real
 monorepo. Silence the user can act on beats a confident wrong jump.
