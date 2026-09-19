@@ -20,6 +20,8 @@ pub struct Selection {
     pub region: Region,
     anchor: (u16, u16),
     head: (u16, u16),
+    /// 写す桁の範囲 (画面の絶対桁、両端含む)。
+    columns: (u16, u16),
 }
 
 impl Selection {
@@ -28,7 +30,15 @@ impl Selection {
             region,
             anchor: (x, y),
             head: (x, y),
+            columns: (0, u16::MAX),
         }
+    }
+
+    /// 区画の端ではなくこの桁までを写す。押した瞬間に決めた値を持ち続けるので、
+    /// ドラッグ中に区画の中身が動いても選択の意味は変わらない。
+    pub fn within_columns(mut self, columns: (u16, u16)) -> Self {
+        self.columns = columns;
+        self
     }
 
     pub fn extend(&mut self, x: u16, y: u16, area: Rect) {
@@ -50,6 +60,9 @@ impl Selection {
     }
 
     pub fn contains(&self, x: u16, y: u16) -> bool {
+        if x < self.columns.0 || x > self.columns.1 {
+            return false;
+        }
         let ((x0, y0), (x1, y1)) = self.ordered();
         (y0..=y1).contains(&y) && (y > y0 || x >= x0) && (y < y1 || x <= x1)
     }
@@ -150,6 +163,24 @@ mod tests {
         let mut selection = Selection::begin(Region::Viewer, 0, 0);
         selection.extend(5, 0, area);
         assert_eq!(text(&buffer, &selection, area), "ねこ x");
+    }
+
+    #[test]
+    fn 桁を絞った選択は行番号もつまみも写さない() {
+        let buffer = buffer(&["1 │ alpha █", "2 │ bravo █"]);
+        let area = Rect::new(0, 0, 12, 2);
+        let mut selection = Selection::begin(Region::Viewer, 4, 0).within_columns((4, 8));
+        selection.extend(11, 1, area);
+        assert_eq!(text(&buffer, &selection, area), "alpha\nbravo");
+    }
+
+    #[test]
+    fn 桁を絞った選択はガターへ引き戻しても本文で止まる() {
+        let buffer = buffer(&["1 │ alpha █", "2 │ bravo █"]);
+        let area = Rect::new(0, 0, 12, 2);
+        let mut selection = Selection::begin(Region::Viewer, 8, 1).within_columns((4, 8));
+        selection.extend(0, 0, area);
+        assert_eq!(text(&buffer, &selection, area), "alpha\nbravo");
     }
 
     #[test]

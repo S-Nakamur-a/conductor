@@ -72,6 +72,12 @@ impl Harness {
         panels.viewer.click(x, y, extend, &ctx)
     }
 
+    fn code_columns(&mut self, x: u16, y: u16) -> Option<(u16, u16)> {
+        let root = self.ws.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = self.ws.split(&root);
+        panels.viewer.code_columns(x, y, &ctx)
+    }
+
     fn install(&mut self, comments: Vec<conductor_core::review_store::ReviewComment>) {
         self.ws.focus = Focus::Viewer;
         self.ws.review.install(Ok(crate::review::Snapshot {
@@ -382,6 +388,54 @@ fn クリックした画面行はその位置の可視行を選ぶ() {
     );
 }
 
+#[test]
+fn 本文から押した選択だけが桁を絞りガターからは区画まるごと() {
+    let dir = fixture(&[("a.rs", "fn a() {\n    b();\n    c();\n}\nfn d() {}\n")]);
+    let mut h = Harness::at(dir.path());
+    h.open("a.rs");
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+    assert_eq!(h.code_columns(0, 11), None, "行番号");
+    assert_eq!(h.code_columns(1, 11), None, "畳みの印");
+    assert_eq!(h.code_columns(4, 11), None, "仕切り");
+    assert_eq!(h.code_columns(5, 11), Some((5, 39)), "本文の 1 桁目");
+
+    h.install(vec![crate::review::tests::comment("a", "a.rs", 2, None)]);
+    assert_eq!(h.code_columns(5, 11), None, "印の桁ぶん右へずれる");
+    assert_eq!(h.code_columns(7, 11), Some((7, 39)));
+}
+
+#[test]
+fn つまみが本文を上書きしている間は右端の桁を写さない() {
+    let long = "x\n".repeat(50);
+    let dir = fixture(&[("a.rs", long.as_str())]);
+    let mut h = Harness::at(dir.path());
+    h.open("a.rs");
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+    assert_eq!(h.code_columns(10, 11), Some((6, 38)));
+
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 50);
+    assert_eq!(
+        h.code_columns(10, 11),
+        Some((6, 39)),
+        "全部収まっていれば右端も本文"
+    );
+}
+
+#[test]
+fn ガターを持たない表示では桁を絞らない() {
+    let dir = fixture(&[("a.md", "# title\n\nbody\n")]);
+    let mut h = Harness::at(dir.path());
+    h.open("a.md");
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+    let effects = h.viewer().toggle_markdown();
+    h.run(effects);
+    h.prepare();
+
+    assert!(h.ws.panels.viewer.is_showing_rendered_markdown());
+    assert_eq!(h.code_columns(10, 11), None);
+}
+
 /// ガターの桁ごとに意味が違う。印の下を押せば印の意味になる。
 #[test]
 fn ガターの桁は印と畳みと本文で意味が分かれる() {
@@ -495,6 +549,44 @@ fn 開いたスレッドの下の行を押すとその行が対象になる() {
         "{:?}",
         editor.target
     );
+}
+
+#[test]
+fn 差分では符号と行番号を外し左右に割ると桁を絞らない() {
+    let dir = fixture(&[("a.txt", "one\n")]);
+    let mut h = Harness::at(dir.path());
+    let file_diff = FileDiff {
+        path: "a.txt".into(),
+        added_lines: 1,
+        deleted_lines: 0,
+        hunks: vec![conductor_core::diff_state::DiffHunk {
+            lines: vec![conductor_core::diff_state::DiffLine {
+                tag: conductor_core::diff_state::DiffLineTag::Insert,
+                old_line_no: None,
+                new_line_no: Some(1),
+                inline_segments: Vec::new(),
+                content: "one".into(),
+            }],
+            func_header: None,
+        }],
+    };
+    let effects = h.viewer().open(
+        Path::new("a.txt"),
+        None,
+        Some(Box::new(OpenDiff {
+            source: DiffSource::working_tree("main"),
+            file: file_diff,
+        })),
+        false,
+    );
+    h.run(effects);
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+    assert_eq!(h.code_columns(5, 10), None, "符号と行番号と仕切り");
+    assert_eq!(h.code_columns(6, 10), Some((6, 39)), "本文の 1 桁目");
+
+    h.viewer().diff.side_by_side = true;
+    assert_eq!(h.code_columns(6, 10), None, "ガターが 2 本ある");
 }
 
 /// 差分を読みながらコメントを付けるのが主な使い方。
