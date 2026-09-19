@@ -390,6 +390,17 @@ git, and any rework of theme / keymap / text_input / config.
   the definition block at the top (kind header + signature) and the `path:line` row
   both jump, the "N refs" row opens the list, and the popup stays put while the
   pointer is inside its rectangle.
+- **A drag selection is bounded by where it started, not by where it is.** `Selection`
+  carries the column range decided at mouse-down (`within_columns`), so `highlight`,
+  `text` and `extend` all agree without any of them knowing about the Viewer. Pressing
+  on the gutter keeps the old panel-wide rectangle; pressing on the code narrows it.
+  The left edge is `gutter_zone`'s first `Zone::Text` plus `render::DIVIDER` — the zone
+  reaches one divider further left than the text does, on purpose, so the `│` is easy to
+  hit. The right edge drops a column **only when the scrollbar is actually drawn**
+  (`render::scrollbar_covers`): `file_body` reserves nothing for it, so the bar overwrites
+  the last column of code, and dropping it unconditionally would eat a real character on
+  any file that fits on screen. Deliberately excluded: side-by-side diff (two gutters
+  cannot be one range) and banner / thread rows (`Origin::Other`).
 - **Status messages:** `Effect::Status(level, text)`
 - **Doc comments:** `//!` at module level, `///` on public items
 - **A regression test is not done until you have seen it fail.** Back the fix out (keep a

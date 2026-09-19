@@ -67,6 +67,12 @@ list) and Terminal 80/20 (Claude Code / shell). Any panel maximizes with
 `Ctrl+Alt+Z` and resizes tmux-style with `Ctrl+Alt+Arrow`, and the ratios
 persist to `config.toml`.
 
+Dragging with the mouse selects inside one panel and copies to the clipboard on
+release. In the Viewer the column you press decides what you get: start on the
+line numbers and the whole panel width is copied, gutter and all; start on the
+code and only the code comes along — no line numbers, no fold markers, no
+scrollbar.
+
 The worktree list is not a column. Every worktree — branch, dirty count,
 ahead/behind, and Claude Code waiting/active state — sits in the full-width
 monitor strip along the top, so parallel sessions can be watched at a glance.

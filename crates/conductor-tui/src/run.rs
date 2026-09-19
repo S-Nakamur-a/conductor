@@ -487,8 +487,12 @@ fn on_mouse(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            ws.chrome.selection = select::area(layout, region)
-                .map(|_| select::Selection::begin(region, mouse.column, mouse.row));
+            let columns = viewer_code_columns(ws, region, mouse);
+            ws.chrome.selection = select::area(layout, region).map(|_| {
+                let selection = select::Selection::begin(region, mouse.column, mouse.row);
+                // None (ガター等) はそのまま区画まるごと — 行番号ごと持っていきたい選択もある。
+                columns.map_or(selection, |c| selection.within_columns(c))
+            });
             // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の
             // 代わりに中央の一覧が開く。
             if region == Region::WorktreeStrip {
@@ -560,6 +564,20 @@ fn on_mouse(
         }
         _ => {}
     }
+}
+
+/// Viewer の region のときだけ code_columns で桁を絞る。
+fn viewer_code_columns(
+    ws: &mut Workspace,
+    region: Region,
+    mouse: MouseEvent,
+) -> Option<(u16, u16)> {
+    if region != Region::Viewer {
+        return None;
+    }
+    let root = ws.panels.viewer.root().to_path_buf();
+    let (panels, _, ctx) = ws.split(&root);
+    panels.viewer.code_columns(mouse.column, mouse.row, &ctx)
 }
 
 fn drag_select(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> bool {
@@ -689,6 +707,8 @@ mod tests {
     use crate::modal::Modal;
     use conductor_svc::pty::SessionKind;
     use crossterm::event::KeyCode;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -828,6 +848,67 @@ mod tests {
         ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
         on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
         assert_eq!(ws.focus, Focus::TerminalClaude);
+    }
+
+    #[test]
+    fn 本文から始めたドラッグは行番号を外した文字列を書き出す() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "alpha\nbravo\n").unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.focus = Focus::Viewer;
+        let effects = ws.panels.viewer.set_root(dir.path().to_path_buf());
+        apply(&mut ws, &mut svc, effects);
+        let effects = ws
+            .panels
+            .viewer
+            .open(std::path::Path::new("a.rs"), None, None, false);
+        apply(&mut ws, &mut svc, effects);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        ws.panels.viewer.sync_layout(&l);
+        let viewer = l.rect(Region::Viewer).unwrap();
+        let body_y = viewer.y + 2;
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let drag_from = |ws: &mut Workspace, svc: &mut Services<TaskResult>, x| {
+            on_mouse(
+                ws,
+                svc,
+                &l,
+                at(MouseEventKind::Down(MouseButton::Left), x, body_y),
+            );
+            on_mouse(
+                ws,
+                svc,
+                &l,
+                at(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    viewer.right() - 2,
+                    body_y + 1,
+                ),
+            );
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal
+                .draw(|frame| crate::render::render(frame, ws, &l))
+                .unwrap();
+            selected_text(ws, &l, terminal.backend().buffer()).unwrap()
+        };
+
+        // 枠の内側から、行番号 1 桁 + 畳みの印 + 仕切り " │ " を越えた先が本文。
+        let code = drag_from(&mut ws, &mut svc, viewer.x + 1 + 5);
+        assert_eq!(code, "alpha\nbravo");
+
+        let gutter = drag_from(&mut ws, &mut svc, viewer.x + 1);
+        assert!(
+            gutter.contains('\u{2502}'),
+            "ガターから押せば今までどおり: {gutter}"
+        );
     }
 
     #[test]

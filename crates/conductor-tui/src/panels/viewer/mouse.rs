@@ -138,6 +138,45 @@ impl ViewerPanel {
         ]
     }
 
+    /// ここから始めたドラッグが写す桁の範囲 (画面の絶対桁)。ガターや、そもそも
+    /// ガターを持たない表示を押したなら None — 区画まるごとの選択に任せる。
+    pub fn code_columns(&self, x: u16, y: u16, ctx: &Ctx) -> Option<(u16, u16)> {
+        if y < self.body.y || self.is_showing_rendered_markdown() {
+            return None;
+        }
+        // side-by-side はガターが 2 本あるので、桁の範囲 1 つでは本文を表せない。
+        if self.diff.active && self.diff.side_by_side {
+            return None;
+        }
+        let origin = render::origin_at(
+            self,
+            ctx.review,
+            ctx.theme,
+            ctx.config.ui.icon_set(),
+            self.body.width,
+            self.body.height as usize,
+            (y - self.body.y) as usize,
+        );
+        if matches!(origin, render::Origin::Other) {
+            return None;
+        }
+        let no_comments = self
+            .content
+            .path
+            .as_deref()
+            .is_none_or(|path| ctx.review.for_file(path).is_empty());
+        // gutter_zone の Text は押しやすさで仕切りを含むが、写すのはその右から。
+        let first = (0..self.body.width).find(|column| {
+            self.gutter_zone(*column, self.content.lines.len(), no_comments) == Zone::Text
+        })? + render::DIVIDER as u16;
+        let left = self.body.x + first;
+        let right = self
+            .body
+            .right()
+            .saturating_sub(1 + u16::from(render::scrollbar_covers(self, self.body.height)));
+        (left <= x && x <= right).then_some((left, right))
+    }
+
     /// ガターの桁割り。render の組み方と 1 対 1 で、印の下を押せば印の意味になる。
     fn gutter_zone(&self, column: u16, total: usize, no_comments: bool) -> Zone {
         let mark = if no_comments { 0 } else { render::MARK };

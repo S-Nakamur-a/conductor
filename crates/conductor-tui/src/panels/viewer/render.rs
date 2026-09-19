@@ -21,9 +21,12 @@ use super::{Scroll, ViewerPanel};
 use crate::review::ReviewState;
 use crate::workspace::Workspace;
 
-/// ガターのうち行番号が使わない列: 折りたたみマーカー(1) + 空白(1) + '│'(1) + 空白(1)。
+/// 行番号と本文を分ける仕切り " │ "。本文の左端はここの右から始まる。
+pub const DIVIDER: usize = 3;
+
+/// ガターのうち行番号が使わない列: 折りたたみマーカー(1) + 仕切り。
 /// diff 表示ではさらに +/- の 1 列と空白 1 列。
-pub const GUTTER_FIXED: usize = 4;
+pub const GUTTER_FIXED: usize = 1 + DIVIDER;
 pub const DIFF_SIGN: usize = 2;
 
 /// 本文の上に載るタブ帯の高さ。[super::ViewerPanel::sync_layout] も同じ値を引く。
@@ -155,12 +158,12 @@ fn popup(frame: &mut Frame, popup: super::hover::Popup, theme: &Theme) {
     }
 }
 
-/// 畳んだぶんを除いた尺で出す。畳んだまま端まで送ったのにつまみが半分、が起きない。
-fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
+/// 畳んだぶんを除いた尺。畳んだまま端まで送ったのにつまみが半分、が起きない。
+fn scrollbar_extent(panel: &ViewerPanel) -> Option<(usize, usize)> {
     if panel.content.media.is_some() {
-        return;
+        return None;
     }
-    let (total, at) = if panel.diff.active {
+    Some(if panel.diff.active {
         (panel.diff.entries.len(), panel.scroll.diff)
     } else if panel.is_showing_rendered_markdown() {
         (panel.content.rendered.len(), panel.scroll.md)
@@ -170,6 +173,17 @@ fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
             panel.fold.visible_count(total),
             panel.fold.visible_index(panel.scroll.line + 1, total),
         )
+    })
+}
+
+/// つまみが本文の右端 1 桁を上書きしているか。本文だけの選択はその桁を写さない。
+pub(super) fn scrollbar_covers(panel: &ViewerPanel, height: u16) -> bool {
+    scrollbar_extent(panel).is_some_and(|(total, _)| total > height as usize)
+}
+
+fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
+    let Some((total, at)) = scrollbar_extent(panel) else {
+        return;
     };
     if total <= area.height as usize {
         return;
