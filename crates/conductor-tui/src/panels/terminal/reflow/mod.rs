@@ -35,10 +35,7 @@ pub(super) enum Handled {
 }
 
 pub(crate) struct Reflow {
-    /// 映しているログの session id。届いた結果がこれと違えば捨てる。
-    session: String,
     entries: Vec<LogEntry>,
-    loading: bool,
     scroll: usize,
     /// 最新ターンに張り付いているか。組み直したときの着地点がこれで決まる。
     follow: bool,
@@ -52,14 +49,14 @@ pub(crate) struct Reflow {
     /// 直前のフレームでモーダルが開いていたか。
     overlay_was_open: bool,
     wants_clear: bool,
+    /// 初回の組み直しの着地点。読み込みを待っている間に上へ動いた分を末尾から遡る。
+    initial_scroll_back: Option<usize>,
 }
 
 impl Reflow {
-    pub(super) fn opening(session: String) -> Self {
+    pub(super) fn new(entries: Vec<LogEntry>, scroll_back: usize) -> Self {
         Self {
-            session,
-            entries: Vec::new(),
-            loading: true,
+            entries,
             scroll: 0,
             follow: true,
             // Claude Code 自身の既定に合わせて折りたたみで開く。
@@ -71,25 +68,13 @@ impl Reflow {
             sweep: Some(Instant::now()),
             overlay_was_open: false,
             wants_clear: true,
+            initial_scroll_back: Some(scroll_back),
         }
     }
 
     #[cfg(test)]
-    pub(super) fn is_loading(&self) -> bool {
-        self.loading
-    }
-
-    pub(super) fn session(&self) -> &str {
-        &self.session
-    }
-
-    /// 読み終えたログを載せる。session id の照合は呼び出し側が済ませている。
-    pub(super) fn install(&mut self, entries: Vec<LogEntry>) {
-        self.entries = entries;
-        self.loading = false;
-        self.follow = true;
-        self.size.1 = 0;
-        self.wants_clear = true;
+    pub(super) fn scroll(&self) -> usize {
+        self.scroll
     }
 
     pub(crate) fn border_color(&self, theme: &Theme) -> ratatui::style::Color {
@@ -138,13 +123,26 @@ impl Reflow {
             anchored = anchor.map(|a| render::anchor_index(&self.meta, a));
         }
         self.size = size;
-        self.scroll = scroll_after_reflow(
-            self.follow,
-            anchored,
-            self.scroll,
-            self.lines.len(),
-            height as usize,
-        );
+        match self.initial_scroll_back.take() {
+            Some(scroll_back) => {
+                let bottom = bottom_scroll(self.lines.len(), height as usize);
+                self.scroll = clamp_scroll(
+                    bottom.saturating_sub(scroll_back),
+                    self.lines.len(),
+                    height as usize,
+                );
+                self.follow = at_bottom(self.scroll, self.lines.len(), height as usize);
+            }
+            None => {
+                self.scroll = scroll_after_reflow(
+                    self.follow,
+                    anchored,
+                    self.scroll,
+                    self.lines.len(),
+                    height as usize,
+                );
+            }
+        }
     }
 
     pub(super) fn key(&mut self, key: KeyEvent) -> Handled {

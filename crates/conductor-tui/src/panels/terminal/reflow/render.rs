@@ -10,7 +10,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::Reflow;
 use super::build::LineMeta;
-use super::style::{INACTIVE, USER_BG, truncate_to_width};
+use super::style::{INACTIVE, USER_BG};
 
 /// 追従が外れているときだけ出すチップ。長い順に並べ、収まる最初のものを選ぶ。
 ///
@@ -24,26 +24,6 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, reflow: &Reflow) {
     }
     // 部分的にしか埋まらないトランスクリプトでも、下のライブ PTY が透けないよう必ず消す。
     frame.render_widget(Clear, area);
-
-    if reflow.loading {
-        let msg = "Loading transcript\u{2026}";
-        let cols = UnicodeWidthStr::width(msg).min(area.width as usize) as u16;
-        let rect = Rect::new(
-            area.x + (area.width.saturating_sub(cols)) / 2,
-            area.y + area.height / 2,
-            cols,
-            1,
-        );
-        let text = truncate_to_width(msg, area.width as usize);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                text,
-                Style::default().fg(INACTIVE),
-            ))),
-            rect,
-        );
-        return;
-    }
 
     let buffer = frame.buffer_mut();
     for (row, (line, meta)) in reflow

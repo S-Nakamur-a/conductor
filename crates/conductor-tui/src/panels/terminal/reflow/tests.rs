@@ -1107,11 +1107,10 @@ fn draw_badge(width: u16, height: u16, following: bool) -> (Option<Rect>, Buffer
 
 /// 追従が外れた状態のビュー。チップだけを見るので中身は 1 行でよい。
 fn detached(width: u16, height: u16, following: bool) -> Reflow {
-    let mut reflow = Reflow::opening("s".into());
-    reflow.install(vec![entry(
-        Role::Assistant,
-        vec![DisplayBlock::Text("x".into())],
-    )]);
+    let mut reflow = Reflow::new(
+        vec![entry(Role::Assistant, vec![DisplayBlock::Text("x".into())])],
+        0,
+    );
     reflow.prepare(&Theme::default(), highlighter(), (height, width), false);
     reflow.follow = following;
     reflow
@@ -1255,8 +1254,7 @@ fn 幅が変わっても追従中は最新のターンに留まる() {
 // ビューの状態遷移
 
 fn opened(entries: Vec<LogEntry>) -> Reflow {
-    let mut reflow = Reflow::opening("session-a".into());
-    reflow.install(entries);
+    let mut reflow = Reflow::new(entries, 0);
     reflow.prepare(&Theme::default(), highlighter(), (INNER as u16, 60), false);
     reflow
 }
