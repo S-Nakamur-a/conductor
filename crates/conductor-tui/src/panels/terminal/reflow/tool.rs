@@ -133,6 +133,8 @@ pub(super) fn render_result_collapsed(
 ) -> Vec<Line<'static>> {
     match kind {
         ResultKind::Hidden => Vec::new(),
+        // build.rs が先に render_ask_user_question で描くので、ここには来ない。
+        ResultKind::AskUserQuestion => Vec::new(),
         ResultKind::Inline if is_error => inline_error_lines(lines, width, styles),
         ResultKind::Inline => Vec::new(),
         ResultKind::Counted { .. } if std::mem::replace(summary_emitted, true) => Vec::new(),
@@ -166,6 +168,42 @@ fn bucket_summary_line(
     }
     parts.push((EXPAND_HINT.to_string(), styles.result));
     fit_styled_line(MARKER_COLS, &parts, width)
+}
+
+/// ctrl+o の展開状態を問わず同じ形で描く (Claude Code 自身が回答後は選択肢を出さず、畳みもしない)。
+pub(super) fn render_ask_user_question(
+    lines: &[String],
+    width: usize,
+    styles: &ToolStyles,
+) -> Vec<Line<'static>> {
+    const HEADER: &str = "User answered Claude's questions:";
+    const BULLET: &str = "· ";
+    const BULLET_COLS: usize = 2;
+
+    let budget = width.saturating_sub(RESULT_GUTTER + BULLET_COLS);
+    let mut out = vec![Line::from(Span::styled(
+        truncate_to_width(&format!(" {HEADER}"), width),
+        styles.result,
+    ))];
+    for raw in lines {
+        for (i, wrapped) in wrap_plain_text(raw, budget).into_iter().enumerate() {
+            let gutter = if out.len() == 1 {
+                format!("  {TOOL_RESULT_GLYPH}  ")
+            } else {
+                " ".repeat(RESULT_GUTTER)
+            };
+            let bullet = if i == 0 {
+                BULLET
+            } else {
+                &" ".repeat(BULLET_COLS)
+            };
+            out.push(Line::from(vec![
+                Span::styled(gutter, styles.result),
+                Span::styled(format!("{bullet}{wrapped}"), styles.result),
+            ]));
+        }
+    }
+    out
 }
 
 fn lower_first(s: &str) -> String {

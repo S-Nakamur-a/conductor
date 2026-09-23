@@ -60,10 +60,15 @@ pub enum ResultKind {
         from_bash: bool,
     },
     Inline,
+    AskUserQuestion,
     Hidden,
 }
 
+/// tool_use 側の ⏺ 表示は classify のまま。結果側だけ専用の形にする。
 pub fn result_kind(name: &str, input: &Value) -> ResultKind {
+    if name == "AskUserQuestion" {
+        return ResultKind::AskUserQuestion;
+    }
     match classify(name, input) {
         ToolCategory::Counted(bucket) => ResultKind::Counted {
             bucket,

@@ -385,6 +385,51 @@ fn 結果の種類は前のレコードにある呼び出しから決まる() {
     ));
 }
 
+/// 実データ (jsonl の toolUseResult) から採った設問と回答。文言はそのまま。
+#[test]
+fn 設問ツールの結果はquestionとanswerを1行ずつ並べる() {
+    let id = "toolu_01E7EXmfQ2Kk4wphPYnc5rvQ";
+    let questions = json!([
+        {"question": "方針これでいい？"},
+        {"question": "遡ってる間、選択カーソル等が静的になるのは許容？"},
+        {"question": "「変更したファイルの実際のコード」って具体にどれ？"},
+    ]);
+    let tool_use_result = json!({
+        "questions": questions,
+        "answers": {
+            "方針これでいい？": "jsonl 1枚に寄せる (推奨)",
+            "遡ってる間、選択カーソル等が静的になるのは許容？": "静的で OK (推奨)",
+            "「変更したファイルの実際のコード」って具体にどれ？":
+                "Edit の diff, AskUserQuestion の中身",
+        },
+        "annotations": {},
+    });
+    let got = blocks(&[
+        assistant(json!([tool_use(
+            id,
+            "AskUserQuestion",
+            json!({"questions": questions})
+        )])),
+        user(json!([tool_result(
+            id,
+            "Your questions have been answered: ..."
+        )]))
+        .with("toolUseResult", tool_use_result),
+    ]);
+    assert_eq!(
+        got[1],
+        DisplayBlock::ToolResult {
+            kind: ResultKind::AskUserQuestion,
+            lines: lines(&[
+                "方針これでいい？ → jsonl 1枚に寄せる (推奨)",
+                "遡ってる間、選択カーソル等が静的になるのは許容？ → 静的で OK (推奨)",
+                "「変更したファイルの実際のコード」って具体にどれ？ → Edit の diff, AskUserQuestion の中身",
+            ]),
+            is_error: false,
+        }
+    );
+}
+
 #[test]
 fn 対応の無い結果は隠す() {
     let got = blocks(&[user(json!([tool_result("nonexistent", "x")]))]);

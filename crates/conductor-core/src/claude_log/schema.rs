@@ -25,6 +25,9 @@ pub struct LogRecord {
     /// RFC3339。古いレコードには無い。
     #[serde(default)]
     pub timestamp: Option<String>,
+    /// tool_result に付く、type ごとに形が違う付帯データ (AskUserQuestion の回答など)。
+    #[serde(default)]
+    pub tool_use_result: Option<serde_json::Value>,
 }
 
 /// CLI がユーザの代わりに会話へ注入したコンテキスト。
