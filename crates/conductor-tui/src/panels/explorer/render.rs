@@ -25,12 +25,12 @@ pub fn render(frame: &mut Frame, tree_area: Rect, changes_area: Rect, ws: &Works
 
     let inner = crate::list::inner(changes_area);
     if inner.height > 0 {
-        let lines = bottom_lines(ws, inner.height as usize);
+        let lines = bottom_lines(ws, inner.width as usize, inner.height as usize);
         frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
-pub fn bottom_lines(ws: &Workspace, height: usize) -> Vec<Line<'static>> {
+pub fn bottom_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'static>> {
     let panel = &ws.panels.explorer;
     match panel.bottom() {
         BottomView::GitChanges => git_changes::render::lines(
@@ -39,7 +39,7 @@ pub fn bottom_lines(ws: &Workspace, height: usize) -> Vec<Line<'static>> {
             &ws.review,
             &ws.theme,
             &ws.config,
-            height,
+            git_changes::render::Area { width, height },
             panel.pane() == Pane::Bottom,
         ),
         BottomView::Comments => crate::comment_list::lines(

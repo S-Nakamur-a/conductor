@@ -967,7 +967,7 @@ pub fn digit_count(n: usize) -> usize {
 mod tests {
     use super::*;
     use conductor_core::config::Config;
-    use conductor_core::diff_state::{DiffHunk, DiffLine, FileDiff, InlineSegment};
+    use conductor_core::diff_state::{DiffHunk, DiffLine, FileDiff, FileStatus, InlineSegment};
     use ratatui::style::Color;
 
     fn panel(lines: &[&str]) -> ViewerPanel {
@@ -1047,6 +1047,7 @@ mod tests {
         panel.content.error = Some("No such file or directory".into());
         let file_diff = FileDiff {
             path: "a.rs".into(),
+            status: FileStatus::Modified,
             added_lines: 0,
             deleted_lines: 1,
             hunks: vec![DiffHunk {
@@ -1097,6 +1098,7 @@ mod tests {
         let mut panel = panel(&["a", "b", "c"]);
         let file_diff = FileDiff {
             path: "a.rs".into(),
+            status: FileStatus::Modified,
             added_lines: 1,
             deleted_lines: 1,
             hunks: vec![DiffHunk {
@@ -1162,6 +1164,7 @@ mod tests {
     fn insert_only(content: &str, segments: Vec<InlineSegment>) -> FileDiff {
         FileDiff {
             path: "a.rs".into(),
+            status: FileStatus::Modified,
             added_lines: 1,
             deleted_lines: 0,
             hunks: vec![DiffHunk {
@@ -1290,6 +1293,7 @@ mod tests {
         panel.diff.build(
             &FileDiff {
                 path: "a.rs".into(),
+                status: FileStatus::Modified,
                 added_lines: 1,
                 deleted_lines: 0,
                 hunks: vec![DiffHunk {

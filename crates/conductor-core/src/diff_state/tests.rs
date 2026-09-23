@@ -6,6 +6,7 @@ use crate::test_support::{TestRepo, Tree};
 fn file(path: &str) -> FileDiff {
     FileDiff {
         path: path.to_string(),
+        status: FileStatus::Modified,
         added_lines: 0,
         deleted_lines: 0,
         hunks: Vec::new(),
@@ -771,5 +772,56 @@ fn 新しい側の本文は出どころから読む() {
         DiffSource::commit(&root.to_string())
             .read_new_side(&repo.path, "missing.txt")
             .is_err()
+    );
+}
+
+fn dir_rows(ds: &DiffState) -> Vec<(String, usize)> {
+    ds.display_list
+        .iter()
+        .filter_map(|e| match e {
+            DiffListEntry::Directory { name, depth, .. } => Some((name.clone(), *depth)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn 子が1つだけの階層は1行に畳まれる() {
+    let ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
+    assert_eq!(
+        dir_rows(&ds),
+        vec![
+            ("crates".to_string(), 0),
+            ("core/src".to_string(), 1),
+            ("tui/src".to_string(), 1),
+        ],
+        "crates は子が 2 つあるので畳まない"
+    );
+}
+
+#[test]
+fn 畳んだ行の折りたたみはその単位で効く() {
+    let mut ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
+    let idx = ds
+        .display_list
+        .iter()
+        .position(
+            |e| matches!(e, DiffListEntry::Directory { path, .. } if path == "crates/core/src"),
+        )
+        .expect("畳んだ行のパスは最深のもの");
+    ds.collapse_section(idx);
+    assert!(ds.display_index_for_path("crates/core/src/a.rs").is_none());
+    assert!(ds.display_index_for_path("crates/tui/src/b.rs").is_some());
+}
+
+#[test]
+fn 途中が折りたたまれていれば畳まずそこで止める() {
+    let mut ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
+    ds.collapsed_dirs.insert("crates/core".to_string());
+    ds.rebuild_display_list();
+    assert!(
+        dir_rows(&ds).contains(&("core".to_string(), 1)),
+        "閉じた指定を畳んで消さない: {:?}",
+        dir_rows(&ds)
     );
 }

@@ -1,9 +1,9 @@
 //! Git Changes の描画。行は純関数が組む。
 
 use conductor_core::config::Config;
-use conductor_core::diff_state::{DiffListEntry, DiffSource};
+use conductor_core::diff_state::{DiffListEntry, DiffSource, FileDiff, FileStatus};
 use conductor_core::git_engine::GitStatusMap;
-use conductor_core::icons::{COMMENT, IconSet, dir_icon, expand_arrow, file_icon};
+use conductor_core::icons::{COMMENT, IconSet, expand_arrow};
 use conductor_core::review_store::CommentStatus;
 use conductor_core::theme::Theme;
 use ratatui::style::Style;
@@ -13,6 +13,7 @@ use super::log::Row;
 use super::{GitChanges, Listing};
 use crate::list::row_line;
 use crate::review::ReviewState;
+use crate::strip::{truncate_to_width, width_of};
 
 pub fn title(changes: &GitChanges) -> String {
     if changes.listing() == Listing::Log {
@@ -22,11 +23,29 @@ pub fn title(changes: &GitChanges) -> String {
         DiffSource::WorkingTree { .. } => String::new(),
         other => format!("{} ", other.label()),
     };
-    let total = changes.diff().files.len();
-    match changes.diff().error.is_some() {
-        true => format!(" Git Changes {source}({total}, error) "),
-        false => format!(" Git Changes {source}({total}) "),
+    let diff = changes.diff();
+    let total = diff.files.len();
+    if diff.error.is_some() {
+        return format!(" Git Changes {source}({total}, error) ");
     }
+    if diff.files.is_empty() {
+        return format!(" Git Changes {source}({total}) ");
+    }
+    format!(" Git Changes {source}({total}) {} ", totals(&diff.files))
+}
+
+/// 一覧全体の増減。見出しに出す。
+fn totals(files: &[FileDiff]) -> String {
+    let added: usize = files.iter().map(|f| f.added_lines).sum();
+    let deleted: usize = files.iter().map(|f| f.deleted_lines).sum();
+    format!("+{added} -{deleted}")
+}
+
+/// 行を組むのに要る区画の大きさ。増減を右端へ寄せるので幅が要る。
+#[derive(Clone, Copy)]
+pub struct Area {
+    pub width: usize,
+    pub height: usize,
 }
 
 pub fn lines(
@@ -35,14 +54,16 @@ pub fn lines(
     review: &ReviewState,
     theme: &Theme,
     config: &Config,
-    height: usize,
+    area: Area,
     focused: bool,
 ) -> Vec<Line<'static>> {
+    let Area { width, height } = area;
     if changes.listing() == Listing::Log {
-        return log_lines(changes, theme, height, focused);
+        return log_lines(changes, theme, width, height, focused);
     }
     let icons = config.ui.icon_set();
     let diff = changes.diff();
+    let stats_w = StatsWidth::of(&diff.files);
     let mut lines = Vec::with_capacity(height);
 
     // base 解決の失敗を「変更なし」と混同させないため、先頭行に固定する。バナーは
@@ -84,14 +105,9 @@ pub fn lines(
                 ..
             } => {
                 let indent = "  ".repeat(*depth);
-                let icon = dir_icon(!*collapsed);
                 vec![
                     Span::styled(
-                        format!(
-                            "  {indent}{} {} ",
-                            expand_arrow(!*collapsed, icons),
-                            icon.glyph(icons)
-                        ),
+                        format!("  {indent}{} ", expand_arrow(!*collapsed, icons)),
                         Style::default().fg(theme.info),
                     ),
                     Span::styled(name.clone(), Style::default().fg(theme.info)),
@@ -103,40 +119,46 @@ pub fn lines(
                 let Some(file) = diff.files.get(*file_index) else {
                     continue;
                 };
-                let name = file.path.rsplit('/').next().unwrap_or(&file.path);
                 let indent = "  ".repeat(*depth);
-                // ファイル名の色は git のステージ状態。行数はベースからの合計なので、
-                // その内訳がコミット済みか手元の編集かはこの色でしか分からない。
+                // ファイル名の色は git のステージ状態。変更の種類は行頭の 1 文字が持つので、
+                // コミットを見ているときも追加と削除が区別できる。
                 let fg = match diff.source {
                     DiffSource::WorkingTree { .. } => stage_color(theme, status.status(&file.path)),
                     DiffSource::Commit { .. } => theme.fg,
                 };
-                let icon = file_icon(name);
-                let mark = if review.is_viewed(&file.path) {
-                    " \u{2713} "
-                } else {
-                    "   "
-                };
+                let head = format!("  {indent}");
+                let badge = comment_badge(review, &file.path, theme, icons);
+                let viewed = review.is_viewed(&file.path);
+                let stats = Stats::new(file, stats_w);
+                // 名前を削ってでも増減は残す。
+                let reserved = width_of(&head) as usize
+                    + 2
+                    + badge.as_ref().map_or(0, |b| width_of(&b.content) as usize)
+                    + usize::from(viewed) * 2
+                    + stats.width()
+                    + 1;
+                let name = file.path.rsplit('/').next().unwrap_or(&file.path);
                 let mut spans = vec![
-                    Span::raw(format!("  {indent}")),
+                    Span::raw(head),
                     Span::styled(
-                        format!("{} ", icon.glyph(icons)),
-                        Style::default().fg(icon.role.color(theme)),
-                    ),
-                    Span::styled(name.to_string(), Style::default().fg(fg)),
-                    Span::styled(
-                        format!("  +{}", file.added_lines),
-                        Style::default().fg(theme.diff_add),
+                        format!("{} ", file.status.letter()),
+                        Style::default().fg(status_color(theme, file.status)),
                     ),
                     Span::styled(
-                        format!(" -{}", file.deleted_lines),
-                        Style::default().fg(theme.diff_del),
+                        truncate_to_width(name, width.saturating_sub(reserved)),
+                        Style::default().fg(fg),
                     ),
                 ];
-                if let Some(badge) = comment_badge(review, &file.path, theme, icons) {
+                if let Some(badge) = badge {
                     spans.push(badge);
                 }
-                spans.push(Span::styled(mark, Style::default().fg(theme.success)));
+                if viewed {
+                    spans.push(Span::styled(
+                        " \u{2713}",
+                        Style::default().fg(theme.success),
+                    ));
+                }
+                stats.push(&mut spans, width, theme);
                 spans
             }
         };
@@ -148,6 +170,7 @@ pub fn lines(
 fn log_lines(
     changes: &GitChanges,
     theme: &Theme,
+    width: usize,
     height: usize,
     focused: bool,
 ) -> Vec<Line<'static>> {
@@ -158,11 +181,19 @@ fn log_lines(
     for row in cursor.visible(log.len(), log.viewport()).take(height) {
         let spans = match log.row(row) {
             Some(Row::WorkingTree) => {
-                let fg = match current {
-                    DiffSource::WorkingTree { .. } => theme.accent,
-                    DiffSource::Commit { .. } => theme.fg,
-                };
-                vec![Span::styled("  working tree", Style::default().fg(fg))]
+                let showing = matches!(current, DiffSource::WorkingTree { .. });
+                let fg = if showing { theme.accent } else { theme.fg };
+                let mut spans = vec![Span::styled(
+                    format!("{} working tree", pointer(showing)),
+                    Style::default().fg(fg),
+                )];
+                // 合計を出せるのは作業ツリーを読み込んでいるときだけ。コミットを見ている
+                // 間の数字は手元の変更を表さないので、出さない。
+                if showing {
+                    let total = totals(&changes.diff().files);
+                    push_right(&mut spans, total, width, theme.hint);
+                }
+                spans
             }
             Some(Row::Commit(i)) => {
                 let Some(commit) = log.commits().get(i) else {
@@ -173,7 +204,11 @@ fn log_lines(
                 let hash_fg = if showing { theme.accent } else { theme.info };
                 vec![
                     Span::styled(
-                        format!("  {} ", commit.short_oid),
+                        format!("{} ", pointer(showing)),
+                        Style::default().fg(theme.accent),
+                    ),
+                    Span::styled(
+                        format!("{} ", commit.short_oid),
                         Style::default().fg(hash_fg),
                     ),
                     Span::styled(
@@ -197,6 +232,97 @@ fn log_lines(
         lines.push(row_line(spans, theme, row == cursor.selected(), focused));
     }
     lines
+}
+
+/// 増減の桁。一覧で一番大きいものに合わせて縦に読めるようにする。
+#[derive(Clone, Copy, Default)]
+struct StatsWidth {
+    added: usize,
+    deleted: usize,
+}
+
+impl StatsWidth {
+    fn of(files: &[FileDiff]) -> Self {
+        let digits = |n: usize| n.to_string().len();
+        Self {
+            added: files
+                .iter()
+                .map(|f| digits(f.added_lines))
+                .max()
+                .unwrap_or(1),
+            deleted: files
+                .iter()
+                .map(|f| digits(f.deleted_lines))
+                .max()
+                .unwrap_or(1),
+        }
+    }
+}
+
+/// 出どころの目印。色差の弱いテーマ向けに文字で示す (`▸` は CJK 端末で 2 桁になる)。
+fn pointer(showing: bool) -> &'static str {
+    if showing { " >" } else { "  " }
+}
+
+fn status_color(theme: &Theme, status: FileStatus) -> ratatui::style::Color {
+    match status {
+        FileStatus::Added | FileStatus::Untracked => theme.diff_add,
+        FileStatus::Deleted => theme.diff_del,
+        FileStatus::Modified => theme.warning,
+        FileStatus::Renamed | FileStatus::TypeChange => theme.info,
+    }
+}
+
+/// 右端に寄せる増減。名前より先に幅を取る。
+struct Stats {
+    added: String,
+    deleted: String,
+}
+
+impl Stats {
+    fn new(file: &FileDiff, w: StatsWidth) -> Self {
+        Self {
+            added: format!("{:>1$}", format!("+{}", file.added_lines), w.added + 1),
+            deleted: format!(
+                " {:>1$} ",
+                format!("-{}", file.deleted_lines),
+                w.deleted + 1
+            ),
+        }
+    }
+
+    fn width(&self) -> usize {
+        (width_of(&self.added) + width_of(&self.deleted)) as usize
+    }
+
+    fn push(self, spans: &mut Vec<Span<'static>>, width: usize, theme: &Theme) {
+        spans.push(Span::raw(gap(spans, width, self.width())));
+        spans.push(Span::styled(
+            self.added,
+            Style::default().fg(theme.diff_add),
+        ));
+        spans.push(Span::styled(
+            self.deleted,
+            Style::default().fg(theme.diff_del),
+        ));
+    }
+}
+
+fn push_right(
+    spans: &mut Vec<Span<'static>>,
+    text: String,
+    width: usize,
+    color: ratatui::style::Color,
+) {
+    let tail = width_of(&text) as usize + 1;
+    spans.push(Span::raw(gap(spans, width, tail)));
+    spans.push(Span::styled(format!("{text} "), Style::default().fg(color)));
+}
+
+/// 右端に寄せるための空白。入り切らないときも 1 つは空けて、名前と数字がくっつかないようにする。
+fn gap(spans: &[Span<'static>], width: usize, tail: usize) -> String {
+    let used: usize = spans.iter().map(|s| width_of(&s.content) as usize).sum();
+    " ".repeat(width.saturating_sub(used + tail).max(1))
 }
 
 /// 解決済みが muted でなく hint なのは、muted が一部のテーマで背景と同化するため。
@@ -248,11 +374,12 @@ fn stage_color(theme: &Theme, status: Option<git2::Status>) -> ratatui::style::C
 mod tests {
     use super::*;
     use crate::list::Viewport;
-    use conductor_core::diff_state::{DiffState, FileDiff};
+    use conductor_core::diff_state::{DiffState, FileDiff, FileStatus};
 
     fn file(path: &str, added: usize) -> FileDiff {
         FileDiff {
             path: path.into(),
+            status: FileStatus::Modified,
             added_lines: added,
             deleted_lines: 0,
             hunks: Vec::new(),
@@ -270,19 +397,96 @@ mod tests {
         changes
     }
 
+    fn with_files(source: DiffSource, files: Vec<FileDiff>) -> GitChanges {
+        let mut changes = GitChanges::default();
+        changes.set_source(source.clone());
+        let mut diff = DiffState::new(source);
+        diff.files = files;
+        diff.rebuild_display_list();
+        changes.install(diff);
+        changes.set_viewport(Viewport::new(0, 20));
+        changes
+    }
+
+    fn sized(path: &str, status: FileStatus, added: usize, deleted: usize) -> FileDiff {
+        FileDiff {
+            path: path.into(),
+            status,
+            added_lines: added,
+            deleted_lines: deleted,
+            hunks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn 変更の種類はコミットを見ている間も文字で分かる() {
+        let source = DiffSource::commit("0123456789abcdef0123456789abcdef01234567");
+        let changes = with_files(
+            source,
+            vec![
+                sized("added.rs", FileStatus::Added, 9, 0),
+                sized("gone.rs", FileStatus::Deleted, 0, 4),
+            ],
+        );
+        let lines = texts(&changes, &ReviewState::default());
+        assert!(lines[0].starts_with("  A added.rs"), "{:?}", lines[0]);
+        assert!(lines[1].starts_with("  D gone.rs"), "{:?}", lines[1]);
+    }
+
+    #[test]
+    fn 増減は右端で桁が揃う() {
+        let changes = with_files(
+            DiffSource::working_tree("main"),
+            vec![
+                sized("a.rs", FileStatus::Modified, 1, 128),
+                sized("b.rs", FileStatus::Modified, 12, 3),
+            ],
+        );
+        let lines = texts(&changes, &ReviewState::default());
+        assert!(lines[0].ends_with(" +1 -128 "), "{:?}", lines[0]);
+        assert!(lines[1].ends_with("+12   -3 "), "{:?}", lines[1]);
+        assert_eq!(
+            lines[0].chars().count(),
+            lines[1].chars().count(),
+            "右端が揃う: {lines:?}"
+        );
+    }
+
     fn texts(changes: &GitChanges, review: &ReviewState) -> Vec<String> {
+        texts_at(changes, review, 44)
+    }
+
+    fn texts_at(changes: &GitChanges, review: &ReviewState, width: usize) -> Vec<String> {
         lines(
             changes,
             &GitStatusMap::default(),
             review,
             &Theme::default(),
             &Config::default(),
-            10,
+            Area { width, height: 10 },
             true,
         )
         .iter()
         .map(|l| l.to_string())
         .collect()
+    }
+
+    #[test]
+    fn 狭い区画では増減より先に名前が削られる() {
+        let changes = with_files(
+            DiffSource::working_tree("main"),
+            vec![sized(
+                "crates/tui/very_long_file_name.rs",
+                FileStatus::Modified,
+                3,
+                128,
+            )],
+        );
+        let line = texts_at(&changes, &ReviewState::default(), 24)
+            .pop()
+            .unwrap();
+        assert!(line.ends_with(" -128 "), "削除の数が残る: {line:?}");
+        assert!(line.contains('\u{2026}'), "名前が削られる: {line:?}");
     }
 
     #[test]
@@ -315,12 +519,30 @@ mod tests {
         let lines = texts(&changes, &ReviewState::default());
         assert!(lines[0].contains("working tree"), "{lines:?}");
         assert!(
-            lines[1].starts_with("  01234567 "),
+            lines[1].starts_with("   01234567 "),
             "ハッシュの列は短縮形: {:?}",
             lines[1]
         );
         assert_eq!(lines.len(), 2, "1 件で尽きたので読み足しの行は無い");
         assert!(title(&changes).contains("commits (1)"));
+    }
+
+    #[test]
+    fn 出どころの目印は色ではなく文字で付く() {
+        let mut changes = GitChanges::default();
+        changes.set_viewport(Viewport::new(0, 20));
+        changes.show_log();
+        let oid = "0123456789abcdef0123456789abcdef01234567";
+        changes.install_log(0, Ok(vec![super::super::log::tests::commit(oid)]));
+
+        let lines = texts(&changes, &ReviewState::default());
+        assert!(lines[0].starts_with(" >"), "作業ツリー: {:?}", lines[0]);
+        assert!(!lines[1].starts_with(" >"), "コミット: {:?}", lines[1]);
+
+        changes.set_source(DiffSource::commit(oid));
+        let lines = texts(&changes, &ReviewState::default());
+        assert!(!lines[0].starts_with(" >"), "作業ツリー: {:?}", lines[0]);
+        assert!(lines[1].starts_with(" >"), "コミット: {:?}", lines[1]);
     }
 
     #[test]

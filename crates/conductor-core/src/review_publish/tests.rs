@@ -1,11 +1,12 @@
 use super::*;
-use crate::diff_state::{DiffHunk, DiffLine, DiffLineTag, DiffSource, FileDiff};
+use crate::diff_state::{DiffHunk, DiffLine, DiffLineTag, DiffSource, FileDiff, FileStatus};
 
 /// path のハンク 1 つが new_lines の行番号だけを持つ差分。
 fn diff_with_hunk(path: &str, new_lines: &[usize]) -> DiffState {
     let mut ds = DiffState::new(DiffSource::working_tree("main"));
     ds.files = vec![FileDiff {
         path: path.to_string(),
+        status: FileStatus::Modified,
         added_lines: new_lines.len(),
         deleted_lines: 0,
         hunks: vec![DiffHunk {

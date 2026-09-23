@@ -280,6 +280,7 @@ pub fn prev_block(entries: &[Entry], from: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use conductor_core::diff_state::DiffLine;
+    use conductor_core::diff_state::FileStatus;
 
     fn line(tag: DiffLineTag, new_line_no: Option<usize>, content: &str) -> DiffLine {
         DiffLine {
@@ -305,6 +306,7 @@ mod tests {
     fn one_hunk() -> FileDiff {
         FileDiff {
             path: "a.rs".into(),
+            status: FileStatus::Modified,
             added_lines: 1,
             deleted_lines: 1,
             hunks: vec![DiffHunk {

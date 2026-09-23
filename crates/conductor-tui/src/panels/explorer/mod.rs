@@ -340,11 +340,12 @@ fn score(path: &str, query: &str) -> Option<i32> {
 mod tests {
     use super::*;
     use crate::workspace::{Focus, StatusLevel, Workspace};
-    use conductor_core::diff_state::{DiffSource, FileDiff};
+    use conductor_core::diff_state::{DiffSource, FileDiff, FileStatus};
 
     fn file(path: &str) -> FileDiff {
         FileDiff {
             path: path.into(),
+            status: FileStatus::Modified,
             added_lines: 1,
             deleted_lines: 0,
             hunks: Vec::new(),

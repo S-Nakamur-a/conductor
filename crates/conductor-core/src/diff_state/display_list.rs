@@ -30,14 +30,31 @@ impl Dir {
         out: &mut Vec<DiffListEntry>,
     ) {
         for (name, dir) in &self.subdirs {
-            let path = if prefix.is_empty() {
+            let mut path = if prefix.is_empty() {
                 name.clone()
             } else {
                 format!("{prefix}/{name}")
             };
+            let mut name = name.clone();
+            let mut dir = dir;
+            // 子が 1 つしかない階層は 1 行に畳む。深い一本道が行と字下げを食い潰すため。
+            // 畳んだ行のパスは最深のものになるが、reveal_path は祖先を全部展開するので
+            // 折りたたみとは噛み合う。途中が折りたたみ済みならそこで止める。畳むと閉じた
+            // 指定が消えてしまう。
+            while !collapsed_dirs.contains(&path)
+                && dir.file_indices.is_empty()
+                && dir.subdirs.len() == 1
+            {
+                let Some((child, only)) = dir.subdirs.iter().next() else {
+                    break;
+                };
+                name = format!("{name}/{child}");
+                path = format!("{path}/{child}");
+                dir = only;
+            }
             let collapsed = collapsed_dirs.contains(&path);
             out.push(DiffListEntry::Directory {
-                name: name.clone(),
+                name,
                 path: path.clone(),
                 depth,
                 collapsed,

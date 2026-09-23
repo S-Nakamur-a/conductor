@@ -1643,7 +1643,7 @@ mod tests {
 
         ws.focus = Focus::Explorer;
         on_key(&mut ws, &mut svc, key(KeyCode::Char('c')));
-        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 10)
+        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 60, 10)
             .iter()
             .map(ratatui::text::Line::to_string)
             .collect();

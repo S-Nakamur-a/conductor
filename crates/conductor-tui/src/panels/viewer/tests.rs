@@ -1,5 +1,5 @@
 use super::*;
-use conductor_core::diff_state::{DiffSource, FileDiff};
+use conductor_core::diff_state::{DiffSource, FileDiff, FileStatus};
 use conductor_core::keymap::Action;
 use conductor_core::review_store::ReviewComment;
 use conductor_svc::Services;
@@ -295,6 +295,7 @@ fn diffを添えて開くと差分になりescで素の本文へ戻る() {
     let mut h = Harness::at(dir.path());
     let file_diff = FileDiff {
         path: "a.txt".into(),
+        status: FileStatus::Modified,
         added_lines: 1,
         deleted_lines: 0,
         hunks: vec![conductor_core::diff_state::DiffHunk {
@@ -557,6 +558,7 @@ fn 差分では符号と行番号を外し左右に割ると桁を絞らない()
     let mut h = Harness::at(dir.path());
     let file_diff = FileDiff {
         path: "a.txt".into(),
+        status: FileStatus::Modified,
         added_lines: 1,
         deleted_lines: 0,
         hunks: vec![conductor_core::diff_state::DiffHunk {
@@ -596,6 +598,7 @@ fn 差分表示でもガターから作成でき削除行では断る() {
     let mut h = Harness::at(dir.path());
     let file_diff = FileDiff {
         path: "a.txt".into(),
+        status: FileStatus::Modified,
         added_lines: 1,
         deleted_lines: 1,
         hunks: vec![conductor_core::diff_state::DiffHunk {
@@ -667,6 +670,7 @@ fn 差分の隠れた塊を押すと展開される() {
     };
     let file_diff = FileDiff {
         path: "a.txt".into(),
+        status: FileStatus::Modified,
         added_lines: 0,
         deleted_lines: 0,
         hunks: vec![
@@ -790,6 +794,7 @@ fn 削除行ではコメントを始められない() {
     let mut h = Harness::at(dir.path());
     let file_diff = FileDiff {
         path: "a.txt".into(),
+        status: FileStatus::Modified,
         added_lines: 0,
         deleted_lines: 1,
         hunks: vec![conductor_core::diff_state::DiffHunk {
@@ -981,6 +986,7 @@ fn レンダリング表示は素のmarkdownファイルに限る() {
 
     let file_diff = FileDiff {
         path: "notes.md".into(),
+        status: FileStatus::Modified,
         added_lines: 1,
         deleted_lines: 0,
         hunks: vec![conductor_core::diff_state::DiffHunk {
