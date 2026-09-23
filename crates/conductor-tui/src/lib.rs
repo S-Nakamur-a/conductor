@@ -31,4 +31,5 @@ pub mod term;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod timer;
+mod unknown_tool_log;
 pub mod workspace;

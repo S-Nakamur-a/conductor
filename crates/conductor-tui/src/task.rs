@@ -1107,7 +1107,9 @@ fn read_transcript(working_dir: &Path, session_id: &str) -> Result<Vec<LogEntry>
     let path = home
         .session_log(working_dir, session_id)
         .ok_or_else(|| format!("no session log on disk for {session_id}"))?;
-    Ok(claude_log::load_session(&path))
+    let entries = claude_log::load_session(&path);
+    crate::unknown_tool_log::record(working_dir, &entries);
+    Ok(entries)
 }
 
 fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, String> {

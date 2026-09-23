@@ -67,7 +67,8 @@ pub(super) fn render_tool_use(
     } else {
         match classify(name, input) {
             ToolCategory::Counted(_) | ToolCategory::Hidden => return None,
-            ToolCategory::Inline { display_name, arg } => (display_name, arg),
+            ToolCategory::Inline { display_name, arg }
+            | ToolCategory::Unknown { display_name, arg } => (display_name, arg),
         }
     };
     let marker_style = if errored {

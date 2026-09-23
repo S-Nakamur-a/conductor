@@ -725,6 +725,10 @@ fn ツールの分類表() {
         display_name: name.to_string(),
         arg: arg.map(str::to_string),
     };
+    let unknown = |name: &str, arg: Option<&str>| Unknown {
+        display_name: name.to_string(),
+        arg: arg.map(str::to_string),
+    };
     let cases: Vec<(&str, &str, Value, ToolCategory)> = vec![
         (
             "Read",
@@ -789,10 +793,16 @@ fn ツールの分類表() {
             Hidden,
         ),
         (
-            "未知のツールはキー探索",
+            "未知のツールはキー探索のうえ Unknown に落ちる",
             "WebSearch",
             json!({"query": "some search term"}),
-            inline("WebSearch", Some("some search term")),
+            unknown("WebSearch", Some("some search term")),
+        ),
+        (
+            "AskUserQuestion は知っているので Unknown に落とさない",
+            "AskUserQuestion",
+            json!({"questions": []}),
+            inline("AskUserQuestion", None),
         ),
         (
             "キーが無ければ引数無し",
