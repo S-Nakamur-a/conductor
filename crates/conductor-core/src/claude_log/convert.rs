@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::model::{DisplayBlock, Role};
@@ -17,29 +18,41 @@ use super::tool_class::{ResultKind, result_kind};
 pub(super) struct ToolPairing {
     errored: HashSet<String>,
     kinds: HashMap<String, ResultKind>,
+    /// Bash の stdout などレコードによっては大きいので、questions を持つものだけ控える。
+    ask_user_question_results: HashMap<String, Value>,
 }
 
 impl ToolPairing {
     pub(super) fn scan(records: &[LogRecord]) -> Self {
         let mut errored = HashSet::new();
+        let mut ask_user_question_results = HashMap::new();
         for record in records {
             let Some(Content::Blocks(blocks)) = record.message.as_ref().map(|m| &m.content) else {
                 continue;
             };
             for block in blocks {
-                if let Block::ToolResult {
+                let Block::ToolResult {
                     tool_use_id,
-                    is_error: true,
+                    is_error,
                     ..
                 } = block
-                {
+                else {
+                    continue;
+                };
+                if *is_error {
                     errored.insert(tool_use_id.clone());
+                }
+                if let Some(result) = &record.tool_use_result
+                    && result.get("questions").is_some()
+                {
+                    ask_user_question_results.insert(tool_use_id.clone(), result.clone());
                 }
             }
         }
         Self {
             errored,
             kinds: HashMap::new(),
+            ask_user_question_results,
         }
     }
 
@@ -59,6 +72,49 @@ impl ToolPairing {
             .copied()
             .unwrap_or(ResultKind::Hidden)
     }
+
+    fn ask_user_question_result(&self, tool_use_id: &str) -> Option<&Value> {
+        self.ask_user_question_results.get(tool_use_id)
+    }
+}
+
+#[derive(Deserialize)]
+struct AskUserQuestionResult {
+    #[serde(default)]
+    questions: Vec<AskUserQuestionEntry>,
+    #[serde(default)]
+    answers: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct AskUserQuestionEntry {
+    question: String,
+}
+
+/// answers は設問の文字列をキーにしたオブジェクトで、multiSelect の複数回答も
+/// Claude Code 自身が既に ", " で結んだ 1 本の文字列として入っている。
+fn ask_user_question_lines(result: &Value) -> Vec<String> {
+    let Ok(AskUserQuestionResult { questions, answers }) =
+        serde_json::from_value::<AskUserQuestionResult>(result.clone())
+    else {
+        return Vec::new();
+    };
+    questions
+        .into_iter()
+        .filter_map(|q| {
+            let answer = answers.get(&q.question)?;
+            Some(format!(
+                "{} → {}",
+                join_lines(&q.question),
+                join_lines(answer)
+            ))
+        })
+        .collect()
+}
+
+/// 自由入力の回答に改行が混じっても · で始まる 1 行の体裁を崩さないための保険。
+fn join_lines(s: &str) -> String {
+    s.lines().map(sanitize_line).collect::<Vec<_>>().join(" ")
 }
 
 pub(super) fn result_lines(content: &ToolResultContent) -> Vec<String> {
@@ -227,11 +283,21 @@ pub(super) fn content_to_display_blocks(
                 tool_use_id,
                 content,
                 is_error,
-            } => Some(DisplayBlock::ToolResult {
-                kind: pairing.kind_of(&tool_use_id),
-                lines: result_lines(&content),
-                is_error,
-            }),
+            } => {
+                let kind = pairing.kind_of(&tool_use_id);
+                let lines = match kind {
+                    ResultKind::AskUserQuestion => pairing
+                        .ask_user_question_result(&tool_use_id)
+                        .map(ask_user_question_lines)
+                        .unwrap_or_default(),
+                    _ => result_lines(&content),
+                };
+                Some(DisplayBlock::ToolResult {
+                    kind,
+                    lines,
+                    is_error,
+                })
+            }
             Block::Other => None,
         })
         .collect()

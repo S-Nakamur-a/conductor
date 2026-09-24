@@ -1107,11 +1107,10 @@ fn draw_badge(width: u16, height: u16, following: bool) -> (Option<Rect>, Buffer
 
 /// 追従が外れた状態のビュー。チップだけを見るので中身は 1 行でよい。
 fn detached(width: u16, height: u16, following: bool) -> Reflow {
-    let mut reflow = Reflow::opening("s".into());
-    reflow.install(vec![entry(
-        Role::Assistant,
-        vec![DisplayBlock::Text("x".into())],
-    )]);
+    let mut reflow = Reflow::new(
+        vec![entry(Role::Assistant, vec![DisplayBlock::Text("x".into())])],
+        0,
+    );
     reflow.prepare(&Theme::default(), highlighter(), (height, width), false);
     reflow.follow = following;
     reflow
@@ -1255,8 +1254,7 @@ fn 幅が変わっても追従中は最新のターンに留まる() {
 // ビューの状態遷移
 
 fn opened(entries: Vec<LogEntry>) -> Reflow {
-    let mut reflow = Reflow::opening("session-a".into());
-    reflow.install(entries);
+    let mut reflow = Reflow::new(entries, 0);
     reflow.prepare(&Theme::default(), highlighter(), (INNER as u16, 60), false);
     reflow
 }
@@ -1422,4 +1420,25 @@ fn 実際のトランスクリプトでもレイアウトの不変条件が保�
             }
         }
     }
+}
+
+#[test]
+fn 長い回答は切らずに折り返す() {
+    const TAIL: &str = "そのまま最後まで残ること";
+    let answer = format!("方針は？ → 1 行には収まらない長さの自由入力が{TAIL}");
+    let entries = [entry(
+        Role::User,
+        vec![tool_result(
+            ResultKind::AskUserQuestion,
+            &[answer.as_str()],
+            false,
+        )],
+    )];
+
+    let shown = visible(&built(&entries, false, 40).lines);
+    assert!(shown.len() > 2, "折り返されていない: {shown:?}");
+    assert!(
+        shown[1..].concat().contains(TAIL),
+        "末尾が落ちている: {shown:?}"
+    );
 }

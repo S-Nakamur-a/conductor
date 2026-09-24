@@ -4,7 +4,7 @@
 //! 描くので「論理行 1 つ = 表示行 1 つ」が保たれ、スクロールの上限が total - height で
 //! 素直に決まる。ユーザのターンだけは markdown を通さず全幅の背景ブロックになる。
 
-use conductor_core::claude_log::{DisplayBlock, LogEntry, Role};
+use conductor_core::claude_log::{DisplayBlock, LogEntry, ResultKind, Role};
 use conductor_core::theme::Theme;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -20,8 +20,8 @@ use super::style::{
     truncate_to_width, with_marker,
 };
 use super::tool::{
-    count_buckets, render_annotation, render_result_collapsed, render_result_expanded,
-    render_tool_use,
+    count_buckets, render_annotation, render_ask_user_question, render_result_collapsed,
+    render_result_expanded, render_tool_use,
 };
 use super::wrap::render_user_text;
 
@@ -176,6 +176,11 @@ fn render_block(
         } => render_tool_use(name, input, *errored, ctx.expanded, width, &styles.tools)
             .into_iter()
             .collect(),
+        DisplayBlock::ToolResult {
+            kind: ResultKind::AskUserQuestion,
+            lines,
+            ..
+        } => render_ask_user_question(lines, width, &styles.tools),
         DisplayBlock::ToolResult {
             lines, is_error, ..
         } if ctx.expanded => render_result_expanded(lines, *is_error, width, &styles.tools),

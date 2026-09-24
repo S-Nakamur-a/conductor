@@ -17,6 +17,12 @@ pub enum ToolCategory {
         display_name: String,
         arg: Option<String>,
     },
+    /// classify が名前を知らず、Inline の描き方に仕方なく落としたもの。中身は Inline
+    /// と同じで描画も変わらないが、型を分けることで「知っていて選んだ」ものと区別できる。
+    Unknown {
+        display_name: String,
+        arg: Option<String>,
+    },
     /// どちらの位置でも描かれない (TodoWrite など)。エラー時も同様。
     Hidden,
 }
@@ -60,16 +66,21 @@ pub enum ResultKind {
         from_bash: bool,
     },
     Inline,
+    AskUserQuestion,
     Hidden,
 }
 
+/// tool_use 側の ⏺ 表示は classify のまま。結果側だけ専用の形にする。
 pub fn result_kind(name: &str, input: &Value) -> ResultKind {
+    if name == "AskUserQuestion" {
+        return ResultKind::AskUserQuestion;
+    }
     match classify(name, input) {
         ToolCategory::Counted(bucket) => ResultKind::Counted {
             bucket,
             from_bash: name == "Bash",
         },
-        ToolCategory::Inline { .. } => ResultKind::Inline,
+        ToolCategory::Inline { .. } | ToolCategory::Unknown { .. } => ResultKind::Inline,
         ToolCategory::Hidden => ResultKind::Hidden,
     }
 }
@@ -85,7 +96,12 @@ pub fn classify(name: &str, input: &Value) -> ToolCategory {
         "Task" => inline("Agent", input, "description"),
         "WebFetch" => inline("Fetch", input, "url"),
         "TodoWrite" => ToolCategory::Hidden,
-        other => ToolCategory::Inline {
+        // 知っているツールなので Unknown に落とさない (落とすと unknown-tools.log に偽陽性が出る)。
+        "AskUserQuestion" => ToolCategory::Inline {
+            display_name: name.to_string(),
+            arg: unknown_tool_arg(input),
+        },
+        other => ToolCategory::Unknown {
             display_name: other.to_string(),
             arg: unknown_tool_arg(input),
         },
