@@ -48,6 +48,37 @@ pub struct Area {
     pub height: usize,
 }
 
+/// 戻る行の行き先。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackTarget {
+    Log,
+    WorkingTree,
+}
+
+const BACK_INDENT: usize = 2;
+const BACK_GAP: usize = 3;
+const TO_LOG: &str = "< commits";
+const TO_TREE: &str = "< working tree";
+
+/// 区画内側の列 x が指す行き先。描画とクリックがこの 1 つの定義を読む。
+pub fn back_target_at(x: usize) -> Option<BackTarget> {
+    let log = BACK_INDENT..BACK_INDENT + TO_LOG.len();
+    let tree = log.end + BACK_GAP..log.end + BACK_GAP + TO_TREE.len();
+    if log.contains(&x) {
+        return Some(BackTarget::Log);
+    }
+    tree.contains(&x).then_some(BackTarget::WorkingTree)
+}
+
+fn back_row(theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" ".repeat(BACK_INDENT)),
+        Span::styled(TO_LOG, Style::default().fg(theme.info)),
+        Span::raw(" ".repeat(BACK_GAP)),
+        Span::styled(TO_TREE, Style::default().fg(theme.info)),
+    ])
+}
+
 pub fn lines(
     changes: &GitChanges,
     status: &GitStatusMap,
@@ -74,6 +105,9 @@ pub fn lines(
             format!("  \u{26a0} {}", error.replace('\n', " ")),
             Style::default().fg(theme.error),
         ));
+    }
+    if changes.shows_back_row() {
+        lines.push(back_row(theme));
     }
     if diff.display_list.is_empty() {
         let text = if changes.is_loading() {
@@ -429,8 +463,13 @@ mod tests {
             ],
         );
         let lines = texts(&changes, &ReviewState::default());
-        assert!(lines[0].starts_with("  A added.rs"), "{:?}", lines[0]);
-        assert!(lines[1].starts_with("  D gone.rs"), "{:?}", lines[1]);
+        assert!(
+            lines[0].contains("< commits"),
+            "先頭は戻る行: {:?}",
+            lines[0]
+        );
+        assert!(lines[1].starts_with("  A added.rs"), "{:?}", lines[1]);
+        assert!(lines[2].starts_with("  D gone.rs"), "{:?}", lines[2]);
     }
 
     #[test]
@@ -450,6 +489,33 @@ mod tests {
             lines[1].chars().count(),
             "右端が揃う: {lines:?}"
         );
+    }
+
+    #[test]
+    fn 戻る行の当たり判定は左が一覧で右が作業ツリー() {
+        assert_eq!(back_target_at(0), None, "字下げ");
+        assert_eq!(back_target_at(2), Some(BackTarget::Log));
+        assert_eq!(back_target_at(10), Some(BackTarget::Log));
+        assert_eq!(back_target_at(12), None, "2 つの間");
+        assert_eq!(back_target_at(14), Some(BackTarget::WorkingTree));
+        assert_eq!(back_target_at(27), Some(BackTarget::WorkingTree));
+        assert_eq!(back_target_at(28), None, "行の右外");
+    }
+
+    #[test]
+    fn 戻る行はコミットの中を見ている間だけ出る() {
+        let mut changes = GitChanges::default();
+        assert!(!changes.shows_back_row(), "作業ツリーでは要らない");
+        assert_eq!(changes.banner_rows(), 0);
+
+        changes.set_source(DiffSource::commit(
+            "0123456789abcdef0123456789abcdef01234567",
+        ));
+        assert!(changes.shows_back_row());
+        assert_eq!(changes.banner_rows(), 1);
+
+        changes.show_log();
+        assert!(!changes.shows_back_row(), "一覧そのものからは戻る先が自明");
     }
 
     fn texts(changes: &GitChanges, review: &ReviewState) -> Vec<String> {

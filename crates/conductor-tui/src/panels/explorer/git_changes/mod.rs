@@ -38,6 +38,8 @@ pub struct GitChanges {
     log: CommitLog,
     cursor: ListCursor,
     view: Viewport,
+    /// 区画の内側の左端。戻る行のどちらを押したかは列で決まる。
+    left: u16,
     clicks: ClickTracker,
     loading: bool,
     /// 作業ツリー差分が届いたら開くパス。
@@ -61,6 +63,7 @@ impl GitChanges {
             listing: Listing::default(),
             log: CommitLog::default(),
             cursor: ListCursor::default(),
+            left: 0,
             view: Viewport::default(),
             clicks: ClickTracker::default(),
             loading: false,
@@ -113,7 +116,21 @@ impl GitChanges {
 
     /// 一覧の先頭でバナーが使う行数。
     pub fn banner_rows(&self) -> usize {
-        usize::from(self.diff.error.is_some())
+        usize::from(self.diff.error.is_some()) + usize::from(self.shows_back_row())
+    }
+
+    /// コミットを出どころにしているか。
+    pub fn on_commit(&self) -> bool {
+        matches!(self.source, DiffSource::Commit { .. })
+    }
+
+    /// コミットを見ている間だけ、出どころを戻す行を出す。
+    pub fn shows_back_row(&self) -> bool {
+        self.listing == Listing::Files && self.on_commit()
+    }
+
+    pub fn set_left(&mut self, left: u16) {
+        self.left = left;
     }
 
     /// worktree が変わった。前の worktree のコミットは新しい方に無いので出どころも戻す。
@@ -259,7 +276,11 @@ impl GitChanges {
     }
 
     /// 行のクリック。ファイルは preview で開いて 2 回目で固定する。区画の外なら None。
-    pub fn click(&mut self, y: u16) -> Option<Vec<Effect>> {
+    pub fn click(&mut self, x: u16, y: u16) -> Option<Vec<Effect>> {
+        if self.shows_back_row() && Some(y) == self.view.top.checked_sub(1) {
+            let col = usize::from(x.saturating_sub(self.left));
+            return render::back_target_at(col).map(|target| self.go_back(target));
+        }
         if self.listing == Listing::Log {
             let row = self.log.select_at(y)?;
             return Some(self.pick(row));
@@ -269,6 +290,17 @@ impl GitChanges {
         self.cursor.select(row, len, self.view);
         let preview = !self.clicks.is_double(row);
         Some(self.activate(row, preview))
+    }
+
+    /// 出どころを戻す。コミットの中から一覧へ、または作業ツリーへ。
+    fn go_back(&mut self, target: render::BackTarget) -> Vec<Effect> {
+        match target {
+            render::BackTarget::Log => self.show_log(),
+            render::BackTarget::WorkingTree => {
+                let base = self.base.clone();
+                vec![self.set_source(DiffSource::working_tree(&base))]
+            }
+        }
     }
 
     /// ホイール。選択は動かさず窓だけ送る。

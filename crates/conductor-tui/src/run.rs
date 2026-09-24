@@ -546,7 +546,10 @@ fn on_mouse(
                     ws.panels.revidere.click(region, mouse.row);
                     Vec::new()
                 }
-                Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
+                Focus::Explorer => ws
+                    .panels
+                    .explorer
+                    .click(mouse.column, mouse.row, &ws.review),
                 Focus::Viewer => {
                     let root = ws.panels.viewer.root().to_path_buf();
                     let (panels, _, ctx) = ws.split(&root);
