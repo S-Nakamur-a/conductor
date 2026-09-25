@@ -298,7 +298,7 @@ fn pointer(showing: bool) -> &'static str {
     if showing { " >" } else { "  " }
 }
 
-fn status_color(theme: &Theme, status: FileStatus) -> ratatui::style::Color {
+pub fn status_color(theme: &Theme, status: FileStatus) -> ratatui::style::Color {
     match status {
         FileStatus::Added | FileStatus::Untracked => theme.diff_add,
         FileStatus::Deleted => theme.diff_del,
@@ -516,6 +516,34 @@ mod tests {
 
         changes.show_log();
         assert!(!changes.shows_back_row(), "一覧そのものからは戻る先が自明");
+    }
+
+    #[test]
+    fn 歩いている間に届いた別のコミットの中身は捨てる() {
+        use conductor_core::keymap::Action;
+
+        let a = "0123456789abcdef0123456789abcdef01234567";
+        let b = "89abcdef0123456789abcdef0123456789abcdef";
+        let mut changes = GitChanges::default();
+        changes.set_viewport(Viewport::new(0, 20));
+        changes.show_log();
+        changes.install_log(
+            0,
+            Ok(vec![
+                super::super::log::tests::commit(a),
+                super::super::log::tests::commit(b),
+            ]),
+        );
+        changes.update(Action::NavigateDown);
+
+        changes.install_overview(DiffState::new(DiffSource::commit(b)));
+        assert!(changes.preview().is_none(), "選んでいない方は捨てる");
+
+        changes.install_overview(DiffState::new(DiffSource::commit(a)));
+        assert!(changes.preview().is_some());
+
+        changes.show_files();
+        assert!(changes.preview().is_none(), "一覧を離れたら出さない");
     }
 
     fn texts(changes: &GitChanges, review: &ReviewState) -> Vec<String> {

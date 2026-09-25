@@ -40,6 +40,8 @@ pub struct GitChanges {
     view: Viewport,
     /// 区画の内側の左端。戻る行のどちらを押したかは列で決まる。
     left: u16,
+    /// コミット一覧で目を通しているコミットの中身。Viewer がこれを出す。
+    preview: Option<DiffState>,
     clicks: ClickTracker,
     loading: bool,
     /// 作業ツリー差分が届いたら開くパス。
@@ -64,6 +66,7 @@ impl GitChanges {
             log: CommitLog::default(),
             cursor: ListCursor::default(),
             left: 0,
+            preview: None,
             view: Viewport::default(),
             clicks: ClickTracker::default(),
             loading: false,
@@ -180,7 +183,8 @@ impl GitChanges {
                 if skip == 0 && untouched {
                     self.log.select_source(&self.source);
                 }
-                Vec::new()
+                // 一覧に入った直後は行が無いので、届いてからここで最初の 1 件を取る。
+                self.preview_selected().into_iter().collect()
             }
             Err(e) => vec![Effect::Status(StatusLevel::Error, e)],
         }
@@ -227,7 +231,7 @@ impl GitChanges {
 
     fn log_key(&mut self, action: Action) -> Option<Vec<Effect>> {
         if self.log.navigate(action) {
-            return Some(Vec::new());
+            return Some(self.preview_selected().into_iter().collect());
         }
         match action {
             Action::Select => Some(self.pick(self.log.selected_row()?)),
@@ -300,6 +304,51 @@ impl GitChanges {
                 let base = self.base.clone();
                 vec![self.set_source(DiffSource::working_tree(&base))]
             }
+        }
+    }
+
+    /// 一覧で選んでいるコミットの中身を取りに行く。作業ツリーの行や読み足しの行では何もしない。
+    /// 前の結果はここで捨てる — 残すと別のコミットの中身を出したまま待つことになる。
+    fn preview_selected(&mut self) -> Option<Effect> {
+        self.preview = None;
+        let Some(Row::Commit(i)) = self.log.selected_row() else {
+            return None;
+        };
+        let oid = self.log.commits().get(i)?.oid.clone();
+        Some(Effect::Spawn(Task::CommitOverview {
+            worktree: self.worktree.clone(),
+            source: DiffSource::commit(&oid),
+        }))
+    }
+
+    /// 選んでいるコミットのものだけ残す。歩いている間に古い結果が届くため。
+    pub fn install_overview(&mut self, diff: DiffState) {
+        let wanted = match self.log.selected_row() {
+            Some(Row::Commit(i)) => self.log.commits().get(i).map(|c| c.oid.clone()),
+            _ => None,
+        };
+        let arrived = match &diff.source {
+            DiffSource::Commit { oid } => Some(oid.as_str()),
+            DiffSource::WorkingTree { .. } => None,
+        };
+        if arrived.is_some() && wanted.as_deref() == arrived {
+            self.preview = Some(diff);
+        }
+    }
+
+    /// preview と対になるコミットの見出し。
+    pub fn previewed_commit(&self) -> Option<&CommitInfo> {
+        match self.log.selected_row() {
+            Some(Row::Commit(i)) => self.log.commits().get(i),
+            _ => None,
+        }
+    }
+
+    /// Viewer が出すコミットの中身。一覧を見ていないときは無い。
+    pub fn preview(&self) -> Option<&DiffState> {
+        match self.listing {
+            Listing::Log => self.preview.as_ref(),
+            Listing::Files => None,
         }
     }
 

@@ -71,6 +71,12 @@ pub enum Task {
         worktree: PathBuf,
         source: DiffSource,
     },
+    /// コミット一覧で目を通しているコミットの中身。開くのではなく見せるだけなので、
+    /// 結果は Git Changes を差し替えず preview として持つ。
+    CommitOverview {
+        worktree: PathBuf,
+        source: DiffSource,
+    },
     HeadLog {
         worktree: PathBuf,
         skip: usize,
@@ -328,6 +334,8 @@ pub enum TaskResult {
     Tree(Box<tree::Snapshot>),
     /// DiffState は失敗の理由を自分の中に持つので Result にしない。
     Diff(Box<DiffState>),
+    /// どのコミットの結果かは DiffState の source が持つ。
+    CommitOverview(Box<DiffState>),
     /// `skip` は log 側の照合用にそのまま返す。
     HeadLog {
         skip: usize,
@@ -430,6 +438,16 @@ impl Task {
                         Box::new(diff)
                     },
                     TaskResult::Diff,
+                );
+            }
+            Task::CommitOverview { worktree, source } => {
+                svc.spawn(
+                    move || {
+                        let mut diff = DiffState::new(source);
+                        diff.load(&worktree, env.word_diff, env.tab_width);
+                        Box::new(diff)
+                    },
+                    TaskResult::CommitOverview,
                 );
             }
             Task::HeadLog {

@@ -302,6 +302,10 @@ impl ExplorerPanel {
             }
             TaskResult::Diff(diff) => self.changes.install(*diff),
             TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
+            TaskResult::CommitOverview(diff) => {
+                self.changes.install_overview(*diff);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }

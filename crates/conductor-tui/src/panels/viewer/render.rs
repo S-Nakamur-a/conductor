@@ -112,6 +112,20 @@ pub fn render(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    // コミット一覧を歩いている間は、選んでいるコミットの中身をここに出す。Viewer の
+    // 本文を差し替えないのは、一覧から離れたら元の読みかけに戻るのが自然なため。
+    if let Some(diff) = ws.panels.explorer.changes.preview() {
+        let lines = commit_overview(
+            diff,
+            ws.panels.explorer.changes.previewed_commit(),
+            &ws.theme,
+            inner.width as usize,
+            inner.height as usize,
+        );
+        frame.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
     let panel = &ws.panels.viewer;
     let strip = Rect {
         height: TAB_ROW,
@@ -961,6 +975,62 @@ fn half_line(
 
 pub fn digit_count(n: usize) -> usize {
     n.max(1).ilog10() as usize + 1
+}
+
+/// コミット 1 つの見出しと変更ファイル。Git Changes の一覧と同じ語彙で並べる。
+fn commit_overview(
+    diff: &conductor_core::diff_state::DiffState,
+    commit: Option<&conductor_core::git_engine::CommitInfo>,
+    theme: &Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    use crate::panels::explorer::git_changes::render::status_color;
+
+    let mut lines = Vec::with_capacity(height);
+    if let Some(c) = commit {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" {} ", c.short_oid),
+                Style::default().fg(theme.info),
+            ),
+            Span::styled(c.message.clone(), Style::default().fg(theme.fg)),
+        ]));
+        lines.push(Line::styled(
+            format!(" {} \u{00b7} {}", c.author, c.time_ago),
+            Style::default().fg(theme.hint),
+        ));
+    }
+    if let Some(error) = &diff.error {
+        lines.push(Line::styled(
+            format!(" \u{26a0} {}", error.replace('\n', " ")),
+            Style::default().fg(theme.error),
+        ));
+    }
+    let added: usize = diff.files.iter().map(|f| f.added_lines).sum();
+    let deleted: usize = diff.files.iter().map(|f| f.deleted_lines).sum();
+    let count = diff.files.len();
+    let unit = if count == 1 { "file" } else { "files" };
+    lines.push(Line::styled(
+        format!(" {count} {unit}  +{added} -{deleted}"),
+        Style::default().fg(theme.hint),
+    ));
+    lines.push(Line::raw(""));
+
+    for file in diff.files.iter().take(height.saturating_sub(lines.len())) {
+        let stats = format!("+{} -{}", file.added_lines, file.deleted_lines);
+        let head = format!("  {} ", file.status.letter());
+        let room = width.saturating_sub(head.len() + stats.len() + 2);
+        let name = crate::strip::truncate_to_width(&file.path, room);
+        let used = head.len() + crate::strip::width_of(&name) as usize + stats.len();
+        lines.push(Line::from(vec![
+            Span::styled(head, Style::default().fg(status_color(theme, file.status))),
+            Span::styled(name, Style::default().fg(theme.fg)),
+            Span::raw(" ".repeat(width.saturating_sub(used + 1).max(1))),
+            Span::styled(stats, Style::default().fg(theme.hint)),
+        ]));
+    }
+    lines
 }
 
 #[cfg(test)]
