@@ -22,6 +22,7 @@ pub mod grep;
 pub mod help;
 pub mod history;
 pub mod input;
+pub mod listing;
 pub mod palette;
 pub mod picker;
 pub mod pr;
@@ -53,6 +54,7 @@ pub enum Modal {
     Publish(publish::Publish),
     Update(update::Update),
     References(references::References),
+    ListingPicker(listing::ListingPicker),
 }
 
 /// 1 行のテキスト入力。確定した文字列は選択中の [Mode] が Effect に変える。
@@ -315,7 +317,8 @@ impl Modal {
             | Modal::CherryPick(_)
             | Modal::Publish(_)
             | Modal::Update(_)
-            | Modal::References(_) => {}
+            | Modal::References(_)
+            | Modal::ListingPicker(_) => {}
         }
     }
 
@@ -334,6 +337,7 @@ impl Modal {
             Modal::Publish(confirm) => confirm.update(key, ctx),
             Modal::Update(update) => update.update(key, ctx),
             Modal::References(list) => list.update(key, ctx),
+            Modal::ListingPicker(picker) => picker.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
                 KeyCode::Tab if prompt.has_modes() => {

@@ -475,15 +475,20 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
             editor.title(),
             editor_lines(editor, &ws.theme, area.width * 60 / 100),
         ),
+        Modal::ListingPicker(picker) => (
+            crate::modal::listing::title(),
+            crate::modal::listing::lines(picker, &ws.theme),
+        ),
         Modal::CommentList(_) => unreachable!("上で返している"),
     };
 
     // 一覧を持つモーダルは画面を大きく取る。中身の丈で決めると、絞り込むたびに
     // 枠が伸び縮みして読みにくい。
-    let rect = if wide(modal) {
-        big
-    } else {
-        centered(area, 60, (body.len() as u16 + 2).min(area.height))
+    // 押した場所に紐づくポップアップは中央に置かない。指定が無いものは今まで通り。
+    let rect = match modal {
+        Modal::ListingPicker(picker) => crate::modal::listing::rect(picker, area),
+        _ if wide(modal) => big,
+        _ => centered(area, 60, (body.len() as u16 + 2).min(area.height)),
     };
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(body).block(modal_block(ws, &title)), rect);
