@@ -1,7 +1,7 @@
 .PHONY: install build dev clean fmt wt-stamp wt-reset
 
 install:
-	cargo install --path .
+	sh scripts/install.sh
 
 build:
 	cargo build --release
