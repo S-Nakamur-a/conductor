@@ -1,5 +1,5 @@
 //! 実 PTY を起動せずに固定できる事実だけを試す: 入力の符号化とサニタイズ、
-//! 生履歴のトリムと再生、UTF-8 の分割、ロケール判定。
+//! 生履歴のトリムと再生、UTF-8 の分割、ロケール判定、組み立てたコマンド行。
 
 use std::collections::VecDeque;
 
@@ -7,6 +7,7 @@ use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence}
 use super::locale::{utf8_chunks, utf8_locale_overrides};
 use super::reader::{note_shown_cursor, trim_raw_history};
 use super::screen::rebuild_parser;
+use super::spawn::{Launch, build_command};
 
 #[test]
 fn 隠している間のカーソル位置は取り込まない() {
@@ -244,4 +245,84 @@ fn 無いlc_allは削除対象にしない() {
     let (sets, removes) = utf8_locale_overrides(None, None, Some("C"));
     assert_eq!(sets, vec![("LC_CTYPE", "C.UTF-8")]);
     assert!(removes.is_empty());
+}
+
+#[test]
+fn フックを降りたセッションはsettingsを渡さず書きもしない() {
+    let repo = tempfile::tempdir().unwrap();
+    let settings = repo.path().join(".conductor/claude-hooks.json");
+    let claude = |session_hooks| Launch::ClaudeCode {
+        repo_root: repo.path(),
+        resume_session_id: None,
+        session_name: None,
+        session_hooks,
+    };
+    let passes_settings = |launch: &Launch<'_>| {
+        let (cmd, _) = build_command(launch, "panel");
+        cmd.get_argv().iter().any(|arg| arg == "--settings")
+    };
+
+    assert!(passes_settings(&claude(true)));
+    assert!(settings.exists());
+
+    std::fs::remove_file(&settings).unwrap();
+    assert!(!passes_settings(&claude(false)));
+    assert!(
+        !settings.exists(),
+        "先客のパネルが次に読む設定を書き換えてはいけない"
+    );
+}
+
+#[test]
+fn フックを降りてもpanel_idは渡しソケットは渡さない() {
+    const SENTINEL: &str = "CONDUCTOR_TEST_SOCK_SENTINEL";
+    let Ok(sentinel) = std::env::var(SENTINEL) else {
+        // 継いだ宛先を消す動きは、宛先が環境にある時しか観測できない。set_var は同じ
+        // プロセスの他のテストに漏れるので、環境を足した子として入り直す。
+        let dir = tempfile::tempdir().unwrap();
+        let sentinel = dir.path().join("entered");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pty::tests::フックを降りてもpanel_idは渡しソケットは渡さない",
+            ])
+            .env(SENTINEL, &sentinel)
+            .env(
+                conductor_core::cc_hook::NOTIFY_SOCK_ENV,
+                "/tmp/first-window.sock",
+            )
+            .status()
+            .unwrap();
+        assert!(status.success());
+        // libtest はフィルタが 1 件も当たらなくても 0 で終わるので、成功だけでは足りない。
+        assert!(
+            sentinel.exists(),
+            "子が本体に入っていない — 上の綴りがテスト名とずれている"
+        );
+        return;
+    };
+
+    let repo = tempfile::tempdir().unwrap();
+    let (cmd, _) = build_command(
+        &Launch::ClaudeCode {
+            repo_root: repo.path(),
+            resume_session_id: None,
+            session_name: None,
+            session_hooks: false,
+        },
+        "panel",
+    );
+    // extra は自分で足した分、full は子が実際に見る分。
+    let set: Vec<&str> = cmd.iter_extra_env_as_str().map(|(key, _)| key).collect();
+    let seen: Vec<&str> = cmd.iter_full_env_as_str().map(|(key, _)| key).collect();
+
+    assert!(
+        set.contains(&conductor_core::cc_hook::PANEL_ID_ENV),
+        "プラグインのフックはこれが無いと先客のソケットへ自力で送る"
+    );
+    assert!(
+        !seen.contains(&conductor_core::cc_hook::NOTIFY_SOCK_ENV),
+        "継いだ宛先を消さないと 2 つ目のウィンドウのパネルが先客のソケットを持つ"
+    );
+    std::fs::write(sentinel, "").unwrap();
 }
