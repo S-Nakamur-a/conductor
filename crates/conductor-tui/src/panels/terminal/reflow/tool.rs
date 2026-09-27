@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::strip::truncate_to_width;
 use conductor_core::claude_log::{
     BUCKET_ORDER, CountedBucket, DisplayBlock, LogEntry, ResultKind, ToolCategory, classify,
     unknown_tool_arg,
@@ -12,7 +13,6 @@ use unicode_width::UnicodeWidthStr;
 
 use super::style::{
     ASSISTANT_MARKER, MARKER_COLS, TOOL_RESULT_GLYPH, ToolStyles, fit_styled_line, pad_glyph_to,
-    truncate_to_width,
 };
 use super::wrap::wrap_plain_text;
 

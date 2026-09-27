@@ -456,6 +456,14 @@ fn on_mouse(
     layout: &Layout,
     mouse: MouseEvent,
 ) {
+    // 下区画の見出しは境界の行にあるが、文字が並んでいる範囲だけは一覧の切り替えに使う。
+    // 残りの桁はそのまま境界のドラッグへ渡す — 枠を掴んで高さを変える操作を潰さない。
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(effects) = bottom_title_click(ws, layout, mouse)
+    {
+        apply(ws, svc, effects);
+        return;
+    }
     if let Some(effects) = drag_divider(ws, layout, mouse) {
         apply(ws, svc, effects);
         return;
@@ -487,6 +495,12 @@ fn on_mouse(
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // 開いているポップアップが先。区画に渡すと裏の一覧が反応してしまう。
+            if let Some(crate::modal::Modal::ListingPicker(picker)) = ws.modals.last() {
+                let effects = picker.click(mouse.column, mouse.row, layout.area);
+                apply(ws, svc, effects);
+                return;
+            }
             let columns = viewer_code_columns(ws, region, mouse);
             ws.chrome.selection = select::area(layout, region).map(|_| {
                 let selection = select::Selection::begin(region, mouse.column, mouse.row);
@@ -546,7 +560,10 @@ fn on_mouse(
                     ws.panels.revidere.click(region, mouse.row);
                     Vec::new()
                 }
-                Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
+                Focus::Explorer => ws
+                    .panels
+                    .explorer
+                    .click(mouse.column, mouse.row, &ws.review),
                 Focus::Viewer => {
                     let root = ws.panels.viewer.root().to_path_buf();
                     let (panels, _, ctx) = ws.split(&root);
@@ -625,6 +642,28 @@ fn drag_divider(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Optio
         return ws.chrome.drag.map(|_| Vec::new());
     }
     None
+}
+
+/// 下区画の見出しを押したら、何を出すかを選ぶポップアップを開く。見出しの外なら None。
+fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
+    let rect = layout.rect(Region::ExplorerChanges)?;
+    if mouse.row != rect.y {
+        return None;
+    }
+    let title = crate::panels::explorer::render::bottom_title(&ws.panels.explorer, ws);
+    let zone = rect.x + 1..rect.x + 1 + crate::strip::width_of(&title);
+    if !zone.contains(&mouse.column) {
+        return None;
+    }
+    let explorer = &ws.panels.explorer;
+    let current = match (explorer.bottom(), explorer.changes.listing()) {
+        (crate::panels::explorer::BottomView::Comments, _) => 2,
+        (_, crate::panels::explorer::git_changes::Listing::Log) => 1,
+        _ => 0,
+    };
+    Some(vec![Effect::PushModal(crate::modal::Modal::ListingPicker(
+        crate::modal::listing::ListingPicker::new(rect.x, rect.y + 1, current),
+    ))])
 }
 
 /// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
@@ -1643,7 +1682,7 @@ mod tests {
 
         ws.focus = Focus::Explorer;
         on_key(&mut ws, &mut svc, key(KeyCode::Char('c')));
-        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 10)
+        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 60, 10)
             .iter()
             .map(ratatui::text::Line::to_string)
             .collect();

@@ -4,6 +4,7 @@
 //! 描くので「論理行 1 つ = 表示行 1 つ」が保たれ、スクロールの上限が total - height で
 //! 素直に決まる。ユーザのターンだけは markdown を通さず全幅の背景ブロックになる。
 
+use crate::strip::truncate_to_width;
 use conductor_core::claude_log::{DisplayBlock, LogEntry, ResultKind, Role};
 use conductor_core::theme::Theme;
 use ratatui::style::{Modifier, Style};
@@ -16,8 +17,7 @@ use crate::panels::viewer::syntax::Highlighter;
 
 use super::style::{
     ASSISTANT_MARKER, INACTIVE, MARKER_COLS, Styles, TEAMMATE_GLYPH, THINKING_GLYPH, USER_MARKER,
-    fit_glyph_line, fit_styled_line, is_width_ambiguous, markdown_theme, pad_glyph_to,
-    truncate_to_width, with_marker,
+    fit_glyph_line, fit_styled_line, is_width_ambiguous, markdown_theme, pad_glyph_to, with_marker,
 };
 use super::tool::{
     count_buckets, render_annotation, render_ask_user_question, render_result_collapsed,

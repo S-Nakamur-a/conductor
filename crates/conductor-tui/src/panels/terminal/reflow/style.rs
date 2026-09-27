@@ -3,10 +3,10 @@
 //! 配色は conductor のテーマではなく Claude Code のダークテーマに固定する。
 //! ライブ PTY と読み比べたときに同じ絵に見えることを優先している。
 
+use crate::strip::truncate_to_width;
 use conductor_core::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// 左のマーカー溝に割り当てる表示カラム数。
@@ -166,24 +166,4 @@ pub(super) fn fit_glyph_line(
     let style = parts.first().map(|(_, s)| *s).unwrap_or_default();
     line.spans[0] = Span::styled(pad_glyph_to(glyph, MARKER_COLS), style);
     line
-}
-
-/// 収まらなければ末尾を省略記号に置き換える。境目は書記素クラスタで決める。
-pub(super) fn truncate_to_width(s: &str, max_cols: usize) -> String {
-    if max_cols == 0 {
-        return String::new();
-    }
-    if UnicodeWidthStr::width(s) <= max_cols {
-        return s.to_string();
-    }
-    let budget = max_cols - 1;
-    let mut width = 0usize;
-    for (i, cluster) in s.grapheme_indices(true) {
-        let cw = UnicodeWidthStr::width(cluster);
-        if width + cw > budget {
-            return format!("{}\u{2026}", &s[..i]);
-        }
-        width += cw;
-    }
-    s.to_string()
 }

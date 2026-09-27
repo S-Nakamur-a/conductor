@@ -9,7 +9,9 @@ use git2::{Delta, DiffFile, Oid, Repository};
 use regex::Regex;
 use similar::{ChangeTag, TextDiff};
 
-use super::{DiffHunk, DiffLine, DiffLineTag, DiffSource, DiffState, FileDiff, InlineSegment};
+use super::{
+    DiffHunk, DiffLine, DiffLineTag, DiffSource, DiffState, FileDiff, FileStatus, InlineSegment,
+};
 
 const CONTEXT_LINES: u32 = 3;
 const FUNC_HEADER_MAX_BYTES: usize = 80;
@@ -200,10 +202,24 @@ fn file_diff(
 
     Ok(Some(FileDiff {
         path,
+        status: file_status(delta.status()),
         added_lines,
         deleted_lines,
         hunks,
     }))
+}
+
+/// Copied を Added に寄せるのは、コピー元が変更されないので利用者には新規追加と同じに見えるため。
+/// Renamed は find_similar を呼んでいないので現状は出ない。
+fn file_status(delta: git2::Delta) -> FileStatus {
+    match delta {
+        git2::Delta::Added | git2::Delta::Copied => FileStatus::Added,
+        git2::Delta::Deleted => FileStatus::Deleted,
+        git2::Delta::Renamed => FileStatus::Renamed,
+        git2::Delta::Typechange => FileStatus::TypeChange,
+        git2::Delta::Untracked => FileStatus::Untracked,
+        _ => FileStatus::Modified,
+    }
 }
 
 fn hunk_start(lines: &[DiffLine]) -> usize {

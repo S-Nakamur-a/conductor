@@ -72,11 +72,36 @@ pub struct DiffHunk {
     pub func_header: Option<String>,
 }
 
+/// 変更の種類。一覧には [FileStatus::letter] の 1 文字を出す。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    TypeChange,
+    Untracked,
+}
+
+impl FileStatus {
+    pub fn letter(self) -> char {
+        match self {
+            Self::Added => 'A',
+            Self::Modified => 'M',
+            Self::Deleted => 'D',
+            Self::Renamed => 'R',
+            Self::TypeChange => 'T',
+            Self::Untracked => 'U',
+        }
+    }
+}
+
 /// 1 ファイルの diff。行数は全ハンクの合計で、バイナリは 0 のまま一覧に残る。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiff {
     /// worktree ルートからの相対パス。
     pub path: String,
+    pub status: FileStatus,
     pub added_lines: usize,
     pub deleted_lines: usize,
     pub hunks: Vec<DiffHunk>,

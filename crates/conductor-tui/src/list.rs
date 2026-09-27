@@ -149,12 +149,22 @@ pub fn row_line(
     if !selected {
         return line;
     }
-    let (bg, fg) = if focused {
-        (theme.selected_bg, theme.selected_fg)
-    } else {
-        (theme.selected_bg_inactive, theme.selected_fg_inactive)
+    // 選択は背景だけで示し、行の色は残す。selected_bg は多くのテーマで accent と同値で、
+    // 行の文字色と衝突して読めなくなるため使わない。Line のスタイルは fg を持つ Span に
+    // 負けるので、fg を渡しても効かない。
+    //
+    // 非フォーカスは selected_bg_inactive を darken/lighten して弱める。多くのテーマで
+    // これと line_selected_bg が同値なので、別の色を使い分けても差が出ない。
+    let bg = match focused {
+        true => theme.selected_bg_inactive,
+        false if theme.light => Theme::lighten(theme.selected_bg_inactive, 0.5),
+        false => Theme::darken(theme.selected_bg_inactive, 0.6),
     };
-    line.style(Style::default().bg(bg).fg(fg).add_modifier(Modifier::BOLD))
+    let style = Style::default().bg(bg);
+    line.style(match focused {
+        true => style.add_modifier(Modifier::BOLD),
+        false => style,
+    })
 }
 
 #[cfg(test)]
@@ -253,5 +263,37 @@ mod tests {
     fn index_atは短い一覧の末尾より後ろを受け付けない() {
         let c = ListCursor::default();
         assert_eq!(c.index_at(5, 2, VIEW), None);
+    }
+}
+
+#[cfg(test)]
+mod row_line_tests {
+    use super::*;
+
+    #[test]
+    fn 選択行は行の色を残し背景だけで示す() {
+        let theme = Theme::default();
+        assert_eq!(
+            theme.accent, theme.selected_bg,
+            "既定テーマで両者が同値であることがこのテストの前提"
+        );
+
+        let line = row_line(
+            vec![Span::styled("x", Style::default().fg(theme.accent))],
+            &theme,
+            true,
+            true,
+        );
+
+        assert_ne!(line.style.bg, Some(theme.selected_bg));
+        assert_eq!(line.spans[0].style.fg, Some(theme.accent));
+    }
+
+    #[test]
+    fn 選択行の背景はフォーカスの有無で変わる() {
+        let theme = Theme::default();
+        let focused = row_line(vec![Span::raw("x")], &theme, true, true);
+        let unfocused = row_line(vec![Span::raw("x")], &theme, true, false);
+        assert_ne!(focused.style.bg, unfocused.style.bg);
     }
 }

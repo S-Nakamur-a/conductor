@@ -2,6 +2,7 @@
 
 use conductor_core::theme::Theme;
 use ratatui::style::{Modifier, Style};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 // チップを閉じる印と増やす印。帯ごとに文字や色が違うと、同じ操作に見えない。
@@ -36,6 +37,26 @@ impl<K> Slot<K> {
 
 pub fn width_of(s: &str) -> u16 {
     UnicodeWidthStr::width(s) as u16
+}
+
+/// 収まらなければ末尾を省略記号に置き換える。境目は書記素クラスタで決める。
+pub fn truncate_to_width(s: &str, max_cols: usize) -> String {
+    if max_cols == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(s) <= max_cols {
+        return s.to_string();
+    }
+    let budget = max_cols - 1;
+    let mut width = 0usize;
+    for (i, cluster) in s.grapheme_indices(true) {
+        let cw = UnicodeWidthStr::width(cluster);
+        if width + cw > budget {
+            return format!("{}\u{2026}", &s[..i]);
+        }
+        width += cw;
+    }
+    s.to_string()
 }
 
 pub fn push<K>(slots: &mut Vec<Slot<K>>, label: String, kind: K) {

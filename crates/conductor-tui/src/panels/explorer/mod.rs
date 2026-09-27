@@ -99,6 +99,7 @@ impl ExplorerPanel {
         }
         if let Some(rect) = layout.rect(Region::ExplorerChanges) {
             self.changes.set_viewport(Viewport::inside(rect, 0));
+            self.changes.set_left(crate::list::inner(rect).x);
             self.comments.set_viewport(Viewport::inside(rect, 0));
         }
     }
@@ -137,10 +138,7 @@ impl ExplorerPanel {
             Action::ShowCommitLog => return Some(self.show_commit_log()),
             Action::ShowCommentList => return Some(self.show(BottomView::Comments)),
             Action::ExitSubPanel if self.pane == Pane::Bottom => {
-                if self.bottom != BottomView::GitChanges || !self.changes.leave_log() {
-                    self.pane = Pane::Tree;
-                }
-                return Some(Vec::new());
+                return Some(self.exit_sub_panel());
             }
             _ => {}
         }
@@ -149,6 +147,21 @@ impl ExplorerPanel {
             (Pane::Bottom, BottomView::GitChanges) => self.changes.update(action),
             (Pane::Bottom, BottomView::Comments) => self.comments.update(action, ctx.review),
         }
+    }
+
+    /// 下区画から 1 段戻る。コミットの中 → コミット一覧 → ツリーの一方向で、
+    /// 一覧から中へは戻さない。戻すと戻る行と往復して抜けられなくなる。
+    fn exit_sub_panel(&mut self) -> Vec<Effect> {
+        if self.bottom == BottomView::GitChanges {
+            if self.changes.shows_back_row() {
+                return self.changes.show_log();
+            }
+            if !self.changes.on_commit() && self.changes.leave_log() {
+                return Vec::new();
+            }
+        }
+        self.pane = Pane::Tree;
+        Vec::new()
     }
 
     /// 一覧を替えると同時にフォーカスも下区画へ移す。見えない相手にキーが飛ぶと迷う。
@@ -213,7 +226,7 @@ impl ExplorerPanel {
     /// 行のクリック。ディレクトリは開閉し、ファイルは preview で開いて 2 回目で固定する
     /// — preview のタブは 1 枚しか残らないので、開いたタブが溜まらない。
     /// 区画の外なら何も起きない。
-    pub fn click(&mut self, y: u16, review: &ReviewState) -> Vec<Effect> {
+    pub fn click(&mut self, x: u16, y: u16, review: &ReviewState) -> Vec<Effect> {
         let visible = self.tree.visible();
         if let Some(row) = self.tree_cursor.index_at(y, visible.len(), self.tree_view) {
             self.pane = Pane::Tree;
@@ -237,7 +250,7 @@ impl ExplorerPanel {
                 self.pane = Pane::Bottom;
                 self.comments.click(y, review)
             }
-            BottomView::GitChanges => match self.changes.click(y) {
+            BottomView::GitChanges => match self.changes.click(x, y) {
                 Some(effects) => {
                     self.pane = Pane::Bottom;
                     effects
@@ -289,6 +302,10 @@ impl ExplorerPanel {
             }
             TaskResult::Diff(diff) => self.changes.install(*diff),
             TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
+            TaskResult::CommitOverview(diff) => {
+                self.changes.install_overview(*diff);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -340,11 +357,12 @@ fn score(path: &str, query: &str) -> Option<i32> {
 mod tests {
     use super::*;
     use crate::workspace::{Focus, StatusLevel, Workspace};
-    use conductor_core::diff_state::{DiffSource, FileDiff};
+    use conductor_core::diff_state::{DiffSource, FileDiff, FileStatus};
 
     fn file(path: &str) -> FileDiff {
         FileDiff {
             path: path.into(),
+            status: FileStatus::Modified,
             added_lines: 1,
             deleted_lines: 0,
             hunks: Vec::new(),
@@ -433,7 +451,7 @@ mod tests {
         let review = ReviewState::default();
 
         for want_preview in [true, false] {
-            let effects = ex.click(0, &review);
+            let effects = ex.click(0, 0, &review);
             let [Effect::OpenFile { path, preview, .. }] = effects.as_slice() else {
                 panic!("{effects:?}");
             };
@@ -447,7 +465,7 @@ mod tests {
         let review = ReviewState::default();
 
         for want_preview in [true, false] {
-            let effects = ws.panels.explorer.click(0, &review);
+            let effects = ws.panels.explorer.click(0, 0, &review);
             let [Effect::OpenFile { path, preview, .. }] = effects.as_slice() else {
                 panic!("{effects:?}");
             };
