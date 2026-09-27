@@ -149,13 +149,12 @@ pub fn row_line(
     if !selected {
         return line;
     }
-    // 選択は背景だけで示し、行が持つ色は残す。selected_bg を敷くと、多くのテーマで
-    // accent と同値なため (icons::IconRole::color にも同じ注意がある) 行の文字が
-    // 背景に溶ける — catppuccin-mocha はどちらも Mauve で完全に読めなくなっていた。
-    // Line のスタイルは fg を持つ Span に負けるので、fg を渡しても効かない。
+    // 選択は背景だけで示し、行の色は残す。selected_bg は多くのテーマで accent と同値で、
+    // 行の文字色と衝突して読めなくなるため使わない。Line のスタイルは fg を持つ Span に
+    // 負けるので、fg を渡しても効かない。
     //
-    // 非フォーカスは地の色へ寄せて弱める。11 テーマ中 9 つで selected_bg_inactive と
-    // line_selected_bg が同値なので、既存の色を 2 つ使い分けても差が出ない。
+    // 非フォーカスは selected_bg_inactive を darken/lighten して弱める。多くのテーマで
+    // これと line_selected_bg が同値なので、別の色を使い分けても差が出ない。
     let bg = match focused {
         true => theme.selected_bg_inactive,
         false if theme.light => Theme::lighten(theme.selected_bg_inactive, 0.5),
