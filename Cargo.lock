@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-core"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-mcp"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "conductor-core",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-svc"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "conductor-core",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-tui"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 dependencies = [
  "aa-media",
  "anyhow",
@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "revidere"
-version = "0.5.0-wt.git-changes-panel-ux"
+version = "0.5.0"
 dependencies = [
  "log",
  "revidere-fixtures",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "revidere-fixtures"
-version = "0.2.0-wt.git-changes-panel-ux"
+version = "0.2.0"
 dependencies = [
  "revidere",
 ]
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-core"
-version = "0.2.0-wt.git-changes-panel-ux"
+version = "0.2.0"
 dependencies = [
  "ignore",
  "libc",

@@ -1,6 +1,6 @@
 [package]
 name = "conductor-mcp"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 edition = "2024"
 publish = false
 description = "conductor mcp-serve: レビュー DB を stdio の MCP で公開するサーバ"

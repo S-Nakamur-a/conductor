@@ -1,6 +1,6 @@
 [package]
 name = "conductor-tui"
-version = "0.1.0-wt.git-changes-panel-ux"
+version = "0.1.0"
 edition = "2024"
 publish = false
 description = "conductor の画面。パネル群とシェル (route / layout / Effect / render)"
