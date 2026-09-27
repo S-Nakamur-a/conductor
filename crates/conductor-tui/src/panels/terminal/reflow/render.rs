@@ -11,7 +11,6 @@ use unicode_width::UnicodeWidthStr;
 use super::Reflow;
 use super::build::LineMeta;
 use super::style::{INACTIVE, USER_BG};
-use crate::strip::truncate_to_width;
 
 /// 追従が外れているときだけ出すチップ。長い順に並べ、収まる最初のものを選ぶ。
 ///
