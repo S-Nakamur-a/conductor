@@ -3,8 +3,12 @@
 //! 端末自身の選択は画面全体の矩形なので、隣の区画の文字が混ざる。マウスを捕まえて
 //! いる間、端末は素のドラッグを選択にしない (Alacritty は Shift で端末側に戻る) ので、
 //! ここで区画の枠の内側に切り詰めた選択を持ち、OSC 52 で端末のクリップボードへ渡す。
+//! OSC 52 を黙って捨てる端末 (GNOME Terminal などの VTE) もあるので、手元に
+//! クリップボードのコマンドがあればそちらにも渡す。
 
+use std::io::Write;
 use std::ops::RangeInclusive;
+use std::process::{Command, Stdio};
 
 use base64::Engine;
 use ratatui::buffer::Buffer;
@@ -126,6 +130,65 @@ pub fn osc52(text: &str) -> Vec<u8> {
     format!("\x1b]52;c;{payload}\x07").into_bytes()
 }
 
+/// 手元のクリップボードへ書くコマンドの候補。先に見つかったものを使う。
+///
+/// 表示サーバの無い環境 (SSH 越しなど) では空。そこは OSC 52 の受け持ち。
+fn clipboard_commands(wayland: bool, x11: bool, macos: bool) -> Vec<&'static [&'static str]> {
+    let mut commands: Vec<&'static [&'static str]> = Vec::new();
+    if macos {
+        commands.push(&["pbcopy"]);
+    }
+    if wayland {
+        commands.push(&["wl-copy"]);
+    }
+    if x11 {
+        commands.push(&["xclip", "-selection", "clipboard"]);
+        commands.push(&["xsel", "--clipboard", "--input"]);
+    }
+    commands
+}
+
+/// 手元のクリップボードへ書く。xclip / xsel / wl-copy は選択を持ち続けるために
+/// 自分を fork して残るので、待つのは別スレッドにして UI を止めない。
+pub fn system_copy(text: &str) {
+    let env_set = |name| std::env::var_os(name).is_some_and(|v| !v.is_empty());
+    let commands = clipboard_commands(
+        env_set("WAYLAND_DISPLAY"),
+        env_set("DISPLAY"),
+        cfg!(target_os = "macos"),
+    );
+    if commands.is_empty() {
+        return;
+    }
+    let text = text.to_owned();
+    std::thread::spawn(move || {
+        for argv in commands {
+            let child = Command::new(argv[0])
+                .args(&argv[1..])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            let mut child = match child {
+                Ok(child) => child,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    log::warn!("clipboard: {} failed to start: {e}", argv[0]);
+                    continue;
+                }
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            match child.wait() {
+                Ok(status) if status.success() => return,
+                Ok(status) => log::warn!("clipboard: {} exited with {status}", argv[0]),
+                Err(e) => log::warn!("clipboard: {} failed: {e}", argv[0]),
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +266,24 @@ mod tests {
             area(&layout, Region::Viewer),
             Some(viewer.inner(Margin::new(1, 1)))
         );
+    }
+
+    #[test]
+    fn 表示サーバが無ければクリップボードのコマンドを使わない() {
+        assert!(clipboard_commands(false, false, false).is_empty());
+    }
+
+    #[test]
+    fn x11ではxclipを先に試しxselに落ちる() {
+        let commands = clipboard_commands(false, true, false);
+        assert_eq!(commands[0][0], "xclip");
+        assert_eq!(commands[1][0], "xsel");
+    }
+
+    #[test]
+    fn waylandではwl_copyを先に試す() {
+        let commands = clipboard_commands(true, true, false);
+        assert_eq!(commands[0][0], "wl-copy");
     }
 
     #[test]

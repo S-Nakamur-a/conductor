@@ -155,6 +155,7 @@ pub fn run(
                 let _ = stdout
                     .write_all(&select::osc52(&text))
                     .and_then(|_| stdout.flush());
+                select::system_copy(&text);
                 apply(
                     ws,
                     svc,
