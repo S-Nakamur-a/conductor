@@ -24,6 +24,7 @@ pub enum Launch<'a> {
         /// 与えると `--resume`。無ければ新しい id を `--session-id` で強制する。
         resume_session_id: Option<&'a str>,
         session_name: Option<&'a str>,
+        session_hooks: bool,
     },
     Shell {
         program: &'a str,
@@ -135,12 +136,16 @@ impl PtyStore {
 }
 
 /// コマンド行と、Claude なら書き込み先になる session id。
-fn build_command(launch: &Launch<'_>, panel_id: &str) -> (CommandBuilder, Option<String>) {
+pub(super) fn build_command(
+    launch: &Launch<'_>,
+    panel_id: &str,
+) -> (CommandBuilder, Option<String>) {
     match launch {
         Launch::ClaudeCode {
             repo_root,
             resume_session_id,
             session_name,
+            session_hooks,
         } => {
             let mut cmd = CommandBuilder::new("claude");
             // resume は既存の id を保つ。新規は id を先に決めて渡すので、「worktree の
@@ -169,15 +174,26 @@ fn build_command(launch: &Launch<'_>, panel_id: &str) -> (CommandBuilder, Option
             );
 
             // --settings はレイヤーを足す形なので、ユーザ自身の settings は生き残る (実測)。
-            match cc_hook::install_settings(repo_root) {
-                Ok(path) => {
+            // 書けば先客のパネルが次に読む claude-hooks.json をこちらの exe に差し替えてしまう。
+            //
+            // PANEL_ID は仕掛けない場合も渡す。プラグインのフックはこれの有無だけで自分が
+            // 黙るかを決めるので、無いと .conductor/cc-notify.path から先客のソケットを
+            // 自力で見つけて active/waiting を送り、先客のストリップが嘘をつく。
+            //
+            // 宛先は逆に、先に消してから仕掛けた枝だけが入れ直す。2 つ目のウィンドウを
+            // 先客のパネルの中から起動すると環境変数でここまで継がれてくるので、渡さない
+            // だけでは子に見えたままになる。
+            cmd.env(cc_hook::PANEL_ID_ENV, panel_id);
+            cmd.env_remove(cc_hook::NOTIFY_SOCK_ENV);
+            match session_hooks.then(|| cc_hook::install_settings(repo_root)) {
+                Some(Ok(path)) => {
                     cmd.arg("--settings");
                     cmd.arg(&path);
-                    cmd.env(cc_hook::PANEL_ID_ENV, panel_id);
                     cmd.env(cc_hook::NOTIFY_SOCK_ENV, cc_hook::socket_path(repo_root));
                 }
                 // 書けなくてもパネルは動かす。ローテーション追跡はログからの推測に落ちる。
-                Err(e) => log::warn!("could not install the Claude session hook: {e}"),
+                Some(Err(e)) => log::warn!("could not install the Claude session hook: {e}"),
+                None => {}
             }
             (cmd, Some(session_id))
         }

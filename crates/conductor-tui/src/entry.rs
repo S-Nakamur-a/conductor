@@ -34,49 +34,61 @@ pub fn run(version: &'static str) -> Result<()> {
         return result;
     }
 
+    let options = Options::parse(std::env::args().skip(1))?;
+
     // 端末に触る前に。断られたら通常スクリーンのまま理由を出して終わりたい。
-    let repo_root = worktree_root(&arg_path(std::env::args().nth(1))?);
-    let _lock = match instance_lock::acquire(&repo_root) {
-        Ok(Some(lock)) => Some(lock),
-        Ok(None) => anyhow::bail!(
-            "conductor is already open on this repository:\n  {}\n\n\
-             All worktrees of a repository share one window.\n\
-             Switch to that window, or close it first.",
-            instance_lock::locked_repo_root(&repo_root).display()
-        ),
-        // 排他できないことを理由にリポジトリを開けなくするほうが害が大きい。
-        Err(e) => {
-            log::warn!("could not take the single-instance lock: {e:#}");
-            None
+    let repo_root = worktree_root(&arg_path(options.repo)?);
+    let _lock = if options.second_window {
+        None
+    } else {
+        match instance_lock::acquire(&repo_root) {
+            Ok(Some(lock)) => Some(lock),
+            Ok(None) => anyhow::bail!(
+                "conductor is already open on this repository:\n  {}\n\n\
+                 All worktrees of a repository share one window.\n\
+                 Switch to that window, close it first, or open a second one\n\
+                 for verification with --second-window.",
+                instance_lock::locked_repo_root(&repo_root).display()
+            ),
+            // 排他できないことを理由にリポジトリを開けなくするほうが害が大きい。
+            Err(e) => {
+                log::warn!("could not take the single-instance lock: {e:#}");
+                None
+            }
         }
     };
 
     let mut ws = workspace(repo_root, version);
+    if options.second_window {
+        ws.panels.terminal.leave_session_hooks_alone();
+    }
     let mut svc = Services::new();
+    // リポジトリにつき 1 つしかない口は、2 つ目のウィンドウでは先客に譲る。FIFO は
+    // 作り直しが先客の読み口を消し、ソケットは宛先を奪う。どちらも黙って壊れる。
+    let repo_channels = !options.second_window;
     // Claude Code のフックがこのソケットへ active/waiting とセッション id を送る。
-    let _cc_notify = match CcNotifyListener::new(&ws.repo.root, svc.sender()) {
-        Ok(listener) => Some(listener),
-        Err(e) => {
-            log::warn!("cc-notify listener: {e:#}");
-            None
-        }
+    let _cc_notify = if repo_channels {
+        started(
+            "cc-notify listener",
+            CcNotifyListener::new(&ws.repo.root, svc.sender()),
+        )
+    } else {
+        None
     };
     // MCP がレビュー DB を書いたら、この FIFO 越しに読み直しを促してくる。
-    let _refresh = match RefreshPipe::new(&ws.repo.root, svc.sender()) {
-        Ok(pipe) => Some(pipe),
-        Err(e) => {
-            log::warn!("refresh pipe: {e:#}");
-            None
-        }
+    let _refresh = if repo_channels {
+        started(
+            "refresh pipe",
+            RefreshPipe::new(&ws.repo.root, svc.sender()),
+        )
+    } else {
+        None
     };
     // 設定ファイルを外部のエディタで書き換えたら、外観をその場で入れ替える。
-    let _config_watch = match ConfigWatcher::new(&config::config_file_path(), svc.sender()) {
-        Ok(watcher) => Some(watcher),
-        Err(e) => {
-            log::warn!("config watcher: {e:#}");
-            None
-        }
-    };
+    let _config_watch = started(
+        "config watcher",
+        ConfigWatcher::new(&config::config_file_path(), svc.sender()),
+    );
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let modes = term::enter(terminal.backend_mut())?;
     let _ = execute!(
@@ -163,6 +175,41 @@ fn repo_state(root: PathBuf, config: &Config) -> RepoState {
     repo
 }
 
+/// 立ち上がらなくても起動は続ける。
+fn started<T>(what: &str, made: Result<T>) -> Option<T> {
+    match made {
+        Ok(value) => Some(value),
+        Err(e) => {
+            log::warn!("{what}: {e:#}");
+            None
+        }
+    }
+}
+
+/// TUI を起動するときの引数。
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Options {
+    repo: Option<String>,
+    second_window: bool,
+}
+
+impl Options {
+    fn parse(args: impl Iterator<Item = String>) -> Result<Self> {
+        let mut options = Self::default();
+        for arg in args {
+            match arg.as_str() {
+                "--second-window" => options.second_window = true,
+                _ if arg.starts_with('-') => {
+                    anyhow::bail!("unknown option: {arg}\nRun conductor --help for the usage.")
+                }
+                _ if options.repo.is_none() => options.repo = Some(arg),
+                _ => anyhow::bail!("conductor opens one repository, but got a second path: {arg}"),
+            }
+        }
+        Ok(options)
+    }
+}
+
 /// 引数 (無ければ現在のディレクトリ) を絶対パスにする。
 fn arg_path(arg: Option<String>) -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
@@ -235,7 +282,7 @@ fn print_help(version: &str) {
     println!(
         r#"conductor {version}
 
-Usage: conductor [REPO_PATH]
+Usage: conductor [REPO_PATH] [--second-window]
        conductor index [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
@@ -269,6 +316,14 @@ Commands:
                up the same way as cc-hook; not usually run by hand.
 
 Options:
+  --second-window  Open a repository that another conductor already has open.
+                   For verifying a build, not for working in. A repository has
+                   one set of .conductor/ channels and the first window keeps
+                   them, so this window has no MCP refresh, no Claude Code
+                   session hooks (the monitor strip stays blank and a panel's
+                   /clear is not followed) and writes no claude-hooks.json.
+                   The review database and the code index are shared as usual.
+
   -V, --version    Print version and exit
   -h, --help       Print this help and exit"#
     );
@@ -298,5 +353,31 @@ fn apply_auto_icons(ws: &mut Workspace) {
     ws.config.ui.icons = Some(set);
     if let Err(e) = config::persist_ui_icons(set) {
         log::warn!("icon set: detected {set:?} but could not write it to config: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Options;
+
+    fn parse(args: &[&str]) -> anyhow::Result<Options> {
+        Options::parse(args.iter().map(|a| (*a).to_string()))
+    }
+
+    #[test]
+    fn フラグとパスは順番を問わない() {
+        let want = Options {
+            repo: Some("../other".into()),
+            second_window: true,
+        };
+        assert_eq!(parse(&["--second-window", "../other"]).unwrap(), want);
+        assert_eq!(parse(&["../other", "--second-window"]).unwrap(), want);
+        assert_eq!(parse(&[]).unwrap(), Options::default());
+    }
+
+    #[test]
+    fn 読めない引数はパスとして飲み込まずに断る() {
+        assert!(parse(&["--secondwindow"]).is_err());
+        assert!(parse(&["one", "two"]).is_err());
     }
 }

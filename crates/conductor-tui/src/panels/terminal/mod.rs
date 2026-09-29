@@ -91,6 +91,8 @@ pub struct TerminalPanel {
     active: HashSet<PathBuf>,
     /// 起こしたセッションの id と、受け取れるようになったら送るプロンプト。
     deferred: HashMap<String, String>,
+    /// 2 つ目のウィンドウは先客の宛先を奪わないよう、フックを仕掛けずに降りる。
+    session_hooks: bool,
 }
 
 impl TerminalPanel {
@@ -110,7 +112,12 @@ impl TerminalPanel {
             waiting: HashSet::new(),
             active: HashSet::new(),
             deferred: HashMap::new(),
+            session_hooks: true,
         }
+    }
+
+    pub fn leave_session_hooks_alone(&mut self) {
+        self.session_hooks = false;
     }
 
     pub fn is_waiting(&self, worktree: &Path) -> bool {
@@ -685,6 +692,7 @@ impl TerminalPanel {
                 repo_root,
                 resume_session_id: resume,
                 session_name,
+                session_hooks: self.session_hooks,
             },
         };
         let index = self.pty.spawn(Spawn {
