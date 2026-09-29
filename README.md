@@ -185,6 +185,23 @@ left alone, which keeps `conductor -V` honest; a dependency's version already
 propagates into everything downstream of it. Third-party crates keep their versions
 and so stay shared in the cache — only the seven workspace crates rebuild.
 
+`make install` from a linked worktree installs as `conductor-<worktree dir name>`
+rather than `conductor`, so several finished worktrees can sit side by side in
+`~/.cargo/bin` and you can tell which build you are running. The main worktree
+still installs as plain `conductor`, and builds keep using the shared `target-dir`,
+so splitting the name costs no build time. Those extra binaries are outside cargo's
+own bookkeeping: remove one with `rm ~/.cargo/bin/conductor-<name>`, not
+`cargo uninstall`.
+
+A repository normally allows one conductor window, shared by all of its worktrees,
+because what lives under `.conductor/` — the review database, the cc-notify socket,
+the refresh FIFO — assumes a single owner. To try a build without closing the window
+you already have, start the second one with `--second-window`. It takes no lock and
+*declines* those per-repository channels rather than taking them over, so the first
+window keeps working. The trade is that the second window has no MCP refresh and no
+Claude Code session hooks — its monitor strip stays blank and a panel's `/clear` is
+not followed — while the review database and the code index stay shared as usual.
+
 CI checks formatting and clippy on every pull request. `.githooks/pre-commit`
 runs the same `cargo fmt --all -- --check` locally if you want to catch it before
 pushing — wiring it up is left to you, since hook setups vary. Pointing git at it
