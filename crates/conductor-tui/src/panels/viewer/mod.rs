@@ -17,11 +17,13 @@ pub mod syntax;
 pub mod tabs;
 pub mod thread;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::OpenDiff;
 use conductor_core::keymap::KeyContext;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
@@ -85,6 +87,10 @@ pub struct ViewerPanel {
     md_rendered: bool,
     /// 構築が重いので最初に必要になるまで作らない。
     highlighter: Option<Highlighter>,
+    /// 直近に出したハイライトを鍵ごとに (最大 [HIGHLIGHT_STASH] 件)。
+    highlight_stash: HighlightStash,
+    /// ツアーが今見せている範囲。パスごと持つので、別のファイルに移った帯が残らない。
+    tour_range: Option<(String, u32, u32)>,
     load: Option<Load>,
     seq: u64,
     /// z の 2 打鍵目を待っている。
@@ -116,6 +122,8 @@ impl ViewerPanel {
             nav: CodeNav::default(),
             md_rendered: false,
             highlighter: None,
+            highlight_stash: VecDeque::new(),
+            tour_range: None,
             load: None,
             seq: 0,
             pending_fold: false,
@@ -305,11 +313,13 @@ impl ViewerPanel {
     }
 
     /// 前のファイルの残りを落とす。読み込みの成否によらず先に通る。
+    ///
+    /// ハイライトだけは残す。鍵が (テーマ, パス, 本文) の指紋なので前のファイルのものが
+    /// 新しいファイルの答えに化けることはなく、捨てると同じファイルを開き直すだけで
+    /// 全行を組み直す — 1410 行で 44ms、これは UI スレッドで払う。
     fn clear_for_new_file(&mut self) {
         self.content.lines.clear();
         self.content.error = None;
-        self.content.highlighted.clear();
-        self.content.highlight_key = None;
         self.content.rendered.clear();
         self.content.rendered_key = None;
         self.content.runs.clear();
@@ -319,6 +329,29 @@ impl ViewerPanel {
         self.diff.clear();
         self.threads.clear();
         self.fold.clear();
+    }
+
+    pub fn set_tour_range(&mut self, path: String, start: u32, end: u32) {
+        self.tour_range = Some((path, start, end));
+    }
+
+    pub(super) fn in_tour_range(&self, line_1: usize) -> bool {
+        let Some((path, start, end)) = &self.tour_range else {
+            return false;
+        };
+        self.content.path.as_deref() == Some(path.as_str())
+            && (*start as usize..=*end as usize).contains(&line_1)
+    }
+
+    /// Content が入れ替わる前に通る。
+    pub(super) fn hold_highlight(&mut self) {
+        if let Some(key) = self.content.highlight_key.take() {
+            hold(
+                &mut self.highlight_stash,
+                key,
+                std::mem::take(&mut self.content.highlighted),
+            );
+        }
     }
 
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
@@ -426,7 +459,7 @@ impl ViewerPanel {
         if rendered {
             refresh_markdown(&mut self.content, highlighter, theme, width);
         } else {
-            refresh_highlight(&mut self.content, highlighter);
+            refresh_highlight(&mut self.content, &mut self.highlight_stash, highlighter);
         }
         Vec::new()
     }
@@ -508,13 +541,40 @@ impl ViewerPanel {
     }
 }
 
-fn refresh_highlight(content: &mut Content, highlighter: &Highlighter) {
+/// 貯めておくファイル数。停留所が数ファイルを往復する分だけあればよい。1 ファイルの
+/// 結果は実測で本文の約 12 倍 (1410 行 53KB のソースで 626KB) なので、増やすほど効く。
+const HIGHLIGHT_STASH: usize = 4;
+
+/// 1 ファイル分のハイライトと、それを取り違えないための鍵。
+type Highlighted = Vec<Vec<(Style, String)>>;
+type HighlightStash = VecDeque<(u64, Highlighted)>;
+
+fn refresh_highlight(content: &mut Content, stash: &mut HighlightStash, highlighter: &Highlighter) {
     let key = syntax::cache_key(highlighter.id(), content.path.as_deref(), &content.lines);
     if content.highlight_key == Some(key) {
         return;
     }
-    content.highlighted = highlighter.highlight(content.path.as_deref(), &content.lines);
+    if let Some(previous) = content.highlight_key.take() {
+        hold(stash, previous, std::mem::take(&mut content.highlighted));
+    }
+    let found = stash
+        .iter()
+        .position(|(held, _)| *held == key)
+        .and_then(|at| stash.remove(at));
+    content.highlighted = match found {
+        Some((_, held)) => held,
+        None => highlighter.highlight(content.path.as_deref(), &content.lines),
+    };
     content.highlight_key = Some(key);
+}
+
+fn hold(stash: &mut HighlightStash, key: u64, highlighted: Highlighted) {
+    if highlighted.is_empty() {
+        return;
+    }
+    stash.retain(|(held, _)| *held != key);
+    stash.push_front((key, highlighted));
+    stash.truncate(HIGHLIGHT_STASH);
 }
 
 /// 折り返し幅も配色も描画のたびに変わりうるので、指紋に畳んで比べる。

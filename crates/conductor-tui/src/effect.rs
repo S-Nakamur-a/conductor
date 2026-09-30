@@ -32,6 +32,13 @@ pub enum Effect {
         path: String,
         line: Option<usize>,
     },
+    /// ツアーが見せている範囲。行を指すだけだと、その停留所がどこまでの話なのかが
+    /// Viewer から消える。
+    TourRange {
+        path: String,
+        start: u32,
+        end: u32,
+    },
     /// Explorer のツリーを開いて選択する。相対パスは Viewer の根から。
     RevealInTree(String),
     SearchInFile(String),
@@ -100,6 +107,9 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             } => {
                 let follow_up = open_file(ws, &path, line, diff, preview);
                 queue.extend(follow_up);
+            }
+            Effect::TourRange { path, start, end } => {
+                ws.panels.viewer.set_tour_range(path, start, end);
             }
             Effect::JumpTo { path, line } => {
                 ws.panels.viewer.note_jump_from();

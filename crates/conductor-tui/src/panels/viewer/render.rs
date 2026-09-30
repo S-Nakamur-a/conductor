@@ -578,7 +578,11 @@ fn gutter_spans(
             false => Span::raw(" ".repeat(badge)),
         });
     }
-    spans.push(Span::styled(" \u{2502} ", muted));
+    // 仕切りを帯に替えて範囲を示す。背景色は全テーマで accent と選択色が同値なので使えない。
+    spans.push(match panel.in_tour_range(line_1) {
+        true => Span::styled(" \u{2590} ", Style::default().fg(theme.accent)),
+        false => Span::styled(" \u{2502} ", muted),
+    });
     spans
 }
 

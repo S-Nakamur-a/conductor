@@ -55,6 +55,7 @@ pub enum CommandId {
     ShowDiffList,
     ShowCommitLog,
     ShowCommentList,
+    ShowTourStops,
     ShowRevidere,
     SwitchTheme,
     ToggleHighContrast,
@@ -192,6 +193,7 @@ commands! {
     ShowDiffList, "Explorer: Show Git Changes", View, Some(Action::ShowDiffList), "git changes diff changed files";
     ShowCommitLog, "Explorer: Show Commit Log", View, Some(Action::ShowCommitLog), "git log commits history hash";
     ShowCommentList, "Explorer: Show Comment List", View, Some(Action::ShowCommentList), "comment review list";
+    ShowTourStops, "Explorer: Show Tour Stops", View, Some(Action::ShowTourStops), "tour stops walkthrough guide plan narration flow order reading";
     ShowRevidere, "Review: Show Review (sections + diff)", View, Some(Action::ShowRevidere), "revidere review sections importance diff two column reading order";
     SwitchTheme, "Switch Theme", View, Some(Action::OpenThemePicker), "theme color light dark appearance palette catppuccin solarized github";
     ToggleHighContrast, "UI: Toggle High Contrast", View, None, "high contrast accessibility a11y legibility bright bold theme readable vision";

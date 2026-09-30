@@ -142,6 +142,7 @@
 "L" = "show_commit_log"
 "c" = "show_comment_list"
 "C" = "open_comment_list"
+"t" = "show_tour_stops"
 "w" = "show_revidere"
 # Shift+W runs the analysis — the "heavier" sibling of w=show, mirroring the
 # do/undo shift-pairing used elsewhere. Dispatched as a global action, so it
@@ -169,9 +170,10 @@
 "g" = "go_to_top"
 "G" = "go_to_bottom"
 "v" = "toggle_viewed"
-# 下区画の 2 つの一覧は互いに行き来できる。ツリーまで戻らないと切り替えられないと、
+# 下区画の一覧は互いに行き来できる。ツリーまで戻らないと切り替えられないと、
 # コメントを見てから変更一覧へ戻る往復が毎回 2 手増える。
 "c" = "show_comment_list"
+"t" = "show_tour_stops"
 "L" = "show_commit_log"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
@@ -190,6 +192,7 @@
 "G" = "go_to_bottom"
 "d" = "show_diff_list"
 "c" = "show_comment_list"
+"t" = "show_tour_stops"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
@@ -216,6 +219,30 @@
 "R" = "reply_to_comment"
 "space" = "view_comment_detail"
 "d" = "show_diff_list"
+"t" = "show_tour_stops"
+"esc" = "exit_sub_panel"
+"ctrl+esc" = "exit_sub_panel"
+":" = "command_palette"
+
+# ── Explorer: tour stops ────────────────────────────────────────────────────────
+# カーソル移動そのものが操作のすべてなので、覚える「開く」キーが要らない。
+# enter はタブを固定するだけ。
+[layers.explorer_tour_stops]
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+"l" = "expand_or_right"
+"right" = "expand_or_right"
+"enter" = "select"
+"d" = "show_diff_list"
+"c" = "show_comment_list"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"

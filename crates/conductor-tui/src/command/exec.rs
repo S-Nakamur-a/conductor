@@ -138,6 +138,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::ShowCommentList | CommandId::ShowReviewComments => {
             show_explorer(ws, BottomView::Comments)
         }
+        CommandId::ShowTourStops => show_explorer(ws, BottomView::TourStops),
         CommandId::SwitchTheme => vec![Effect::PushModal(Modal::ThemePicker(
             theme::ThemePicker::open(&ws.appearance.name),
         ))],

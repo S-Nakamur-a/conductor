@@ -28,4 +28,5 @@ pub mod smart_worktree;
 pub mod term_caps;
 #[cfg(test)]
 mod test_support;
+pub mod tour;
 pub mod update_checker;
