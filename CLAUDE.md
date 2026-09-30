@@ -420,6 +420,15 @@ git, and any rework of theme / keymap / text_input / config.
   pin nothing. One test here passed against a deliberately broken `state.rs` because
   `source_delta` returns `Sources::First` before it ever looks at the key; another passed
   because the root it meant to exercise was never in `self.roots` to begin with.
+- **A test that names a file must put that file there.** Fixtures that only name paths pass
+  for the wrong reason: `tour_stops`'s navigation tests pointed at a script whose files were
+  never written, and stayed green until line-number validation arrived and failed three of
+  them at once.
+- **Throw away the test that only had to produce a number.** Before claiming a cap or a
+  cache actually pays, write a scratch test in the crate, read it with
+  `cargo test --release -- --nocapture`, then delete it — the measurement belongs in a
+  comment, not in the suite. That is where `HIGHLIGHT_STASH`'s "本文の約 12 倍" came from;
+  an estimate left in a comment gives the next person nothing to move the cap against.
 - **Tests never wait on "quiet for N ms".** Use `conductor_tui::testing::wait_for(cond)`
   or `pump` (waits for `Services::in_flight() == 0`). A quiet-time wait only fails on a
   loaded machine; to prove a flake is pre-existing, check main out with
