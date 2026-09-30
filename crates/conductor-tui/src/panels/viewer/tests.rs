@@ -290,6 +290,66 @@ fn 遅れて届いた古い読み込みは捨てる() {
 }
 
 #[test]
+fn 別のファイルを挟んで戻ってもハイライトは組み直さない() {
+    let dir = fixture(&[("a.rs", "fn a() {}\n"), ("b.rs", "fn b() {}\n")]);
+    let mut h = Harness::at(dir.path());
+    let config = conductor_core::config::Config::default();
+    let theme = conductor_core::theme::Theme::default();
+
+    h.peek("a.rs");
+    h.viewer().prepare(&config, &theme);
+    let first = h.ws.panels.viewer.content.highlight_key;
+    assert!(first.is_some());
+
+    // 組み直したかは時間では測れないので、貯めた中身に印を置いて生死を見る。
+    h.viewer().content.highlighted =
+        vec![vec![(ratatui::style::Style::default(), "MARK".to_string())]];
+
+    for path in ["a.rs", "b.rs", "a.rs"] {
+        h.peek(path);
+        h.viewer().prepare(&config, &theme);
+    }
+
+    assert_eq!(h.ws.panels.viewer.content.highlight_key, first);
+    assert_eq!(
+        h.ws.panels.viewer.content.highlighted[0][0].1, "MARK",
+        "貯めたものを使わず組み直している"
+    );
+}
+
+#[test]
+fn 貯める数を超えたら古いファイルの分は捨てる() {
+    let files: Vec<(String, String)> = (0..=HIGHLIGHT_STASH)
+        .map(|i| (format!("f{i}.rs"), format!("fn f{i}() {{}}\n")))
+        .collect();
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let dir = fixture(&borrowed);
+    let mut h = Harness::at(dir.path());
+    let config = conductor_core::config::Config::default();
+    let theme = conductor_core::theme::Theme::default();
+
+    h.peek("f0.rs");
+    h.viewer().prepare(&config, &theme);
+    h.viewer().content.highlighted =
+        vec![vec![(ratatui::style::Style::default(), "MARK".to_string())]];
+
+    for (path, _) in files.iter().skip(1) {
+        h.peek(path);
+        h.viewer().prepare(&config, &theme);
+    }
+    h.peek("f0.rs");
+    h.viewer().prepare(&config, &theme);
+
+    assert_ne!(
+        h.ws.panels.viewer.content.highlighted[0][0].1, "MARK",
+        "押し出されずに残っている"
+    );
+}
+
+#[test]
 fn diffを添えて開くと差分になりescで素の本文へ戻る() {
     let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
     let mut h = Harness::at(dir.path());

@@ -198,7 +198,10 @@ impl ViewerPanel {
         self.scroll = view.scroll;
     }
 
+    /// 出ていく本文のハイライトをパネル側に預ける。ここを通らないと、新しいタブに
+    /// 移った時点で Content ごと既定値に戻り、組み直し以外の道が無くなる。
     fn take_active(&mut self) -> Stashed {
+        self.hold_highlight();
         Stashed {
             content: std::mem::take(&mut self.content),
             diff: std::mem::take(&mut self.diff),

@@ -2,6 +2,7 @@
 
 pub mod git_changes;
 pub mod render;
+pub mod tour_stops;
 pub mod tree;
 
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use crate::task::{Task, TaskResult};
 use crate::workspace::Ctx;
 
 use git_changes::GitChanges;
+use tour_stops::TourStops;
 use tree::FileTree;
 
 /// キーを受け取っている区画。
@@ -36,6 +38,7 @@ pub enum BottomView {
     #[default]
     GitChanges,
     Comments,
+    TourStops,
 }
 
 #[derive(Debug, Default)]
@@ -46,6 +49,7 @@ pub struct ExplorerPanel {
     tree_cursor: ListCursor,
     pub changes: GitChanges,
     pub comments: CommentList,
+    pub tour: TourStops,
     tree_view: Viewport,
     tree_clicks: ClickTracker,
     /// 投げたまま結果がまだ届いていないツリー読みの数。
@@ -90,6 +94,7 @@ impl ExplorerPanel {
             (Pane::Tree, _) => KeyContext::Explorer,
             (Pane::Bottom, BottomView::GitChanges) => self.changes.key_context(),
             (Pane::Bottom, BottomView::Comments) => KeyContext::ExplorerCommentList,
+            (Pane::Bottom, BottomView::TourStops) => KeyContext::ExplorerTourStops,
         }
     }
 
@@ -101,6 +106,8 @@ impl ExplorerPanel {
             self.changes.set_viewport(Viewport::inside(rect, 0));
             self.changes.set_left(crate::list::inner(rect).x);
             self.comments.set_viewport(Viewport::inside(rect, 0));
+            self.tour.set_viewport(Viewport::inside(rect, 0));
+            self.tour.set_width(crate::list::inner(rect).width);
         }
     }
 
@@ -137,6 +144,7 @@ impl ExplorerPanel {
             }
             Action::ShowCommitLog => return Some(self.show_commit_log()),
             Action::ShowCommentList => return Some(self.show(BottomView::Comments)),
+            Action::ShowTourStops => return Some(self.show(BottomView::TourStops)),
             Action::ExitSubPanel if self.pane == Pane::Bottom => {
                 return Some(self.exit_sub_panel());
             }
@@ -146,6 +154,7 @@ impl ExplorerPanel {
             (Pane::Tree, _) => self.tree_key(action),
             (Pane::Bottom, BottomView::GitChanges) => self.changes.update(action),
             (Pane::Bottom, BottomView::Comments) => self.comments.update(action, ctx.review),
+            (Pane::Bottom, BottomView::TourStops) => self.tour.update(action),
         }
     }
 
@@ -166,6 +175,10 @@ impl ExplorerPanel {
 
     /// 一覧を替えると同時にフォーカスも下区画へ移す。見えない相手にキーが飛ぶと迷う。
     pub fn show(&mut self, view: BottomView) -> Vec<Effect> {
+        if view == BottomView::TourStops {
+            let root = self.tree.root().to_path_buf();
+            self.tour.load(&root, &self.changes.diff().files);
+        }
         self.bottom = view;
         self.pane = Pane::Bottom;
         Vec::new()
@@ -257,6 +270,13 @@ impl ExplorerPanel {
                 }
                 None => Vec::new(),
             },
+            BottomView::TourStops => match self.tour.click(y) {
+                Some(effects) => {
+                    self.pane = Pane::Bottom;
+                    effects
+                }
+                None => Vec::new(),
+            },
         }
     }
 
@@ -265,6 +285,7 @@ impl ExplorerPanel {
         match (region, self.bottom) {
             (Region::ExplorerChanges, BottomView::Comments) => self.comments.scroll(delta, review),
             (Region::ExplorerChanges, BottomView::GitChanges) => self.changes.scroll(delta),
+            (Region::ExplorerChanges, BottomView::TourStops) => self.tour.scroll(delta),
             _ => self
                 .tree_cursor
                 .pan(delta, self.tree.visible().len(), self.tree_view),

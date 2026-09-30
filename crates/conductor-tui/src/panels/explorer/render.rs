@@ -50,6 +50,13 @@ pub fn bottom_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'st
             height,
             panel.pane() == Pane::Bottom,
         ),
+        BottomView::TourStops => super::tour_stops::lines(
+            &panel.tour,
+            &ws.theme,
+            ws.config.ui.icon_set(),
+            height,
+            panel.pane() == Pane::Bottom,
+        ),
     }
 }
 
@@ -71,6 +78,7 @@ pub fn bottom_title(panel: &ExplorerPanel, ws: &Workspace) -> String {
     match panel.bottom() {
         BottomView::Comments => crate::comment_list::title(&ws.review, ws.config.ui.icon_set()),
         BottomView::GitChanges => git_changes::render::title(&panel.changes),
+        BottomView::TourStops => super::tour_stops::title(&panel.tour, ws.config.ui.icon_set()),
     }
 }
 

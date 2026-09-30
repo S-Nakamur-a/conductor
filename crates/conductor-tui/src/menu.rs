@@ -132,6 +132,7 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::ShowDiffList, "Git Changes"),
             cmd(CommandId::ShowCommitLog, "Commit Log"),
             cmd(CommandId::ShowCommentList, "Comment List"),
+            cmd(CommandId::ShowTourStops, "Tour Stops"),
             SEP,
             cmd(CommandId::ToggleMarkdownRender, "Markdown: Raw / Rendered"),
             SEP,

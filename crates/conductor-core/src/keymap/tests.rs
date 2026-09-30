@@ -36,6 +36,37 @@ fn 既定は警告なしで組み上がる() {
 }
 
 #[test]
+fn 下区画の一覧はどの層からでも切り替えられる() {
+    let km = KeyMap::default();
+    let views = [
+        (ch('d'), Action::ShowDiffList),
+        (ch('c'), Action::ShowCommentList),
+        (ch('t'), Action::ShowTourStops),
+    ];
+    let layers = [
+        Explorer,
+        ExplorerDiffList,
+        ExplorerCommitLog,
+        ExplorerCommentList,
+        ExplorerTourStops,
+    ];
+    for (key, action) in views {
+        for layer in layers {
+            let own_view = matches!(
+                (layer, action),
+                (ExplorerDiffList | ExplorerCommitLog, Action::ShowDiffList)
+                    | (ExplorerCommentList, Action::ShowCommentList)
+                    | (ExplorerTourStops, Action::ShowTourStops)
+            );
+            assert!(
+                km.resolve(&key, layer) == Some(action) || own_view,
+                "{layer:?} から {action:?} へ行けない"
+            );
+        }
+    }
+}
+
+#[test]
 fn 既定のキーが解決する() {
     let km = KeyMap::default();
     let cases = [
