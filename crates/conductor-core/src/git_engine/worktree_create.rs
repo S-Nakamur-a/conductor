@@ -50,53 +50,74 @@ impl GitEngine {
     }
 
     /// `origin/feature-x` のようなリモートブランチから worktree を作る。ローカルに
-    /// 無ければ upstream 付きで新規ブランチを切り、同名があればそれを checkout して
-    /// origin へ fast-forward する。
+    /// 無ければ upstream 付きで新規ブランチを切り、同名があればリモートへ早送り
+    /// してから checkout する。
     pub fn create_worktree_from_remote(
         &self,
         remote_branch: &str,
         worktree_dir_override: Option<&Path>,
     ) -> Result<PathBuf> {
-        let local_branch = remote_branch
-            .strip_prefix("origin/")
-            .unwrap_or(remote_branch);
+        let local_branch = Self::strip_remote_prefix(remote_branch);
+        if self
+            .list_worktrees()?
+            .iter()
+            .any(|wt| wt.branch == local_branch)
+        {
+            anyhow::bail!("'{local_branch}' is already checked out in another worktree");
+        }
         let dir_name = Self::strip_branch_prefix(local_branch);
         let wt_path = self
             .worktrees_base_dir(worktree_dir_override)?
             .join(dir_name);
-        self.prepare_worktree_slot(&wt_path, dir_name)?;
-        let path = wt_path.display().to_string();
-        if self
+        let existing = self
             .repo
             .find_branch(local_branch, git2::BranchType::Local)
-            .is_ok()
-        {
+            .is_ok();
+        if existing {
+            self.catch_up_with_remote(local_branch, remote_branch)?;
+        }
+        self.prepare_worktree_slot(&wt_path, dir_name)?;
+        let path = wt_path.display().to_string();
+        if existing {
             self.git_worktree_add(&[&path, local_branch])?;
-            self.fast_forward_worktree(&wt_path, remote_branch);
         } else {
             self.git_worktree_add(&["--track", "-b", local_branch, &path, remote_branch])?;
         }
         Ok(wt_path)
     }
 
-    /// 作ったばかりの worktree を remote_branch へ fast-forward する。
+    /// ローカルブランチをリモートへ早送りし、upstream をそこへ張り直す。
+    /// 分岐していれば ref は動かさない。
     ///
-    /// ref を直接進めるのではなく worktree の中で merge させるのは、index と
-    /// 作業ツリーも一緒に動かすため。分岐していれば --ff-only が断るので、
-    /// ローカルのコミットを失う経路が無い。
-    fn fast_forward_worktree(&self, wt_path: &Path, remote_branch: &str) {
-        let out = std::process::Command::new("git")
-            .args(["merge", "--ff-only", remote_branch])
-            .current_dir(wt_path)
-            .output();
-        match out {
-            Ok(o) if !o.status.success() => log::warn!(
-                "could not fast-forward to {remote_branch}: {}",
-                String::from_utf8_lossy(&o.stderr).trim()
-            ),
-            Err(e) => log::warn!("could not run `git merge --ff-only {remote_branch}`: {e}"),
-            Ok(_) => {}
+    /// worktree を作る前に済ませるのは、post-checkout フックがそのブランチに
+    /// コミットを足すと、以後どう足掻いても早送りできなくなるため。
+    fn catch_up_with_remote(&self, local_branch: &str, remote_branch: &str) -> Result<()> {
+        let remote_oid = self
+            .repo
+            .find_reference(&format!("refs/remotes/{remote_branch}"))
+            .with_context(|| format!("no such remote branch: {remote_branch}"))?
+            .peel_to_commit()?
+            .id();
+        let mut local = self
+            .repo
+            .find_reference(&format!("refs/heads/{local_branch}"))?;
+        let local_oid = local.peel_to_commit()?.id();
+        if remote_oid != local_oid && self.repo.graph_descendant_of(remote_oid, local_oid)? {
+            local.set_target(remote_oid, "conductor: fast-forward to the remote branch")?;
         }
+        self.repo
+            .find_branch(local_branch, git2::BranchType::Local)?
+            .set_upstream(Some(remote_branch))?;
+        Ok(())
+    }
+
+    /// `origin/feature/x` から `feature/x` を取り出す。`origin/` だけを剥がすと
+    /// `upstream/main` が丸ごとローカルブランチ名になり、`refs/heads/upstream/main`
+    /// が `refs/remotes/upstream/main` を隠して自分自身を早送りする。
+    fn strip_remote_prefix(remote_branch: &str) -> &str {
+        remote_branch
+            .split_once('/')
+            .map_or(remote_branch, |(_, name)| name)
     }
 
     /// base_branch のローカルブランチを用意し、origin の tip の純粋な子孫なら
@@ -161,8 +182,10 @@ impl GitEngine {
     /// origin/master、ローカルの main、master の順。
     pub fn default_branch(&self) -> String {
         if let Ok(head) = self.repo.find_reference("refs/remotes/origin/HEAD")
-            && let Some(target) = head.symbolic_target()
-            && let Some(name) = target.strip_prefix("refs/remotes/origin/")
+            && let Ok(resolved) = head.resolve()
+            && let Some(name) = resolved
+                .name()
+                .and_then(|n| n.strip_prefix("refs/remotes/origin/"))
         {
             return name.to_string();
         }

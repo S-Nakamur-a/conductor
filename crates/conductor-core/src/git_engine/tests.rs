@@ -448,12 +448,25 @@ fn 既定ブランチはorigin_headから順に落ちる() {
         .delete()
         .unwrap();
 
+    let dangling = TestRepo::with_base_commit();
+    dangling.remote_ref("origin/main", dangling.tip("main"));
+    dangling
+        .repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+            true,
+            "test",
+        )
+        .unwrap();
+
     for (label, repo, want) in [
         (
             "origin/HEAD は origin/main に勝つ",
             &head_points_elsewhere,
             "staging",
         ),
+        ("ぶら下がった origin/HEAD は飛ばす", &dangling, "main"),
         ("origin/HEAD が無ければリモート", &remote_only, "master"),
         ("リモートが無ければローカル", &local_only, "master"),
         ("何も無ければ main", &TestRepo::new(), "main"),
@@ -465,6 +478,7 @@ fn 既定ブランチはorigin_headから順に落ちる() {
 #[test]
 fn リモートブランチの取り込みはローカルに同名があっても作れる() {
     let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
     repo.branch_at("topic", repo.tip("main"));
     repo.file("b.txt", "1\n").add("b.txt");
     let ahead = repo.commit("ahead");
@@ -478,11 +492,22 @@ fn リモートブランチの取り込みはローカルに同名があって�
 
     assert!(wt.join("b.txt").exists(), "origin に追いついていない");
     assert_eq!(repo.tip("topic"), ahead);
+    assert_eq!(
+        repo.repo
+            .find_branch("topic", git2::BranchType::Local)
+            .unwrap()
+            .upstream()
+            .unwrap()
+            .name()
+            .unwrap(),
+        Some("origin/topic")
+    );
 }
 
 #[test]
 fn 分岐したローカルブランチはリモートに合わせて巻き戻らない() {
     let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
     let base = repo.tip("main");
     repo.file("b.txt", "1\n").add("b.txt");
     repo.remote_ref("origin/topic", repo.commit("remote side"));
@@ -497,6 +522,75 @@ fn 分岐したローカルブランチはリモートに合わせて巻き戻�
         .unwrap();
 
     assert_eq!(repo.tip("topic"), local_side);
+}
+
+/// post-checkout がそのブランチにコミットを足すと、worktree を作ったあとでは
+/// もう早送りできない。取り込みはリモートの内容で始まっていなければならない。
+#[test]
+fn post_checkoutがコミットしてもリモートの内容で作られる() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    repo.branch_at("topic", repo.tip("main"));
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("ahead"));
+    write_hook(
+        &repo.path,
+        "post-checkout",
+        "#!/bin/sh\n\
+         echo stamp > stamp.txt\n\
+         git add stamp.txt\n\
+         git -c user.email=t@t -c user.name=t commit -q -m stamp\n",
+    );
+    let dir = tempfile::tempdir().unwrap();
+
+    let wt = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert!(wt.join("b.txt").exists(), "リモートの内容が入っていない");
+}
+
+#[test]
+fn 別のworktreeでチェックアウト中のブランチは取り込まない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    repo.linked_worktree("topic");
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("ahead"));
+    let dir = tempfile::tempdir().unwrap();
+
+    let err = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap_err();
+
+    assert!(err.to_string().contains("already checked out"), "{err}");
+}
+
+#[test]
+fn origin以外のリモートでもローカルブランチ名にリモート名は残らない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("upstream", "/nowhere").unwrap();
+    repo.remote_ref("upstream/topic", repo.tip("main"));
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("upstream/topic", Some(dir.path()))
+        .unwrap();
+
+    assert_eq!(
+        repo.engine().list_local_branches().unwrap(),
+        vec!["main".to_string(), "topic".to_string()]
+    );
+}
+
+fn write_hook(repo_path: &Path, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = repo_path.join(".git/hooks").join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, body).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 #[test]
