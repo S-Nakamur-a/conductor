@@ -23,7 +23,6 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 
 [general]
 # repo = "/path/to/default/repo"       # default repository to open on startup
-# main_branch = "main"                  # main/trunk branch name (default: "main")
 # shell = "/bin/zsh"                    # shell for PTY sessions (default: $SHELL)
 # repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
 # worktree_dir = "~/worktrees"          # custom worktree base directory

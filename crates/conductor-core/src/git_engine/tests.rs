@@ -419,6 +419,87 @@ fn base_refの解決はorigin_ローカル_headの順() {
 }
 
 #[test]
+fn 既定ブランチはorigin_headから順に落ちる() {
+    let head_points_elsewhere = TestRepo::with_base_commit();
+    let tip = head_points_elsewhere.tip("main");
+    head_points_elsewhere
+        .remote_ref("origin/main", tip)
+        .remote_ref("origin/staging", tip);
+    head_points_elsewhere
+        .repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/staging",
+            true,
+            "test",
+        )
+        .unwrap();
+
+    let remote_only = TestRepo::with_base_commit();
+    remote_only.remote_ref("origin/master", remote_only.tip("main"));
+
+    let local_only = TestRepo::with_base_commit();
+    let local_tip = local_only.tip("main");
+    local_only.branch_at("master", local_tip).checkout("master");
+    local_only
+        .repo
+        .find_branch("main", git2::BranchType::Local)
+        .unwrap()
+        .delete()
+        .unwrap();
+
+    for (label, repo, want) in [
+        (
+            "origin/HEAD は origin/main に勝つ",
+            &head_points_elsewhere,
+            "staging",
+        ),
+        ("origin/HEAD が無ければリモート", &remote_only, "master"),
+        ("リモートが無ければローカル", &local_only, "master"),
+        ("何も無ければ main", &TestRepo::new(), "main"),
+    ] {
+        assert_eq!(repo.engine().default_branch(), want, "{label}");
+    }
+}
+
+#[test]
+fn リモートブランチの取り込みはローカルに同名があっても作れる() {
+    let repo = TestRepo::with_base_commit();
+    repo.branch_at("topic", repo.tip("main"));
+    repo.file("b.txt", "1\n").add("b.txt");
+    let ahead = repo.commit("ahead");
+    repo.remote_ref("origin/topic", ahead);
+    let dir = tempfile::tempdir().unwrap();
+
+    let wt = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert!(wt.join("b.txt").exists(), "origin に追いついていない");
+    assert_eq!(repo.tip("topic"), ahead);
+}
+
+#[test]
+fn 分岐したローカルブランチはリモートに合わせて巻き戻らない() {
+    let repo = TestRepo::with_base_commit();
+    let base = repo.tip("main");
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("remote side"));
+    repo.checkout_at("topic", base);
+    repo.file("c.txt", "1\n").add("c.txt");
+    let local_side = repo.commit("local side");
+    repo.checkout("main");
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert_eq!(repo.tip("topic"), local_side);
+}
+
+#[test]
 fn is_branch_merged_intoは同一か祖先なら真() {
     let repo = TestRepo::with_base_commit();
     let feature = repo.linked_worktree("feature");

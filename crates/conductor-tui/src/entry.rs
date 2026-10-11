@@ -156,8 +156,7 @@ fn workspace(root: PathBuf, version: &'static str) -> Workspace {
 /// git でないディレクトリでも開けるよう、引けなければパスから作れるところまでで諦める。
 /// ブランチは worktree 一覧が届いてから決まる。
 fn repo_state(root: PathBuf, config: &Config) -> RepoState {
-    let main_branch = config.general.main_branch.clone();
-    let mut repo = RepoState::open(&root, &main_branch).unwrap_or_else(|_| {
+    let mut repo = RepoState::open(&root).unwrap_or_else(|_| {
         let name = root.file_name().map_or_else(
             || root.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
@@ -165,7 +164,7 @@ fn repo_state(root: PathBuf, config: &Config) -> RepoState {
         RepoState {
             root: root.clone(),
             name,
-            main_branch,
+            main_branch: String::from("main"),
             known: vec![root.clone()],
         }
     });

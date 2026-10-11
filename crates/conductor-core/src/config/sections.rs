@@ -13,7 +13,6 @@ use crate::icons::IconSet;
 pub struct GeneralConfig {
     /// 起動時に開くリポジトリ。
     pub repo: Option<PathBuf>,
-    pub main_branch: String,
     /// PTY で起動するシェル。既定は $SHELL、無ければ /bin/sh。
     pub shell: String,
     /// リポジトリ切り替えの候補。
@@ -31,7 +30,6 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             repo: None,
-            main_branch: String::from("main"),
             shell: std::env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh")),
             repos: Vec::new(),
             worktree_dir: None,

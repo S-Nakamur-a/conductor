@@ -49,8 +49,9 @@ impl GitEngine {
         Ok(wt_dir.to_path_buf())
     }
 
-    /// `origin/feature-x` のようなリモートブランチから、upstream 付きのローカル
-    /// ブランチと worktree を作る。
+    /// `origin/feature-x` のようなリモートブランチから worktree を作る。ローカルに
+    /// 無ければ upstream 付きで新規ブランチを切り、同名があればそれを checkout して
+    /// origin へ fast-forward する。
     pub fn create_worktree_from_remote(
         &self,
         remote_branch: &str,
@@ -64,14 +65,38 @@ impl GitEngine {
             .worktrees_base_dir(worktree_dir_override)?
             .join(dir_name);
         self.prepare_worktree_slot(&wt_path, dir_name)?;
-        self.git_worktree_add(&[
-            "--track",
-            "-b",
-            local_branch,
-            &wt_path.display().to_string(),
-            remote_branch,
-        ])?;
+        let path = wt_path.display().to_string();
+        if self
+            .repo
+            .find_branch(local_branch, git2::BranchType::Local)
+            .is_ok()
+        {
+            self.git_worktree_add(&[&path, local_branch])?;
+            self.fast_forward_worktree(&wt_path, remote_branch);
+        } else {
+            self.git_worktree_add(&["--track", "-b", local_branch, &path, remote_branch])?;
+        }
         Ok(wt_path)
+    }
+
+    /// 作ったばかりの worktree を remote_branch へ fast-forward する。
+    ///
+    /// ref を直接進めるのではなく worktree の中で merge させるのは、index と
+    /// 作業ツリーも一緒に動かすため。分岐していれば --ff-only が断るので、
+    /// ローカルのコミットを失う経路が無い。
+    fn fast_forward_worktree(&self, wt_path: &Path, remote_branch: &str) {
+        let out = std::process::Command::new("git")
+            .args(["merge", "--ff-only", remote_branch])
+            .current_dir(wt_path)
+            .output();
+        match out {
+            Ok(o) if !o.status.success() => log::warn!(
+                "could not fast-forward to {remote_branch}: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+            Err(e) => log::warn!("could not run `git merge --ff-only {remote_branch}`: {e}"),
+            Ok(_) => {}
+        }
     }
 
     /// base_branch のローカルブランチを用意し、origin の tip の純粋な子孫なら
@@ -130,6 +155,28 @@ impl GitEngine {
         }
         names.sort();
         Ok(names)
+    }
+
+    /// このリポジトリの既定ブランチ。origin/HEAD の指す先、origin/main、
+    /// origin/master、ローカルの main、master の順。
+    pub fn default_branch(&self) -> String {
+        if let Ok(head) = self.repo.find_reference("refs/remotes/origin/HEAD")
+            && let Some(target) = head.symbolic_target()
+            && let Some(name) = target.strip_prefix("refs/remotes/origin/")
+        {
+            return name.to_string();
+        }
+        for cand in ["origin/main", "origin/master"] {
+            if self.repo.revparse_single(cand).is_ok() {
+                return cand.trim_start_matches("origin/").to_string();
+            }
+        }
+        for cand in ["main", "master"] {
+            if self.repo.find_branch(cand, git2::BranchType::Local).is_ok() {
+                return cand.to_string();
+            }
+        }
+        String::from("main")
     }
 
     /// 新しい worktree の起点として必ず解決できる ref を返す。
