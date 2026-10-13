@@ -419,6 +419,262 @@ fn base_refの解決はorigin_ローカル_headの順() {
 }
 
 #[test]
+fn 既定ブランチはorigin_headから順に落ちる() {
+    let head_points_elsewhere = TestRepo::with_base_commit();
+    let tip = head_points_elsewhere.tip("main");
+    head_points_elsewhere
+        .remote_ref("origin/main", tip)
+        .remote_ref("origin/staging", tip);
+    head_points_elsewhere
+        .repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/staging",
+            true,
+            "test",
+        )
+        .unwrap();
+
+    let remote_only = TestRepo::with_base_commit();
+    remote_only.remote_ref("origin/master", remote_only.tip("main"));
+
+    let local_only = TestRepo::with_base_commit();
+    let local_tip = local_only.tip("main");
+    local_only.branch_at("master", local_tip).checkout("master");
+    local_only
+        .repo
+        .find_branch("main", git2::BranchType::Local)
+        .unwrap()
+        .delete()
+        .unwrap();
+
+    let dangling = TestRepo::with_base_commit();
+    dangling.remote_ref("origin/main", dangling.tip("main"));
+    dangling
+        .repo
+        .reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+            true,
+            "test",
+        )
+        .unwrap();
+
+    for (label, repo, want) in [
+        (
+            "origin/HEAD は origin/main に勝つ",
+            &head_points_elsewhere,
+            "staging",
+        ),
+        ("ぶら下がった origin/HEAD は飛ばす", &dangling, "main"),
+        ("origin/HEAD が無ければリモート", &remote_only, "master"),
+        ("リモートが無ければローカル", &local_only, "master"),
+        ("何も無ければ main", &TestRepo::new(), "main"),
+    ] {
+        assert_eq!(repo.engine().default_branch(), want, "{label}");
+    }
+}
+
+#[test]
+fn リモートブランチの取り込みはローカルに同名があっても作れる() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    repo.branch_at("topic", repo.tip("main"));
+    repo.file("b.txt", "1\n").add("b.txt");
+    let ahead = repo.commit("ahead");
+    repo.remote_ref("origin/topic", ahead);
+    let dir = tempfile::tempdir().unwrap();
+
+    let wt = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert!(wt.join("b.txt").exists(), "origin に追いついていない");
+    assert_eq!(repo.tip("topic"), ahead);
+    assert_eq!(
+        repo.repo
+            .find_branch("topic", git2::BranchType::Local)
+            .unwrap()
+            .upstream()
+            .unwrap()
+            .name()
+            .unwrap(),
+        Some("origin/topic")
+    );
+}
+
+#[test]
+fn 分岐したローカルブランチはリモートに合わせて巻き戻らない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    let base = repo.tip("main");
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("remote side"));
+    repo.checkout_at("topic", base);
+    repo.file("c.txt", "1\n").add("c.txt");
+    let local_side = repo.commit("local side");
+    repo.checkout("main");
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert_eq!(repo.tip("topic"), local_side);
+}
+
+/// post-checkout がそのブランチにコミットを足すと、worktree を作ったあとでは
+/// もう早送りできない。取り込みはリモートの内容で始まっていなければならない。
+#[test]
+fn post_checkoutがコミットしてもリモートの内容で作られる() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    repo.branch_at("topic", repo.tip("main"));
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("ahead"));
+    write_hook(
+        &repo.path,
+        "post-checkout",
+        "#!/bin/sh\n\
+         echo stamp > stamp.txt\n\
+         git add stamp.txt\n\
+         git -c user.email=t@t -c user.name=t commit -q -m stamp\n",
+    );
+    let dir = tempfile::tempdir().unwrap();
+
+    let wt = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert!(
+        wt.join("stamp.txt").exists(),
+        "post-checkout が走っていない"
+    );
+    assert!(wt.join("b.txt").exists(), "リモートの内容が入っていない");
+}
+
+#[test]
+fn 別のworktreeでチェックアウト中のブランチは取り込まない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    let live = repo.linked_worktree("topic");
+    let before = repo.tip("topic");
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("origin/topic", repo.commit("ahead"));
+    let dir = tempfile::tempdir().unwrap();
+
+    let err = repo
+        .engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap_err();
+
+    assert!(err.to_string().contains("already checked out"), "{err}");
+    assert!(live.path.exists(), "生きている worktree が消えた");
+    assert_eq!(repo.tip("topic"), before, "ref だけ進んでいる");
+}
+
+/// worktree のディレクトリ名は feature/topic と topic を同じ "topic" に潰す。
+/// 別の場所で生きている worktree を、名前が当たっただけで消してはいけない。
+#[test]
+fn 置き場所の違う同名worktreeはpruneしない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    let live = tempfile::tempdir().unwrap();
+    let live_wt = live.path().join("topic");
+    run_git(
+        &repo.path,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "feature/topic",
+            &live_wt.display().to_string(),
+        ],
+    );
+    fs::write(live_wt.join("wip.txt"), "uncommitted\n").unwrap();
+    repo.remote_ref("origin/topic", repo.tip("main"));
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("origin/topic", Some(dir.path()))
+        .unwrap();
+
+    assert!(live_wt.join("wip.txt").exists(), "未コミットごと消された");
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// 本家 (upstream) のブランチを覗くだけで、自分のフォーク (origin) を向いていた
+/// push 先が書き換わってはいけない。
+#[test]
+fn 別のリモートを追跡中のブランチはupstreamを奪われない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("origin", "/nowhere").unwrap();
+    repo.repo.remote("upstream", "/nowhere").unwrap();
+    repo.remote_ref("origin/topic", repo.tip("main"));
+    repo.branch_at("topic", repo.tip("main"));
+    repo.repo
+        .find_branch("topic", git2::BranchType::Local)
+        .unwrap()
+        .set_upstream(Some("origin/topic"))
+        .unwrap();
+    repo.file("b.txt", "1\n").add("b.txt");
+    repo.remote_ref("upstream/topic", repo.commit("upstream side"));
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("upstream/topic", Some(dir.path()))
+        .unwrap();
+
+    assert_eq!(
+        repo.repo
+            .find_branch("topic", git2::BranchType::Local)
+            .unwrap()
+            .upstream()
+            .unwrap()
+            .name()
+            .unwrap(),
+        Some("origin/topic")
+    );
+}
+
+#[test]
+fn origin以外のリモートでもローカルブランチ名にリモート名は残らない() {
+    let repo = TestRepo::with_base_commit();
+    repo.repo.remote("upstream", "/nowhere").unwrap();
+    repo.remote_ref("upstream/topic", repo.tip("main"));
+    let dir = tempfile::tempdir().unwrap();
+
+    repo.engine()
+        .create_worktree_from_remote("upstream/topic", Some(dir.path()))
+        .unwrap();
+
+    assert_eq!(
+        repo.engine().list_local_branches().unwrap(),
+        vec!["main".to_string(), "topic".to_string()]
+    );
+}
+
+fn write_hook(repo_path: &Path, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = repo_path.join(".git/hooks").join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, body).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
 fn is_branch_merged_intoは同一か祖先なら真() {
     let repo = TestRepo::with_base_commit();
     let feature = repo.linked_worktree("feature");

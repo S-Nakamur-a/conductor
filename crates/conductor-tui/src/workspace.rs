@@ -125,8 +125,8 @@ pub struct RepoState {
 }
 
 impl RepoState {
-    /// リポジトリを開いて名前を決める。
-    pub fn open(root: &Path, main_branch: &str) -> anyhow::Result<Self> {
+    /// リポジトリを開いて名前と既定ブランチを決める。
+    pub fn open(root: &Path) -> anyhow::Result<Self> {
         let git = conductor_core::git_engine::GitEngine::open(root)?;
         let dir_name = |path: &Path| {
             path.file_name().map_or_else(
@@ -140,7 +140,7 @@ impl RepoState {
         Ok(Self {
             root: root.to_path_buf(),
             name,
-            main_branch: main_branch.to_string(),
+            main_branch: git.default_branch(),
             known: vec![root.to_path_buf()],
         })
     }
@@ -807,10 +807,10 @@ mod tests {
     fn 再起動が要る設定は警告だけで写さない() {
         let mut ws = Workspace::for_test();
         let mut new = ws.config.clone();
-        new.general.main_branch = "trunk".into();
+        new.general.shell = "/bin/fish".into();
 
         let effects = ws.adopt_config(&new);
-        assert_ne!(ws.config.general.main_branch, "trunk");
+        assert_ne!(ws.config.general.shell, "/bin/fish");
         assert!(matches!(
             effects.as_slice(),
             [Effect::Status(StatusLevel::Warning, _)]

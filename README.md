@@ -139,7 +139,7 @@ All fields are optional with sensible defaults, so an absent config file is a
 valid one. The full set of keys — with every field commented out at its default
 — is in [docs/configuration.md](docs/configuration.md).
 
-The sections are `[general]` (repo, main branch, shell, worktree directory,
+The sections are `[general]` (repo, shell, worktree directory,
 Claude Code auto-resume), `[terminal]` (scrollback limits), `[viewer]` (syntax
 theme, tab width), `[diff]` (unified / side-by-side, word diff), `[ui]` (colour
 theme, contrast, icons, startup animation), `[layout]` (column and split

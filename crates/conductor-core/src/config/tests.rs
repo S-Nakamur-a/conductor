@@ -38,7 +38,6 @@ fn non_default() -> Config {
     Config {
         general: GeneralConfig {
             repo: Some(PathBuf::from("/r")),
-            main_branch: String::from("master"),
             shell: String::from("/bin/fish"),
             repos: vec![PathBuf::from("/a")],
             worktree_dir: Some(PathBuf::from("/wt")),
@@ -111,10 +110,10 @@ fn セクションごとに鍵を読む() {
     let d = Config::default();
     let cases = [
         (
-            "[general]\nmain_branch = \"develop\"",
+            "[general]\nshell = \"/bin/fish\"",
             Config {
                 general: GeneralConfig {
-                    main_branch: String::from("develop"),
+                    shell: String::from("/bin/fish"),
                     ..d.general.clone()
                 },
                 ..d.clone()
@@ -219,14 +218,7 @@ fn keybindsは生のテーブルのまま持つ() {
 
 #[test]
 fn 捨てた設定と知らない鍵は無視される() {
-    let expected = Config {
-        general: GeneralConfig {
-            main_branch: String::from("develop"),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    assert_eq!(parse(LEGACY_CONFIG), expected);
+    assert_eq!(parse(LEGACY_CONFIG), Config::default());
 }
 
 #[test]
@@ -460,11 +452,6 @@ fn 全フィールドはliveかrestartのどちらか一方に属する() {
         (
             "general.repo",
             |c| c.general.repo = Some("/p".into()),
-            Restart,
-        ),
-        (
-            "general.main_branch",
-            |c| c.general.main_branch = "master".into(),
             Restart,
         ),
         (

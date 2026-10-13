@@ -352,8 +352,8 @@ fn switch_repo(
         )];
     }
     let root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let name = match RepoState::open(&root, &ws.config.general.main_branch) {
-        Ok(repo) => repo.name.clone(),
+    let opened = match RepoState::open(&root) {
+        Ok(repo) => repo,
         Err(e) => {
             return vec![Effect::Status(
                 StatusLevel::Error,
@@ -372,12 +372,8 @@ fn switch_repo(
     }
     let stopped = ws.panels.revidere.abort();
     let known = std::mem::take(&mut ws.repo.known);
-    ws.repo = RepoState {
-        root: root.clone(),
-        name: name.clone(),
-        main_branch: ws.config.general.main_branch.clone(),
-        known,
-    };
+    let name = opened.name.clone();
+    ws.repo = RepoState { known, ..opened };
     ws.repo.remember(&root);
     ws.review = Default::default();
     ws.panels.worktree = Default::default();
