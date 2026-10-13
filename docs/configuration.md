@@ -10,7 +10,6 @@ immediately on save; everything else needs a restart.
 ```toml
 [general]
 # repo = "/path/to/default/repo"       # default repository to open on startup
-# main_branch = "main"                  # main/trunk branch name (default: "main")
 # shell = "/bin/zsh"                    # shell for PTY sessions (default: $SHELL)
 # repos = ["/path/to/repo1", "/path/to/repo2"]  # additional repos for multi-repo support
 # worktree_dir = "~/worktrees"          # custom worktree base directory
@@ -108,6 +107,15 @@ immediately on save; everything else needs a restart.
 # not use tools, the output format, which directory to read — is part of the
 # prompt Conductor builds for that task.
 ```
+
+## The default branch
+
+There is no setting for it. Conductor reads it from the repository itself —
+what `origin/HEAD` points at, then `origin/main`, `origin/master`, and finally a
+local `main` or `master`. A repository whose default branch is `staging` is
+reviewed against `staging`, and new worktrees are cut from it, without any
+configuration. One global setting could not be right for two repositories at
+once, which is why `general.main_branch` is gone.
 
 ## Key-bind action names
 
