@@ -5,14 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use git2::{Repository, Status, StatusOptions, StatusShow};
 
-use super::{GitEngine, ReviewState, WorktreeInfo};
-
-struct ChangeCounts {
-    added: usize,
-    modified: usize,
-    deleted: usize,
-    staged: usize,
-}
+use super::{ChangeCounts, GitEngine, ReviewState, WorktreeInfo};
 
 impl GitEngine {
     /// main と linked のすべての worktree を、ブランチとステータス件数つきで返す。
@@ -138,16 +131,11 @@ impl GitEngine {
         self.worktree_info_at(wt.path(), false)
     }
 
+    /// 変更件数は数えない (counts は None)。理由は WorktreeInfo::counts。
     fn worktree_info_at(&self, path: &Path, is_main: bool) -> Result<WorktreeInfo> {
         let repo = Repository::open(path)
             .with_context(|| format!("cannot open repo at {}", path.display()))?;
 
-        let counts = Self::change_counts(&repo).unwrap_or(ChangeCounts {
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            staged: 0,
-        });
         let (ahead, behind) = Self::ahead_behind_upstream(&repo);
         let head = repo.head().ok();
         let head_oid = head
@@ -162,11 +150,7 @@ impl GitEngine {
             path: path.to_path_buf(),
             branch: Self::current_branch_name(&repo),
             is_main,
-            added: counts.added,
-            modified: counts.modified,
-            deleted: counts.deleted,
-            staged: counts.staged,
-            is_clean: counts.added == 0 && counts.modified == 0 && counts.deleted == 0,
+            counts: None,
             ahead,
             behind,
             head_oid,
@@ -217,8 +201,15 @@ impl GitEngine {
         "HEAD (detached)".to_string()
     }
 
+    /// 1 つの worktree の変更件数。
+    pub fn change_counts_at(path: &Path) -> Result<ChangeCounts> {
+        let repo = Repository::open(path)
+            .with_context(|| format!("cannot open repo at {}", path.display()))?;
+        Self::change_counts(&repo)
+    }
+
     /// added / modified / deleted はファイルごとに 1 バケットだが、staged だけは
-    /// それらと重複して数える (理由は WorktreeInfo::staged)。
+    /// それらと重複して数える (理由は ChangeCounts::staged)。
     fn change_counts(repo: &Repository) -> Result<ChangeCounts> {
         const STAGED: Status = Status::INDEX_NEW
             .union(Status::INDEX_MODIFIED)
@@ -238,12 +229,7 @@ impl GitEngine {
             .renames_head_to_index(true);
         let statuses = repo.statuses(Some(&mut opts))?;
 
-        let mut counts = ChangeCounts {
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            staged: 0,
-        };
+        let mut counts = ChangeCounts::default();
         for entry in statuses.iter() {
             let s = entry.status();
             if s.intersects(STAGED) {

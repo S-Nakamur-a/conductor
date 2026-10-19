@@ -39,12 +39,9 @@ pub fn conductor_dir(repo_path: &Path) -> PathBuf {
         .join(".conductor")
 }
 
-/// 1 つの worktree のブランチと変更件数。
-#[derive(Debug, Clone)]
-pub struct WorktreeInfo {
-    pub path: PathBuf,
-    pub branch: String,
-    pub is_main: bool,
+/// 1 つの worktree の変更件数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChangeCounts {
     pub added: usize,
     pub modified: usize,
     pub deleted: usize,
@@ -52,7 +49,28 @@ pub struct WorktreeInfo {
     /// 数えるので git add しても合計が動かず、これが無いとステージ操作を
     /// 観測できる信号が消える (ファイルウォッチャーは .git/ を見ない)。
     pub staged: usize,
-    pub is_clean: bool,
+}
+
+impl ChangeCounts {
+    pub fn is_clean(&self) -> bool {
+        self.total() == 0
+    }
+
+    pub fn total(&self) -> usize {
+        self.added + self.modified + self.deleted
+    }
+}
+
+/// 1 つの worktree のブランチと変更件数。
+#[derive(Debug, Clone)]
+pub struct WorktreeInfo {
+    pub path: PathBuf,
+    pub branch: String,
+    pub is_main: bool,
+    /// 数え終わるまで None。作業ツリーを歩くので 1 worktree あたり実測 6〜7.6 秒
+    /// (175,388 ファイル)。一覧は先に出して後から埋める。
+    /// bool にしないのは、数える前の worktree を clean と名乗らせないため。
+    pub counts: Option<ChangeCounts>,
     /// upstream に対する ahead / behind。upstream が無ければ None。
     pub ahead: Option<usize>,
     pub behind: Option<usize>,

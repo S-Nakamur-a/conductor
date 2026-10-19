@@ -11,7 +11,9 @@ use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, ApiConfig, LayoutConfig, ReviewConfig};
 use conductor_core::diff_state::{DiffSource, DiffState};
-use conductor_core::git_engine::{CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir};
+use conductor_core::git_engine::{
+    ChangeCounts, CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir,
+};
 use conductor_core::grep_search::{self, GrepMatch};
 use conductor_core::pr_intake::{self, PrIntakeOutcome};
 use conductor_core::review_publish::{self, PublishComment, PublishOutcome, PublishRequest};
@@ -50,6 +52,10 @@ pub struct TaskEnv {
 #[derive(Debug)]
 pub enum Task {
     ListWorktrees,
+    /// 1 つの worktree の変更件数。一覧とは別に走らせる (理由は WorktreeInfo::counts)。
+    WorktreeCounts {
+        path: PathBuf,
+    },
     CreateWorktree {
         branch: String,
     },
@@ -327,6 +333,11 @@ pub enum ReviewWrite {
 #[derive(Debug)]
 pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
+    /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
+    WorktreeCounts {
+        path: PathBuf,
+        counts: Option<ChangeCounts>,
+    },
     /// 作成できた worktree のパスと、そのブランチ。
     WorktreeCreated(Result<(PathBuf, String), String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
@@ -405,6 +416,19 @@ impl Task {
         match self {
             Task::ListWorktrees => {
                 svc.spawn(move || list_worktrees(&env), TaskResult::Worktrees);
+            }
+            Task::WorktreeCounts { path } => {
+                svc.spawn(
+                    move || {
+                        let counts = GitEngine::change_counts_at(&path)
+                            .inspect_err(|e| {
+                                log::warn!("could not count changes in {}: {e:#}", path.display());
+                            })
+                            .ok();
+                        (path, counts)
+                    },
+                    |(path, counts)| TaskResult::WorktreeCounts { path, counts },
+                );
             }
             Task::CreateWorktree { branch } => {
                 svc.spawn(
