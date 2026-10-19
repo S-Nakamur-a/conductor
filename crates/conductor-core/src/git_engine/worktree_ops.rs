@@ -16,29 +16,43 @@ struct ChangeCounts {
 
 impl GitEngine {
     /// main と linked のすべての worktree を、ブランチとステータス件数つきで返す。
-    /// 調べられなかった worktree はログに残して飛ばす。
+    /// 1 つでも調べられればそれを返し、調べられなかったものはログに残して飛ばす。
+    ///
+    /// 全滅したときだけ Err にするのは、空の一覧が「worktree が無いリポジトリ」と
+    /// 区別できないため。libgit2 が読めない index (split index など) では全滅する。
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
         let mut infos = Vec::new();
+        let mut first_error = None;
 
         let main_path = self.main_worktree_path()?;
         match self.worktree_info_at(&main_path, true) {
             Ok(info) => infos.push(info),
-            Err(e) => log::warn!(
-                "failed to inspect main worktree at {}: {e}",
-                main_path.display()
-            ),
+            Err(e) => {
+                log::warn!(
+                    "failed to inspect main worktree at {}: {e}",
+                    main_path.display()
+                );
+                first_error = Some(e.context(format!("main worktree at {}", main_path.display())));
+            }
         }
 
         if let Ok(names) = self.repo.worktrees() {
             for name in names.iter().flatten() {
                 match self.linked_worktree_info(name) {
                     Ok(info) => infos.push(info),
-                    Err(e) => log::warn!("failed to inspect linked worktree '{name}': {e}"),
+                    Err(e) => {
+                        log::warn!("failed to inspect linked worktree '{name}': {e}");
+                        first_error =
+                            first_error.or_else(|| Some(e.context(format!("worktree '{name}'"))));
+                    }
                 }
             }
         }
 
-        Ok(infos)
+        match first_error {
+            Some(e) if infos.is_empty() => Err(e),
+            _ => Ok(infos),
+        }
     }
 
     /// ローカルブランチ名をソート済みで返す。

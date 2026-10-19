@@ -321,7 +321,9 @@ fn run_timers(
     let now = Instant::now();
     let mut dirty = false;
     if worktree_poll.due(now) {
-        apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+        if !ws.panels.worktree.is_listing() {
+            apply(ws, svc, vec![Effect::Spawn(Task::ListWorktrees)]);
+        }
         // 一覧と同じ周期で見直す。作り直しに失敗しても次の周回で試し直せる。
         dirty |= file_watch.sync(ws, svc);
     }

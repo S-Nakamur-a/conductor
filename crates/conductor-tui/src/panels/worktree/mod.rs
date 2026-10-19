@@ -21,6 +21,7 @@ pub struct WorktreePanel {
     selected: Option<PathBuf>,
     /// 作成・削除の完了を待っている数。ストリップの回転マーカーが読む。
     pending: usize,
+    listing: bool,
     /// 一覧に載ったら選び直したい worktree。作った直後や取り込んだ直後はまだ
     /// 載っていないので、パスだけ覚えて次の一覧で拾う。
     pending_select: Option<PathBuf>,
@@ -49,6 +50,11 @@ impl WorktreePanel {
 
     pub fn is_busy(&self) -> bool {
         self.pending > 0
+    }
+
+    /// 取得中に周期の取り直しを重ねると、175k ファイルのリポジトリ(1 回 25 秒)で 8 本並走して互いを遅くする。
+    pub fn is_listing(&self) -> bool {
+        self.listing
     }
 
     pub fn grabbed(&self) -> Option<&GrabState> {
@@ -149,6 +155,7 @@ impl WorktreePanel {
     pub fn apply_result(&mut self, result: TaskResult, ctx: &Ctx) -> Vec<Effect> {
         match result {
             TaskResult::Worktrees(Ok(list)) => {
+                self.listing = false;
                 self.list = list;
                 self.settle_selection(&ctx.repo.root)
             }
@@ -183,6 +190,7 @@ impl WorktreePanel {
             }
             TaskResult::StaleWorktrees(Err(e)) => vec![Effect::Status(StatusLevel::Error, e)],
             TaskResult::Worktrees(Err(e)) => {
+                self.listing = false;
                 vec![Effect::Status(
                     StatusLevel::Error,
                     format!("worktrees: {e}"),
@@ -287,7 +295,7 @@ impl WorktreePanel {
         vec![Effect::SelectWorktree(index)]
     }
 
-    /// 走り始めた Task を数える。ストリップのマーカー以外は見ない。
+    /// 走り始めた Task を数える。ストリップのマーカーと周期の取り直し以外は見ない。
     pub fn note_spawned(&mut self, task: &Task) {
         if matches!(
             task,
@@ -297,6 +305,9 @@ impl WorktreePanel {
                 | Task::CreateWorktreeFromRemote { .. }
         ) {
             self.pending += 1;
+        }
+        if matches!(task, Task::ListWorktrees) {
+            self.listing = true;
         }
     }
 }
@@ -423,6 +434,28 @@ mod tests {
         let effects = ws.accept(TaskResult::Worktrees(Ok(remaining)));
         crate::effect::apply(&mut ws, &mut svc, effects);
         assert_eq!(ws.panels.worktree.selected().unwrap().branch, "main");
+    }
+
+    #[test]
+    fn 取得中は周期の取り直しを見送り結果が届くと再開する() {
+        let mut panel = WorktreePanel::default();
+        assert!(!panel.is_listing());
+
+        panel.note_spawned(&Task::ListWorktrees);
+        assert!(panel.is_listing(), "走っている間も投げてしまう");
+
+        let mut ws = drive(&[]);
+        ws.panels.worktree.note_spawned(&Task::ListWorktrees);
+        ws.accept(TaskResult::Worktrees(Ok(vec![info(
+            "/tmp/repo",
+            "main",
+            true,
+        )])));
+        assert!(!ws.panels.worktree.is_listing());
+
+        ws.panels.worktree.note_spawned(&Task::ListWorktrees);
+        ws.accept(TaskResult::Worktrees(Err("index unreadable".into())));
+        assert!(!ws.panels.worktree.is_listing(), "失敗で取り直しが止まった");
     }
 
     #[test]
