@@ -67,14 +67,13 @@ pub fn list(frame: &mut Frame, area: Rect, ws: &Workspace) {
                 Style::default().fg(theme.fg)
             };
             let mut spans = vec![Span::styled(format!("{marker}{}", worktree.branch), style)];
-            if !worktree.is_clean {
-                spans.push(Span::styled(
-                    format!(
-                        " ~{}",
-                        worktree.added + worktree.modified + worktree.deleted
-                    ),
+            match worktree.counts {
+                None => spans.push(Span::styled(" ~?", Style::default().fg(theme.dir_fg))),
+                Some(counts) if !counts.is_clean() => spans.push(Span::styled(
+                    format!(" ~{}", counts.total()),
                     Style::default().fg(theme.warning),
-                ));
+                )),
+                Some(_) => {}
             }
             spans.push(Span::styled(
                 format!("  {}", worktree.path.display()),

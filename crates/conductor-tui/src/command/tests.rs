@@ -228,18 +228,14 @@ fn 幅が動いたときだけ設定に書き戻す() {
 
 #[test]
 fn git系コマンドは状態で灰色になる() {
-    use conductor_core::git_engine::{GrabState, WorktreeInfo};
+    use conductor_core::git_engine::{ChangeCounts, GrabState, WorktreeInfo};
 
     fn worktree(path: &str, branch: &str, is_main: bool) -> WorktreeInfo {
         WorktreeInfo {
             path: path.into(),
             branch: branch.into(),
             is_main,
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            staged: 0,
-            is_clean: true,
+            counts: Some(ChangeCounts::default()),
             ahead: None,
             behind: None,
             head_oid: None,

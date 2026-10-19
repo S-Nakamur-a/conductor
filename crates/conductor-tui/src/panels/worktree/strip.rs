@@ -31,11 +31,10 @@ fn chip_text(worktree: &WorktreeInfo, waiting: bool, active: bool) -> String {
         text.push_str("\u{25cf} ");
     }
     text.push_str(&worktree.branch);
-    if !worktree.is_clean {
-        text.push_str(&format!(
-            " ~{}",
-            worktree.added + worktree.modified + worktree.deleted
-        ));
+    match worktree.counts {
+        None => text.push_str(" ~?"),
+        Some(counts) if !counts.is_clean() => text.push_str(&format!(" ~{}", counts.total())),
+        Some(_) => {}
     }
     if let Some(ahead) = worktree.ahead.filter(|a| *a > 0) {
         text.push_str(&format!(" \u{2191}{ahead}"));

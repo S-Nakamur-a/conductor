@@ -76,7 +76,9 @@ scrollbar.
 The worktree list is not a column. Every worktree — branch, dirty count,
 ahead/behind, and Claude Code waiting/active state — sits in the full-width
 monitor strip along the top, so parallel sessions can be watched at a glance.
-Click one to jump to it, or `[+]` to create one.
+Click one to jump to it, or `[+]` to create one. The dirty count is filled in
+after the list appears — `~?` means it is still being counted, and deleting a
+worktree in that state asks as if there were uncommitted changes.
 
 ### Keybindings
 

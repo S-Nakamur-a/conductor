@@ -79,17 +79,14 @@ mod tests {
     use super::*;
     use crate::task::{Task, TaskResult};
     use conductor_core::config::Config;
+    use conductor_core::git_engine::ChangeCounts;
 
     fn worktree(path: &str, is_main: bool) -> WorktreeInfo {
         WorktreeInfo {
             path: PathBuf::from(path),
             branch: path.into(),
             is_main,
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            staged: 0,
-            is_clean: true,
+            counts: Some(ChangeCounts::default()),
             ahead: None,
             behind: None,
             head_oid: None,

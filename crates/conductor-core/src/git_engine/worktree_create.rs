@@ -125,9 +125,8 @@ impl GitEngine {
 
     /// local_branch をチェックアウト中の worktree が他にあるか。
     ///
-    /// 変更件数まで数える [GitEngine::list_worktrees] をここで使うと、worktree 2 本の
-    /// モノレポで実測 18.5 秒かかる (見たいのは HEAD だけで 1ms 未満)。ディレクトリを
-    /// 手で消された登録も git は「使用中」と扱うので、開けるかどうかでは落とさない。
+    /// ディレクトリを手で消された登録も git は「使用中」と扱うので、開けるかどうかでは
+    /// 落とさない。
     fn branch_checked_out_elsewhere(&self, local_branch: &str) -> Result<bool> {
         let target = format!("refs/heads/{local_branch}");
         let is_target = |repo: &git2::Repository| {

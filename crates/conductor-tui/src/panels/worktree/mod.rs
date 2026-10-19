@@ -21,6 +21,9 @@ pub struct WorktreePanel {
     selected: Option<PathBuf>,
     /// 作成・削除の完了を待っている数。ストリップの回転マーカーが読む。
     pending: usize,
+    listing: bool,
+    /// 件数を数えている最中の worktree。
+    counting: std::collections::HashSet<PathBuf>,
     /// 一覧に載ったら選び直したい worktree。作った直後や取り込んだ直後はまだ
     /// 載っていないので、パスだけ覚えて次の一覧で拾う。
     pending_select: Option<PathBuf>,
@@ -49,6 +52,11 @@ impl WorktreePanel {
 
     pub fn is_busy(&self) -> bool {
         self.pending > 0
+    }
+
+    /// 取得中に周期の取り直しを重ねると、175k ファイルのリポジトリ(1 回 25 秒)で 8 本並走して互いを遅くする。
+    pub fn is_listing(&self) -> bool {
+        self.listing
     }
 
     pub fn grabbed(&self) -> Option<&GrabState> {
@@ -125,14 +133,25 @@ impl WorktreePanel {
         if worktree.is_main {
             return Effect::Status(StatusLevel::Error, "cannot delete the main worktree".into());
         }
-        let changes = worktree.added + worktree.modified + worktree.deleted;
-        let question = if worktree.is_clean {
-            format!("Delete worktree '{}' and its branch?", worktree.branch)
-        } else {
-            format!(
-                "Delete worktree '{}'? {changes} uncommitted change(s) will be LOST.",
+        // 数え直しの最中の件数は前回の値なので、clean と名乗らせない。
+        let settled = worktree
+            .counts
+            .filter(|_| !self.counting.contains(&worktree.path));
+        let question = match settled {
+            Some(counts) if counts.is_clean() => {
+                format!("Delete worktree '{}' and its branch?", worktree.branch)
+            }
+            Some(counts) => format!(
+                "Delete worktree '{}'? {} uncommitted change(s) will be LOST.",
+                worktree.branch,
+                counts.total()
+            ),
+            // 数えられなかったのか数え終わっていないのかは区別しない。どちらも
+            // 「失うものが無い」と言えないので、確認文は同じでよい。
+            None => format!(
+                "Delete worktree '{}'? Uncommitted changes could not be confirmed; any will be LOST.",
                 worktree.branch
-            )
+            ),
         };
         Effect::PushModal(Modal::Confirm(
             Confirm::destructive(
@@ -148,9 +167,28 @@ impl WorktreePanel {
 
     pub fn apply_result(&mut self, result: TaskResult, ctx: &Ctx) -> Vec<Effect> {
         match result {
-            TaskResult::Worktrees(Ok(list)) => {
+            TaskResult::Worktrees(Ok(mut list)) => {
+                self.listing = false;
+                // 一覧が入れ替わるたびに件数を捨てると、表示が ~? に戻り続ける。
+                for worktree in &mut list {
+                    worktree.counts = worktree.counts.or_else(|| {
+                        self.list
+                            .iter()
+                            .find(|known| known.path == worktree.path)
+                            .and_then(|known| known.counts)
+                    });
+                }
                 self.list = list;
-                self.settle_selection(&ctx.repo.root)
+                let mut effects = self.count_changes();
+                effects.extend(self.settle_selection(&ctx.repo.root));
+                effects
+            }
+            TaskResult::WorktreeCounts { path, counts } => {
+                self.counting.remove(&path);
+                if let Some(worktree) = self.list.iter_mut().find(|w| w.path == path) {
+                    worktree.counts = counts;
+                }
+                Vec::new()
             }
             TaskResult::GitDone(outcome) => self.git_done(outcome),
             TaskResult::GrabState(state) => {
@@ -183,6 +221,7 @@ impl WorktreePanel {
             }
             TaskResult::StaleWorktrees(Err(e)) => vec![Effect::Status(StatusLevel::Error, e)],
             TaskResult::Worktrees(Err(e)) => {
+                self.listing = false;
                 vec![Effect::Status(
                     StatusLevel::Error,
                     format!("worktrees: {e}"),
@@ -263,6 +302,24 @@ impl WorktreePanel {
         effects
     }
 
+    /// 選んでいるものから投げるのは、見ている行を先に埋めるため。
+    /// 数えている最中のものを飛ばすのは、一覧が 3 秒ごとに来るので、重ねると
+    /// 並走だけが増えてどれも返らなくなるため。
+    fn count_changes(&mut self) -> Vec<Effect> {
+        let selected = self.selected_index();
+        let paths: Vec<PathBuf> = std::iter::once(selected)
+            .chain((0..self.list.len()).filter(|i| *i != selected))
+            .filter_map(|i| self.list.get(i))
+            .map(|worktree| worktree.path.clone())
+            .filter(|path| !self.counting.contains(path))
+            .collect();
+        self.counting.extend(paths.iter().cloned());
+        paths
+            .into_iter()
+            .map(|path| Effect::Spawn(Task::WorktreeCounts { path }))
+            .collect()
+    }
+
     /// 一覧が入れ替わったあとの選択。指していた worktree が消えていたら、
     /// conductor を開いた worktree へ戻す。
     fn settle_selection(&mut self, root: &Path) -> Vec<Effect> {
@@ -287,7 +344,7 @@ impl WorktreePanel {
         vec![Effect::SelectWorktree(index)]
     }
 
-    /// 走り始めた Task を数える。ストリップのマーカー以外は見ない。
+    /// 走り始めた Task を数える。ストリップのマーカーと周期の取り直し以外は見ない。
     pub fn note_spawned(&mut self, task: &Task) {
         if matches!(
             task,
@@ -297,6 +354,9 @@ impl WorktreePanel {
                 | Task::CreateWorktreeFromRemote { .. }
         ) {
             self.pending += 1;
+        }
+        if matches!(task, Task::ListWorktrees) {
+            self.listing = true;
         }
     }
 }
@@ -344,17 +404,14 @@ fn level_of(message: &str) -> StatusLevel {
 mod tests {
     use super::*;
     use crate::workspace::Workspace;
+    use conductor_core::git_engine::ChangeCounts;
 
     fn info(path: &str, branch: &str, is_main: bool) -> WorktreeInfo {
         WorktreeInfo {
             path: PathBuf::from(path),
             branch: branch.into(),
             is_main,
-            added: 0,
-            modified: 0,
-            deleted: 0,
-            staged: 0,
-            is_clean: true,
+            counts: Some(ChangeCounts::default()),
             ahead: None,
             behind: None,
             head_oid: None,
@@ -373,8 +430,16 @@ mod tests {
             info("/tmp/wt/b", "feature/b", false),
         ];
         let mut svc = conductor_svc::Services::new();
+        let paths: Vec<PathBuf> = list.iter().map(|w| w.path.clone()).collect();
         let effects = ws.accept(TaskResult::Worktrees(Ok(list)));
         crate::effect::apply(&mut ws, &mut svc, effects);
+        // 数え終わったところから始める。数えかけのままだと投げ直しが見送られる。
+        for path in paths {
+            ws.accept(TaskResult::WorktreeCounts {
+                path,
+                counts: Some(ChangeCounts::default()),
+            });
+        }
         for action in actions {
             let effects = ws.dispatch(*action).unwrap_or_default();
             crate::effect::apply(&mut ws, &mut svc, effects);
@@ -411,8 +476,121 @@ mod tests {
         let mut ws = drive(&[Action::GoToBottom]);
         let shorter = vec![info("/tmp/wt/b", "feature/b", false)];
         let effects = ws.accept(TaskResult::Worktrees(Ok(shorter)));
-        assert!(effects.is_empty(), "選び直しが起きた: {effects:?}");
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::SelectWorktree(_))),
+            "選び直しが起きた: {effects:?}"
+        );
         assert_eq!(ws.panels.worktree.selected().unwrap().branch, "feature/b");
+    }
+
+    #[test]
+    fn 一覧が届いたら選んでいるものから件数を数えに行く() {
+        let mut ws = drive(&[]);
+        let list = vec![
+            info("/tmp/repo", "main", true),
+            info("/tmp/wt/a", "feature/a", false),
+        ];
+        ws.panels.worktree.selected = Some(PathBuf::from("/tmp/wt/a"));
+
+        let effects = ws.accept(TaskResult::Worktrees(Ok(list)));
+        let counted: Vec<&PathBuf> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Spawn(Task::WorktreeCounts { path }) => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            counted,
+            [&PathBuf::from("/tmp/wt/a"), &PathBuf::from("/tmp/repo")],
+            "選んでいるものが先頭でない"
+        );
+    }
+
+    #[test]
+    fn 数えている最中は投げ直さず結果が届くと再開する() {
+        let mut ws = drive(&[]);
+        let list = vec![WorktreeInfo {
+            counts: None,
+            ..info("/tmp/wt/a", "feature/a", false)
+        }];
+        let counts = |effects: &[Effect]| {
+            effects
+                .iter()
+                .filter(|e| matches!(e, Effect::Spawn(Task::WorktreeCounts { .. })))
+                .count()
+        };
+
+        let first = ws.accept(TaskResult::Worktrees(Ok(list.clone())));
+        assert_eq!(counts(&first), 1);
+
+        let again = ws.accept(TaskResult::Worktrees(Ok(list.clone())));
+        assert_eq!(counts(&again), 0, "数えている最中に重ねた");
+
+        ws.accept(TaskResult::WorktreeCounts {
+            path: PathBuf::from("/tmp/wt/a"),
+            counts: Some(ChangeCounts::default()),
+        });
+        let after = ws.accept(TaskResult::Worktrees(Ok(list)));
+        assert_eq!(counts(&after), 1, "届いたのに数え直さない");
+    }
+
+    #[test]
+    fn 一覧が入れ替わっても数え終わった件数は残る() {
+        let mut ws = drive(&[]);
+        let fresh = || {
+            vec![WorktreeInfo {
+                counts: None,
+                ..info("/tmp/wt/a", "feature/a", false)
+            }]
+        };
+        ws.accept(TaskResult::Worktrees(Ok(fresh())));
+        ws.accept(TaskResult::WorktreeCounts {
+            path: PathBuf::from("/tmp/wt/a"),
+            counts: Some(ChangeCounts {
+                modified: 2,
+                ..Default::default()
+            }),
+        });
+
+        ws.accept(TaskResult::Worktrees(Ok(fresh())));
+
+        assert_eq!(
+            ws.panels.worktree.list()[0].counts.map(|c| c.total()),
+            Some(2),
+            "一覧の入れ替えで件数が ~? に戻った"
+        );
+    }
+
+    #[test]
+    fn 数え終わった件数は該当する_worktree_だけに入る() {
+        let mut ws = drive(&[]);
+        // 1 段目は件数を持たずに届く。どちらもまだ数えたことのない worktree。
+        let list = vec![
+            WorktreeInfo {
+                counts: None,
+                ..info("/tmp/fresh/x", "feature/x", false)
+            },
+            WorktreeInfo {
+                counts: None,
+                ..info("/tmp/fresh/y", "feature/y", false)
+            },
+        ];
+        ws.accept(TaskResult::Worktrees(Ok(list)));
+
+        ws.accept(TaskResult::WorktreeCounts {
+            path: PathBuf::from("/tmp/fresh/y"),
+            counts: Some(ChangeCounts {
+                modified: 2,
+                ..Default::default()
+            }),
+        });
+
+        let list = ws.panels.worktree.list();
+        assert_eq!(list[0].counts, None, "別の worktree に入った");
+        assert_eq!(list[1].counts.unwrap().total(), 2);
     }
 
     #[test]
@@ -426,6 +604,28 @@ mod tests {
     }
 
     #[test]
+    fn 取得中は周期の取り直しを見送り結果が届くと再開する() {
+        let mut panel = WorktreePanel::default();
+        assert!(!panel.is_listing());
+
+        panel.note_spawned(&Task::ListWorktrees);
+        assert!(panel.is_listing(), "走っている間も投げてしまう");
+
+        let mut ws = drive(&[]);
+        ws.panels.worktree.note_spawned(&Task::ListWorktrees);
+        ws.accept(TaskResult::Worktrees(Ok(vec![info(
+            "/tmp/repo",
+            "main",
+            true,
+        )])));
+        assert!(!ws.panels.worktree.is_listing());
+
+        ws.panels.worktree.note_spawned(&Task::ListWorktrees);
+        ws.accept(TaskResult::Worktrees(Err("index unreadable".into())));
+        assert!(!ws.panels.worktree.is_listing(), "失敗で取り直しが止まった");
+    }
+
+    #[test]
     fn mainは削除できず確認も出さない() {
         let mut ws = drive(&[Action::DeleteWorktree]);
         assert!(ws.modals.is_empty(), "main で確認が出た");
@@ -435,14 +635,42 @@ mod tests {
         ));
     }
 
+    fn delete_question(worktree: WorktreeInfo) -> String {
+        let mut ws = drive(&[]);
+        let mut svc = conductor_svc::Services::new();
+        let (path, counts) = (worktree.path.clone(), worktree.counts);
+        let effects = ws.accept(TaskResult::Worktrees(Ok(vec![worktree])));
+        crate::effect::apply(&mut ws, &mut svc, effects);
+        // 数え直しを終わらせる。最中だと確認文は件数を名指しできない。
+        ws.accept(TaskResult::WorktreeCounts { path, counts });
+        let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
+        crate::effect::apply(&mut ws, &mut svc, effects);
+        let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
+            panic!("確認が出ていない: {:?}", ws.modals);
+        };
+        confirm.question.clone()
+    }
+
     #[test]
     fn 削除の確認は失うものを名指しする() {
-        let mut ws = drive(&[]);
         let mut dirty = info("/tmp/wt/a", "feature/a", false);
-        dirty.is_clean = false;
-        dirty.modified = 3;
-        let effects = ws.accept(TaskResult::Worktrees(Ok(vec![dirty])));
+        dirty.counts = Some(ChangeCounts {
+            modified: 3,
+            ..Default::default()
+        });
+        let question = delete_question(dirty);
+        assert!(question.contains("feature/a"));
+        assert!(question.contains('3'), "{question}");
+    }
+
+    #[test]
+    fn 数え直しの最中の削除の確認は前回のcleanを名乗らない() {
+        let mut ws = drive(&[]);
         let mut svc = conductor_svc::Services::new();
+        let clean = vec![info("/tmp/wt/a", "feature/a", false)];
+
+        // 数え終わって clean。ここで一覧が来ると数え直しが走る。
+        let effects = ws.accept(TaskResult::Worktrees(Ok(clean)));
         crate::effect::apply(&mut ws, &mut svc, effects);
         let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
         crate::effect::apply(&mut ws, &mut svc, effects);
@@ -450,8 +678,16 @@ mod tests {
         let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
             panic!("確認が出ていない: {:?}", ws.modals);
         };
-        assert!(confirm.question.contains("feature/a"));
-        assert!(confirm.question.contains('3'), "{}", confirm.question);
+        assert!(confirm.question.contains("LOST"), "{}", confirm.question);
+    }
+
+    #[test]
+    fn 数え終わるまでの削除の確認は失うものが無いと名乗らない() {
+        // まだ一度も数えていない worktree なので、持ち越せる件数が無い。
+        let mut uncounted = info("/tmp/wt/never-counted", "feature/new", false);
+        uncounted.counts = None;
+        let question = delete_question(uncounted);
+        assert!(question.contains("LOST"), "{question}");
     }
 
     #[test]

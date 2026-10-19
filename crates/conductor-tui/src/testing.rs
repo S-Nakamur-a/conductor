@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use conductor_core::git_engine::WorktreeInfo;
+use conductor_core::git_engine::{ChangeCounts, WorktreeInfo};
 use conductor_svc::{EventKind, Services};
 
 use crate::effect::apply;
@@ -53,11 +53,7 @@ pub fn select_only_worktree(ws: &mut Workspace, svc: &mut Services<TaskResult>, 
         path: PathBuf::from(path),
         branch: "main".into(),
         is_main: true,
-        added: 0,
-        modified: 0,
-        deleted: 0,
-        staged: 0,
-        is_clean: true,
+        counts: Some(ChangeCounts::default()),
         ahead: None,
         behind: None,
         head_oid: None,

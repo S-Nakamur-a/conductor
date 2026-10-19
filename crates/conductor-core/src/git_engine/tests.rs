@@ -141,19 +141,14 @@ fn コミットの無いリポジトリでも一覧が取れる() {
 
 #[test]
 fn 変更件数はファイルを1回だけ数えstagedだけ重複して数える() {
-    struct Counts {
-        added: usize,
-        modified: usize,
-        deleted: usize,
-        staged: usize,
-    }
-    let want = |added, modified, deleted, staged| Counts {
+    use super::ChangeCounts;
+    let want = |added, modified, deleted, staged| ChangeCounts {
         added,
         modified,
         deleted,
         staged,
     };
-    type Case = (&'static str, fn(&Tree), Counts);
+    type Case = (&'static str, fn(&Tree), ChangeCounts);
     let cases: [Case; 6] = [
         (
             "未追跡",
@@ -202,14 +197,14 @@ fn 変更件数はファイルを1回だけ数えstagedだけ重複して数え�
         let repo = TestRepo::with_base_commit();
         setup(&repo);
 
-        let info = repo.engine().list_worktrees().unwrap().remove(0);
+        let counts = GitEngine::change_counts_at(&repo.path).unwrap();
 
-        assert_eq!(
-            (info.added, info.modified, info.deleted, info.staged),
-            (want.added, want.modified, want.deleted, want.staged),
-            "{label}"
+        assert_eq!(counts, want, "{label}");
+        assert!(!counts.is_clean(), "{label}");
+        assert!(
+            repo.engine().list_worktrees().unwrap()[0].counts.is_none(),
+            "一覧が件数まで数えている: {label}"
         );
-        assert!(!info.is_clean, "{label}");
     }
 }
 

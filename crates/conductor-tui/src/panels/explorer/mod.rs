@@ -54,6 +54,7 @@ pub struct ExplorerPanel {
     tree_clicks: ClickTracker,
     /// 投げたまま結果がまだ届いていないツリー読みの数。
     pending: usize,
+    refresh_queued: bool,
 }
 
 impl ExplorerPanel {
@@ -112,7 +113,12 @@ impl ExplorerPanel {
     }
 
     /// worktree が変わった。base は作業ツリー差分の比較先。
+    ///
+    /// 根を据え直す合図は世代が進んだ合図でもあり、投げたものの結果は捨てられる。
+    /// 根が同じでそこから先へ進まない場合も数えたままにしない。残すと待ちが
+    /// 下がらず、以後の投げ直しが永久に見送られる。
     pub fn set_root(&mut self, root: PathBuf, base: &str) -> Vec<Effect> {
+        self.forget_in_flight();
         if self.tree.root() == root {
             return Vec::new();
         }
@@ -122,8 +128,20 @@ impl ExplorerPanel {
         self.refresh()
     }
 
-    /// ツリーと diff を投げ直す。
+    /// ツリーと diff を投げ直す。根が決まる前は何も投げない。worktree 一覧が
+    /// 届くまで根は空で、空の根で走らせた走査と diff はエラーを返すだけ。
+    ///
+    /// 走っている間は投げ直さず、返ってきてから 1 回だけ投げる。175k ファイルの
+    /// リポジトリでは走査 13 秒・diff 9 秒で、ファイル変更ごとに重ねると実測
+    /// 476 本のスレッドが並び、どれも返らなくなる。
     pub fn refresh(&mut self) -> Vec<Effect> {
+        if self.tree.root().as_os_str().is_empty() {
+            return Vec::new();
+        }
+        if self.pending > 0 {
+            self.refresh_queued = true;
+            return Vec::new();
+        }
         self.pending += 1;
         vec![
             Effect::Spawn(Task::LoadTree {
@@ -313,13 +331,27 @@ impl ExplorerPanel {
         }
     }
 
+    fn tree_settled(&mut self) -> Vec<Effect> {
+        self.pending = self.pending.saturating_sub(1);
+        if self.pending == 0 && std::mem::take(&mut self.refresh_queued) {
+            return self.refresh();
+        }
+        Vec::new()
+    }
+
+    fn forget_in_flight(&mut self) {
+        self.pending = 0;
+        self.refresh_queued = false;
+    }
+
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
+            // 別の根の走査が遅れて届いても、今の根の表示を奪わない。
+            TaskResult::Tree(snapshot) if snapshot.root != self.tree.root() => self.tree_settled(),
             TaskResult::Tree(snapshot) => {
-                self.pending = self.pending.saturating_sub(1);
                 self.tree.install(*snapshot);
                 self.clamp();
-                Vec::new()
+                self.tree_settled()
             }
             TaskResult::Diff(diff) => self.changes.install(*diff),
             TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
@@ -419,6 +451,66 @@ mod tests {
 
     fn selected(ws: &Workspace) -> usize {
         ws.panels.explorer.changes.cursor().selected()
+    }
+
+    #[test]
+    fn 根が決まる前は走査もdiffも投げない() {
+        let mut panel = ExplorerPanel::default();
+        assert!(panel.refresh().is_empty());
+    }
+
+    #[test]
+    fn 根を据え直すと同じ根でも待ちが白紙に戻る() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let mut panel = ExplorerPanel::default();
+
+        // 走査を 1 本出したまま待たせる。
+        panel.set_root(root.clone(), "main");
+        assert!(panel.refresh().is_empty());
+
+        // この結果は世代が進んで捨てられる。据え直しで数えるのをやめないと、
+        // 以後の投げ直しは永久に見送られる。
+        assert!(panel.set_root(root.clone(), "main").is_empty(), "根は同じ");
+        assert!(!panel.refresh().is_empty(), "投げ直しが永久に見送られた");
+    }
+
+    #[test]
+    fn 走査中の投げ直しは重ねず返ってから一度だけ出す() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut panel = ExplorerPanel::default();
+        panel.set_root(dir.path().to_path_buf(), "main");
+
+        assert!(panel.refresh().is_empty(), "走っている間に重ねた");
+        assert!(panel.refresh().is_empty(), "走っている間に重ねた");
+
+        let settled = panel.apply_result(TaskResult::Tree(Box::new(tree::survey(dir.path(), &[]))));
+        assert_eq!(settled.len(), 2, "待たせた投げ直しが出ない: {settled:?}");
+
+        let settled = panel.apply_result(TaskResult::Tree(Box::new(tree::survey(dir.path(), &[]))));
+        assert!(settled.is_empty(), "二度出た: {settled:?}");
+    }
+
+    #[test]
+    fn 別の根の走査が届いても今の根の表示を奪わない() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("live.txt"), "\n").unwrap();
+        let other = tempfile::TempDir::new().unwrap();
+        std::fs::write(other.path().join("stale.txt"), "\n").unwrap();
+
+        let mut panel = ExplorerPanel::default();
+        panel.set_root(dir.path().to_path_buf(), "main");
+        panel.apply_result(TaskResult::Tree(Box::new(tree::survey(dir.path(), &[]))));
+        panel.apply_result(TaskResult::Tree(Box::new(tree::survey(other.path(), &[]))));
+
+        assert_eq!(panel.tree.root(), dir.path());
+        let names: Vec<&str> = panel
+            .tree
+            .entries()
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(names, ["live.txt"]);
     }
 
     #[test]
