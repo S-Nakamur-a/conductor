@@ -332,9 +332,20 @@ Input ─route()─> Routed ─update()─> Vec<Effect> ─apply()─> Workspace
 
 A `Task` goes to svc and a `TaskResult` comes back on **one mpsc**. Generation
 matching happens once, in svc's `try_recv`: an event whose generation is not the
-current one is dropped, and the generation is bumped on every worktree switch.
+current one is dropped, and the generation is bumped when the *repository*
+changes (`effect.rs`'s `switch_repo`, the only `bump_generation` call) — **not on
+a worktree switch**. A result that outlives a worktree switch therefore still
+arrives, so whoever installs it has to check it is still the one asked for.
 The sender shares that generation through an `Arc<AtomicU64>` — copying the value
 into `EventSender` makes every watcher signal after the first switch vanish.
+
+**A periodically spawned `Task` needs an in-flight guard.** On a repository with
+175,388 tracked files the worktree list takes 25s, the file-tree survey 13s and
+the working-tree diff 9s, against a 3s poll and a 500ms debounce. Spawning faster
+than results return piles up one thread per second — measured 476 threads at 303%
+CPU, with nothing ever settling, so the list and the Explorer stayed empty for
+good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh`, and the
+per-worktree change counts; each one grew this same hole independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
 channel, so `PtyStore` lives in svc and the renderer reads it directly. There is
@@ -419,7 +430,10 @@ git, and any rework of theme / keymap / text_input / config.
   copy, restore it right away), run the one test, and confirm the panic — a green test can
   pin nothing. One test here passed against a deliberately broken `state.rs` because
   `source_delta` returns `Sources::First` before it ever looks at the key; another passed
-  because the root it meant to exercise was never in `self.roots` to begin with.
+  because the root it meant to exercise was never in `self.roots` to begin with. Red proves
+  as little as green: read the panic and confirm it names the behaviour you pinned. One test
+  here failed *with* the fix in place, because its temp directory was not a git repository
+  and `switch_repo` returned before reaching the line under test.
 - **A test that names a file must put that file there.** Fixtures that only name paths pass
   for the wrong reason: `tour_stops`'s navigation tests pointed at a script whose files were
   never written, and stayed green until line-number validation arrived and failed three of
