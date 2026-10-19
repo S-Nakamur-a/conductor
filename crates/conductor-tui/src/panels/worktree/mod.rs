@@ -133,7 +133,11 @@ impl WorktreePanel {
         if worktree.is_main {
             return Effect::Status(StatusLevel::Error, "cannot delete the main worktree".into());
         }
-        let question = match worktree.counts {
+        // 数え直しの最中の件数は前回の値なので、clean と名乗らせない。
+        let settled = worktree
+            .counts
+            .filter(|_| !self.counting.contains(&worktree.path));
+        let question = match settled {
             Some(counts) if counts.is_clean() => {
                 format!("Delete worktree '{}' and its branch?", worktree.branch)
             }
@@ -142,8 +146,10 @@ impl WorktreePanel {
                 worktree.branch,
                 counts.total()
             ),
+            // 数えられなかったのか数え終わっていないのかは区別しない。どちらも
+            // 「失うものが無い」と言えないので、確認文は同じでよい。
             None => format!(
-                "Delete worktree '{}'? Changes are still being counted; any uncommitted change will be LOST.",
+                "Delete worktree '{}'? Uncommitted changes could not be confirmed; any will be LOST.",
                 worktree.branch
             ),
         };
@@ -632,8 +638,11 @@ mod tests {
     fn delete_question(worktree: WorktreeInfo) -> String {
         let mut ws = drive(&[]);
         let mut svc = conductor_svc::Services::new();
+        let (path, counts) = (worktree.path.clone(), worktree.counts);
         let effects = ws.accept(TaskResult::Worktrees(Ok(vec![worktree])));
         crate::effect::apply(&mut ws, &mut svc, effects);
+        // 数え直しを終わらせる。最中だと確認文は件数を名指しできない。
+        ws.accept(TaskResult::WorktreeCounts { path, counts });
         let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
         crate::effect::apply(&mut ws, &mut svc, effects);
         let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
@@ -652,6 +661,24 @@ mod tests {
         let question = delete_question(dirty);
         assert!(question.contains("feature/a"));
         assert!(question.contains('3'), "{question}");
+    }
+
+    #[test]
+    fn 数え直しの最中の削除の確認は前回のcleanを名乗らない() {
+        let mut ws = drive(&[]);
+        let mut svc = conductor_svc::Services::new();
+        let clean = vec![info("/tmp/wt/a", "feature/a", false)];
+
+        // 数え終わって clean。ここで一覧が来ると数え直しが走る。
+        let effects = ws.accept(TaskResult::Worktrees(Ok(clean)));
+        crate::effect::apply(&mut ws, &mut svc, effects);
+        let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
+        crate::effect::apply(&mut ws, &mut svc, effects);
+
+        let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
+            panic!("確認が出ていない: {:?}", ws.modals);
+        };
+        assert!(confirm.question.contains("LOST"), "{}", confirm.question);
     }
 
     #[test]

@@ -8,11 +8,11 @@ use git2::{Repository, Status, StatusOptions, StatusShow};
 use super::{ChangeCounts, GitEngine, ReviewState, WorktreeInfo};
 
 impl GitEngine {
-    /// main と linked のすべての worktree を、ブランチとステータス件数つきで返す。
+    /// main と linked のすべての worktree を、ブランチつきで返す (件数は数えない)。
     /// 1 つでも調べられればそれを返し、調べられなかったものはログに残して飛ばす。
     ///
     /// 全滅したときだけ Err にするのは、空の一覧が「worktree が無いリポジトリ」と
-    /// 区別できないため。libgit2 が読めない index (split index など) では全滅する。
+    /// 区別できないため。
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
         let mut infos = Vec::new();
         let mut first_error = None;
