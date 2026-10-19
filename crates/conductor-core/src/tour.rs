@@ -398,7 +398,7 @@ mod tests {
         };
 
         assert_eq!(
-            unexplained(&tour(Vec::new()), &[binary.clone()]),
+            unexplained(&tour(Vec::new()), std::slice::from_ref(&binary)),
             [Place::whole("logo.png")]
         );
         assert!(

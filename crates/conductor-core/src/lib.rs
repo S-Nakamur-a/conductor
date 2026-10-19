@@ -7,6 +7,7 @@ pub mod claude_log;
 pub mod claude_sessions;
 pub mod config;
 pub mod diff_state;
+pub mod file_index;
 pub mod git_engine;
 pub mod icons;
 pub mod keymap;
