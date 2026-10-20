@@ -343,7 +343,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
                 &[Action::RevidereNextSection, Action::ReviderePrevSection],
             ),
             ("overview", &[Action::RevidereShowOverview]),
-            ("ask", &[Action::CycleFocusForward]),
+            ("ask", &[Action::RevidereAskClaude]),
             ("close", &[Action::ExitSubPanel]),
         ],
     };

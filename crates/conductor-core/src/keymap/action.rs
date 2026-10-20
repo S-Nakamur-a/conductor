@@ -128,6 +128,7 @@ keymap_suite::actions! {
         RevidereShowOverview => "revidere_show_overview",
         RevidereShowSections => "revidere_show_sections",
         RevidereToggleScope => "revidere_toggle_scope",
+        RevidereAskClaude => "revidere_ask_claude",
         ToggleViewed => "toggle_viewed",
         /// 'z' の 2 打鍵目 (za/zc/zo/zm/zr/zR/zM) はハンドラ側が直接読む。
         /// gd/gi/gr と同じ扱いで、折りたたみだけが再割り当て可能な語彙を持つ理由がない。
@@ -190,6 +191,7 @@ impl Action {
             Action::RevidereToggleScope => {
                 "Switch between the whole branch and what changed since the last review"
             }
+            Action::RevidereAskClaude => "Paste the selected section into Claude Code's input",
             Action::AnalyzeRevidere => "Review this branch (asks first)",
             Action::ForceAnalyzeRevidere => "Re-analyse without asking, ignoring the cached reply",
             Action::FoldPrefix => "Fold block (za/zc/zo/zm/zr/zR/zM)",

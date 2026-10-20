@@ -435,6 +435,51 @@ fn 左列で選び右列へ渡って_viewer_へ出す() {
     assert_eq!(effects, vec![Effect::Focus(Focus::Explorer)]);
 }
 
+#[test]
+fn claude_へは成果物の在り処と見ている項目を渡す() {
+    let (mut ws, _svc) = built(&section("beta を足す", "a.txt", 2));
+    let pasted = |ws: &mut Workspace| match ws.dispatch(Action::RevidereAskClaude).unwrap()[..] {
+        [Effect::PasteToClaude(ref text)] => text.clone(),
+        ref other => panic!("{other:?}"),
+    };
+
+    assert_eq!(
+        pasted(&mut ws),
+        ".conductor/review.json の項目「beta を足す」 (a.txt:2) について: "
+    );
+
+    ws.panels.revidere.show_overview(true);
+    assert_eq!(
+        pasted(&mut ws),
+        ".conductor/review.json のレビューについて: "
+    );
+}
+
+#[test]
+fn 題の改行は貼る前に畳む() {
+    let (mut ws, _svc) = built(&section("一行目\\n二行目", "a.txt", 2));
+    let effects = ws.dispatch(Action::RevidereAskClaude).unwrap();
+    let [Effect::PasteToClaude(text)] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(text.contains("「一行目 二行目」"), "{text}");
+}
+
+#[test]
+fn 読み込み中は前の_worktree_の項目を貼らない() {
+    let (mut ws, _svc) = built(&section("beta を足す", "a.txt", 2));
+    // 読み込みを頼んだところで止め、結果は届けない。
+    let _ = ws.panels.revidere.reload(std::path::PathBuf::new());
+    let effects = ws.dispatch(Action::RevidereAskClaude).unwrap();
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Warning, _)]
+        ),
+        "{effects:?}"
+    );
+}
+
 /// 区間の切り替えは読みかけの位置を持ち越さず、その区間の成果物を読み直す。
 #[test]
 fn 区間の切り替えは読み直しを頼む() {

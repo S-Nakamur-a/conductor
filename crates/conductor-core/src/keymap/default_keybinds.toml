@@ -276,6 +276,7 @@
 # p は列 (o/d) とは別の軸で、見ている区間を入れ替える。W をこのレイヤーにも置くのは、
 # 切り替えた先が未解析のときに、いったん抜けないと作れないのでは行き止まりになるため。
 "p" = "revidere_toggle_scope"
+"a" = "revidere_ask_claude"
 # 開いた w で閉じる。
 "w" = "show_revidere"
 "W" = "analyze_revidere"
