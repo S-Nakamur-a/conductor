@@ -1535,6 +1535,41 @@ mod tests {
         );
     }
 
+    /// 一覧を開いたときの fetch は裏で走るので、選ぶまでに origin が進んでいることがある。
+    #[test]
+    fn リモートブランチは作る直前に_fetch_して最新で切る() {
+        let repo = crate::testing::TestRepo::new();
+        repo.remote_branch("feature/remote-only");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        let origin = repo.origin();
+        repo.git(&[
+            "-C",
+            origin.to_str().unwrap(),
+            "update-ref",
+            "refs/heads/feature/remote-only",
+            &tip,
+        ]);
+
+        type_text(&mut ws, &mut svc, "remote-only");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "feature/remote-only")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+    }
+
     #[test]
     fn prune_は消えたworktreeを数えて確認してから消す() {
         let repo = crate::testing::TestRepo::new();

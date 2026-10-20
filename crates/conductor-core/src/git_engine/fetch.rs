@@ -22,6 +22,14 @@ impl GitEngine {
         self.run_git_fetch(&["origin", refspec])
     }
 
+    /// `git fetch <remote> <branch>...`。リモート追跡 ref だけを進め、ローカルブランチは
+    /// 触らない。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
+    pub fn fetch_branches(&self, remote: &str, branches: &[&str]) -> Result<()> {
+        let mut args = vec![remote];
+        args.extend(branches);
+        self.run_git_fetch(&args)
+    }
+
     fn run_git_fetch(&self, args: &[&str]) -> Result<()> {
         let cwd = self.repo.workdir().unwrap_or(self.repo.path());
         log::debug!(

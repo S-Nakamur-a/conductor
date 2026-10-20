@@ -304,6 +304,30 @@ fn fetch_refspecはローカルブランチを作る() {
 }
 
 #[test]
+fn fetch_branchesはリモート追跡refだけを進める() {
+    let origin = Origin::new();
+    let repo = TestRepo::with_remote_and_main(&origin);
+    let ahead = origin.commit_on("feature", "pushed after the picker fetched");
+
+    repo.engine()
+        .fetch_branches("origin", &["feature", "main"])
+        .unwrap();
+
+    assert_eq!(
+        repo.repo
+            .refname_to_id("refs/remotes/origin/feature")
+            .unwrap(),
+        ahead
+    );
+    assert!(
+        repo.repo
+            .find_branch("feature", git2::BranchType::Local)
+            .is_err(),
+        "ローカルブランチまで作ってはならない"
+    );
+}
+
+#[test]
 fn 知らないrefへのfetch_refspecは失敗を返す() {
     let origin = Origin::new();
     let repo = TestRepo::with_remote_and_main(&origin);
