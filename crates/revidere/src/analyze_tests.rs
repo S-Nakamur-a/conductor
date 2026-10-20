@@ -47,6 +47,52 @@ impl Ai for StubAi {
     }
 }
 
+/// 差し戻しの最中に中止される AI。
+struct CancelledDuringRepair {
+    first: String,
+    cancelled: std::cell::Cell<bool>,
+}
+
+impl Ai for CancelledDuringRepair {
+    fn complete(&self, _system: &str, user: &str) -> Result<String, String> {
+        if user.contains("直前の回答では") {
+            self.cancelled.set(true);
+            return Err("Cancelled".into());
+        }
+        Ok(self.first.clone())
+    }
+
+    fn identity(&self) -> String {
+        "stub".to_string()
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancelled.get()
+    }
+}
+
+#[test]
+fn 差し戻しの最中に中止されたら成果物を書かない() {
+    let repo = repo_ignoring_artifacts();
+    repo.write("a.txt", "1\n");
+    let base = repo.commit_all("base");
+    repo.branch("feature");
+    repo.write("a.txt", "1\n2\n3\n");
+    repo.commit_all("first");
+
+    let ai = CancelledDuringRepair {
+        first: answer_covering("line 2 only", 2, 2),
+        cancelled: Default::default(),
+    };
+    let e = analyze(&options(&repo, &base), &ai).unwrap_err();
+    assert!(matches!(e, AnalyzeError::Ai(_)), "{e:?}");
+    let root = git::root(repo.dir()).unwrap();
+    assert!(
+        !crate::review::artifact_path(&root, crate::review::Scope::Base).exists(),
+        "止めた解析が前のレビューを上書きしてはいけない"
+    );
+}
+
 /// 1 項目だけの答え。その項目が a.txt の後像 from..=to を持つ。
 fn answer_covering(title: &str, from: u32, to: u32) -> String {
     revidere_fixtures::answer(&revidere_fixtures::sections(&[

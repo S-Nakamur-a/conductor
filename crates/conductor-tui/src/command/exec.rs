@@ -272,17 +272,11 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::ForceAnalyzeRevidere => analyze(ws, true),
         CommandId::CancelAnalyzeRevidere => {
             let branch = ws.branch().to_string();
-            if ws.panels.revidere.cancel(&branch) {
-                vec![Effect::Status(
-                    StatusLevel::Info,
-                    format!("Cancelled the review for '{branch}'."),
-                )]
-            } else {
-                vec![Effect::Status(
-                    StatusLevel::Warning,
-                    "No review is running for this branch.".into(),
-                )]
-            }
+            ws.panels.revidere.cancel(&branch);
+            vec![Effect::Status(
+                StatusLevel::Info,
+                format!("Cancelling the review for '{branch}'\u{2026}"),
+            )]
         }
     }
 }

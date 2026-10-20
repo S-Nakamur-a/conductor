@@ -180,15 +180,12 @@ impl RevidereState {
         stopped
     }
 
-    /// そのブランチの解析だけを止める。走っていなければ false。
-    /// 枠は外さない。結果はブランチ名だけで届くので、ここで外すと、止まりきる前に
-    /// やり直した解析の枠を古い方の結果が外してしまう。
-    pub fn cancel(&mut self, branch: &str) -> bool {
-        let Some(cancel) = self.running.get(branch) else {
-            return false;
-        };
-        cancel.store(true, Ordering::Relaxed);
-        true
+    /// そのブランチの解析だけを止める。枠は外さない。結果はブランチ名だけで届くので、
+    /// ここで外すと、止まりきる前にやり直した解析の枠を古い方の結果が外してしまう。
+    pub fn cancel(&mut self, branch: &str) {
+        if let Some(cancel) = self.running.get(branch) {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// 解析 1 本の終わり。文言にブランチ名を入れるのは、複数の worktree で同時に

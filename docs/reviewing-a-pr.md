@@ -33,7 +33,9 @@ terminal keybindings keep working while you review:
    completion cannot do. Replies are cached on the diff itself, so re-running on
    an unchanged diff returns instantly — the confirmation offers a re-analysis
    that ignores the cache when a review for this commit already exists, and
-   `alt+w` skips both the question and the cache.
+   `alt+w` skips both the question and the cache. *Review ▸ Cancel Running
+   Review* stops the run for the selected worktree's branch and kills the AI
+   command; the previous review is left as it was.
 5. **Publish comments** — palette: *Review: Publish Comments to GitHub* posts
    your inline review comments (and replies) back to the PR via `gh`.
 

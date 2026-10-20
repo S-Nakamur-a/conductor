@@ -212,7 +212,7 @@ fn 取り消しは指定したブランチの解析だけを止める() {
     panel.note_spawned(&a);
     panel.note_spawned(&b);
 
-    assert!(panel.cancel("feature/a"));
+    panel.cancel("feature/a");
     assert!(ca.load(Ordering::Relaxed));
     assert!(!cb.load(Ordering::Relaxed) && panel.is_running("feature/b"));
     assert!(
@@ -226,7 +226,6 @@ fn 取り消しは指定したブランチの解析だけを止める() {
         "other",
     );
     assert!(!panel.is_running("feature/a"));
-    assert!(!panel.cancel("feature/a"), "止まったあとは止めるものが無い");
 }
 
 fn key(code: KeyCode) -> KeyEvent {
