@@ -71,6 +71,14 @@ struct Editor {
     size: (u16, u16),
 }
 
+/// シェルを起こすときは読まれない。
+#[derive(Default)]
+struct ClaudeArgs<'a> {
+    resume: Option<&'a str>,
+    name: Option<&'a str>,
+    chrome: bool,
+}
+
 struct PendingTranscript {
     session: String,
     scroll_back: usize,
@@ -670,11 +678,10 @@ impl TerminalPanel {
     fn launch(
         &mut self,
         kind: SessionKind,
-        resume: Option<&str>,
+        claude: ClaudeArgs<'_>,
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
-        session_name: Option<&str>,
     ) -> Result<String> {
         let worktree_name = worktree
             .file_name()
@@ -690,9 +697,10 @@ impl TerminalPanel {
             },
             _ => Launch::ClaudeCode {
                 repo_root,
-                resume_session_id: resume,
-                session_name,
+                resume_session_id: claude.resume,
+                session_name: claude.name,
                 session_hooks: self.session_hooks,
+                chrome: claude.chrome,
             },
         };
         let index = self.pty.spawn(Spawn {
@@ -714,8 +722,14 @@ impl TerminalPanel {
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
+        chrome: bool,
     ) -> Result<()> {
-        let id = self.launch(kind, resume, worktree, repo_root, config, None)?;
+        let claude = ClaudeArgs {
+            resume,
+            name: None,
+            chrome,
+        };
+        let id = self.launch(kind, claude, worktree, repo_root, config)?;
         // spawn した先の worktree を映していないと、そのセッションはどこにも出ない。
         self.worktree = Some(worktree.to_path_buf());
         match kind {
@@ -754,14 +768,11 @@ impl TerminalPanel {
         repo_root: &Path,
         config: &Config,
     ) -> Result<()> {
-        let id = self.launch(
-            SessionKind::ClaudeCode,
-            Some(session_id),
-            worktree,
-            repo_root,
-            config,
-            None,
-        )?;
+        let claude = ClaudeArgs {
+            resume: Some(session_id),
+            ..ClaudeArgs::default()
+        };
+        let id = self.launch(SessionKind::ClaudeCode, claude, worktree, repo_root, config)?;
         if self.worktree.as_deref() == Some(worktree) && self.claude.session.is_none() {
             self.claude.show(Some(id));
             self.activate_visible();
@@ -778,14 +789,11 @@ impl TerminalPanel {
         name: Option<&str>,
         prompt: String,
     ) -> Result<()> {
-        let id = self.launch(
-            SessionKind::ClaudeCode,
-            None,
-            worktree,
-            repo_root,
-            config,
+        let claude = ClaudeArgs {
             name,
-        )?;
+            ..ClaudeArgs::default()
+        };
+        let id = self.launch(SessionKind::ClaudeCode, claude, worktree, repo_root, config)?;
         self.deferred.insert(id, prompt);
         Ok(())
     }

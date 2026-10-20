@@ -108,6 +108,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::RefreshWorktrees => vec![Effect::Spawn(Task::ListWorktrees)],
 
         CommandId::NewClaudeCode => vec![Effect::NewSession(SessionKind::ClaudeCode)],
+        CommandId::NewClaudeCodeWithChrome => vec![Effect::NewClaudeWithChrome],
         CommandId::NewShell => vec![Effect::NewSession(SessionKind::Shell)],
         CommandId::ResumeClaudeSession => {
             let (picker, load) = session::ResumePicker::open();

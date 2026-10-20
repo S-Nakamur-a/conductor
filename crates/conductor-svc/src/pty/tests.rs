@@ -256,6 +256,7 @@ fn フックを降りたセッションはsettingsを渡さず書きもしない
         resume_session_id: None,
         session_name: None,
         session_hooks,
+        chrome: false,
     };
     let passes_settings = |launch: &Launch<'_>| {
         let (cmd, _) = build_command(launch, "panel");
@@ -271,6 +272,25 @@ fn フックを降りたセッションはsettingsを渡さず書きもしない
         !settings.exists(),
         "先客のパネルが次に読む設定を書き換えてはいけない"
     );
+}
+
+#[test]
+fn chromeを頼んだセッションだけがchromeフラグを渡す() {
+    let repo = tempfile::tempdir().unwrap();
+    let passes_chrome = |chrome| {
+        let launch = Launch::ClaudeCode {
+            repo_root: repo.path(),
+            resume_session_id: None,
+            session_name: None,
+            session_hooks: false,
+            chrome,
+        };
+        let (cmd, _) = build_command(&launch, "panel");
+        cmd.get_argv().iter().any(|arg| arg == "--chrome")
+    };
+
+    assert!(passes_chrome(true));
+    assert!(!passes_chrome(false));
 }
 
 #[test]
@@ -309,6 +329,7 @@ fn フックを降りてもpanel_idは渡しソケットは渡さない() {
             resume_session_id: None,
             session_name: None,
             session_hooks: false,
+            chrome: false,
         },
         "panel",
     );

@@ -47,6 +47,7 @@ pub enum Effect {
     StepChangedFile(isize),
     SelectWorktree(usize),
     NewSession(SessionKind),
+    NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す。Prompt の on_submit は関数
     /// ポインタで設定もリポジトリも掴めないので、Task を組むのは apply の側。
     SmartWorktree(String),
@@ -152,7 +153,10 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 }
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
-            Effect::NewSession(kind) => new_session(ws, kind, None, None),
+            Effect::NewSession(kind) => new_session(ws, kind, None, None, false),
+            Effect::NewClaudeWithChrome => {
+                new_session(ws, SessionKind::ClaudeCode, None, None, true)
+            }
             Effect::SmartWorktree(description) => {
                 queue.push_back(Effect::Spawn(Task::SmartWorktree {
                     description,
@@ -170,7 +174,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             } => queue.extend(smart_session(ws, &worktree, name.as_deref(), prompt)),
             Effect::SendToShell(command) => queue.extend(send_to_shell(ws, &command)),
             Effect::ResumeSession { id, worktree } => {
-                new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree)
+                new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree, false)
             }
             Effect::OpenInEditor(path) => queue.extend(open_in_editor(ws, &path)),
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
@@ -255,7 +259,7 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
 /// テストを走らせたいのであって、先にシェルを開けと言われたいわけではない。
 fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
     if !ws.panels.terminal.has_shell() {
-        new_session(ws, SessionKind::Shell, None, None);
+        new_session(ws, SessionKind::Shell, None, None, false);
     }
     match ws.panels.terminal.send_line(command) {
         Ok(()) => vec![Effect::Focus(Focus::TerminalShell)],
@@ -306,17 +310,23 @@ fn smart_session(
     }
 }
 
-fn new_session(ws: &mut Workspace, kind: SessionKind, resume: Option<&str>, at: Option<PathBuf>) {
+fn new_session(
+    ws: &mut Workspace,
+    kind: SessionKind,
+    resume: Option<&str>,
+    at: Option<PathBuf>,
+    chrome: bool,
+) {
     let worktree = at.unwrap_or_else(|| {
         ws.panels
             .worktree
             .selected()
             .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone())
     });
-    let result = ws
-        .panels
-        .terminal
-        .spawn(kind, resume, &worktree, &ws.repo.root, &ws.config);
+    let result =
+        ws.panels
+            .terminal
+            .spawn(kind, resume, &worktree, &ws.repo.root, &ws.config, chrome);
     match result {
         Ok(()) => {
             ws.focus = match kind {
