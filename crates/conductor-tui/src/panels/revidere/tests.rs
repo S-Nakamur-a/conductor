@@ -443,16 +443,16 @@ fn claude_へは成果物の在り処と見ている項目を渡す() {
         ref other => panic!("{other:?}"),
     };
 
+    let artifact = revidere::review::artifact_path(ws.panels.viewer.root(), Scope::Base);
+    let artifact = artifact.display();
+
     assert_eq!(
         pasted(&mut ws),
-        ".conductor/review.json の項目「beta を足す」 (a.txt:2) について: "
+        format!("{artifact} の項目「beta を足す」 (a.txt:2) について: ")
     );
 
     ws.panels.revidere.show_overview(true);
-    assert_eq!(
-        pasted(&mut ws),
-        ".conductor/review.json のレビューについて: "
-    );
+    assert_eq!(pasted(&mut ws), format!("{artifact} のレビューについて: "));
 }
 
 #[test]
@@ -466,10 +466,25 @@ fn 題の改行は貼る前に畳む() {
 }
 
 #[test]
-fn 読み込み中は前の_worktree_の項目を貼らない() {
+fn 開き直しの読み込み中でも同じ_worktree_の成果物なら貼る() {
     let (mut ws, _svc) = built(&section("beta を足す", "a.txt", 2));
     // 読み込みを頼んだところで止め、結果は届けない。
-    let _ = ws.panels.revidere.reload(std::path::PathBuf::new());
+    let _ = ws
+        .panels
+        .revidere
+        .reload(ws.panels.viewer.root().to_path_buf());
+    let effects = ws.dispatch(Action::RevidereAskClaude).unwrap();
+    assert!(
+        matches!(effects.as_slice(), [Effect::PasteToClaude(_)]),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn 別の_worktree_の成果物は貼らない() {
+    let (mut ws, _svc) = built(&section("beta を足す", "a.txt", 2));
+    let other = tempfile::tempdir().unwrap();
+    let _ = ws.panels.viewer.set_root(other.path().to_path_buf());
     let effects = ws.dispatch(Action::RevidereAskClaude).unwrap();
     assert!(
         matches!(

@@ -347,12 +347,15 @@ impl RevidereState {
             Action::RevidereToggleScope => {
                 return Some(self.toggle_scope(ctx.root.to_path_buf()));
             }
-            // 読み込み中は worktree を切り替えた直後で、手元の成果物は前の worktree のもの。
-            Action::RevidereAskClaude if self.loading || self.review.is_none() => {
-                return Some(vec![Effect::Status(
-                    StatusLevel::Warning,
-                    "No review loaded to ask Claude about.".into(),
-                )]);
+            Action::RevidereAskClaude
+                if self.review.as_ref().is_none_or(|r| r.worktree != ctx.root) =>
+            {
+                let why = match (&self.review, self.loading) {
+                    (_, true) => "The review is still loading.",
+                    (Some(_), false) => "The review on screen belongs to another worktree.",
+                    (None, false) => "No review loaded to ask Claude about.",
+                };
+                return Some(vec![Effect::Status(StatusLevel::Warning, why.into())]);
             }
             Action::RevidereAskClaude => {
                 return Some(vec![Effect::PasteToClaude(self.question(ctx.root))]);
@@ -472,10 +475,11 @@ impl RevidereState {
     }
 
     /// Claude に渡す問いの書き出し。本文は成果物に書いてあるので、渡すのは
-    /// 在り処と、どの項目を見ているかだけ。
+    /// 在り処と、どの項目を見ているかだけ。Claude の cwd がこの worktree とは
+    /// 限らないので、在り処は絶対パスで渡す。
     fn question(&self, root: &Path) -> String {
         let artifact = revidere::review::artifact_path(root, self.scope);
-        let artifact = artifact.strip_prefix(root).unwrap_or(&artifact).display();
+        let artifact = artifact.display();
         let placed = self
             .review
             .as_ref()
