@@ -52,7 +52,7 @@ pub struct ExplorerPanel {
     pub tour: TourStops,
     tree_view: Viewport,
     tree_clicks: ClickTracker,
-    /// 投げたまま結果がまだ届いていないツリー読みの数。
+    /// 投げたまま結果がまだ届いていない走査 (ツリー・ファイル一覧・git status) の数。
     pending: usize,
     refresh_queued: bool,
 }
@@ -142,14 +142,21 @@ impl ExplorerPanel {
             self.refresh_queued = true;
             return Vec::new();
         }
-        self.pending += 1;
-        vec![
-            Effect::Spawn(Task::LoadTree {
-                root: self.tree.root().to_path_buf(),
+        let root = self.tree.root().to_path_buf();
+        let spawned = [
+            Task::LoadTree {
+                root: root.clone(),
                 expanded: self.tree.expanded_dirs(),
-            }),
-            self.changes.reload(),
-        ]
+            },
+            Task::LoadFileIndex { root: root.clone() },
+            Task::LoadGitStatus { root },
+        ];
+        self.pending += spawned.len();
+        spawned
+            .into_iter()
+            .map(Effect::Spawn)
+            .chain([self.changes.reload()])
+            .collect()
     }
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
@@ -331,7 +338,7 @@ impl ExplorerPanel {
         }
     }
 
-    fn tree_settled(&mut self) -> Vec<Effect> {
+    fn survey_settled(&mut self) -> Vec<Effect> {
         self.pending = self.pending.saturating_sub(1);
         if self.pending == 0 && std::mem::take(&mut self.refresh_queued) {
             return self.refresh();
@@ -347,11 +354,27 @@ impl ExplorerPanel {
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
             // 別の根の走査が遅れて届いても、今の根の表示を奪わない。
-            TaskResult::Tree(snapshot) if snapshot.root != self.tree.root() => self.tree_settled(),
+            TaskResult::Tree(snapshot) if snapshot.root != self.tree.root() => {
+                self.survey_settled()
+            }
             TaskResult::Tree(snapshot) => {
                 self.tree.install(*snapshot);
                 self.clamp();
-                self.tree_settled()
+                self.survey_settled()
+            }
+            TaskResult::FileIndex { root, files } => {
+                if root == self.tree.root() {
+                    self.tree.install_files(files);
+                }
+                self.survey_settled()
+            }
+            TaskResult::GitStatus { root, status } => {
+                if let Some(status) = status
+                    && root == self.tree.root()
+                {
+                    self.tree.install_status(*status);
+                }
+                self.survey_settled()
             }
             TaskResult::Diff(diff) => self.changes.install(*diff),
             TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
@@ -484,11 +507,36 @@ mod tests {
         assert!(panel.refresh().is_empty(), "走っている間に重ねた");
         assert!(panel.refresh().is_empty(), "走っている間に重ねた");
 
-        let settled = panel.apply_result(TaskResult::Tree(Box::new(tree::survey(dir.path(), &[]))));
-        assert_eq!(settled.len(), 2, "待たせた投げ直しが出ない: {settled:?}");
+        let mut results = survey_results(dir.path());
+        let last = results.pop().unwrap();
+        for result in results {
+            assert!(
+                panel.apply_result(result).is_empty(),
+                "全部返る前に投げ直した"
+            );
+        }
+        assert!(
+            !panel.apply_result(last).is_empty(),
+            "待たせた投げ直しが出ない"
+        );
 
-        let settled = panel.apply_result(TaskResult::Tree(Box::new(tree::survey(dir.path(), &[]))));
-        assert!(settled.is_empty(), "二度出た: {settled:?}");
+        for result in survey_results(dir.path()) {
+            assert!(panel.apply_result(result).is_empty(), "二度出た");
+        }
+    }
+
+    fn survey_results(root: &std::path::Path) -> Vec<TaskResult> {
+        vec![
+            TaskResult::FileIndex {
+                root: root.to_path_buf(),
+                files: Vec::new(),
+            },
+            TaskResult::GitStatus {
+                root: root.to_path_buf(),
+                status: None,
+            },
+            TaskResult::Tree(Box::new(tree::survey(root, &[]))),
+        ]
     }
 
     #[test]

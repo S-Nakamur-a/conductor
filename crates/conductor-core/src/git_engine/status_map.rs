@@ -16,6 +16,29 @@ pub enum TreeGitState {
     Ignored,
 }
 
+/// 作業ツリー全体を歩かずに ignored かどうかだけを答える。
+///
+/// [GitStatusMap::load] は 17 万ファイルのリポジトリで実測 9 秒かかり、libgit2 は
+/// fsmonitor も untrackedCache も見ないのでオプションを削っても縮まらない。同じ数の
+/// 問い合わせをこちらで答えると 7ms なので、全体の status が届くまでのツリーの
+/// 色付けはこれで埋める。埋めないと ignored が全部 Tracked として明るく出る。
+pub struct IgnoreOracle(Option<Repository>);
+
+impl IgnoreOracle {
+    pub fn open(worktree_path: &Path) -> Self {
+        Self(Repository::discover(worktree_path).ok())
+    }
+
+    pub fn classify(&self, path: &str) -> TreeGitState {
+        match &self.0 {
+            Some(repo) if repo.status_should_ignore(Path::new(path)).unwrap_or(false) => {
+                TreeGitState::Ignored
+            }
+            _ => TreeGitState::Tracked,
+        }
+    }
+}
+
 /// libgit2 が報告する worktree ルートからの相対パスをキーにした status。
 #[derive(Debug, Clone, Default)]
 pub struct GitStatusMap {

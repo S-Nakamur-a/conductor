@@ -1,13 +1,16 @@
 //! ファイルツリーの走査と、その中の位置。
 //!
 //! 走査は svc のワーカーで行い ([Snapshot])、展開したディレクトリの子だけを
-//! UI スレッドで読む。根・エントリ・git status は同じ 1 回の走査から出たものなので
-//! 3 つ揃って入れ替える。別々に書けると「根は新しいのにエントリは古い」状態が作れ、
+//! UI スレッドで読む。
+//!
+//! 全体の git status とファイル名検索の一覧はリポジトリ全体を歩くので、Snapshot には
+//! 載せず別のタスクで後から流し込む ([FileTree::install_status] /
+//! [FileTree::install_files])。後から届くものは根で照合する。根とエントリがずれると、
 //! その瞬間のクリックが別ブランチの同名ファイルを開く。
 
 use std::path::{Path, PathBuf};
 
-use conductor_core::git_engine::status_map::{GitStatusMap, TreeGitState};
+use conductor_core::git_engine::status_map::{GitStatusMap, IgnoreOracle, TreeGitState};
 use conductor_core::icons::{FileIcon, dir_icon, file_icon};
 
 /// 走査の最大深度。
@@ -56,44 +59,28 @@ pub struct Entry {
 pub struct Snapshot {
     pub root: PathBuf,
     pub entries: Vec<Entry>,
-    pub status: GitStatusMap,
-    /// ファイル名検索が引く、根以下の全ファイル。
-    pub all_files: Vec<String>,
 }
 
 /// root を歩いて Snapshot を作る。`expanded` にあるディレクトリは子まで読む。
 pub fn survey(root: &Path, expanded: &[String]) -> Snapshot {
-    // 失敗しても空のマップに落とすが、これは無害なフォールバックではない。エントリが
-    // 無いとツリー上は全て Tracked に見え、UI が「未ステージの変更がある」の正反対を
-    // 黙って主張する。git 管理外のディレクトリでは正当にこの経路を通る。
-    let status = GitStatusMap::load(root).unwrap_or_else(|e| {
-        log::warn!(
-            "git status unavailable for {} — the file tree will render as if everything is tracked: {e}",
-            root.display()
-        );
-        GitStatusMap::default()
-    });
+    let oracle = IgnoreOracle::open(root);
+    let classify = |path: &str| oracle.classify(path);
 
     let mut entries = Vec::new();
-    read_children(root, root, 0, &mut entries, &status);
+    read_children(root, root, 0, &mut entries, &classify);
 
     let mut idx = 0;
     while idx < entries.len() {
         if entries[idx].is_dir && expanded.contains(&entries[idx].path) {
             entries[idx].expanded = true;
-            load_children(root, &mut entries, idx, &status);
+            load_children(root, &mut entries, idx, &classify);
         }
         idx += 1;
     }
 
-    let mut all_files = Vec::new();
-    collect_files(root, root, 0, &mut all_files);
-
     Snapshot {
         root: root.to_path_buf(),
         entries,
-        status,
-        all_files,
     }
 }
 
@@ -103,6 +90,8 @@ pub struct FileTree {
     root: PathBuf,
     entries: Vec<Entry>,
     status: GitStatusMap,
+    /// 全体の status が一度でも届いたか。空のマップは「変更なし」と区別がつかない。
+    status_loaded: bool,
     all_files: Vec<String>,
 }
 
@@ -132,6 +121,7 @@ impl FileTree {
             self.entries.clear();
             self.all_files.clear();
             self.status = GitStatusMap::default();
+            self.status_loaded = false;
         }
         self.root = root;
     }
@@ -139,8 +129,30 @@ impl FileTree {
     pub fn install(&mut self, snapshot: Snapshot) {
         self.root = snapshot.root;
         self.entries = snapshot.entries;
-        self.status = snapshot.status;
-        self.all_files = snapshot.all_files;
+        self.reclassify();
+    }
+
+    /// 遅れて届いた全体の status で色を引き直す。届くまでの色は ignored しか
+    /// 見ていない ([IgnoreOracle])。
+    pub fn install_status(&mut self, status: GitStatusMap) {
+        self.status = status;
+        self.status_loaded = true;
+        self.reclassify();
+    }
+
+    pub fn install_files(&mut self, files: Vec<String>) {
+        self.all_files = files;
+    }
+
+    /// 走査し直すたびに status を当て直さないと、ウォッチャーが走るたびに色が
+    /// ignored だけの状態へ戻る。まだ届いていなければ走査時の色をそのまま使う。
+    fn reclassify(&mut self) {
+        if !self.status_loaded {
+            return;
+        }
+        for entry in &mut self.entries {
+            entry.git = self.status.classify(&entry.path);
+        }
     }
 
     /// いま展開しているディレクトリ。走査をやり直しても同じ形に戻すために渡す。
@@ -191,7 +203,13 @@ impl FileTree {
             return;
         }
         entry.expanded = true;
-        load_children(&self.root, &mut self.entries, idx, &self.status);
+        let Self {
+            root,
+            entries,
+            status,
+            ..
+        } = self;
+        load_children(root, entries, idx, &|path| status.classify(path));
     }
 
     pub fn collapse(&mut self, idx: usize) {
@@ -224,13 +242,18 @@ impl FileTree {
 }
 
 /// idx のディレクトリの直接の子を読み、その直後へ挿す。読み込み済みなら何もしない。
-fn load_children(root: &Path, entries: &mut Vec<Entry>, idx: usize, status: &GitStatusMap) {
+fn load_children(
+    root: &Path,
+    entries: &mut Vec<Entry>,
+    idx: usize,
+    classify: &dyn Fn(&str) -> TreeGitState,
+) {
     let (path, depth) = match entries.get(idx) {
         Some(e) if e.is_dir && !e.children_loaded => (e.path.clone(), e.depth + 1),
         _ => return,
     };
     let mut children = Vec::new();
-    read_children(root, &root.join(&path), depth, &mut children, status);
+    read_children(root, &root.join(&path), depth, &mut children, classify);
     entries[idx].children_loaded = true;
     if !children.is_empty() {
         entries.splice(idx + 1..idx + 1, children);
@@ -244,7 +267,7 @@ fn read_children(
     dir: &Path,
     depth: usize,
     entries: &mut Vec<Entry>,
-    status: &GitStatusMap,
+    classify: &dyn Fn(&str) -> TreeGitState,
 ) {
     if depth > MAX_DEPTH {
         return;
@@ -268,7 +291,7 @@ fn read_children(
             continue;
         }
         let path = relative(root, &full);
-        let git = status.classify(&path);
+        let git = classify(&path);
         entries.push(Entry {
             icon: if is_dir {
                 dir_icon(false)
@@ -283,26 +306,6 @@ fn read_children(
             children_loaded: false,
             git,
         });
-    }
-}
-
-fn collect_files(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
-    if depth > MAX_DEPTH {
-        return;
-    }
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in read_dir.filter_map(|e| e.ok()) {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let full = entry.path();
-        if full.is_dir() {
-            if !SKIP_DIRS.contains(&name.as_str()) {
-                collect_files(root, &full, depth + 1, out);
-            }
-        } else {
-            out.push(relative(root, &full));
-        }
     }
 }
 
@@ -350,14 +353,25 @@ mod tests {
         assert!(visible.contains(&"ignored"), "{visible:?}");
         assert!(visible.contains(&"src"));
         assert!(!visible.contains(&"node_modules"), "{visible:?}");
-        assert!(
-            !tree
-                .all_files()
-                .iter()
-                .any(|p| p.starts_with("node_modules"))
-        );
         // 直下だけを読むので、畳んだディレクトリの中身はまだ出ない。
         assert!(!visible.contains(&"src/main.rs"));
+    }
+
+    #[test]
+    fn 全体のstatusが届く前でもignoredは暗いまま出る() {
+        let dir = fixture();
+        git2::Repository::init(dir.path()).unwrap();
+        let mut tree = FileTree::default();
+        tree.install(survey(dir.path(), &[]));
+
+        let git = |path: &str| {
+            tree.entries()
+                .iter()
+                .find(|e| e.path == path)
+                .map(|e| e.git)
+        };
+        assert_eq!(git("ignored"), Some(TreeGitState::Ignored));
+        assert_eq!(git("src"), Some(TreeGitState::Tracked));
     }
 
     #[test]

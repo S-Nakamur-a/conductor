@@ -11,6 +11,7 @@ use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, ApiConfig, LayoutConfig, ReviewConfig};
 use conductor_core::diff_state::{DiffSource, DiffState};
+use conductor_core::git_engine::status_map::GitStatusMap;
 use conductor_core::git_engine::{
     ChangeCounts, CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir,
 };
@@ -72,6 +73,14 @@ pub enum Task {
     LoadTree {
         root: PathBuf,
         expanded: Vec<String>,
+    },
+    /// ファイル名検索が引く一覧。
+    LoadFileIndex {
+        root: PathBuf,
+    },
+    /// ツリーの色付けに使う全体の git status。
+    LoadGitStatus {
+        root: PathBuf,
     },
     ComputeDiff {
         worktree: PathBuf,
@@ -343,6 +352,17 @@ pub enum TaskResult {
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
     Tree(Box<tree::Snapshot>),
+    /// `root` は照合用。走査中に worktree を切り替えていたら捨てる。
+    FileIndex {
+        root: PathBuf,
+        files: Vec<String>,
+    },
+    /// 読めなければ None。空のマップを入れるとツリーが全て Tracked に見え、
+    /// 「変更なし」を黙って主張する。
+    GitStatus {
+        root: PathBuf,
+        status: Option<Box<GitStatusMap>>,
+    },
     /// DiffState は失敗の理由を自分の中に持つので Result にしない。
     Diff(Box<DiffState>),
     /// どのコミットの結果かは DiffState の source が持つ。
@@ -452,6 +472,30 @@ impl Task {
                 svc.spawn(
                     move || Box::new(tree::survey(&root, &expanded)),
                     TaskResult::Tree,
+                );
+            }
+            Task::LoadFileIndex { root } => {
+                svc.spawn(
+                    move || {
+                        let files = conductor_core::file_index::list(&root);
+                        (root, files)
+                    },
+                    |(root, files)| TaskResult::FileIndex { root, files },
+                );
+            }
+            Task::LoadGitStatus { root } => {
+                svc.spawn(
+                    move || {
+                        // git 管理外のディレクトリでは正当にここで失敗する。
+                        let status = GitStatusMap::load(&root)
+                            .inspect_err(|e| log::warn!("git status unavailable: {e}"))
+                            .ok();
+                        (root, status)
+                    },
+                    |(root, status)| TaskResult::GitStatus {
+                        root,
+                        status: status.map(Box::new),
+                    },
                 );
             }
             Task::ComputeDiff { worktree, source } => {
