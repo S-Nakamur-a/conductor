@@ -125,6 +125,56 @@ fn ベースrefはローカルブランチが無くてもリモート追跡ref�
     }
 }
 
+/// git fetch はローカルの main を進めない。origin/main の tip から切ったブランチを古い
+/// ローカル main で測ると merge-base が古くなり、上流に載った他人の変更まで差分に出る
+/// (17 万ファイルのリポジトリで 1 コミット遅れが 316 ファイル)。
+#[test]
+fn ローカルブランチが古くてもoriginを先に取って差分を広げない() {
+    let repo = TestRepo::new();
+    let stale = repo.commit_tree(None, &[("a.txt", b"a")]);
+    repo.branch_at("main", stale);
+    let upstream = repo.commit_tree(Some(stale), &[("theirs.txt", b"theirs")]);
+    repo.remote_ref("origin/main", upstream);
+    let head = repo.commit_tree(Some(upstream), &[("b.txt", b"b")]);
+    repo.checkout_at("feature", head);
+
+    assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
+}
+
+/// git status は中身が全部未追跡のディレクトリを `new/` の 1 行に畳む。それを pathspec に
+/// そのまま渡しても配下が 1 件ずつ中身付きで出なければならない。
+#[test]
+fn 畳まれた未追跡ディレクトリの中身は1件ずつ出る() {
+    let repo = TestRepo::new();
+    on_main(&repo);
+    repo.file("new/x.txt", "x\n").file("new/deep/y.txt", "y\n");
+
+    let (files, error) = DiffSource::working_tree("main")
+        .changed_files(&repo.path, false, 4)
+        .unwrap();
+
+    assert_eq!(error, None);
+    let listed: Vec<(&str, usize)> = files
+        .iter()
+        .map(|f| (f.path.as_str(), f.added_lines))
+        .collect();
+    assert_eq!(listed, [("new/deep/y.txt", 1), ("new/x.txt", 1)]);
+}
+
+/// コミットで変えて作業ツリーで元に戻したファイルは、git status にも tree 同士の差分にも
+/// 出るがベースとは同じ内容なので、一覧には出ない。
+#[test]
+fn コミットで変えて作業ツリーで戻したファイルは出ない() {
+    let repo = TestRepo::new();
+    let base = repo.commit_tree(None, &[("a.txt", b"base\n")]);
+    repo.branch_at("main", base);
+    let head = repo.commit_tree(Some(base), &[("a.txt", b"changed\n"), ("b.txt", b"b\n")]);
+    repo.checkout_at("feature", head);
+    repo.file("a.txt", "base\n");
+
+    assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
+}
+
 /// リモート追跡 ref は worktree ごとではなく共有の commondir にある。
 #[test]
 fn リンクされたworktreeからもリモート追跡refを解決する() {

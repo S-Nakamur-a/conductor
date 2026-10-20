@@ -81,6 +81,11 @@ impl GitStatusMap {
         })
     }
 
+    /// status に出た全パス。未追跡ディレクトリは git が畳んだ `newdir/` のまま。
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.by_path.keys().map(String::as_str)
+    }
+
     /// git status が報告した生のビット。変更なしの tracked ファイルは None。
     /// 畳まれた未追跡ディレクトリの配下は Changed files に 1 行ずつ出るので、
     /// 未追跡だけは祖先から継承する (None だとそこだけ clean と同じ色になる)。
