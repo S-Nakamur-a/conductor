@@ -63,6 +63,9 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
         CommandId::PublishReview if ws.review.unpublished_count() == 0 => {
             Enabled::No("no unpublished comments on this branch")
         }
+        CommandId::CancelAnalyzeRevidere if !ws.panels.revidere.is_running(ws.branch()) => {
+            Enabled::No("no review is running for this branch")
+        }
         CommandId::UpdateAndRestart if ws.chrome.update.is_none() => {
             Enabled::No("no newer release is known \u{2014} check for updates first")
         }
@@ -267,6 +270,20 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::AnalyzeRevidere => confirm_analyze(ws),
         // 押した人はもう一度作ると決めている。ヘルプも "without asking" と名乗る。
         CommandId::ForceAnalyzeRevidere => analyze(ws, true),
+        CommandId::CancelAnalyzeRevidere => {
+            let branch = ws.branch().to_string();
+            if ws.panels.revidere.cancel(&branch) {
+                vec![Effect::Status(
+                    StatusLevel::Info,
+                    format!("Cancelled the review for '{branch}'."),
+                )]
+            } else {
+                vec![Effect::Status(
+                    StatusLevel::Warning,
+                    "No review is running for this branch.".into(),
+                )]
+            }
+        }
     }
 }
 

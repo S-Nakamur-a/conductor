@@ -113,6 +113,7 @@ pub const MENUS: &[Menu] = &[
         icon: icons::MENU_REVIEW,
         items: &[
             cmd(CommandId::AnalyzeRevidere, "Review current branch"),
+            cmd(CommandId::CancelAnalyzeRevidere, "Cancel Running Review"),
             cmd(CommandId::ReviewPullRequest, "Review Pull Request\u{2026}"),
             SEP,
             cmd(CommandId::ShowRevidere, "Show Review"),

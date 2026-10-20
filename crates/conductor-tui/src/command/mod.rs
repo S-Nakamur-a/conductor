@@ -64,6 +64,7 @@ pub enum CommandId {
     ReviewPullRequest,
     AnalyzeRevidere,
     ForceAnalyzeRevidere,
+    CancelAnalyzeRevidere,
     PublishReview,
     AddReviewComment,
     ViewCommentDetail,
@@ -202,6 +203,7 @@ commands! {
     ReviewPullRequest, "Review: Review Pull Request…", Review, Some(Action::ReviewPullRequest), "pr pull request github fetch worktree review number url";
     AnalyzeRevidere, "Review: Review Current Branch…", Review, Some(Action::AnalyzeRevidere), "revidere analyse analyze generate ai review sections coverage branch";
     ForceAnalyzeRevidere, "Review: Re-analyse Current Branch", Review, Some(Action::ForceAnalyzeRevidere), "revidere reanalyse regenerate force ignore cache rebuild ai review";
+    CancelAnalyzeRevidere, "Review: Cancel Running Review", Review, None, "revidere cancel stop abort kill running analyse analyze ai review";
     PublishReview, "Review: Publish Comments to GitHub", Review, Some(Action::PublishReview), "publish post github pr comments review upload";
     AddReviewComment, "Review: Add Comment", Review, Some(Action::AddComment), "new comment add write";
     ViewCommentDetail, "Review: View Comment Detail", Review, Some(Action::ViewCommentDetail), "detail preview";
