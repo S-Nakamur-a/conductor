@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use super::GitEngine;
 
 impl GitEngine {
+    /// origin が登録されているか。無ければ fetch も fast-forward も追いつく先が無い。
     pub fn has_origin(&self) -> bool {
         self.repo.find_remote("origin").is_ok()
     }
