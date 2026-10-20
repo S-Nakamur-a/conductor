@@ -98,6 +98,11 @@ command by name.
 | **/** · **Ctrl+g** | search · full-text (grep) search |
 | **Esc** · **Ctrl+q** | back / close overlay · quit |
 
+To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code
+Session (Chrome)* (or "New Claude Code (Chrome)" in the palette). It launches
+`claude --chrome`; it has no key, and sessions started any other way — including
+resumed ones — run without it.
+
 ## Reviewing a Pull Request
 
 PR review runs inside the normal Explorer/Viewer/Terminal accordion — there is

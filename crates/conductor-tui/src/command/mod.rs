@@ -37,6 +37,7 @@ pub enum CommandId {
     OpenPullRequest,
 
     NewClaudeCode,
+    NewClaudeCodeWithChrome,
     NewShell,
     ResumeClaudeSession,
     SaveSessionHistory,
@@ -176,6 +177,7 @@ commands! {
     OpenPullRequest, "Worktree: Open Pull Request", Worktree, Some(Action::OpenPullRequest), "pr github browser web open";
 
     NewClaudeCode, "Terminal: New Claude Code", Terminal, Some(Action::NewClaudeCode), "spawn ai";
+    NewClaudeCodeWithChrome, "Terminal: New Claude Code (Chrome)", Terminal, None, "spawn ai chrome browser";
     NewShell, "Terminal: New Shell", Terminal, Some(Action::NewShell), "spawn bash zsh";
     ResumeClaudeSession, "Terminal: Resume Claude Session", Terminal, None, "resume continue";
     SaveSessionHistory, "Terminal: Save Output", Terminal, None, "save record session output snapshot scrollback";

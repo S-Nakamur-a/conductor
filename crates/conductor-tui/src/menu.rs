@@ -177,6 +177,10 @@ pub const MENUS: &[Menu] = &[
         icon: icons::MENU_TERMINAL,
         items: &[
             cmd(CommandId::NewClaudeCode, "New Claude Code Session"),
+            cmd(
+                CommandId::NewClaudeCodeWithChrome,
+                "New Claude Code Session (Chrome)",
+            ),
             cmd(CommandId::NewShell, "New Shell Session"),
             cmd(
                 CommandId::ResumeClaudeSession,

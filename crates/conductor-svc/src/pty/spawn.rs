@@ -25,6 +25,7 @@ pub enum Launch<'a> {
         resume_session_id: Option<&'a str>,
         session_name: Option<&'a str>,
         session_hooks: bool,
+        chrome: bool,
     },
     Shell {
         program: &'a str,
@@ -146,8 +147,12 @@ pub(super) fn build_command(
             resume_session_id,
             session_name,
             session_hooks,
+            chrome,
         } => {
             let mut cmd = CommandBuilder::new("claude");
+            if *chrome {
+                cmd.arg("--chrome");
+            }
             // resume は既存の id を保つ。新規は id を先に決めて渡すので、「worktree の
             // 最新セッション」を推測せずにログのファイル名が事前にわかる。
             let session_id = match resume_session_id {
