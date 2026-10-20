@@ -92,6 +92,11 @@ pub struct FileTree {
     status: GitStatusMap,
     /// 全体の status が一度でも届いたか。空のマップは「変更なし」と区別がつかない。
     status_loaded: bool,
+    /// 展開した子を分類するための ignore 判定。開くのに 0.2〜0.4 秒かかり warm に
+    /// ならないので、根ごとに 1 回だけ開いて使い回す。引き換えに index の写しが
+    /// その時点で固まるので、`git add -f` した直後は走査が走るまで暗いまま出る
+    /// (`.git` の変更はウォッチャーが見ない)。gitignore 側は毎回読み直される。
+    ignore: Option<IgnoreOracle>,
     all_files: Vec<String>,
 }
 
@@ -122,6 +127,7 @@ impl FileTree {
             self.all_files.clear();
             self.status = GitStatusMap::default();
             self.status_loaded = false;
+            self.ignore = None;
         }
         self.root = root;
     }
@@ -132,8 +138,6 @@ impl FileTree {
         self.reclassify();
     }
 
-    /// 遅れて届いた全体の status で色を引き直す。届くまでの色は ignored しか
-    /// 見ていない ([IgnoreOracle])。
     pub fn install_status(&mut self, status: GitStatusMap) {
         self.status = status;
         self.status_loaded = true;
@@ -145,13 +149,18 @@ impl FileTree {
     }
 
     /// 走査し直すたびに status を当て直さないと、ウォッチャーが走るたびに色が
-    /// ignored だけの状態へ戻る。まだ届いていなければ走査時の色をそのまま使う。
+    /// 走査時の状態へ戻る。まだ届いていなければ走査時の色をそのまま使う。
+    ///
+    /// ignored は走査が決めたものを残す。全体の status は ignored を持たないので
+    /// ([GitStatusMap])、引き直すと node_modules が明るく出る。
     fn reclassify(&mut self) {
         if !self.status_loaded {
             return;
         }
         for entry in &mut self.entries {
-            entry.git = self.status.classify(&entry.path);
+            if entry.git != TreeGitState::Ignored {
+                entry.git = self.status.classify(&entry.path);
+            }
         }
     }
 
@@ -207,9 +216,14 @@ impl FileTree {
             root,
             entries,
             status,
+            ignore,
             ..
         } = self;
-        load_children(root, entries, idx, &|path| status.classify(path));
+        let ignore = ignore.get_or_insert_with(|| IgnoreOracle::open(root));
+        load_children(root, entries, idx, &|path| match ignore.classify(path) {
+            TreeGitState::Ignored => TreeGitState::Ignored,
+            _ => status.classify(path),
+        });
     }
 
     pub fn collapse(&mut self, idx: usize) {
@@ -372,6 +386,37 @@ mod tests {
         };
         assert_eq!(git("ignored"), Some(TreeGitState::Ignored));
         assert_eq!(git("src"), Some(TreeGitState::Tracked));
+    }
+
+    #[test]
+    fn ignoredディレクトリを展開しても追跡済みの子は暗くしない() {
+        let dir = fixture();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        std::fs::write(dir.path().join("ignored/keep.txt"), "a\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("ignored/keep.txt"))
+            .unwrap();
+        index.write().unwrap();
+
+        let mut tree = FileTree::default();
+        tree.install(survey(dir.path(), &[]));
+        let idx = tree
+            .entries()
+            .iter()
+            .position(|e| e.path == "ignored")
+            .unwrap();
+        tree.expand(idx);
+
+        let git = |path: &str| {
+            tree.entries()
+                .iter()
+                .find(|e| e.path == path)
+                .map(|e| e.git)
+        };
+        assert_eq!(git("ignored"), Some(TreeGitState::Ignored));
+        assert_eq!(git("ignored/out.txt"), Some(TreeGitState::Ignored));
+        assert_eq!(git("ignored/keep.txt"), Some(TreeGitState::Tracked));
     }
 
     #[test]

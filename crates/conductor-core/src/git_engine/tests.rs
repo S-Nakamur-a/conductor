@@ -924,8 +924,8 @@ fn delete_branchはチェックアウトされていないブランチを消す(
     );
 }
 
-/// classify() が区別すべき全組み合わせ。各パスの期待値は「そのフィクスチャをどう作ったか」
-/// (add したか、.gitignore に載せたか、触っていないか) から決めていて、実装をなぞらない。
+/// 各パスの期待値は「そのフィクスチャをどう作ったか」(add したか、.gitignore に載せたか、
+/// 触っていないか) から決めていて、実装をなぞらない。
 fn status_fixture() -> TestRepo {
     let repo = TestRepo::new();
     for name in [
@@ -963,10 +963,6 @@ fn 分類は各フィクスチャが作られた状態を答える() {
         ("unstaged_only.txt", TreeGitState::Tracked),
         ("both.txt", TreeGitState::Tracked),
         ("untracked.txt", TreeGitState::Untracked),
-        // libgit2 は build/ を末尾スラッシュ付きの 1 エントリに折りたたむ (実測)。
-        ("build", TreeGitState::Ignored),
-        ("build/deep/x.txt", TreeGitState::Ignored),
-        // 接頭辞を共有するだけの兄弟は ignored ではない。
         ("build2/y.txt", TreeGitState::Untracked),
         // git が見たことのないディレクトリは中身と同じ扱い。
         ("newdir", TreeGitState::Untracked),
@@ -976,6 +972,87 @@ fn 分類は各フィクスチャが作られた状態を答える() {
         ("nonexistent-dir", TreeGitState::Tracked),
     ] {
         assert_eq!(map.classify(path), want, "{path}");
+    }
+}
+
+#[test]
+fn 短い名前からのリネームは隣のファイルのstatusを消さない() {
+    let repo = TestRepo::new();
+    repo.file("foo", "a\n").add("foo");
+    repo.file("keep.txt", "a\n").add("keep.txt");
+    repo.commit("initial");
+
+    fs::rename(repo.path.join("foo"), repo.path.join("bar")).unwrap();
+    let mut index = repo.repo.index().unwrap();
+    index.remove_path(Path::new("foo")).unwrap();
+    index.add_path(Path::new("bar")).unwrap();
+    index.write().unwrap();
+    repo.file("keep.txt", "b\n");
+
+    let map = GitStatusMap::load(&repo.path).unwrap();
+
+    assert!(map.status("bar").is_some(), "リネーム先が消えた");
+    assert!(
+        map.status("foo").is_some_and(|s| s.is_index_deleted()),
+        "リネーム元が消えた: {:?}",
+        map.status("foo")
+    );
+    assert!(
+        map.status("keep.txt").is_some_and(|s| s.is_wt_modified()),
+        "隣のファイルの変更が消えた: {:?}",
+        map.status("keep.txt")
+    );
+}
+
+#[test]
+fn 強制追加したファイルはignored扱いにしない() {
+    let repo = TestRepo::new();
+    repo.file(".gitignore", "*.log\nbuild/\n").add(".gitignore");
+    repo.file("forced.log", "a\n").add("forced.log");
+    repo.commit("initial");
+    repo.file("plain.log", "a\n");
+    repo.file("build/deep/x.txt", "a\n");
+
+    let oracle = status_map::IgnoreOracle::open(&repo.path);
+
+    for (path, want) in [
+        ("forced.log", TreeGitState::Tracked),
+        (".gitignore", TreeGitState::Tracked),
+        ("plain.log", TreeGitState::Ignored),
+        ("build", TreeGitState::Ignored),
+        ("build/deep/x.txt", TreeGitState::Ignored),
+    ] {
+        assert_eq!(oracle.classify(path), want, "{path}");
+    }
+}
+
+#[test]
+fn 同じパスに2レコード来てもビットを落とさない() {
+    let repo = TestRepo::new();
+    repo.file("foo", "a\n").add("foo");
+    repo.commit("initial");
+    let mut index = repo.repo.index().unwrap();
+    index.remove_path(Path::new("foo")).unwrap();
+    index.write().unwrap();
+
+    let status = GitStatusMap::load(&repo.path).unwrap().status("foo");
+
+    assert!(
+        status.is_some_and(|s| s.is_index_deleted() && s.is_wt_new()),
+        "{status:?}"
+    );
+}
+
+#[test]
+fn 畳まれた未追跡ディレクトリの配下もstatusを答える() {
+    let map = GitStatusMap::load(&status_fixture().path).unwrap();
+
+    for path in ["newdir/a.txt", "newdir/sub/b.txt"] {
+        assert!(
+            map.status(path).is_some_and(|s| s.is_wt_new()),
+            "{path}: {:?}",
+            map.status(path)
+        );
     }
 }
 

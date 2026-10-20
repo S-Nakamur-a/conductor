@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 
-use anyhow::{Context, Result};
-use git2::{Repository, Status, StatusOptions, StatusShow};
+use anyhow::{Context, Result, bail};
+use git2::{Index, Repository, Status};
 
 /// ファイルツリーの薄暗い表示のための大まかな分類。staged / unstaged の区別は
 /// [GitStatusMap::status] 側。
@@ -18,76 +19,88 @@ pub enum TreeGitState {
 
 /// 作業ツリー全体を歩かずに ignored かどうかだけを答える。
 ///
-/// [GitStatusMap::load] は 17 万ファイルのリポジトリで実測 9 秒かかり、libgit2 は
-/// fsmonitor も untrackedCache も見ないのでオプションを削っても縮まらない。同じ数の
-/// 問い合わせをこちらで答えると 7ms なので、全体の status が届くまでのツリーの
-/// 色付けはこれで埋める。埋めないと ignored が全部 Tracked として明るく出る。
-pub struct IgnoreOracle(Option<Repository>);
+/// 一覧に ignored を混ぜると作業ツリー全体の走査になる (17 万ファイルで
+/// `git status --ignored` が 4.0 秒) ので、ここで 1 件ずつ答える (0.3ms)。
+pub struct IgnoreOracle {
+    repo: Option<Repository>,
+    index: Option<Index>,
+}
 
 impl IgnoreOracle {
     pub fn open(worktree_path: &Path) -> Self {
-        Self(Repository::discover(worktree_path).ok())
+        let repo = Repository::discover(worktree_path).ok();
+        let index = repo.as_ref().and_then(|repo| repo.index().ok());
+        Self { repo, index }
     }
 
+    /// 追跡済みのファイルに gitignore は効かない。ルールだけで答えると `git add -f`
+    /// したファイルを ignored と誤判定する (`status_should_ignore` が true を返す)。
+    /// index が読めなければルールだけで答えるため、その誤判定が残る。
     pub fn classify(&self, path: &str) -> TreeGitState {
-        match &self.0 {
+        if self.is_tracked(path) {
+            return TreeGitState::Tracked;
+        }
+        match &self.repo {
             Some(repo) if repo.status_should_ignore(Path::new(path)).unwrap_or(false) => {
                 TreeGitState::Ignored
             }
             _ => TreeGitState::Tracked,
         }
     }
+
+    /// コンフリクト中のエントリは stage 1/2/3 しか持たないので、stage 0 だけ見ると
+    /// 解決中に一番見たいファイルが ignored として暗く出る。
+    fn is_tracked(&self, path: &str) -> bool {
+        self.index.as_ref().is_some_and(|index| {
+            let path = Path::new(path);
+            index.get_path(path, 0).is_some() || index.get_path(path, 2).is_some()
+        })
+    }
 }
 
-/// libgit2 が報告する worktree ルートからの相対パスをキーにした status。
-#[derive(Debug, Clone, Default)]
+/// `git2::Index` は Debug を持たないが、これを抱える FileTree は derive している。
+impl std::fmt::Debug for IgnoreOracle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IgnoreOracle")
+            .field("opened", &self.repo.is_some())
+            .finish()
+    }
+}
+
+/// worktree ルートからの相対パスをキーにした status。ignored は入っていない
+/// ([IgnoreOracle] が 1 件ずつ答える)。
+#[derive(Debug, Default)]
 pub struct GitStatusMap {
     by_path: HashMap<String, Status>,
 }
 
 impl GitStatusMap {
     pub fn load(worktree_path: &Path) -> Result<Self> {
-        let repo = Repository::discover(worktree_path)
-            .with_context(|| format!("failed to discover repo from {}", worktree_path.display()))?;
-
-        // recurse_ignored_dirs は付けない。付けると ignored ディレクトリの中身を全部
-        // 走査する。21GB の target/ を持つ親リポジトリで実測 2,771ms / 122,407 件、
-        // 付けなければ約 3.1ms。これは 3 秒ポーリングから UI スレッドで走る。
-        let mut opts = StatusOptions::new();
-        opts.show(StatusShow::IndexAndWorkdir)
-            .include_untracked(true)
-            .recurse_untracked_dirs(true)
-            .include_ignored(true);
-        let statuses = repo
-            .statuses(Some(&mut opts))
-            .context("failed to compute git status")?;
-
-        let workdir = repo.workdir();
-        let mut by_path = HashMap::with_capacity(statuses.len());
-        for entry in statuses.iter() {
-            let Some(path) = entry.path() else {
-                continue;
-            };
-            let status = drop_deletion_still_on_disk(entry.status(), workdir, path);
-            if !status.is_empty() {
-                by_path.insert(path.to_string(), status);
-            }
-        }
-        Ok(Self { by_path })
+        Ok(Self {
+            by_path: porcelain(worktree_path)?,
+        })
     }
 
-    /// git status が報告した生のビット。変更なしの tracked ファイルと、折りたたまれた
-    /// ignored ディレクトリの配下は None (祖先を遡らない。それは [classify](Self::classify))。
+    /// git status が報告した生のビット。変更なしの tracked ファイルは None。
+    /// 畳まれた未追跡ディレクトリの配下は Changed files に 1 行ずつ出るので、
+    /// 未追跡だけは祖先から継承する (None だとそこだけ clean と同じ色になる)。
     pub fn status(&self, path: &str) -> Option<Status> {
-        self.by_path.get(path).copied()
+        if let Some(status) = self.by_path.get(path) {
+            return Some(*status);
+        }
+        ancestor_dirs(path).find_map(|ancestor| {
+            self.by_path
+                .get(&ancestor)
+                .filter(|status| status.is_wt_new())
+                .copied()
+        })
     }
 
     /// path (ファイルでもディレクトリでも、末尾スラッシュ無し) を分類する。
     ///
-    /// libgit2 は ignored ディレクトリを `target/` のような末尾スラッシュ付きの 1 エントリ
-    /// に折りたたむので、配下のパスは祖先から Ignored を継承する。untracked ディレクトリは
-    /// recurse_untracked_dirs でファイル単位に展開されるため、ディレクトリ自身には
-    /// エントリが無く、配下が全部 untracked かで判定する。
+    /// git は中身が全部未追跡のディレクトリを `newdir/` の 1 エントリに折りたたむので、
+    /// 配下のパスは祖先から Untracked を継承する。追跡済みのファイルを含むディレクトリは
+    /// 折りたたまれず未追跡ファイルだけが個別に出るため、ディレクトリ自身は Tracked。
     pub fn classify(&self, path: &str) -> TreeGitState {
         if let Some(status) = self
             .by_path
@@ -96,43 +109,97 @@ impl GitStatusMap {
         {
             return classify_status(*status);
         }
-        let ignored_ancestor = ancestor_dirs(path)
-            .any(|ancestor| self.by_path.get(&ancestor).is_some_and(Status::is_ignored));
-        if ignored_ancestor {
-            return TreeGitState::Ignored;
-        }
-        let mut descendants = self.descendants(path).peekable();
-        if descendants.peek().is_some() && descendants.all(|s| s.is_wt_new()) {
+        if ancestor_dirs(path).any(|ancestor| {
+            self.by_path
+                .get(&ancestor)
+                .is_some_and(|status| status.is_wt_new())
+        }) {
             return TreeGitState::Untracked;
         }
         TreeGitState::Tracked
     }
-
-    fn descendants<'a>(&'a self, path: &str) -> impl Iterator<Item = Status> + 'a {
-        let prefix = format!("{path}/");
-        self.by_path
-            .iter()
-            .filter(move |(k, _)| k.starts_with(&prefix))
-            .map(|(_, s)| *s)
-    }
 }
 
-/// 大文字小文字を区別しない FS ではケース違いの 2 エントリに実ファイルが 1 つしか無く、
-/// libgit2 は余った方を削除として報告する (git 本体は clean)。
-fn drop_deletion_still_on_disk(status: Status, workdir: Option<&Path>, path: &str) -> Status {
-    let still_there =
-        status.is_wt_deleted() && workdir.is_some_and(|workdir| workdir.join(path).is_file());
-    if still_there {
-        status.difference(Status::WT_DELETED)
-    } else {
-        status
+/// `git status` を呼ぶ。libgit2 の `statuses` は fsmonitor も untrackedCache も見ず、
+/// git 本体の 10 倍以上かかる。
+///
+/// `-uall` は付けない (4.2 秒。未追跡が 1 件も無くても全走査する)。畳まれたディレクトリは
+/// [GitStatusMap::classify] が継承で開く。
+fn porcelain(worktree_path: &Path) -> Result<HashMap<String, Status>> {
+    let out = Command::new("git")
+        // 付けないと status が index を書き戻し、利用者や Claude Code が同じ worktree で
+        // 打った git add / commit を index.lock で弾く。ウォッチャー毎に走るので当たる。
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(worktree_path)
+        // --no-renames が無いと git はリネームを 1 レコードに畳み、元のパスが引けなく
+        // なる。Changed files の一覧はリネームを検出しないので元のパスの行を出し、
+        // status が None だとそこが clean と同じ色になる。パーサもこの形に依存している。
+        .args(["status", "--porcelain", "-unormal", "-z", "--no-renames"])
+        // これらは -C に勝つので、プロセス環境に入っていると別リポジトリの status が返る。
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .with_context(|| format!("cannot run git status in {}", worktree_path.display()))?;
+    if !out.status.success() {
+        bail!(
+            "git status failed in {}: {}",
+            worktree_path.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
+    Ok(parse_porcelain(&out.stdout))
+}
+
+/// `XY<空白>PATH` を NUL で区切った並び。
+///
+/// 同じパスに 2 レコード来ることがある (`git rm --cached` で `D ` と `??`) ので、
+/// 後勝ちにせずビットを畳む。
+fn parse_porcelain(stdout: &[u8]) -> HashMap<String, Status> {
+    let mut by_path: HashMap<String, Status> = HashMap::new();
+    for record in stdout.split(|byte| *byte == 0) {
+        if record.len() < 4 {
+            continue;
+        }
+        let status = status_bits(record[0], record[1]);
+        if !status.is_empty() {
+            *by_path
+                .entry(String::from_utf8_lossy(&record[3..]).into_owned())
+                .or_insert(Status::empty()) |= status;
+        }
+    }
+    by_path
+}
+
+/// `R` と `C` は来ない (`--no-renames`)。
+fn status_bits(index: u8, worktree: u8) -> Status {
+    // 未マージは UU 以外に AA (両方追加) と DD (両方削除) もあり、U を含まない。
+    let unmerged = index == b'U'
+        || worktree == b'U'
+        || matches!((index, worktree), (b'A', b'A') | (b'D', b'D'));
+    if unmerged {
+        return Status::CONFLICTED;
+    }
+    let staged = match index {
+        b'M' => Status::INDEX_MODIFIED,
+        b'A' => Status::INDEX_NEW,
+        b'D' => Status::INDEX_DELETED,
+        b'T' => Status::INDEX_TYPECHANGE,
+        _ => Status::empty(),
+    };
+    let unstaged = match worktree {
+        b'?' => Status::WT_NEW,
+        b'M' => Status::WT_MODIFIED,
+        b'D' => Status::WT_DELETED,
+        b'T' => Status::WT_TYPECHANGE,
+        _ => Status::empty(),
+    };
+    staged | unstaged
 }
 
 fn classify_status(status: Status) -> TreeGitState {
-    if status.is_ignored() {
-        TreeGitState::Ignored
-    } else if status.is_wt_new() {
+    if status.is_wt_new() {
         TreeGitState::Untracked
     } else {
         TreeGitState::Tracked
