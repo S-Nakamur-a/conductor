@@ -37,6 +37,7 @@ pub fn strip(ws: &Workspace, area: Rect) -> Line<'static> {
                 strip::SlotKind::Delete(_) => crate::strip::close_style(theme),
                 strip::SlotKind::Add => crate::strip::add_style(theme),
                 strip::SlotKind::Sep => Style::default().fg(theme.border_secondary),
+                strip::SlotKind::Scroll(_) => Style::default().fg(theme.accent),
                 strip::SlotKind::Muted => Style::default().fg(theme.muted),
             };
             Span::styled(slot.label, style)

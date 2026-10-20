@@ -16,7 +16,9 @@ pub enum SlotKind {
     Delete(usize),
     Add,
     Sep,
-    /// 送り印と「worktree が無い」の案内。押しても何も起きない。
+    /// 送り印。窓は選択から決まるので、隠れている側の端を選ばせて 1 つ分ずらす。
+    Scroll(usize),
+    /// 「worktree が無い」の案内。押しても何も起きない。
     Muted,
 }
 
@@ -54,7 +56,7 @@ fn chip_text(worktree: &WorktreeInfo, waiting: bool, active: bool) -> String {
 /// `width` に収まるチップと、その前後に付く印。
 ///
 /// 窓は毎フレーム選択から決め直す。描画はスクロール位置を書き戻せないし、
-/// 選択が必ず見えていれば覚えておく必要もない。そのぶん送り印は押せない。
+/// 選択が必ず見えていれば覚えておく必要もない。
 pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
     let panel = &ws.panels.worktree;
     let lead = if panel.is_busy() {
@@ -98,7 +100,11 @@ pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
     );
 
     if start > 0 {
-        push(&mut out, format!("\u{2039}{start} "), SlotKind::Muted);
+        push(
+            &mut out,
+            format!("\u{2039}{start} "),
+            SlotKind::Scroll(start - 1),
+        );
     }
     for (i, (text, deletable)) in chips.iter().enumerate().take(end).skip(start) {
         if i > start {
@@ -113,7 +119,7 @@ pub fn slots(ws: &Workspace, width: u16) -> Vec<Slot> {
         push(
             &mut out,
             format!(" {}\u{203a} ", chips.len() - end),
-            SlotKind::Muted,
+            SlotKind::Scroll(end),
         );
     }
     push(&mut out, ADD.into(), SlotKind::Add);
