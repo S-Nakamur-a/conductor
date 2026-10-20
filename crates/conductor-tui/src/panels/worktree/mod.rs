@@ -116,6 +116,8 @@ impl WorktreePanel {
                 Effect::SelectWorktree(*i),
                 Effect::Focus(Focus::TerminalClaude),
             ],
+            // 送りはフォーカスを動かさない。帯を送っただけで端末へ飛ばされると送り続けられない。
+            Some(strip::SlotKind::Scroll(i)) => vec![Effect::SelectWorktree(*i)],
             Some(strip::SlotKind::Delete(i)) => vec![self.delete_modal(*i)],
             Some(strip::SlotKind::Add) => vec![create_modal()],
             // 帯そのものはフォーカスを持たないので、空白のシングルには行き先が無い。
@@ -732,6 +734,35 @@ mod tests {
         let mut svc = conductor_svc::Services::new();
         crate::effect::apply(&mut ws, &mut svc, effects);
         assert_eq!(ws.panels.worktree.selected().unwrap().branch, "feature/b");
+    }
+
+    #[test]
+    fn 送り印を押すと隠れていたチップが見えるようになる() {
+        // 末尾の 1 つが収まらない幅。
+        const NARROW: u16 = 30;
+        let mut ws = drive(&[]);
+        let slots = strip::slots(&ws, NARROW);
+        let scroll = slots
+            .iter()
+            .find(|s| matches!(s.kind, strip::SlotKind::Scroll(_)))
+            .unwrap_or_else(|| panic!("送り印が出ていない: {slots:?}"));
+        assert_eq!(scroll.kind, strip::SlotKind::Scroll(2));
+
+        let effects = ws.panels.worktree.strip_click(&slots, scroll.start);
+        assert_eq!(
+            effects,
+            vec![Effect::SelectWorktree(2)],
+            "送り印が無反応、または端末へフォーカスを持っていった"
+        );
+
+        let mut svc = conductor_svc::Services::new();
+        crate::effect::apply(&mut ws, &mut svc, effects);
+        assert!(
+            strip::slots(&ws, NARROW)
+                .iter()
+                .any(|s| s.kind == strip::SlotKind::Select(2)),
+            "押しても窓が動いていない"
+        );
     }
 
     #[test]
