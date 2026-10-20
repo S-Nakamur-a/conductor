@@ -950,12 +950,15 @@ pub struct Created {
     pub warning: Option<String>,
 }
 
-/// git の stderr は複数行で、ステータスバーは改行を捨てて 1 行に繋ぐ。
-fn first_line(e: &anyhow::Error) -> String {
-    format!("{e:#}")
-        .lines()
-        .next()
-        .unwrap_or_default()
+/// git の stderr は複数行で、ステータスバーは改行を捨てて 1 行に繋ぐ。lock の競合では
+/// 1 行目が `From <url>` で理由は後ろの行にあるので、fatal: / error: の行を優先する。
+fn reason_line(e: &anyhow::Error) -> String {
+    let text = format!("{e:#}");
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or_default();
+    lines
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .unwrap_or(first)
         .to_string()
 }
 
@@ -977,7 +980,7 @@ fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<Created, Str
                 Some(format!(
                     "base '{}' not fetched: {}",
                     env.main_branch,
-                    first_line(&e)
+                    reason_line(&e)
                 ))
             }
             Err(e) => return Err(e),
@@ -1383,7 +1386,7 @@ fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
             format!(
                 "base '{}' not fast-forwarded: {}",
                 env.main_branch,
-                first_line(&e)
+                reason_line(&e)
             )
         });
     let path = git
@@ -1429,6 +1432,24 @@ fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, S
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 通知に出す理由はfatalかerrorの行で_無ければ先頭行() {
+        let locked =
+            anyhow::anyhow!("From ../origin\nerror: cannot lock ref 'refs/remotes/origin/main'")
+                .context("git fetch failed (exit 1)");
+        assert_eq!(
+            super::reason_line(&locked),
+            "error: cannot lock ref 'refs/remotes/origin/main'"
+        );
+
+        let missing = anyhow::anyhow!("fatal: couldn't find remote ref refs/heads/gone")
+            .context("git fetch failed (exit 128)");
+        assert_eq!(
+            super::reason_line(&missing),
+            "git fetch failed (exit 128): fatal: couldn't find remote ref refs/heads/gone"
+        );
+    }
+
     use super::*;
 
     fn api(provider: &str, model: &str, command: &[&str]) -> ApiConfig {

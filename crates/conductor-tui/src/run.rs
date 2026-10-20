@@ -1641,6 +1641,36 @@ mod tests {
     }
 
     #[test]
+    fn 新しいworktreeは作る直前にoriginを取り直して最新のベースから切る() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        // 手元だけ 1 つ前に戻し、origin が先に進んだことを知らない状態にする。
+        repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+        repo.git(&["reset", "-q", "--hard", "HEAD~1"]);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(Task::CreateWorktree {
+                branch: "topic".into(),
+            })],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "topic")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+    }
+
+    #[test]
     fn originが無いリポジトリでは_worktree作成に警告が出ない() {
         let repo = crate::testing::TestRepo::new();
         repo.git(&["remote", "remove", "origin"]);
