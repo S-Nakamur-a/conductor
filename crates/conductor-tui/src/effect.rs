@@ -60,6 +60,8 @@ pub enum Effect {
     },
     /// シェルへ 1 行流して実行させる。テスト実行ボタンの行き先。
     SendToShell(String),
+    /// Claude Code の入力欄へ送信せずに貼る。続きを打つのは人。
+    PasteToClaude(String),
     /// 既存の Claude セッションを `--resume` で開き直す。`worktree` を指すと
     /// 選択とは別の場所で開く。grab はブランチを持ってきた main で開き直す。
     ResumeSession {
@@ -173,6 +175,16 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 prompt,
             } => queue.extend(smart_session(ws, &worktree, name.as_deref(), prompt)),
             Effect::SendToShell(command) => queue.extend(send_to_shell(ws, &command)),
+            Effect::PasteToClaude(text) => {
+                queue.push_back(if ws.panels.terminal.paste(&text, Focus::TerminalClaude) {
+                    Effect::Focus(Focus::TerminalClaude)
+                } else {
+                    Effect::Status(
+                        StatusLevel::Warning,
+                        "No Claude Code session to paste into.".into(),
+                    )
+                })
+            }
             Effect::ResumeSession { id, worktree } => {
                 new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree, false)
             }

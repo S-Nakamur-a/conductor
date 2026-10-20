@@ -23,7 +23,9 @@ terminal keybindings keep working while you review:
    Code on the right. `j`/`k` scroll, `n`/`N` move between sections, `Enter`
    opens the section's location in the Viewer (where you can leave a comment),
    `q` closes it. `Tab` moves to Claude Code and back without closing the
-   review, so a question about the section you are reading costs nothing.
+   review, so a question about the section you are reading costs nothing. `a`
+   moves there too, but first pastes the review file's path, the section's title
+   and its lines into Claude's input — unsent, for you to finish the question.
 
    revidere lives in this repository (`crates/revidere`) and ships inside the
    `conductor` binary, so there is nothing extra to install. It calls the AI

@@ -7,7 +7,7 @@ pub mod artifact;
 pub mod render;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -347,6 +347,19 @@ impl RevidereState {
             Action::RevidereToggleScope => {
                 return Some(self.toggle_scope(ctx.root.to_path_buf()));
             }
+            Action::RevidereAskClaude
+                if self.review.as_ref().is_none_or(|r| r.worktree != ctx.root) =>
+            {
+                let why = match (&self.review, self.loading) {
+                    (_, true) => "The review is still loading.",
+                    (Some(_), false) => "The review on screen belongs to another worktree.",
+                    (None, false) => "No review loaded to ask Claude about.",
+                };
+                return Some(vec![Effect::Status(StatusLevel::Warning, why.into())]);
+            }
+            Action::RevidereAskClaude => {
+                return Some(vec![Effect::PasteToClaude(self.question(ctx.root))]);
+            }
             _ => {}
         }
 
@@ -461,6 +474,33 @@ impl RevidereState {
         }]
     }
 
+    /// Claude に渡す問いの書き出し。本文は成果物に書いてあるので、渡すのは
+    /// 在り処と、どの項目を見ているかだけ。Claude の cwd がこの worktree とは
+    /// 限らないので、在り処は絶対パスで渡す。
+    fn question(&self, root: &Path) -> String {
+        let artifact = revidere::review::artifact_path(root, self.scope);
+        let artifact = artifact.display();
+        let placed = self
+            .review
+            .as_ref()
+            .filter(|_| !self.show_overview)
+            .and_then(|review| Some((review, review.order.sections.get(self.selected)?)));
+        let Some((review, placed)) = placed else {
+            return format!("{artifact} のレビューについて: ");
+        };
+        let what = match placed.section {
+            // 題は AI が書く。改行が素のまま流れると、書き足す前に送信されうる。
+            Some(i) => format!(
+                "の項目「{}」",
+                review.annotations.sections()[i]
+                    .title
+                    .replace(['\r', '\n', '\t'], " ")
+            ),
+            None => "でどの項目も説明していない変更".to_string(),
+        };
+        format!("{artifact} {what} ({}) について: ", locations(placed))
+    }
+
     /// 切り替えた結果は画面が名乗るので、ここではステータスに出さない。
     pub fn toggle_scope(&mut self, worktree: PathBuf) -> Vec<Effect> {
         self.scope = match self.scope {
@@ -472,6 +512,29 @@ impl RevidereState {
         self.replace(None);
         vec![self.reload(worktree)]
     }
+}
+
+/// 項目が持っている行の、今のファイルでの在り処。借りた文脈行は含めない。
+/// 削除行の番号は前像のものなので、混ぜると今のファイルの別の行を指す。
+fn locations(placed: &revidere::PlacedSection) -> String {
+    placed
+        .blocks
+        .iter()
+        .map(|block| {
+            let lines: Vec<u32> = block
+                .lines
+                .iter()
+                .filter(|l| l.owned)
+                .filter_map(|l| l.line.new_line)
+                .collect();
+            match (lines.iter().min(), lines.iter().max()) {
+                (Some(a), Some(b)) if a == b => format!("{}:{a}", block.path),
+                (Some(a), Some(b)) => format!("{}:{a}-{b}", block.path),
+                _ => block.path.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

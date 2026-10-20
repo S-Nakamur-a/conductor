@@ -18,6 +18,8 @@ pub struct Loaded {
     pub order: ReadingOrder,
     /// 成果物が対象にしていた区間の起点。終点は作業ツリーなので対になる commit id は無い。
     pub base: String,
+    /// 読んだ worktree。読み込みは非同期なので、切り替えた直後は前の worktree の成果物が残っている。
+    pub worktree: std::path::PathBuf,
 }
 
 impl Loaded {
@@ -83,6 +85,7 @@ pub fn load(worktree: &Path, scope: Scope) -> Outcome {
         base: annotations.base().to_string(),
         annotations,
         order,
+        worktree: worktree.to_path_buf(),
     }))
 }
 
