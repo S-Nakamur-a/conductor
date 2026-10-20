@@ -138,7 +138,6 @@ fn ローカルブランチが古くてもoriginを先に取って差分を広�
     assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
 }
 
-/// Merge into main はローカルの main を早送りするだけで push しない。
 #[test]
 fn ローカルブランチがoriginより進んでいればそちらを取る() {
     let repo = TestRepo::new();
