@@ -93,7 +93,7 @@ fn workdir_diff<'r>(
     // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、追加行数が 0 になる。
     opts.show_untracked_content(true);
     opts.context_lines(CONTEXT_LINES);
-    // 前方一致なので、git が畳んで返す未追跡ディレクトリ (`new/`) はその配下ごと通る。
+    // 前方一致なので、git が畳んで返す未追跡ディレクトリ (new/) はその配下ごと通る。
     opts.disable_pathspec_match(true);
     for path in &paths {
         opts.pathspec(path);

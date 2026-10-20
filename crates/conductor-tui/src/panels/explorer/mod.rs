@@ -159,7 +159,6 @@ impl ExplorerPanel {
             .collect()
     }
 
-    /// git の状態だけが動いた (commit、fetch、checkout)。ツリーの中身は変わらないので
     /// 走査は投げ直さず、色分けと差分だけ読み直す。走査中なら全体の投げ直しに乗せる
     /// — 走っている diff は動く前の内容を読んでいる。
     pub fn refresh_git(&mut self) -> Vec<Effect> {

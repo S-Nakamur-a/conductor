@@ -297,7 +297,6 @@ fn tick_fs_refresh(
     tick_explorer(ws, svc, debounce, now, ExplorerPanel::refresh)
 }
 
-/// 猶予が明けていたら差分と色分けだけ読み直す。何か投げたら true。
 fn tick_git_refresh(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
@@ -1566,7 +1565,6 @@ mod tests {
         );
     }
 
-    /// 一覧を開いたときの fetch は裏で走るので、選ぶまでに origin が進んでいることがある。
     #[test]
     fn リモートブランチは作る直前に_fetch_して最新で切る() {
         let repo = crate::testing::TestRepo::new();

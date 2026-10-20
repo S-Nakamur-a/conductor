@@ -125,9 +125,6 @@ fn ベースrefはローカルブランチが無くてもリモート追跡ref�
     }
 }
 
-/// git fetch はローカルの main を進めない。origin/main の tip から切ったブランチを古い
-/// ローカル main で測ると merge-base が古くなり、上流に載った他人の変更まで差分に出る
-/// (17 万ファイルのリポジトリで 1 コミット遅れが 316 ファイル)。
 #[test]
 fn ローカルブランチが古くてもoriginを先に取って差分を広げない() {
     let repo = TestRepo::new();
@@ -141,8 +138,6 @@ fn ローカルブランチが古くてもoriginを先に取って差分を広�
     assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
 }
 
-/// git status は中身が全部未追跡のディレクトリを `new/` の 1 行に畳む。それを pathspec に
-/// そのまま渡しても配下が 1 件ずつ中身付きで出なければならない。
 #[test]
 fn 畳まれた未追跡ディレクトリの中身は1件ずつ出る() {
     let repo = TestRepo::new();
@@ -161,8 +156,6 @@ fn 畳まれた未追跡ディレクトリの中身は1件ずつ出る() {
     assert_eq!(listed, [("new/deep/y.txt", 1), ("new/x.txt", 1)]);
 }
 
-/// コミットで変えて作業ツリーで元に戻したファイルは、git status にも tree 同士の差分にも
-/// 出るがベースとは同じ内容なので、一覧には出ない。
 #[test]
 fn コミットで変えて作業ツリーで戻したファイルは出ない() {
     let repo = TestRepo::new();
