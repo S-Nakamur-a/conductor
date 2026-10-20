@@ -1600,6 +1600,33 @@ mod tests {
     }
 
     #[test]
+    fn ベースが取れなくてもリモートブランチは作られ_画面に警告が出る() {
+        let repo = crate::testing::TestRepo::new();
+        repo.remote_branch("feature/remote-only");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        ws.repo.main_branch = "gone".into();
+        run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        type_text(&mut ws, &mut svc, "remote-only");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert!(
+            ws.panels
+                .worktree
+                .list()
+                .iter()
+                .any(|w| w.branch == "feature/remote-only"),
+            "{:?}",
+            ws.panels.worktree.list()
+        );
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Warning, "{}", status.text);
+        assert!(status.text.contains("gone"), "{}", status.text);
+    }
+
+    #[test]
     fn prune_は消えたworktreeを数えて確認してから消す() {
         let repo = crate::testing::TestRepo::new();
         let gone = repo.worktree("feature/gone");

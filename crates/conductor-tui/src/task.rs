@@ -348,7 +348,7 @@ pub enum TaskResult {
         counts: Option<ChangeCounts>,
     },
     /// 作成できた worktree のパスと、そのブランチ。
-    WorktreeCreated(Result<(PathBuf, String), String>),
+    WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
     Tree(Box<tree::Snapshot>),
@@ -942,23 +942,41 @@ fn remote_branches(env: &TaskEnv, fetch: bool) -> Result<Vec<String>, String> {
     })
 }
 
+/// 作った worktree。ベースを最新にできなかったときはその理由を添え、Git Changes の
+/// 差分が広がりうることを画面に出す。
+#[derive(Debug)]
+pub struct Created {
+    pub path: PathBuf,
+    pub branch: String,
+    pub warning: Option<String>,
+}
+
 /// 一覧を開いたときの fetch とは競走になるので、作る直前にもう一度取る。ベースも取るのは
 /// Git Changes の差分がそこから測られるため。ただしベースが取れなくても作成は止めない
 /// — 上流で既定ブランチが改名されていても、目的のブランチは取り込める。
-fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<(PathBuf, String), String> {
+fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<Created, String> {
     let (remote, branch) = remote_branch
         .split_once('/')
         .unwrap_or(("origin", remote_branch));
     git(env, |git| {
-        git.fetch_branches(remote, &[branch])?;
-        if remote == "origin"
-            && let Err(e) = git.fetch_branches("origin", &[&env.main_branch])
+        let warning = if remote == "origin"
+            && let Err(e) = git.fetch_branches(remote, &[branch, &env.main_branch])
         {
-            log::warn!("could not fetch the base branch: {e:#}");
-        }
-        git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())
+            git.fetch_branches(remote, &[branch])?;
+            Some(format!("base '{}' not fetched: {e:#}", env.main_branch))
+        } else {
+            if remote != "origin" {
+                git.fetch_branches(remote, &[branch])?;
+            }
+            None
+        };
+        let path = git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())?;
+        Ok(Created {
+            path,
+            branch: branch.to_string(),
+            warning,
+        })
     })
-    .map(|path| (path, branch.to_string()))
 }
 
 /// wt-grab が指す worktree が消えていれば、その状態ごと片付ける。
@@ -1340,16 +1358,22 @@ fn list_worktrees(env: &TaskEnv) -> Result<Vec<WorktreeInfo>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn create_worktree(env: &TaskEnv, branch: &str) -> Result<(PathBuf, String), String> {
+fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
     let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
     let base = git.resolve_base_ref(&env.main_branch);
     // 分岐していれば触らないので、失敗しても作成そのものは続けられる。
-    if let Err(e) = git.ensure_base_ref_available(&env.main_branch) {
-        log::warn!("could not fast-forward the base ref: {e:#}");
-    }
-    git.create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
-        .map(|path| (path, branch.to_string()))
-        .map_err(|e| e.to_string())
+    let warning = git
+        .ensure_base_ref_available(&env.main_branch)
+        .err()
+        .map(|e| format!("base '{}' not fast-forwarded: {e:#}", env.main_branch));
+    let path = git
+        .create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(Created {
+        path,
+        branch: branch.to_string(),
+        warning,
+    })
 }
 
 fn smart_worktree(

@@ -153,13 +153,11 @@ fn ローカルブランチがoriginより進んでいればそちらを取る()
 fn originと分岐したローカルブランチはoriginを取る() {
     let repo = TestRepo::new();
     let root = repo.commit_tree(None, &[("a.txt", b"a")]);
-    repo.remote_ref(
-        "origin/main",
-        repo.commit_tree(Some(root), &[("theirs.txt", b"t")]),
-    );
+    let theirs = repo.commit_tree(Some(root), &[("theirs.txt", b"t")]);
+    repo.remote_ref("origin/main", theirs);
     let diverged = repo.commit_tree(Some(root), &[("mine.txt", b"m")]);
     repo.branch_at("main", diverged);
-    let head = repo.commit_tree(Some(root), &[("b.txt", b"b")]);
+    let head = repo.commit_tree(Some(theirs), &[("b.txt", b"b")]);
     repo.checkout_at("feature", head);
 
     assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
