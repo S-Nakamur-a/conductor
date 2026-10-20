@@ -342,7 +342,7 @@ into `EventSender` makes every watcher signal after the first switch vanish.
 **A periodically spawned `Task` needs an in-flight guard.** On a repository with
 175,388 tracked files the worktree list takes 25s, the working-tree diff 9s, and
 the two whole-repository walks behind the Explorer 1.8s (the file-name index) and
-6.8s (git status), against a 3s poll and a 500ms debounce. Spawning faster
+0.58s (git status), against a 3s poll and a 500ms debounce. Spawning faster
 than results return piles up one thread per second — measured 476 threads at 303%
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
@@ -383,14 +383,21 @@ the accordion — it takes the main area whole as three columns (reading order |
 | `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together |
 | `tui/command/` · `index.rs` · `markdown/` | The command table with `exec` and `enabled` · both indexes and their rebuilds · markdown, shared by the Viewer and the transcript |
 | `svc/pty/` · `svc/watch/` | PTY spawn/read/write/resize and the vt100 screen · the filesystem, config, cc-notify and refresh-pipe watchers |
-| `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2`, no shell-out · the diff model over `similar` · SQLite for reviews, sessions and viewed files |
+| `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |
 | `core/claude_log/` · `claude_sessions/` · `keymap/` · `theme/` · `config/` | The transcript `.jsonl` format · which one backs a panel · actions and layers · colour themes · `~/.config/conductor/config.toml` |
 | `core/instance_lock/` | `.conductor/conductor.lock` の flock による単独起動の担保 — リポジトリ (全 worktree 込み) につき 1 ウィンドウ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |
 | `core/term_caps/` · `pr_intake/` | OSC 11 background probe and the icon-set guess · `gh` PR fetch into a worktree (re-entrant) |
 
 Deliberately not abstracted: panels as a trait, an ECS, a widget tree over
-ratatui, tokio/async, a subscription bus for `Effect`, a shell-out layer over
-git, and any rework of theme / keymap / text_input / config.
+ratatui, tokio/async, a subscription bus for `Effect`, a general shell-out layer
+over git, and any rework of theme / keymap / text_input / config.
+
+**The one place git is shelled out to is the working-tree status**
+(`status_map.rs`'s `porcelain`). libgit2 consults neither `core.fsmonitor` nor
+`core.untrackedCache`, so on 175,388 files `statuses()` costs 9.5s against
+`git status --porcelain`'s 0.58s for the same answer, and no `StatusOptions`
+narrows the gap — measured 9.0 / 12.5 / 14.1 / 10.2s across the combinations.
+Nothing else may follow it out: the rest of git stays on `git2`.
 
 ## Data Paths
 
