@@ -154,22 +154,36 @@ fn merge_base_tree<'r>(repo: &'r Repository, base: &str, head: Oid) -> Result<gi
         .context("cannot get merge-base tree")
 }
 
-/// origin/<base> を先に引き、無ければ利用者の綴りのまま (タグ、ローカルだけのブランチ)。
-/// git fetch はローカルのブランチを進めないので、ローカルを先に取ると merge-base が
-/// 古いままになり、上流に載った他人の変更まで差分に出る。エラーには利用者が設定した
-/// 綴りの方を残す。
+/// origin/<base> と利用者の綴り (ローカルブランチ、タグ) のうち進んでいる方。
+/// git fetch はローカルのブランチを進めないので、ローカルを常に取ると merge-base が
+/// 古いままになり上流に載った他人の変更まで差分に出る。逆に Merge into main の直後は
+/// ローカルだけが進んでいて、origin を常に取るとマージした分が全部出る。分岐して
+/// いれば origin。エラーには利用者が設定した綴りの方を残す。
 fn resolve_base_commit(repo: &Repository, base: &str) -> Result<Oid> {
-    let resolved = if base.starts_with("origin/") {
-        repo.revparse_single(base)
-    } else {
-        repo.revparse_single(&format!("origin/{base}"))
-            .or_else(|_| repo.revparse_single(base))
+    let commit_of = |spec: &str| {
+        repo.revparse_single(spec)
+            .ok()
+            .and_then(|obj| obj.peel_to_commit().ok())
+            .map(|commit| commit.id())
     };
-    let obj = resolved.with_context(|| format!("base ref '{base}' cannot be resolved"))?;
-    let commit = obj
-        .peel_to_commit()
-        .with_context(|| format!("cannot peel '{base}' to commit"))?;
-    Ok(commit.id())
+    let origin = if base.starts_with("origin/") {
+        commit_of(base)
+    } else {
+        commit_of(&format!("origin/{base}"))
+    };
+    let local = (!base.starts_with("origin/"))
+        .then(|| commit_of(base))
+        .flatten();
+    match (origin, local) {
+        (Some(origin), Some(local))
+            if local != origin && repo.graph_descendant_of(local, origin)? =>
+        {
+            Ok(local)
+        }
+        (Some(origin), _) => Ok(origin),
+        (None, Some(local)) => Ok(local),
+        (None, None) => anyhow::bail!("base ref '{base}' cannot be resolved"),
+    }
 }
 
 /// 内容に変化の無いデルタ (大文字小文字を区別しない FS の stat 不一致で出る) は None。

@@ -55,6 +55,8 @@ pub struct ExplorerPanel {
     /// 投げたまま結果がまだ届いていない走査 (ツリー・ファイル一覧・git status) の数。
     pending: usize,
     refresh_queued: bool,
+    /// 走査中に git の状態が動いた。全体ではなく差分と色分けだけを待たせる。
+    git_refresh_queued: bool,
 }
 
 impl ExplorerPanel {
@@ -159,14 +161,14 @@ impl ExplorerPanel {
             .collect()
     }
 
-    /// 走査は投げ直さず、色分けと差分だけ読み直す。走査中なら全体の投げ直しに乗せる
+    /// 走査は投げ直さず、色分けと差分だけ読み直す。走査中なら終わってから投げる
     /// — 走っている diff は動く前の内容を読んでいる。
     pub fn refresh_git(&mut self) -> Vec<Effect> {
         if self.tree.root().as_os_str().is_empty() {
             return Vec::new();
         }
         if self.pending > 0 {
-            self.refresh_queued = true;
+            self.git_refresh_queued = true;
             return Vec::new();
         }
         self.pending += 1;
@@ -359,8 +361,15 @@ impl ExplorerPanel {
 
     fn survey_settled(&mut self) -> Vec<Effect> {
         self.pending = self.pending.saturating_sub(1);
-        if self.pending == 0 && std::mem::take(&mut self.refresh_queued) {
+        if self.pending > 0 {
+            return Vec::new();
+        }
+        if std::mem::take(&mut self.refresh_queued) {
+            self.git_refresh_queued = false;
             return self.refresh();
+        }
+        if std::mem::take(&mut self.git_refresh_queued) {
+            return self.refresh_git();
         }
         Vec::new()
     }
@@ -368,6 +377,7 @@ impl ExplorerPanel {
     fn forget_in_flight(&mut self) {
         self.pending = 0;
         self.refresh_queued = false;
+        self.git_refresh_queued = false;
     }
 
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
@@ -521,6 +531,41 @@ mod tests {
             "{effects:?}"
         );
         assert!(panel.refresh().is_empty(), "status が返る前に走査を重ねた");
+    }
+
+    #[test]
+    fn 走査中のgit変更は走査が終わってから差分だけ投げる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut panel = ExplorerPanel::default();
+        let root = dir.path().to_path_buf();
+        panel.set_root(root.clone(), "main");
+        assert!(panel.refresh_git().is_empty(), "走査中に投げた");
+
+        let mut effects = Vec::new();
+        for result in [
+            TaskResult::FileIndex {
+                root: root.clone(),
+                files: Vec::new(),
+            },
+            TaskResult::GitStatus {
+                root: root.clone(),
+                status: None,
+            },
+            TaskResult::Tree(Box::new(tree::survey(&root, &[]))),
+        ] {
+            effects.extend(panel.apply_result(result));
+        }
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Spawn(Task::LoadGitStatus { .. }),
+                    Effect::Spawn(Task::ComputeDiff { .. }),
+                ]
+            ),
+            "{effects:?}"
+        );
     }
 
     #[test]

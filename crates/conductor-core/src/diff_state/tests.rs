@@ -138,6 +138,49 @@ fn ローカルブランチが古くてもoriginを先に取って差分を広�
     assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
 }
 
+/// Merge into main はローカルの main を早送りするだけで push しない。
+#[test]
+fn ローカルブランチがoriginより進んでいればそちらを取る() {
+    let repo = TestRepo::new();
+    let pushed = repo.commit_tree(None, &[("a.txt", b"a")]);
+    repo.remote_ref("origin/main", pushed);
+    let merged = repo.commit_tree(Some(pushed), &[("merged.txt", b"m")]);
+    repo.checkout_at("main", merged);
+
+    assert_eq!(changed(&repo, "main"), (Vec::new(), None));
+}
+
+#[test]
+fn originと分岐したローカルブランチはoriginを取る() {
+    let repo = TestRepo::new();
+    let root = repo.commit_tree(None, &[("a.txt", b"a")]);
+    repo.remote_ref(
+        "origin/main",
+        repo.commit_tree(Some(root), &[("theirs.txt", b"t")]),
+    );
+    let diverged = repo.commit_tree(Some(root), &[("mine.txt", b"m")]);
+    repo.branch_at("main", diverged);
+    let head = repo.commit_tree(Some(root), &[("b.txt", b"b")]);
+    repo.checkout_at("feature", head);
+
+    assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
+}
+
+#[test]
+fn intent_to_addしたファイルは一覧に残る() {
+    let repo = TestRepo::new();
+    on_main(&repo);
+    repo.file("n.txt", "n\n");
+    let status = std::process::Command::new("git")
+        .args(["add", "-N", "n.txt"])
+        .current_dir(&repo.path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    assert_eq!(changed(&repo, "main"), (vec!["n.txt".to_string()], None));
+}
+
 #[test]
 fn 畳まれた未追跡ディレクトリの中身は1件ずつ出る() {
     let repo = TestRepo::new();

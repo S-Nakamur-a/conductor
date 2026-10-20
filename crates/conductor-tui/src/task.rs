@@ -942,22 +942,20 @@ fn remote_branches(env: &TaskEnv, fetch: bool) -> Result<Vec<String>, String> {
     })
 }
 
-/// 一覧を開いたときの fetch とは競走になるので、作る直前にもう一度取る。ベースも一緒に
-/// 取るのは、Git Changes の差分がそこから測られるため。
+/// 一覧を開いたときの fetch とは競走になるので、作る直前にもう一度取る。ベースも取るのは
+/// Git Changes の差分がそこから測られるため。ただしベースが取れなくても作成は止めない
+/// — 上流で既定ブランチが改名されていても、目的のブランチは取り込める。
 fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<(PathBuf, String), String> {
     let (remote, branch) = remote_branch
         .split_once('/')
         .unwrap_or(("origin", remote_branch));
     git(env, |git| {
-        let mut wanted = vec![branch];
+        git.fetch_branches(remote, &[branch])?;
         if remote == "origin"
-            && git
-                .resolve_base_ref(&env.main_branch)
-                .starts_with("origin/")
+            && let Err(e) = git.fetch_branches("origin", &[&env.main_branch])
         {
-            wanted.push(&env.main_branch);
+            log::warn!("could not fetch the base branch: {e:#}");
         }
-        git.fetch_branches(remote, &wanted)?;
         git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())
     })
     .map(|path| (path, branch.to_string()))

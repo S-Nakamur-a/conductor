@@ -194,7 +194,8 @@ fn status_bits(index: u8, worktree: u8) -> Status {
         _ => Status::empty(),
     };
     let unstaged = match worktree {
-        b'?' => Status::WT_NEW,
+        // ` A` は git add -N (intent-to-add)。index には空のエントリだけで中身は作業ツリー側。
+        b'?' | b'A' => Status::WT_NEW,
         b'M' => Status::WT_MODIFIED,
         b'D' => Status::WT_DELETED,
         b'T' => Status::WT_TYPECHANGE,

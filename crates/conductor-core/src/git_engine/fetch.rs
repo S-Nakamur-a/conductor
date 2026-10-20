@@ -22,11 +22,16 @@ impl GitEngine {
         self.run_git_fetch(&["origin", refspec])
     }
 
-    /// `git fetch <remote> <branch>...`。リモート追跡 ref だけを進め、ローカルブランチは
-    /// 触らない。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
+    /// `git fetch <remote> refs/heads/<branch>...`。リモート追跡 ref だけを進め、ローカル
+    /// ブランチは触らない。裸の名前だと同名のタグがあればそちらを取って追跡 ref が
+    /// 進まない。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
     pub fn fetch_branches(&self, remote: &str, branches: &[&str]) -> Result<()> {
+        let refs: Vec<String> = branches
+            .iter()
+            .map(|branch| format!("refs/heads/{branch}"))
+            .collect();
         let mut args = vec![remote];
-        args.extend(branches);
+        args.extend(refs.iter().map(String::as_str));
         self.run_git_fetch(&args)
     }
 
