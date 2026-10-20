@@ -950,6 +950,15 @@ pub struct Created {
     pub warning: Option<String>,
 }
 
+/// git の stderr は複数行で、ステータスバーは改行を捨てて 1 行に繋ぐ。
+fn first_line(e: &anyhow::Error) -> String {
+    format!("{e:#}")
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// 一覧を開いたときの fetch とは競走になるので、作る直前にもう一度取る。ベースも取るのは
 /// Git Changes の差分がそこから測られるため。ただしベースが取れなくても作成は止めない
 /// — 上流で既定ブランチが改名されていても、目的のブランチは取り込める。
@@ -965,7 +974,11 @@ fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<Created, Str
             Ok(()) => None,
             Err(e) if with_base => {
                 git.fetch_branches(remote, &[branch])?;
-                Some(format!("base '{}' not fetched: {e:#}", env.main_branch))
+                Some(format!(
+                    "base '{}' not fetched: {}",
+                    env.main_branch,
+                    first_line(&e)
+                ))
             }
             Err(e) => return Err(e),
         };
@@ -1360,11 +1373,19 @@ fn list_worktrees(env: &TaskEnv) -> Result<Vec<WorktreeInfo>, String> {
 fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
     let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
     let base = git.resolve_base_ref(&env.main_branch);
-    // 分岐していれば触らないので、失敗しても作成そのものは続けられる。
+    // 分岐していれば触らないので、失敗しても作成そのものは続けられる。origin が無い
+    // リポジトリでは追いつく先が無いので、取れなかった警告も出さない。
     let warning = git
-        .ensure_base_ref_available(&env.main_branch)
-        .err()
-        .map(|e| format!("base '{}' not fast-forwarded: {e:#}", env.main_branch));
+        .has_origin()
+        .then(|| git.ensure_base_ref_available(&env.main_branch).err())
+        .flatten()
+        .map(|e| {
+            format!(
+                "base '{}' not fast-forwarded: {}",
+                env.main_branch,
+                first_line(&e)
+            )
+        });
     let path = git
         .create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
         .map_err(|e| e.to_string())?;

@@ -11,6 +11,10 @@ use anyhow::{Context, Result};
 use super::GitEngine;
 
 impl GitEngine {
+    pub fn has_origin(&self) -> bool {
+        self.repo.find_remote("origin").is_ok()
+    }
+
     /// `git fetch --prune origin`。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
     pub fn fetch_origin(&self) -> Result<()> {
         self.run_git_fetch(&["--prune", "origin"])

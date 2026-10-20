@@ -1597,10 +1597,12 @@ mod tests {
             .find(|w| w.branch == "feature/remote-only")
             .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
         assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Success, "{}", status.text);
     }
 
     #[test]
-    fn ベースが取れなくてもリモートブランチは作られ_画面に警告が出る() {
+    fn ベースが取れなくてもリモートブランチは最新で作られ_画面に警告が出る() {
         let repo = crate::testing::TestRepo::new();
         repo.remote_branch("feature/remote-only");
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
@@ -1608,22 +1610,53 @@ mod tests {
         run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
         crate::testing::pump(&mut ws, &mut svc);
 
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        let origin = repo.origin();
+        repo.git(&[
+            "-C",
+            origin.to_str().unwrap(),
+            "update-ref",
+            "refs/heads/feature/remote-only",
+            &tip,
+        ]);
+
         type_text(&mut ws, &mut svc, "remote-only");
         on_key(&mut ws, &mut svc, key(KeyCode::Enter));
         crate::testing::pump(&mut ws, &mut svc);
 
-        assert!(
-            ws.panels
-                .worktree
-                .list()
-                .iter()
-                .any(|w| w.branch == "feature/remote-only"),
-            "{:?}",
-            ws.panels.worktree.list()
-        );
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "feature/remote-only")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
         let status = ws.chrome.status.as_ref().expect("status");
         assert_eq!(status.level, StatusLevel::Warning, "{}", status.text);
         assert!(status.text.contains("gone"), "{}", status.text);
+        assert!(!status.text.contains('\n'), "{}", status.text);
+    }
+
+    #[test]
+    fn originが無いリポジトリでは_worktree作成に警告が出ない() {
+        let repo = crate::testing::TestRepo::new();
+        repo.git(&["remote", "remove", "origin"]);
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(Task::CreateWorktree {
+                branch: "topic".into(),
+            })],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Success, "{}", status.text);
     }
 
     #[test]
