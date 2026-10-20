@@ -340,12 +340,14 @@ The sender shares that generation through an `Arc<AtomicU64>` — copying the va
 into `EventSender` makes every watcher signal after the first switch vanish.
 
 **A periodically spawned `Task` needs an in-flight guard.** On a repository with
-175,388 tracked files the worktree list takes 25s, the file-tree survey 13s and
-the working-tree diff 9s, against a 3s poll and a 500ms debounce. Spawning faster
+175,388 tracked files the worktree list takes 25s, the working-tree diff 9s, and
+the two whole-repository walks behind the Explorer 1.8s (the file-name index) and
+6.8s (git status), against a 3s poll and a 500ms debounce. Spawning faster
 than results return piles up one thread per second — measured 476 threads at 303%
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
-good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh`, and the
-per-worktree change counts; each one grew this same hole independently.
+good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
+under one guard), and the per-worktree change counts; each one grew this same hole
+independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
 channel, so `PtyStore` lives in svc and the renderer reads it directly. There is
