@@ -371,7 +371,8 @@ over shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
 persist), `Focus::Editor` merges Explorer+Viewer into one PTY region. Menu rows
 carry a `CommandId` and run through the same `command::exec` as the palette and
 every keybinding. The revidere reading view (`Focus::Revidere`, `w`) is *not* in
-the accordion — it takes the main area whole as two columns (reading order | diff).
+the accordion — it takes the main area whole as three columns (reading order | diff
+| Claude), at fixed 24/38/38 that the accordion's ratios do not move.
 
 ### Key modules
 

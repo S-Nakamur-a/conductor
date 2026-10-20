@@ -400,6 +400,9 @@ impl RevidereState {
                 self.select(self.sections().saturating_sub(1));
                 Vec::new()
             }
+            Action::ExpandOrRight if self.column == Column::Diff => {
+                vec![Effect::Focus(Focus::TerminalClaude)]
+            }
             Action::ExpandOrRight => {
                 self.column = Column::Diff;
                 Vec::new()

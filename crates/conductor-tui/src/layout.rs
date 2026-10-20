@@ -51,6 +51,11 @@ impl Layout {
     /// マウスでつかんで動かせる境界。隣り合う 2 つの枠線のどちらを掴んでも同じ境界になる。
     /// 動かす比率はキーボードのリサイズと同じなので、クランプは [crate::command::exec] が持つ。
     pub fn divider_at(&self, x: u16, y: u16) -> Option<Divider> {
+        // レビューの列はアコーディオンの比率とは別物。掴めると、見えていない
+        // Viewer の幅が動く。
+        if self.rect(Region::RevidereDiff).is_some() {
+            return None;
+        }
         let touches = |edge: u16, v: u16| v == edge || v + 1 == edge;
         // 境界は右側 (下側) の区画の始まりにある。左 (上) が無い配置では境界も無い。
         let vertical = |right: Region, divider: Divider| {
@@ -80,9 +85,9 @@ pub enum Divider {
     TerminalSplit,
 }
 
-/// レビューの左列 (読む順) が取る幅の割合。項目の見出しが 2〜3 行に収まりつつ、
-/// diff 側に十分な幅が残る配分。
-const REVIDERE_ORDER_PCT: u16 = 32;
+/// レビューの列幅。アコーディオンの既定 (24/38/38) に揃えてあるが、設定とは連動しない。
+const REVIDERE_ORDER_PCT: u16 = 24;
+const REVIDERE_CLAUDE_PCT: u16 = 38;
 
 /// 幅の配分。フォーカスされた列が広がるアコーディオン。
 pub fn layout(ws: &Workspace, area: Rect) -> Layout {
@@ -122,22 +127,34 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         ));
     };
 
-    // レビューは 3 列アコーディオンと重ならない。最大化とも無関係に main を 2 つに割る。
-    if ws.focus == Focus::Revidere {
-        // 概要は 1 列。
+    // レビューはアコーディオンと重ならない。最大化とも無関係に main を割る。
+    // 読みながら Claude に訊くのが主な使い方なので、右端は常に Claude。
+    if ws.reviewing() {
+        let claude_w = main.width * REVIDERE_CLAUDE_PCT / 100;
+        let reading = Rect::new(main.x, main.y, main.width - claude_w, main.height);
+        // 概要は項目を持たないので、読む側は 1 列。
         if !ws.panels.revidere.showing_overview() {
             let order_w = main.width * REVIDERE_ORDER_PCT / 100;
             regions.push((
                 Region::RevidereOrder,
-                Rect::new(main.x, main.y, order_w, main.height),
+                Rect::new(reading.x, reading.y, order_w, reading.height),
             ));
             regions.push((
                 Region::RevidereDiff,
-                Rect::new(main.x + order_w, main.y, main.width - order_w, main.height),
+                Rect::new(
+                    reading.x + order_w,
+                    reading.y,
+                    reading.width - order_w,
+                    reading.height,
+                ),
             ));
         } else {
-            regions.push((Region::RevidereDiff, main));
+            regions.push((Region::RevidereDiff, reading));
         }
+        regions.push((
+            Region::TerminalClaude,
+            Rect::new(reading.x + reading.width, main.y, claude_w, main.height),
+        ));
     } else if ws.chrome.maximized {
         match ws.focus {
             Focus::Worktree | Focus::Explorer => push_explorer(&mut regions, main),
@@ -283,22 +300,38 @@ mod tests {
     }
 
     #[test]
-    fn レビューは_2_列で_main_を占め概要では_1_列になる() {
+    fn レビューは読む順とdiffとclaudeの_3_列で概要では_2_列になる() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Revidere;
         ws.panels.revidere.show_overview(false);
         let l = layout(&ws, Rect::new(0, 0, 120, 40));
         let order = l.rect(Region::RevidereOrder).expect("読む順の列");
         let diff = l.rect(Region::RevidereDiff).expect("diff の列");
+        let claude = l.rect(Region::TerminalClaude).expect("Claude の列");
         assert_eq!(order.x + order.width, diff.x);
+        assert_eq!(diff.x + diff.width, claude.x);
+        assert_eq!(claude.x + claude.width, 120);
         assert!(
-            l.rect(Region::TerminalClaude).is_none() && l.rect(Region::Viewer).is_none(),
+            l.rect(Region::Viewer).is_none(),
             "アコーディオンの列は隠れる"
         );
 
         ws.panels.revidere.show_overview(true);
         let l = layout(&ws, Rect::new(0, 0, 120, 40));
         assert!(l.rect(Region::RevidereOrder).is_none());
-        assert_eq!(l.rect(Region::RevidereDiff).map(|r| r.width), Some(120));
+        assert_eq!(l.rect(Region::RevidereDiff).map(|r| r.x), Some(0));
+        assert_eq!(l.rect(Region::TerminalClaude).map(|r| r.width), Some(45));
+    }
+
+    #[test]
+    fn claude_へ移ってもレビューの列は変わらない() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Revidere;
+        ws.panels.revidere.show_overview(false);
+        let reviewing = layout(&ws, Rect::new(0, 0, 120, 40));
+
+        ws.chrome.review_open = true;
+        ws.focus = Focus::TerminalClaude;
+        assert_eq!(layout(&ws, Rect::new(0, 0, 120, 40)), reviewing);
     }
 }

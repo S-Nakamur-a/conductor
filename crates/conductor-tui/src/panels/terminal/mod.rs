@@ -273,10 +273,10 @@ impl TerminalPanel {
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         if self.reading(ctx.focus) {
-            return self.transcript_action(action);
+            return self.transcript_action(action, ctx);
         }
         match action {
-            Action::LeaveTerminal => return Some(vec![Effect::Focus(Focus::Explorer)]),
+            Action::LeaveTerminal => return Some(vec![Effect::Focus(left_of_terminal(ctx))]),
             Action::NextSession => self.cycle(ctx.focus, true),
             Action::PrevSession => self.cycle(ctx.focus, false),
             Action::ScrollbackUp => {
@@ -316,12 +316,12 @@ impl TerminalPanel {
     }
 
     /// 読んでいる間の Action。持たないものは外の解釈へ落とす (パレット、区画のリサイズ)。
-    fn transcript_action(&mut self, action: Action) -> Option<Vec<Effect>> {
+    fn transcript_action(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         match action {
             Action::SnapToLive => return Some(self.close_transcript()),
             Action::LeaveTerminal => {
                 let mut effects = self.close_transcript();
-                effects.push(Effect::Focus(Focus::Explorer));
+                effects.push(Effect::Focus(left_of_terminal(ctx)));
                 return Some(effects);
             }
             _ => {}
@@ -1055,6 +1055,15 @@ pub(super) fn focus_of(region: Region) -> Focus {
         Region::TerminalShell => Focus::TerminalShell,
         Region::Editor => Focus::Editor,
         _ => unreachable!("focus_of: 端末以外の region {region:?}"),
+    }
+}
+
+/// 端末を抜けた先。レビュー画面では左隣が Explorer ではなく読む順になる。
+fn left_of_terminal(ctx: &Ctx) -> Focus {
+    if ctx.reviewing {
+        Focus::Revidere
+    } else {
+        Focus::Explorer
     }
 }
 
