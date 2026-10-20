@@ -223,8 +223,8 @@ pub enum Task {
         worktree: PathBuf,
         scope: revidere::Scope,
     },
-    /// AI にレビューを書かせる。数分かかる。`cancel` は終了時に子プロセスを殺すための
-    /// 旗で、起こした側と共有する。
+    /// AI にレビューを書かせる。数分かかる。`cancel` は子プロセスを殺し、成果物を書く前の
+    /// 中止判定にも使う旗で、起こした側と共有する。
     Analyze {
         worktree: PathBuf,
         branch: String,
@@ -798,6 +798,10 @@ impl revidere::Ai for AiSeam {
 
     fn identity(&self) -> String {
         self.identity.clone()
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancel.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

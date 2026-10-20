@@ -161,7 +161,7 @@ impl RevidereState {
         self.epoch = self.epoch.wrapping_add(1);
     }
 
-    /// 解析の中断旗を捕まえておく。走っている AI コマンドを終了時に kill するのと、
+    /// 解析の中断旗を捕まえておく。走っている AI コマンドを途中で kill するのと、
     /// 同じブランチに 2 本目を走らせないのに要る。
     pub fn note_spawned(&mut self, task: &Task) {
         if let Task::Analyze { branch, cancel, .. } = task {
@@ -178,6 +178,14 @@ impl RevidereState {
             cancel.store(true, Ordering::Relaxed);
         }
         stopped
+    }
+
+    /// そのブランチの解析だけを止める。枠は外さない。結果はブランチ名だけで届くので、
+    /// ここで外すと、止まりきる前にやり直した解析の枠を古い方の結果が外してしまう。
+    pub fn cancel(&mut self, branch: &str) {
+        if let Some(cancel) = self.running.get(branch) {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     /// 解析 1 本の終わり。文言にブランチ名を入れるのは、複数の worktree で同時に

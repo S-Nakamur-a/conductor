@@ -18,6 +18,12 @@ pub trait Ai {
     ///
     /// ここが固定値だと、モデルを替えても前のモデルの答えが返り続ける。
     fn identity(&self) -> String;
+
+    /// 呼び手が解析の中止を求めたか。差し戻しの失敗は握りつぶして最初の答えを
+    /// 書くので、中止はここで別に訊かないと成果物の上書きを止められない。
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -169,6 +175,9 @@ pub fn analyze(o: &Options, ai: &dyn Ai) -> Result<Review, AnalyzeError> {
 
     r.since_previous = since_previous;
 
+    if ai.cancelled() {
+        return Err(AnalyzeError::Ai("Cancelled".into()));
+    }
     let out = crate::review::artifact_path(&root, o.scope);
     write_artifact(&out, &r)?;
     log::info!("revidere: wrote {}", out.display());

@@ -201,6 +201,33 @@ fn 解析はブランチ単位で数え全停止で全部に止まれと伝え�
     assert!(!ca.load(Ordering::Relaxed), "終わった側は触らない");
 }
 
+#[test]
+fn 取り消しは指定したブランチの解析だけを止める() {
+    let mut panel = RevidereState::default();
+    let (a, b) = (analyze_task("feature/a"), analyze_task("feature/b"));
+    let (Task::Analyze { cancel: ca, .. }, Task::Analyze { cancel: cb, .. }) = (&a, &b) else {
+        unreachable!()
+    };
+    let (ca, cb) = (Arc::clone(ca), Arc::clone(cb));
+    panel.note_spawned(&a);
+    panel.note_spawned(&b);
+
+    panel.cancel("feature/a");
+    assert!(ca.load(Ordering::Relaxed));
+    assert!(!cb.load(Ordering::Relaxed) && panel.is_running("feature/b"));
+    assert!(
+        panel.is_running("feature/a"),
+        "止まりきるまでは同じブランチに 2 本目を走らせない"
+    );
+    panel.finished(
+        "feature/a",
+        AnalyzeOutcome::Failed("Cancelled".into()),
+        "/tmp/wt".into(),
+        "other",
+    );
+    assert!(!panel.is_running("feature/a"));
+}
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
