@@ -21,11 +21,14 @@ use conductor_svc::{EventKind, Services};
 use crate::effect::{Effect, apply};
 use crate::layout::{Layout, Region, layout};
 use crate::liveness::{Liveness, liveness};
+use crate::panels::explorer::ExplorerPanel;
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
-use crate::timer::{CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL};
+use crate::timer::{
+    CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL,
+};
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
 /// フレームを描く前にイベントを捌き続ける上限。高速スクロール中に中間フレームが
@@ -39,6 +42,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 /// watcher の合図が静まるのを待つ締切。
 struct Debounces {
     fs: Debounce,
+    git: Debounce,
     config: Debounce,
 }
 
@@ -103,6 +107,7 @@ pub fn run(
     let mut dirty = true;
     let mut debounces = Debounces {
         fs: Debounce::new(FS_DEBOUNCE),
+        git: Debounce::new(GIT_DEBOUNCE),
         config: Debounce::new(CONFIG_DEBOUNCE),
     };
     let mut file_watch = FileWatch::default();
@@ -192,6 +197,7 @@ pub fn run(
         dirty |= ws.tick_viewer();
         dirty |= tick_editor(ws, svc);
         dirty |= tick_fs_refresh(ws, svc, &mut debounces.fs, Instant::now());
+        dirty |= tick_git_refresh(ws, svc, &mut debounces.git, Instant::now());
         dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
@@ -269,6 +275,10 @@ fn watch_effects(
             debounces.fs.touch(now);
             Vec::new()
         }
+        WatchEvent::GitChanged => {
+            debounces.git.touch(now);
+            Vec::new()
+        }
         WatchEvent::ConfigChanged => {
             debounces.config.touch(now);
             Vec::new()
@@ -284,10 +294,30 @@ fn tick_fs_refresh(
     debounce: &mut Debounce,
     now: Instant,
 ) -> bool {
+    tick_explorer(ws, svc, debounce, now, ExplorerPanel::refresh)
+}
+
+/// 猶予が明けていたら差分と色分けだけ読み直す。何か投げたら true。
+fn tick_git_refresh(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    debounce: &mut Debounce,
+    now: Instant,
+) -> bool {
+    tick_explorer(ws, svc, debounce, now, ExplorerPanel::refresh_git)
+}
+
+fn tick_explorer(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    debounce: &mut Debounce,
+    now: Instant,
+    refresh: fn(&mut ExplorerPanel) -> Vec<Effect>,
+) -> bool {
     if !debounce.fire(now) {
         return false;
     }
-    let effects = ws.panels.explorer.refresh();
+    let effects = refresh(&mut ws.panels.explorer);
     apply(ws, svc, effects);
     true
 }
@@ -760,6 +790,7 @@ mod tests {
     fn test_debounces() -> Debounces {
         Debounces {
             fs: Debounce::new(FS_DEBOUNCE),
+            git: Debounce::new(GIT_DEBOUNCE),
             config: Debounce::new(CONFIG_DEBOUNCE),
         }
     }
@@ -1864,6 +1895,16 @@ needle here
         assert!(
             debounces.config.fire(now + CONFIG_DEBOUNCE),
             "ConfigChanged が設定の猶予を触っていない"
+        );
+
+        assert!(watch_effects(&mut ws, WatchEvent::GitChanged, &mut debounces, now).is_empty());
+        assert!(
+            !debounces.fs.fire(now + FS_DEBOUNCE),
+            "GitChanged がファイル変更の猶予 (ツリーの走査) を触っている"
+        );
+        assert!(
+            debounces.git.fire(now + GIT_DEBOUNCE),
+            "GitChanged が git の猶予を触っていない"
         );
     }
 

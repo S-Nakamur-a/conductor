@@ -159,6 +159,26 @@ impl ExplorerPanel {
             .collect()
     }
 
+    /// git の状態だけが動いた (commit、fetch、checkout)。ツリーの中身は変わらないので
+    /// 走査は投げ直さず、色分けと差分だけ読み直す。走査中なら全体の投げ直しに乗せる
+    /// — 走っている diff は動く前の内容を読んでいる。
+    pub fn refresh_git(&mut self) -> Vec<Effect> {
+        if self.tree.root().as_os_str().is_empty() {
+            return Vec::new();
+        }
+        if self.pending > 0 {
+            self.refresh_queued = true;
+            return Vec::new();
+        }
+        self.pending += 1;
+        vec![
+            Effect::Spawn(Task::LoadGitStatus {
+                root: self.tree.root().to_path_buf(),
+            }),
+            self.changes.reload(),
+        ]
+    }
+
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         self.clamp();
         self.comments.clamp(ctx.review);
@@ -480,6 +500,28 @@ mod tests {
     fn 根が決まる前は走査もdiffも投げない() {
         let mut panel = ExplorerPanel::default();
         assert!(panel.refresh().is_empty());
+    }
+
+    #[test]
+    fn git変更の読み直しは走査を投げ直さず差分と色分けだけ投げる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut panel = ExplorerPanel::default();
+        panel.set_root(dir.path().to_path_buf(), "main");
+        panel.forget_in_flight();
+
+        let effects = panel.refresh_git();
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Spawn(Task::LoadGitStatus { .. }),
+                    Effect::Spawn(Task::ComputeDiff { .. }),
+                ]
+            ),
+            "{effects:?}"
+        );
+        assert!(panel.refresh().is_empty(), "status が返る前に走査を重ねた");
     }
 
     #[test]
