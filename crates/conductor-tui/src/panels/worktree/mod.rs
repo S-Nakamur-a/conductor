@@ -234,15 +234,12 @@ impl WorktreePanel {
                 match result {
                     Ok(created) => {
                         self.select_when_listed(created.path);
+                        let text = format!("created '{}'", created.branch);
                         let status = match created.warning {
-                            Some(warning) => Effect::Status(
-                                StatusLevel::Warning,
-                                format!("created '{}' ({warning})", created.branch),
-                            ),
-                            None => Effect::Status(
-                                StatusLevel::Success,
-                                format!("created '{}'", created.branch),
-                            ),
+                            Some(warning) => {
+                                Effect::Status(StatusLevel::Warning, format!("{text} ({warning})"))
+                            }
+                            None => Effect::Status(StatusLevel::Success, text),
                         };
                         vec![status, Effect::Spawn(Task::ListWorktrees)]
                     }

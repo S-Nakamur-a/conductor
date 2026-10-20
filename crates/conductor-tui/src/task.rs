@@ -347,7 +347,6 @@ pub enum TaskResult {
         path: PathBuf,
         counts: Option<ChangeCounts>,
     },
-    /// 作成できた worktree のパスと、そのブランチ。
     WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
@@ -959,16 +958,16 @@ fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<Created, Str
         .split_once('/')
         .unwrap_or(("origin", remote_branch));
     git(env, |git| {
-        let warning = if remote == "origin"
-            && let Err(e) = git.fetch_branches(remote, &[branch, &env.main_branch])
-        {
-            git.fetch_branches(remote, &[branch])?;
-            Some(format!("base '{}' not fetched: {e:#}", env.main_branch))
-        } else {
-            if remote != "origin" {
+        let with_base = remote == "origin";
+        let wanted = [branch, env.main_branch.as_str()];
+        let wanted = if with_base { &wanted[..] } else { &wanted[..1] };
+        let warning = match git.fetch_branches(remote, wanted) {
+            Ok(()) => None,
+            Err(e) if with_base => {
                 git.fetch_branches(remote, &[branch])?;
+                Some(format!("base '{}' not fetched: {e:#}", env.main_branch))
             }
-            None
+            Err(e) => return Err(e),
         };
         let path = git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())?;
         Ok(Created {
