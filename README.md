@@ -108,8 +108,9 @@ keeps working while you review.
 focuses the changed-files list. `W` then runs **revidere**, the AI reviewer that
 ships inside the binary: it sorts every changed line into sections by importance
 and checks that no changed line is left unexplained. `w` opens the result as a
-two-column reading-order view, and *Review: Publish Comments to GitHub* posts
-your inline comments back to the PR.
+three-column reading-order view with Claude Code kept on the right, so a question
+about what you are reading needs no detour, and *Review: Publish Comments to
+GitHub* posts your inline comments back to the PR.
 
 Full walkthrough, including the symbol-jump keys and revidere's `[api]`
 requirements: [docs/reviewing-a-pr.md](docs/reviewing-a-pr.md).

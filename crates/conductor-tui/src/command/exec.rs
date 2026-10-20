@@ -273,7 +273,7 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
 /// 開いているなら閉じる。成果物が無ければ「無い」と言って終わるより、作る口を
 /// その場で出したほうが早い。
 fn show_revidere(ws: &mut Workspace) -> Vec<Effect> {
-    if ws.focus == Focus::Revidere {
+    if ws.reviewing() {
         return vec![Effect::Focus(Focus::Explorer)];
     }
     let panel = &ws.panels.revidere;
@@ -471,8 +471,12 @@ fn resize(ws: &mut Workspace, dir: Resize) -> Vec<Effect> {
     } else {
         -STEP
     };
+    // レビューの列幅は固定。アコーディオンの比率を動かしても、見えている列は変わらない。
+    if ws.reviewing() {
+        return Vec::new();
+    }
     let divider = match (dir, ws.focus) {
-        (Resize::Left | Resize::Right, Focus::Worktree | Focus::Revidere) => return Vec::new(),
+        (Resize::Left | Resize::Right, Focus::Worktree) => return Vec::new(),
         // 最左の列が持つ境界は 1 本だけ。
         (Resize::Left | Resize::Right, Focus::Explorer) => Divider::ExplorerViewer,
         // 中央の列は向いた側の境界を押すので、縮むだけの窮屈な列にならない。

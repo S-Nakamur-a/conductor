@@ -184,7 +184,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     )));
                 }
             }
-            Effect::Focus(focus) => ws.focus = focus,
+            Effect::Focus(focus) => {
+                ws.chrome.review_open =
+                    focus == Focus::Revidere || (ws.reviewing() && focus == Focus::TerminalClaude);
+                ws.focus = focus;
+            }
             Effect::Status(level, text) => {
                 ws.chrome.status = Some(StatusMessage {
                     level,

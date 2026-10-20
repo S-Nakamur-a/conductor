@@ -104,6 +104,9 @@ pub struct Chrome {
     pub status: Option<StatusMessage>,
     pub menu: crate::menu::MenuBar,
     pub maximized: bool,
+    /// レビュー画面が main を占めている。右端の Claude へフォーカスを移しても
+    /// 開いたままにするために、フォーカスとは別に持つ。
+    pub review_open: bool,
     /// つかんでいる境界。離すまで持つ。
     pub drag: Option<crate::layout::Divider>,
     /// マウスで選んでいる区画内の範囲。次のクリック・スクロール・キーで消える。
@@ -198,6 +201,8 @@ pub struct Ctx<'a> {
     pub root: &'a Path,
     /// 1 つのパネルが 2 つの区画を持つことがあるので、どちらが受けたかを添える。
     pub focus: Focus,
+    /// レビュー画面の中にいる。
+    pub reviewing: bool,
     /// フォーカス中の区画とモードで決まる層。キーの案内とスコープが読む。
     pub key_context: KeyContext,
 }
@@ -277,6 +282,7 @@ impl Workspace {
             index: &self.index,
             root: self.panels.viewer.root(),
             focus: self.focus,
+            reviewing: self.reviewing(),
             key_context: self.key_context(),
         }
     }
@@ -325,6 +331,7 @@ impl Workspace {
         root: &'a Path,
     ) -> (&'a mut Panels, &'a mut Vec<Modal>, Ctx<'a>) {
         let key_context = self.key_context();
+        let reviewing = self.reviewing();
         let Self {
             panels,
             modals,
@@ -348,6 +355,7 @@ impl Workspace {
             index,
             root,
             focus: *focus,
+            reviewing,
             key_context,
         };
         (panels, modals, ctx)
@@ -619,10 +627,16 @@ impl Workspace {
         ))]
     }
 
+    /// レビュー画面が出ているか。
+    pub fn reviewing(&self) -> bool {
+        self.focus == Focus::Revidere
+            || (self.chrome.review_open && self.focus == Focus::TerminalClaude)
+    }
+
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
         self.sync_review_fx();
-        if self.focus == Focus::Revidere {
+        if self.reviewing() {
             let Self {
                 panels,
                 theme,

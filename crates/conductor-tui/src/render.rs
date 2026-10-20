@@ -103,14 +103,17 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
 }
 
 fn review_panels(layout: &Layout) -> Vec<Rect> {
-    let reading: Vec<Rect> = [Region::RevidereOrder, Region::RevidereDiff]
-        .iter()
-        .filter_map(|region| layout.rect(*region))
-        .collect();
-    if !reading.is_empty() {
-        return reading;
+    if layout.rect(Region::RevidereDiff).is_none() {
+        return layout.rect(Region::ExplorerChanges).into_iter().collect();
     }
-    layout.rect(Region::ExplorerChanges).into_iter().collect()
+    [
+        Region::RevidereOrder,
+        Region::RevidereDiff,
+        Region::TerminalClaude,
+    ]
+    .iter()
+    .filter_map(|region| layout.rect(*region))
+    .collect()
 }
 
 /// 演出が枠を組み上げる区画。左から順。
@@ -340,6 +343,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
                 &[Action::RevidereNextSection, Action::ReviderePrevSection],
             ),
             ("overview", &[Action::RevidereShowOverview]),
+            ("ask", &[Action::CycleFocusForward]),
             ("close", &[Action::ExitSubPanel]),
         ],
     };

@@ -18,10 +18,12 @@ terminal keybindings keep working while you review:
    runs **revidere** over the worktree's
    diff. It sorts every changed line into sections by importance
    (core / ripple / follow / minor) and checks that **no changed line is left
-   unexplained**. `w` then opens the result as a full-screen two-column view:
-   the reading order on the left, the diff in that order on the right. `j`/`k`
-   scroll, `n`/`N` move between sections, `Enter` opens the section's location
-   in the Viewer (where you can leave a comment), `q` closes it.
+   unexplained**. `w` then opens the result as a full-screen three-column view:
+   the reading order on the left, the diff in that order in the middle, Claude
+   Code on the right. `j`/`k` scroll, `n`/`N` move between sections, `Enter`
+   opens the section's location in the Viewer (where you can leave a comment),
+   `q` closes it. `Tab` moves to Claude Code and back without closing the
+   review, so a question about the section you are reading costs nothing.
 
    revidere lives in this repository (`crates/revidere`) and ships inside the
    `conductor` binary, so there is nothing extra to install. It calls the AI
