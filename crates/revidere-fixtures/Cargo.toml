@@ -1,6 +1,6 @@
 [package]
 name = "revidere-fixtures"
-version = "0.2.0"
+version = "0.2.0-wt.warm-untracked-cache"
 edition = "2021"
 publish = false
 
