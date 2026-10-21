@@ -4,7 +4,9 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use git2::{Repository, StatusOptions, StatusShow};
+use git2::Repository;
+
+use super::GitStatusMap;
 
 /// worktree ルートからの相対パスを、dirty なファイル、直近 10 コミットで変更された
 /// ファイルの順に、重複なく最大 limit 件返す。
@@ -20,14 +22,11 @@ pub fn recently_modified_files(worktree_path: &Path, limit: usize) -> Result<Vec
         }
     };
 
-    let mut opts = StatusOptions::new();
-    opts.show(StatusShow::IndexAndWorkdir)
-        .include_untracked(true);
-    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
-        for entry in statuses.iter() {
-            if let Some(path) = entry.path() {
-                push(path.to_string(), &mut result);
-            }
+    if let Ok(status) = GitStatusMap::load(worktree_path) {
+        let mut dirty: Vec<String> = status.paths().map(str::to_string).collect();
+        dirty.sort();
+        for path in dirty {
+            push(path, &mut result);
         }
     }
 
