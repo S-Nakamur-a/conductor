@@ -3,6 +3,8 @@
 //! 検索そのものはディスクを読むので svc に投げる。通し番号を添えて、打鍵の途中で
 //! 追い越された結果を捨てる。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use conductor_core::grep_search::{GrepMatch, MAX_RESULTS};
@@ -33,6 +35,29 @@ pub struct Grep {
     seq: u64,
     running: bool,
     due: Option<Instant>,
+    in_flight: InFlight,
+}
+
+/// 走っている検索の中止フラグ。
+#[derive(Debug, Default)]
+struct InFlight(Arc<AtomicBool>);
+
+impl InFlight {
+    fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn replace(&mut self) -> Arc<AtomicBool> {
+        self.stop();
+        self.0 = Arc::default();
+        Arc::clone(&self.0)
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 impl Grep {
@@ -57,6 +82,7 @@ impl Grep {
             regex: self.regex,
             case_sensitive: self.case_sensitive,
             seq: self.seq,
+            cancel: self.in_flight.replace(),
         })]
     }
 
@@ -90,6 +116,7 @@ impl Grep {
             self.cursor.selected = 0;
             self.running = false;
             self.due = None;
+            self.in_flight.stop();
             // 通し番号を進めておかないと、飛んでいる検索の結果が空の画面に戻ってくる。
             self.seq += 1;
             return;
@@ -357,6 +384,49 @@ mod tests {
         grep.install(seq, Ok(matches));
         grep.input_focused = false;
         (grep, ws)
+    }
+
+    fn spawned_cancel(grep: &mut Grep) -> Arc<AtomicBool> {
+        grep.due = Some(Instant::now());
+        match grep.tick(std::path::Path::new("/tmp")).as_slice() {
+            [Effect::Spawn(Task::Grep { cancel, .. })] => Arc::clone(cancel),
+            _ => panic!("検索が投げられていない"),
+        }
+    }
+
+    #[test]
+    fn 次の検索を投げると前の検索は止まる() {
+        let ws = Workspace::for_test();
+        let mut grep = Grep::open();
+        grep.update(key(KeyCode::Char('a')), &ws.ctx());
+        let first = spawned_cancel(&mut grep);
+        grep.update(key(KeyCode::Char('b')), &ws.ctx());
+        let second = spawned_cancel(&mut grep);
+
+        assert!(first.load(Ordering::Relaxed));
+        assert!(!second.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn 入力を空にすると走っている検索は止まる() {
+        let ws = Workspace::for_test();
+        let mut grep = Grep::open();
+        grep.update(key(KeyCode::Char('a')), &ws.ctx());
+        let running = spawned_cancel(&mut grep);
+        grep.update(key(KeyCode::Backspace), &ws.ctx());
+
+        assert!(running.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn 閉じると走っている検索は止まる() {
+        let ws = Workspace::for_test();
+        let mut grep = Grep::open();
+        grep.update(key(KeyCode::Char('a')), &ws.ctx());
+        let running = spawned_cancel(&mut grep);
+        drop(grep);
+
+        assert!(running.load(Ordering::Relaxed));
     }
 
     #[test]

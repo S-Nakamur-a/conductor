@@ -6,13 +6,30 @@ fn re(pattern: &str, regex_mode: bool, case_sensitive: bool) -> Regex {
 }
 
 #[test]
+fn 中止済みの検索はファイルを読まない() {
+    let repo = TestRepo::with_base_commit();
+    repo.file("a.txt", "needle\n");
+
+    let matches = search_tree(
+        &repo.path,
+        &re("needle", false, true),
+        &AtomicBool::new(true),
+    );
+    assert!(matches.is_empty());
+}
+
+#[test]
 fn gitignoreされたファイルは検索対象から外れる() {
     let repo = TestRepo::with_base_commit();
     repo.file(".gitignore", "ignored.txt\n");
     repo.file("ignored.txt", "needle here\n");
     repo.file("visible.txt", "needle here\n");
 
-    let matches = search_tree(&repo.path, &re("needle", false, true));
+    let matches = search_tree(
+        &repo.path,
+        &re("needle", false, true),
+        &AtomicBool::new(false),
+    );
     let files: Vec<&str> = matches.iter().map(|m| m.file_path.as_str()).collect();
     assert_eq!(files, vec!["visible.txt"]);
 }
@@ -23,12 +40,16 @@ fn リテラルモードでは正規表現の特殊文字がそのまま扱わ�
     repo.file("data.txt", "a.b\nc+d\n");
 
     // '.' がリテラルなら "a.b" にしか当たらない。
-    let literal = search_tree(&repo.path, &re("a.b", false, true));
+    let literal = search_tree(&repo.path, &re("a.b", false, true), &AtomicBool::new(false));
     assert_eq!(literal.len(), 1);
     assert_eq!(literal[0].line_content, "a.b");
 
     // regex_mode なら '.' は任意の 1 文字にマッチし、"c+d" の行にも当たる。
-    let as_regex = search_tree(&repo.path, &re("a.b|c.d", true, true));
+    let as_regex = search_tree(
+        &repo.path,
+        &re("a.b|c.d", true, true),
+        &AtomicBool::new(false),
+    );
     assert_eq!(as_regex.len(), 2);
 }
 
@@ -37,9 +58,21 @@ fn 大文字小文字の区別はオプションで切り替わる() {
     let repo = TestRepo::with_base_commit();
     repo.file("data.txt", "Needle\n");
 
-    assert!(search_tree(&repo.path, &re("needle", false, true)).is_empty());
+    assert!(
+        search_tree(
+            &repo.path,
+            &re("needle", false, true),
+            &AtomicBool::new(false)
+        )
+        .is_empty()
+    );
     assert_eq!(
-        search_tree(&repo.path, &re("needle", false, false)).len(),
+        search_tree(
+            &repo.path,
+            &re("needle", false, false),
+            &AtomicBool::new(false)
+        )
+        .len(),
         1
     );
 }

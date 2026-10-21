@@ -8,6 +8,7 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ignore::{WalkBuilder, WalkState};
 use regex::{Regex, RegexBuilder};
@@ -87,7 +88,8 @@ pub fn search_files(root: &Path, rel_paths: &[String], re: &Regex) -> Vec<GrepMa
 
 /// root 以下を .gitignore を尊重して並列に走査し、全文検索する。
 /// 結果はスレッドが見つけた順に並ぶので、パス順ではない。
-pub fn search_tree(root: &Path, re: &Regex) -> Vec<GrepMatch> {
+/// `cancel` が立ったら次のファイルに進まずに、そこまでの結果を返す。
+pub fn search_tree(root: &Path, re: &Regex, cancel: &AtomicBool) -> Vec<GrepMatch> {
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
@@ -98,6 +100,9 @@ pub fn search_tree(root: &Path, re: &Regex) -> Vec<GrepMatch> {
     let results = Mutex::new(Vec::new());
     walker.run(|| {
         Box::new(|entry| {
+            if cancel.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
             let Ok(entry) = entry else {
                 return WalkState::Continue;
             };
