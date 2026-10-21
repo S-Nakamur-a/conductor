@@ -505,6 +505,25 @@ mod tests {
         ws.panels.explorer.changes.cursor().selected()
     }
 
+    /// 走査 3 本の結果が全部 Explorer に届かないと pending が残り、以後の投げ直しが
+    /// 全部キューに溜まったまま出てこない。Git Changes は worktree を切り替えるまで凍る。
+    #[test]
+    fn 走査の結果は3本とも_explorerに届いて待ちが0に戻る() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+
+        assert!(
+            !ws.panels.explorer.is_loading(),
+            "走査の結果のどれかが Explorer に届いていない"
+        );
+        assert!(
+            !ws.panels.explorer.refresh().is_empty(),
+            "投げ直しがキューに残ったまま"
+        );
+    }
+
     #[test]
     fn 根が決まる前は走査もdiffも投げない() {
         let mut panel = ExplorerPanel::default();
