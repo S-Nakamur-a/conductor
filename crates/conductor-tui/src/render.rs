@@ -488,7 +488,6 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
 
     // 一覧を持つモーダルは画面を大きく取る。中身の丈で決めると、絞り込むたびに
     // 枠が伸び縮みして読みにくい。
-    // 押した場所に紐づくポップアップは中央に置かない。指定が無いものは今まで通り。
     let rect = match modal {
         Modal::Popup(popup) => crate::modal::popup::rect(popup, area),
         _ if wide(modal) => big,

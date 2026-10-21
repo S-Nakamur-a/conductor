@@ -36,10 +36,15 @@ use reflow::{Handled, Reflow};
 /// セッションのラベルに使う番号。同じ worktree で空いている一番小さいものを取る。
 const SESSION_SLOTS: usize = 9;
 
-const CLAUDE_LAUNCHES: Choices = &[
-    ("Claude Code", CommandId::NewClaudeCode),
-    ("Claude Code + Chrome", CommandId::NewClaudeCodeWithChrome),
-];
+fn claude_launches() -> Choices {
+    vec![
+        ("Claude Code", Effect::Command(CommandId::NewClaudeCode)),
+        (
+            "Claude Code + Chrome",
+            Effect::Command(CommandId::NewClaudeCodeWithChrome),
+        ),
+    ]
+}
 
 /// 端末パネル 1 枚。
 pub struct Pane {
@@ -206,8 +211,8 @@ impl TerminalPanel {
             tabs::SlotKind::Add if region == Region::TerminalClaude => {
                 Some(vec![Effect::PushModal(Modal::Popup(Popup::new(
                     "New",
-                    CLAUDE_LAUNCHES,
-                    (tabs.x + slot.start, tabs.y + 1),
+                    claude_launches(),
+                    Some((tabs.x + slot.start, tabs.y + 1)),
                     0,
                 )))])
             }
@@ -1537,10 +1542,10 @@ mod tests {
             .find(|slot| slot.kind == tabs::SlotKind::Add)
             .expect("チップが無い");
 
-        let effects = panel
+        let mut effects = panel
             .tab_click(Focus::TerminalClaude, tabs.x + add.start, tabs)
             .unwrap();
-        let [Effect::PushModal(Modal::Popup(popup))] = effects.as_slice() else {
+        let [Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice() else {
             panic!("{effects:?}");
         };
         let screen = Rect::new(0, 0, 120, 40);

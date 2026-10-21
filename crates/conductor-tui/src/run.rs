@@ -528,7 +528,7 @@ fn on_mouse(
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // 開いているポップアップが先。区画に渡すと裏の一覧が反応してしまう。
-            if let Some(crate::modal::Modal::Popup(popup)) = ws.modals.last() {
+            if let Some(crate::modal::Modal::Popup(popup)) = ws.modals.last_mut() {
                 let effects = popup.click(mouse.column, mouse.row, layout.area);
                 apply(ws, svc, effects);
                 return;
@@ -691,15 +691,18 @@ fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Opt
         _ => 0,
     };
     Some(vec![Effect::PushModal(crate::modal::Modal::Popup(
-        crate::modal::popup::Popup::new("Show", LISTINGS, (rect.x, rect.y + 1), current),
+        crate::modal::popup::Popup::new("Show", listings(), Some((rect.x, rect.y + 1)), current),
     ))])
 }
 
-const LISTINGS: crate::modal::popup::Choices = &[
-    ("Changes", crate::command::CommandId::ShowDiffList),
-    ("Commit Log", crate::command::CommandId::ShowCommitLog),
-    ("Comments", crate::command::CommandId::ShowCommentList),
-];
+fn listings() -> crate::modal::popup::Choices {
+    use crate::command::CommandId;
+    vec![
+        ("Changes", Effect::Command(CommandId::ShowDiffList)),
+        ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
+        ("Comments", Effect::Command(CommandId::ShowCommentList)),
+    ]
+}
 
 /// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
 /// 重なっているので、後ろに回すと下の行が選ばれる。
