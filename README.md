@@ -118,10 +118,12 @@ PR review runs inside the normal Explorer/Viewer/Terminal accordion — there is
 no separate mode to enter or leave, so every navigation and terminal keybinding
 keeps working while you review.
 
-*Review ▸ Review Pull Request…* fetches a PR (via `gh`) into a worktree and
-focuses the changed-files list. `W` then runs **revidere**, the AI reviewer that
-ships inside the binary: it sorts every changed line into sections by importance
-and checks that no changed line is left unexplained. `w` opens the result as a
+*Review ▸ Review Pull Request…* checks the PR's branch out of `origin` into a
+worktree (via `gh`; an existing one is pulled up to date), focuses the
+changed-files list and starts **revidere** on it, the AI reviewer that ships
+inside the binary: it sorts every changed line into sections by importance and
+checks that no changed line is left unexplained. `W` runs it again on whatever
+worktree you are in. `w` opens the result as a
 three-column reading-order view with Claude Code kept on the right, so a question
 about what you are reading needs no detour, and *Review: Publish Comments to
 GitHub* posts your inline comments back to the PR.

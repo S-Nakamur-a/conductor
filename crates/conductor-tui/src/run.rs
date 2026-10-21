@@ -1576,13 +1576,36 @@ mod tests {
     }
 
     #[test]
-    fn pr取り込みが成功すると閉じてその_worktreeへ移る() {
+    fn pr取り込みが成功すると閉じてその_worktreeへ移りrevidereを走らせる() {
+        use conductor_core::pr_intake::{FetchedPr, IntakenPr};
         let repo = crate::testing::TestRepo::new();
-        let fetched = repo.worktree("pr-9");
+        let fetched = repo.worktree("feature/pr-head");
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        // 空の command は起動する前に断られるので、AI は呼ばれない。
+        ws.config.api.provider = "command".into();
         ws.modals.push(Modal::PrInput(Default::default()));
 
-        let effects = ws.accept(TaskResult::PrIntake(Ok((9, fetched.clone()))));
+        let effects = ws.accept(TaskResult::PrIntake(Ok(Box::new(IntakenPr {
+            pr_number: 9,
+            worktree_path: fetched.clone(),
+            meta: FetchedPr {
+                branch: "feature/pr-head".into(),
+                title: String::new(),
+                base_ref: "main".into(),
+                head_ref: "feature/pr-head".into(),
+                url: String::new(),
+                head_owner_login: None,
+            },
+            pulled: None,
+        }))));
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::Spawn(crate::task::Task::Analyze { worktree, branch, .. })
+                    if *worktree == fetched && branch == "feature/pr-head"
+            )),
+            "{effects:?}"
+        );
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
 

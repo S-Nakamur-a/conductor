@@ -9,7 +9,7 @@ use std::process::Command;
 use crate::git_engine::GitEngine;
 use crate::review_store::PrReviewMeta;
 
-/// 取得した PR head を指すローカルブランチ名。
+/// head を origin から取れない PR を、pull/<N>/head から取ったローカルブランチ名。
 ///
 /// pr/<N> ではなくハイフンなのは、リポジトリが自分の作業で既に使っている
 /// pr/ 名前空間のブランチと衝突するため。
@@ -17,12 +17,39 @@ pub fn local_branch_name(pr_number: u64) -> String {
     format!("pr-{pr_number}")
 }
 
+/// PR の head。どこから取ってどのローカルブランチへ乗せるかはこれだけで決まる。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PrHead {
+    pub number: u64,
+    #[serde(rename = "headRefName")]
+    head_ref: String,
+    #[serde(rename = "isCrossRepository")]
+    from_fork: bool,
+    state: String,
+}
+
+impl PrHead {
+    /// fork の head は origin に無く、閉じた PR の head は消されていることがある。
+    /// open の PR は head ブランチを消すと GitHub が閉じるので、origin にあると言える。
+    fn on_origin(&self) -> bool {
+        !self.from_fork && self.state == "OPEN"
+    }
+
+    pub fn local_branch(&self) -> String {
+        if self.on_origin() {
+            self.head_ref.clone()
+        } else {
+            local_branch_name(self.number)
+        }
+    }
+}
+
 /// gh pr view --json が返す形。
 #[derive(Debug, Clone, serde::Deserialize)]
 struct PrMeta {
+    #[serde(flatten)]
+    head: PrHead,
     title: String,
-    #[serde(rename = "headRefName")]
-    head_ref: String,
     #[serde(rename = "baseRefName")]
     base_ref: String,
     #[serde(rename = "headRepositoryOwner")]
@@ -127,14 +154,20 @@ fn is_valid_worktree_dir(dir: &Path) -> bool {
     dir.join(".git").exists()
 }
 
-fn fetch_pr_meta(pr_number: u64) -> Result<PrMeta, PrIntakeError> {
+fn other(e: impl std::fmt::Display) -> PrIntakeError {
+    PrIntakeError::Other(e.to_string())
+}
+
+/// gh はカレントディレクトリの remote から問い合わせ先を決めるので、repo_path で走らせる。
+fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeError> {
     let output = Command::new("gh")
+        .current_dir(repo_path)
         .args([
             "pr",
             "view",
             &pr_number.to_string(),
             "--json",
-            "number,title,headRefName,baseRefName,headRepositoryOwner,url",
+            "number,title,headRefName,baseRefName,headRepositoryOwner,url,isCrossRepository,state",
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -145,7 +178,7 @@ fn fetch_pr_meta(pr_number: u64) -> Result<PrMeta, PrIntakeError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(PrIntakeError::GhNotInstalled);
         }
-        Err(e) => return Err(PrIntakeError::Other(e.to_string())),
+        Err(e) => return Err(other(e)),
     };
 
     if !output.status.success() {
@@ -158,7 +191,8 @@ fn fetch_pr_meta(pr_number: u64) -> Result<PrMeta, PrIntakeError> {
         .map_err(|e| PrIntakeError::Other(format!("failed to parse `gh pr view` output: {e}")))
 }
 
-/// 新規に取得・作成したときの PR のメタデータ。
+/// gh から取った PR のメタデータ。
+#[derive(Debug)]
 pub struct FetchedPr {
     pub branch: String,
     pub title: String,
@@ -183,116 +217,135 @@ impl FetchedPr {
     }
 }
 
-pub enum PrIntakeOutcome {
-    /// worktree が使える状態になった。meta が None なら過去の取り込みの再利用で、
-    /// 永続化は既に済んでいる。
-    ///
-    /// DB への書き込みを呼び出し側に残してあるのは、ReviewStore がスレッドを
-    /// 跨いで共有される想定ではないため。
-    Ready {
-        pr_number: u64,
-        worktree_path: PathBuf,
-        meta: Option<FetchedPr>,
-    },
-    Failed {
-        error: PrIntakeError,
-    },
+/// worktree が使える状態になった PR。
+///
+/// DB への書き込みを呼び出し側に残してあるのは、ReviewStore がスレッドを
+/// 跨いで共有される想定ではないため。
+#[derive(Debug)]
+pub struct IntakenPr {
+    pub pr_number: u64,
+    pub worktree_path: PathBuf,
+    pub meta: FetchedPr,
+    /// 既にあった worktree を origin へ追いつかせたときの git の答え。早送りできずに
+    /// 古いまま残ったことも、ここでしか分からない。
+    pub pulled: Option<String>,
 }
 
 /// input を PR 番号へ解決し、その worktree を用意する。ネットワークと git の I/O を
 /// 伴うのでバックグラウンドスレッドから呼ぶ。
-///
-/// 同じ PR 番号の worktree が既にディスクにあれば gh も fetch も走らせずに再利用し、
-/// 既存のチェックアウトを自動で fast-forward もしない。黙ってブランチを進めない。
 pub fn intake_pr(
     repo_path: &Path,
     worktree_dir_override: Option<&Path>,
     input: &str,
-) -> PrIntakeOutcome {
-    let pr_number = match parse_pr_input(input) {
-        Ok(n) => n,
-        Err(error) => return PrIntakeOutcome::Failed { error },
+) -> Result<IntakenPr, PrIntakeError> {
+    let pr_number = parse_pr_input(input)?;
+    let engine = GitEngine::open(repo_path).map_err(other)?;
+    let pr_meta = fetch_pr_meta(repo_path, pr_number)?;
+    let head = &pr_meta.head;
+    if let Some(name) = [&head.head_ref, &pr_meta.base_ref]
+        .into_iter()
+        .find(|name| is_suspicious_ref(name))
+    {
+        return Err(other(format!(
+            "refusing a ref that starts with '-': {name}"
+        )));
+    }
+
+    let (worktree_path, pulled) = if head.on_origin() {
+        checkout_head_branch(
+            &engine,
+            &head.head_ref,
+            &pr_meta.base_ref,
+            worktree_dir_override,
+        )?
+    } else {
+        let path =
+            checkout_pull_head(&engine, pr_number, &pr_meta.base_ref, worktree_dir_override)?;
+        (path, None)
     };
 
-    let engine = match GitEngine::open(repo_path) {
-        Ok(e) => e,
-        Err(e) => {
-            return PrIntakeOutcome::Failed {
-                error: PrIntakeError::Other(e.to_string()),
-            };
-        }
-    };
+    Ok(IntakenPr {
+        pr_number,
+        worktree_path,
+        pulled,
+        meta: FetchedPr {
+            branch: head.local_branch(),
+            title: pr_meta.title,
+            base_ref: pr_meta.base_ref,
+            head_ref: pr_meta.head.head_ref,
+            url: pr_meta.url,
+            head_owner_login: pr_meta.head_owner.map(|o| o.login),
+        },
+    })
+}
 
+/// origin の head ブランチを Switch Branch (Remote) と同じ形で worktree にする。
+/// 既にどこかの worktree で checkout されていれば、作らずにそこを origin へ早送りする。
+/// 早送りの相手は upstream ではなく origin/<head>。upstream は利用者が何に向けていても
+/// よく、origin/main を向いていれば main の先端までブランチを動かしてしまう。
+fn checkout_head_branch(
+    engine: &GitEngine,
+    head: &str,
+    base: &str,
+    worktree_dir_override: Option<&Path>,
+) -> Result<(PathBuf, Option<String>), PrIntakeError> {
+    engine
+        .fetch_branches("origin", &[head, base])
+        .map_err(other)?;
+    let remote_branch = format!("origin/{head}");
+    let existing = engine
+        .list_worktrees()
+        .map_err(other)?
+        .into_iter()
+        .find(|w| w.branch == head);
+    if let Some(worktree) = existing {
+        let pulled = engine
+            .fast_forward_worktree(&worktree.path, head, &remote_branch)
+            .map_err(other)?;
+        return Ok((worktree.path, Some(pulled)));
+    }
+    let path = engine
+        .create_worktree_from_remote(&remote_branch, worktree_dir_override)
+        .map_err(other)?;
+    Ok((path, None))
+}
+
+/// head を origin から取れない PR は、GitHub が base 側に置く pull/<N>/head を取る。
+/// 既にあれば取り直さずに使う。checkout 中のブランチへの fetch は git が拒む。
+fn checkout_pull_head(
+    engine: &GitEngine,
+    pr_number: u64,
+    base: &str,
+    worktree_dir_override: Option<&Path>,
+) -> Result<PathBuf, PrIntakeError> {
     let branch = local_branch_name(pr_number);
-    let wt_dir = match engine.worktrees_base_dir(worktree_dir_override) {
-        Ok(base) => base.join(&branch),
-        Err(e) => {
-            return PrIntakeOutcome::Failed {
-                error: PrIntakeError::Other(e.to_string()),
-            };
-        }
-    };
-
+    let wt_dir = engine
+        .worktrees_base_dir(worktree_dir_override)
+        .map_err(other)?
+        .join(&branch);
     if wt_dir.exists() {
         if !is_valid_worktree_dir(&wt_dir) {
-            return PrIntakeOutcome::Failed {
-                error: PrIntakeError::Other(format!(
-                    "Existing directory is not a valid worktree: {}. Delete it and re-run intake.",
-                    wt_dir.display()
-                )),
-            };
+            return Err(other(format!(
+                "Existing directory is not a valid worktree: {}. Delete it and re-run intake.",
+                wt_dir.display()
+            )));
         }
-        return PrIntakeOutcome::Ready {
-            pr_number,
-            worktree_path: wt_dir,
-            meta: None,
-        };
+        return Ok(wt_dir);
     }
 
-    let pr_meta = match fetch_pr_meta(pr_number) {
-        Ok(m) => m,
-        Err(error) => return PrIntakeOutcome::Failed { error },
-    };
-
-    let refspec = format!("pull/{pr_number}/head:{branch}");
-    if let Err(e) = engine.fetch_refspec(&refspec) {
-        return PrIntakeOutcome::Failed {
-            error: classify_failure_text(pr_number, &e.to_string()),
-        };
-    }
-
-    if let Err(e) = engine.create_worktree_for_existing_branch(&branch, &wt_dir) {
-        return PrIntakeOutcome::Failed {
-            error: PrIntakeError::Other(e.to_string()),
-        };
-    }
+    engine
+        .fetch_refspec(&format!("pull/{pr_number}/head:{branch}"))
+        .map_err(|e| classify_failure_text(pr_number, &e.to_string()))?;
+    engine
+        .create_worktree_for_existing_branch(&branch, &wt_dir)
+        .map_err(other)?;
 
     // ベースの取得はベストエフォート。ここが失敗しても差分はローカルに既にある
     // ベース ref で出せるので、取り込み全体は失敗させない。
-    if is_suspicious_ref(&pr_meta.base_ref) {
-        log::warn!(
-            "pr_intake: refusing to fetch suspicious base ref '{}' (starts with '-')",
-            pr_meta.base_ref
-        );
-    } else if let Err(e) = engine.ensure_base_ref_available(&pr_meta.base_ref) {
-        log::warn!(
-            "pr_intake: failed to ensure base ref '{}' is available: {e}",
-            pr_meta.base_ref
-        );
+    if let Err(e) = engine.ensure_base_ref_available(base) {
+        log::warn!("pr_intake: failed to ensure base ref '{base}' is available: {e}");
     }
-
-    PrIntakeOutcome::Ready {
-        pr_number,
-        worktree_path: wt_dir,
-        meta: Some(FetchedPr {
-            branch,
-            title: pr_meta.title,
-            base_ref: pr_meta.base_ref,
-            head_ref: pr_meta.head_ref,
-            url: pr_meta.url,
-            head_owner_login: pr_meta.head_owner.map(|o| o.login),
-        }),
-    }
+    Ok(wt_dir)
 }
 
 #[cfg(test)]

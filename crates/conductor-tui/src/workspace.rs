@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use conductor_core::config::{self, Config};
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
+use conductor_core::pr_intake::IntakenPr;
 use conductor_core::theme::Theme;
 use conductor_core::update_checker::UpdateInfo;
 
@@ -576,20 +577,37 @@ impl Workspace {
 
     /// 取り込みは閉じたあとでも効かせる。gh も fetch も済んでいるので捨てない。
     /// 失敗のときだけ入力へ戻し、打ち直さずに直せるようにする。
-    fn accept_pr_intake(&mut self, outcome: Result<(u64, PathBuf), String>) -> Vec<Effect> {
+    fn accept_pr_intake(&mut self, outcome: Result<Box<IntakenPr>, String>) -> Vec<Effect> {
         match outcome {
-            Ok((pr_number, worktree)) => {
-                self.panels.worktree.select_when_listed(worktree);
+            Ok(pr) => {
+                let IntakenPr {
+                    pr_number,
+                    worktree_path,
+                    meta,
+                    pulled,
+                } = *pr;
+                self.panels
+                    .worktree
+                    .select_when_listed(worktree_path.clone());
                 self.panels.explorer.show(BottomView::Comments);
                 let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
                 if matches!(self.modals.last(), Some(Modal::PrInput(_))) {
                     effects.push(Effect::PopModal);
                 }
                 effects.push(Effect::Focus(Focus::Explorer));
-                effects.push(Effect::Status(
-                    StatusLevel::Success,
-                    format!("PR #{pr_number} ready for review."),
+                effects.extend(crate::command::analyze_worktree(
+                    self,
+                    worktree_path,
+                    meta.branch,
+                    false,
                 ));
+                // 解析の文言で上書きされると、古いまま解析していることが伝わらない。
+                if let Some(pulled) = pulled {
+                    effects.push(Effect::Status(
+                        StatusLevel::Info,
+                        format!("PR #{pr_number}: {pulled} \u{2014} revidere is analysing it."),
+                    ));
+                }
                 effects
             }
             Err(e) => match self.modals.last_mut() {

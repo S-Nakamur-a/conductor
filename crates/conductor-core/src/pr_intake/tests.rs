@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use super::*;
+use crate::test_support::{TestRepo, Tree};
 
 /// PR 42 の worktree ディレクトリだけが既にあるリポジトリ。git_marker が true なら
 /// 本物の worktree と同じく .git (gitdir を指すファイル) を置く。
@@ -88,35 +89,126 @@ fn エラー文は次の手が分かる形になっている() {
     assert!(PrIntakeError::PrNotFound(9).to_string().contains('9'));
 }
 
-/// gh が入っていなくても、既にある worktree には gh も通信もなしで入り直せる。
 #[test]
-fn 既にあるworktreeには通信無しで入り直す() {
+fn pull_headから取ったprは既にあるworktreeへ通信無しで入り直す() {
     let (_parent, repo_path, wt_dir) = repo_with_existing_pr_dir(true);
+    let engine = GitEngine::open(&repo_path).unwrap();
 
-    match intake_pr(&repo_path, None, "42") {
-        PrIntakeOutcome::Ready {
-            pr_number,
-            worktree_path,
-            ..
-        } => {
-            assert_eq!(pr_number, 42);
-            assert_eq!(worktree_path, wt_dir);
-        }
-        PrIntakeOutcome::Failed { error } => panic!("expected Ready, got Failed: {error}"),
-    }
+    let path = checkout_pull_head(&engine, 42, "main", None).unwrap();
+    assert_eq!(path, wt_dir);
 }
 
 /// .git の無い残骸で Ready を返すと、空のレビュー画面を黙って見せることになる。
 #[test]
 fn 壊れたディレクトリでは手の打てるエラーで落ちる() {
     let (_parent, repo_path, wt_dir) = repo_with_existing_pr_dir(false);
+    let engine = GitEngine::open(&repo_path).unwrap();
 
-    match intake_pr(&repo_path, None, "42") {
-        PrIntakeOutcome::Failed { error } => {
-            assert!(error.to_string().contains(&wt_dir.display().to_string()));
-        }
-        PrIntakeOutcome::Ready { .. } => panic!("expected Failed, got Ready"),
+    let error = checkout_pull_head(&engine, 42, "main", None).unwrap_err();
+    assert!(error.to_string().contains(&wt_dir.display().to_string()));
+}
+
+/// gh pr view の実出力 (PR #396) の state と isCrossRepository だけを振る。
+fn pr_head(state: &str, from_fork: bool) -> PrHead {
+    serde_json::from_str(&format!(
+        r#"{{"headRefName":"feature/pty-daemon","isCrossRepository":{from_fork},"number":396,"state":"{state}"}}"#
+    ))
+    .unwrap()
+}
+
+#[test]
+fn originからheadを取るのは同じリポジトリのopenなprだけ() {
+    let cases = [
+        ("OPEN", false, "feature/pty-daemon"),
+        ("OPEN", true, "pr-396"),
+        ("MERGED", false, "pr-396"),
+        ("CLOSED", false, "pr-396"),
+    ];
+    for (state, from_fork, want) in cases {
+        assert_eq!(
+            pr_head(state, from_fork).local_branch(),
+            want,
+            "{state} fork={from_fork}"
+        );
     }
+}
+
+/// origin は feature/x を checkout した状態で返すので、そのまま commit すれば push 相当になる。
+fn clone_with_remote_branch() -> (TestRepo, TestRepo) {
+    let origin = TestRepo::with_base_commit();
+    origin.branch("feature/x");
+    let clone = TestRepo::new();
+    clone
+        .repo
+        .remote("origin", &origin.path.display().to_string())
+        .unwrap();
+    (origin, clone)
+}
+
+#[test]
+fn 同じリポジトリのprはheadブランチの名前でworktreeになる() {
+    let (origin, clone) = clone_with_remote_branch();
+
+    let (path, pulled) = checkout_head_branch(
+        &clone.engine(),
+        "feature/x",
+        "main",
+        Some(&clone.worktrees_dir()),
+    )
+    .unwrap();
+
+    let worktree = Tree::open(path);
+    assert_eq!(worktree.head_branch(), "feature/x");
+    assert_eq!(worktree.tip("feature/x"), origin.tip("feature/x"));
+    assert_eq!(pulled, None);
+}
+
+#[test]
+fn 既にあるheadブランチのworktreeはoriginの最新まで進める() {
+    let (origin, clone) = clone_with_remote_branch();
+    let engine = clone.engine();
+    let worktrees = clone.worktrees_dir();
+    let (first, _) = checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+    origin
+        .file("b.txt", "pushed\n")
+        .add("b.txt")
+        .commit("pushed later");
+
+    let (again, pulled) =
+        checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+
+    assert_eq!(again.canonicalize().unwrap(), first.canonicalize().unwrap());
+    assert_eq!(Tree::open(again).tip("feature/x"), origin.tip("feature/x"));
+    assert!(
+        pulled
+            .as_deref()
+            .is_some_and(|m| m.contains("fast-forward")),
+        "{pulled:?}"
+    );
+}
+
+#[test]
+fn upstreamがmainを向いていてもheadブランチはmainへ進めない() {
+    let (origin, clone) = clone_with_remote_branch();
+    let engine = clone.engine();
+    let worktrees = clone.worktrees_dir();
+    let (path, _) = checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+    let worktree = Tree::open(path);
+    worktree
+        .repo
+        .find_branch("feature/x", git2::BranchType::Local)
+        .unwrap()
+        .set_upstream(Some("origin/main"))
+        .unwrap();
+    origin.checkout("main");
+    origin
+        .file("c.txt", "main moved\n")
+        .add("c.txt")
+        .commit("main moved on");
+
+    checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+
+    assert_eq!(worktree.tip("feature/x"), origin.tip("feature/x"));
 }
 
 #[test]
@@ -143,12 +235,11 @@ fn レビューdbのauthorにはheadリポジトリの所有者が入る() {
 }
 
 /// 実在の GitHub リモートとマージ済み PR (refs/pull/<N>/head はマージ後も解決
-/// できる) に対する end-to-end。ネットワークと認証済みの gh が要るので既定では
-/// 走らせない。このリポジトリ自身の worktree に触らないよう一時ディレクトリへ
-/// clone する。
+/// できる) に対する end-to-end。ネットワークが要るので既定では走らせない。
+/// このリポジトリ自身の worktree に触らないよう一時ディレクトリへ clone する。
 #[test]
 #[ignore]
-fn 実在するprに対する取り込み() {
+fn マージ済みのprはpull_headから取り込める() {
     let parent = tempfile::tempdir().unwrap();
     let repo_path = parent.path().join("repo");
     let mut fetch_opts = git2::FetchOptions::new();
@@ -158,18 +249,7 @@ fn 実在するprに対する取り込み() {
         .clone("https://github.com/S-Nakamur-a/conductor.git", &repo_path)
         .expect("clone should succeed");
 
-    match intake_pr(&repo_path, None, "279") {
-        PrIntakeOutcome::Ready {
-            pr_number,
-            worktree_path,
-            meta,
-        } => {
-            assert_eq!(pr_number, 279);
-            assert!(worktree_path.exists());
-            let meta = meta.expect("fresh intake should carry fetched metadata");
-            assert_eq!(meta.base_ref, "main");
-            assert_eq!(meta.branch, "pr-279");
-        }
-        PrIntakeOutcome::Failed { error } => panic!("expected Ready, got Failed: {error}"),
-    }
+    let engine = GitEngine::open(&repo_path).unwrap();
+    let path = checkout_pull_head(&engine, 279, "main", None).unwrap();
+    assert_eq!(Tree::open(path).head_branch(), "pr-279");
 }

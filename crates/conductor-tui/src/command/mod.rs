@@ -4,7 +4,7 @@ mod exec;
 #[cfg(test)]
 mod tests;
 
-pub use exec::{Enabled, drag_divider, enabled, execute, persist_layout};
+pub use exec::{Enabled, analyze_worktree, drag_divider, enabled, execute, persist_layout};
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 

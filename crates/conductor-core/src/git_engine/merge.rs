@@ -32,7 +32,17 @@ impl GitEngine {
         };
 
         self.fetch_origin()?;
+        self.fast_forward_worktree(worktree_path, &branch_name, &upstream_name)
+    }
 
+    /// worktree_path で checkout 中の branch_name を `refs/remotes/<upstream_name>` へ
+    /// fast-forward する。fast-forward できなければ何もせず、その旨の説明文を返す。
+    pub fn fast_forward_worktree(
+        &self,
+        worktree_path: &Path,
+        branch_name: &str,
+        upstream_name: &str,
+    ) -> Result<String> {
         let wt_repo = Repository::open(worktree_path)
             .with_context(|| format!("cannot re-open worktree at {}", worktree_path.display()))?;
         let upstream_oid = wt_repo

@@ -16,7 +16,7 @@ use conductor_core::git_engine::{
     ChangeCounts, CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir,
 };
 use conductor_core::grep_search::{self, GrepMatch};
-use conductor_core::pr_intake::{self, PrIntakeOutcome};
+use conductor_core::pr_intake::{self, IntakenPr};
 use conductor_core::review_publish::{self, PublishComment, PublishOutcome, PublishRequest};
 use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
@@ -413,8 +413,7 @@ pub enum TaskResult {
     RemoteBranches(Result<Vec<String>, String>),
     StaleWorktrees(Result<Vec<String>, String>),
     Commits(Result<Vec<CommitInfo>, String>),
-    /// 取り込めた PR の番号と worktree。
-    PrIntake(Result<(u64, PathBuf), String>),
+    PrIntake(Result<Box<IntakenPr>, String>),
     Publishable(Result<Box<Publishable>, String>),
     Published(PublishOutcome),
     UpdateCheck {
@@ -1107,23 +1106,14 @@ fn open_pull_request(env: &TaskEnv, branch: &str) -> Result<String, String> {
     Ok(format!("Opened the pull request for '{branch}'"))
 }
 
-fn intake_pr(env: &TaskEnv, input: &str) -> Result<(u64, PathBuf), String> {
-    match pr_intake::intake_pr(&env.root, env.worktree_dir.as_deref(), input) {
-        PrIntakeOutcome::Failed { error } => Err(error.to_string()),
-        PrIntakeOutcome::Ready {
-            pr_number,
-            worktree_path,
-            meta,
-        } => {
-            // 取り込みは済んでいるので、メタデータを書けなくても worktree は返す。
-            if let Some(meta) = meta
-                && let Err(e) = save_pr_meta(env, pr_number, &meta)
-            {
-                log::warn!("could not record the PR metadata: {e}");
-            }
-            Ok((pr_number, worktree_path))
-        }
+fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
+    let intaken = pr_intake::intake_pr(&env.root, env.worktree_dir.as_deref(), input)
+        .map_err(|e| e.to_string())?;
+    // 取り込みは済んでいるので、メタデータを書けなくても worktree は返す。
+    if let Err(e) = save_pr_meta(env, intaken.pr_number, &intaken.meta) {
+        log::warn!("could not record the PR metadata: {e}");
     }
+    Ok(Box::new(intaken))
 }
 
 fn save_pr_meta(env: &TaskEnv, pr_number: u64, meta: &pr_intake::FetchedPr) -> Result<(), String> {
