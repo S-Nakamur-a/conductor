@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 pub const WORKTREE_POLL: Duration = Duration::from_secs(3);
 /// 終わった子プロセスのセッションの片付け。
 pub const PTY_CLEANUP: Duration = Duration::from_secs(10);
+/// 自分へのレビュー依頼の問い合わせ。1 回ごとに GitHub の API を叩く。
+pub const REVIEW_REQUEST_POLL: Duration = Duration::from_secs(60);
 /// ファイルウォッチャーの通知をまとめる猶予。エディタ保存や git checkout は
 /// 短時間に何件も飛んでくるので、都度 Explorer を投げ直すと無駄が積み重なる。
 pub const FS_DEBOUNCE: Duration = Duration::from_millis(500);

@@ -431,6 +431,9 @@ impl Workspace {
             }
             TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
+            TaskResult::RequestedPrIntake { number, outcome } => {
+                self.accept_requested_pr(number, outcome)
+            }
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
             TaskResult::RevidereLoaded(outcome) => self.panels.revidere.install(*outcome),
@@ -618,6 +621,41 @@ impl Workspace {
                 _ => vec![Effect::Status(StatusLevel::Error, e)],
             },
         }
+    }
+
+    /// 頼まれて取り込んだ PR では選択もフォーカスも動かさない。見ている worktree から
+    /// 引き剥がさず、一覧に増えたことと解析が走っていることだけを知らせる。
+    fn accept_requested_pr(
+        &mut self,
+        number: u64,
+        outcome: Result<Box<IntakenPr>, String>,
+    ) -> Vec<Effect> {
+        let IntakenPr {
+            worktree_path,
+            meta,
+            ..
+        } = match outcome {
+            Ok(pr) => *pr,
+            Err(e) => {
+                return vec![Effect::Status(
+                    StatusLevel::Warning,
+                    format!("review requested on PR #{number}: {e}"),
+                )];
+            }
+        };
+        let text = format!(
+            "Your review was requested on PR #{number} \u{2014} revidere is analysing '{}'.",
+            meta.branch
+        );
+        let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
+        effects.extend(crate::command::analyze_worktree(
+            self,
+            worktree_path,
+            meta.branch,
+            false,
+        ));
+        effects.push(Effect::Status(StatusLevel::Info, text));
+        effects
     }
 
     fn accept_publishable(

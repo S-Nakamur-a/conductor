@@ -27,7 +27,8 @@ use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
 use crate::timer::{
-    CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL,
+    CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, REVIEW_REQUEST_POLL, Timer,
+    WORKTREE_POLL,
 };
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -97,6 +98,7 @@ pub fn run(
 ) -> Result<()> {
     let mut last_input = Instant::now();
     let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
+    let mut review_request_poll = Timer::new(REVIEW_REQUEST_POLL, last_input);
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
     let update_interval = Duration::from_secs(ws.config.updates.check_interval_secs);
     let mut update_poll = ws
@@ -205,6 +207,7 @@ pub fn run(
             ws,
             svc,
             &mut worktree_poll,
+            &mut review_request_poll,
             &mut file_watch,
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
@@ -343,6 +346,7 @@ fn run_timers(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
     worktree_poll: &mut Timer,
+    review_request_poll: &mut Timer,
     file_watch: &mut FileWatch,
     pty_cleanup: &mut Timer,
     update_poll: Option<(&mut Timer, Duration)>,
@@ -355,6 +359,17 @@ fn run_timers(
         }
         // 一覧と同じ周期で見直す。作り直しに失敗しても次の周回で試し直せる。
         dirty |= file_watch.sync(ws, svc);
+    }
+    if review_request_poll.due(now)
+        && !ws.config.review.auto_review_repos.is_empty()
+        && !ws.panels.worktree.is_asking_review_requests()
+    {
+        let review = ws.config.review.clone();
+        apply(
+            ws,
+            svc,
+            vec![Effect::Spawn(Task::ListReviewRequests { review })],
+        );
     }
     if pty_cleanup.due(now) {
         dirty |= ws.panels.terminal.cleanup_dead();
@@ -1575,9 +1590,36 @@ mod tests {
         assert_eq!(prompt.input.text(), "12345");
     }
 
+    fn intaken(
+        worktree: &std::path::Path,
+        branch: &str,
+    ) -> Box<conductor_core::pr_intake::IntakenPr> {
+        Box::new(conductor_core::pr_intake::IntakenPr {
+            pr_number: 9,
+            worktree_path: worktree.to_path_buf(),
+            meta: conductor_core::pr_intake::FetchedPr {
+                branch: branch.into(),
+                title: String::new(),
+                base_ref: "main".into(),
+                head_ref: branch.into(),
+                url: String::new(),
+                head_owner_login: None,
+            },
+            pulled: None,
+        })
+    }
+
+    fn analyses(effects: &[Effect], worktree: &std::path::Path) -> bool {
+        effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::Spawn(crate::task::Task::Analyze { worktree: w, .. }) if w == worktree
+            )
+        })
+    }
+
     #[test]
     fn pr取り込みが成功すると閉じてその_worktreeへ移りrevidereを走らせる() {
-        use conductor_core::pr_intake::{FetchedPr, IntakenPr};
         let repo = crate::testing::TestRepo::new();
         let fetched = repo.worktree("feature/pr-head");
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
@@ -1585,27 +1627,11 @@ mod tests {
         ws.config.api.provider = "command".into();
         ws.modals.push(Modal::PrInput(Default::default()));
 
-        let effects = ws.accept(TaskResult::PrIntake(Ok(Box::new(IntakenPr {
-            pr_number: 9,
-            worktree_path: fetched.clone(),
-            meta: FetchedPr {
-                branch: "feature/pr-head".into(),
-                title: String::new(),
-                base_ref: "main".into(),
-                head_ref: "feature/pr-head".into(),
-                url: String::new(),
-                head_owner_login: None,
-            },
-            pulled: None,
-        }))));
-        assert!(
-            effects.iter().any(|e| matches!(
-                e,
-                Effect::Spawn(crate::task::Task::Analyze { worktree, branch, .. })
-                    if *worktree == fetched && branch == "feature/pr-head"
-            )),
-            "{effects:?}"
-        );
+        let effects = ws.accept(TaskResult::PrIntake(Ok(intaken(
+            &fetched,
+            "feature/pr-head",
+        ))));
+        assert!(analyses(&effects, &fetched), "{effects:?}");
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
 
@@ -1615,6 +1641,30 @@ mod tests {
             Some(fetched)
         );
         assert_eq!(ws.focus, Focus::Explorer);
+    }
+
+    #[test]
+    fn 頼まれたprの取り込みは選択を動かさずにrevidereを走らせる() {
+        let repo = crate::testing::TestRepo::new();
+        let fetched = repo.worktree("feature/requested");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        ws.config.api.provider = "command".into();
+        let selected = ws.panels.worktree.selected().map(|w| w.path.clone());
+        let focus = ws.focus;
+
+        let effects = ws.accept(TaskResult::RequestedPrIntake {
+            number: 9,
+            outcome: Ok(intaken(&fetched, "feature/requested")),
+        });
+        assert!(analyses(&effects, &fetched), "{effects:?}");
+        apply(&mut ws, &mut svc, effects);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert_eq!(
+            ws.panels.worktree.selected().map(|w| w.path.clone()),
+            selected
+        );
+        assert_eq!(ws.focus, focus);
     }
 
     #[test]

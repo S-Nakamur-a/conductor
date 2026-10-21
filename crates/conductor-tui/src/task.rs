@@ -16,7 +16,7 @@ use conductor_core::git_engine::{
     ChangeCounts, CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir,
 };
 use conductor_core::grep_search::{self, GrepMatch};
-use conductor_core::pr_intake::{self, IntakenPr};
+use conductor_core::pr_intake::{self, IntakenPr, PrHead};
 use conductor_core::review_publish::{self, PublishComment, PublishOutcome, PublishRequest};
 use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
@@ -189,6 +189,14 @@ pub enum Task {
     /// PR 番号か URL を worktree にする。取り込めたら PR のメタデータも書く。
     IntakePr {
         input: String,
+    },
+    /// 自分に来たレビュー依頼。自動で取り込む設定のリポジトリでなければ gh を呼ばない。
+    ListReviewRequests {
+        review: ReviewConfig,
+    },
+    /// レビューを頼まれた PR を [Task::IntakePr] と同じく取り込む。結果の扱いだけが違う。
+    IntakeRequestedPr {
+        number: u64,
     },
     /// 未公開コメントと投稿先。
     /// 差分の外のコメントを落とすので、いまの worktree の差分をここで取る。
@@ -414,6 +422,11 @@ pub enum TaskResult {
     StaleWorktrees(Result<Vec<String>, String>),
     Commits(Result<Vec<CommitInfo>, String>),
     PrIntake(Result<Box<IntakenPr>, String>),
+    ReviewRequests(Result<Vec<PrHead>, String>),
+    RequestedPrIntake {
+        number: u64,
+        outcome: Result<Box<IntakenPr>, String>,
+    },
     Publishable(Result<Box<Publishable>, String>),
     Published(PublishOutcome),
     UpdateCheck {
@@ -708,6 +721,21 @@ impl Task {
             }
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
+            }
+            Task::ListReviewRequests { review } => {
+                svc.spawn(
+                    move || review_requests(&env, &review),
+                    TaskResult::ReviewRequests,
+                );
+            }
+            Task::IntakeRequestedPr { number } => {
+                svc.spawn(
+                    move || TaskResult::RequestedPrIntake {
+                        number,
+                        outcome: intake_pr(&env, &number.to_string()),
+                    },
+                    |result| result,
+                );
             }
             Task::LoadPublishable { worktree } => {
                 svc.spawn(
@@ -1114,6 +1142,16 @@ fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
         log::warn!("could not record the PR metadata: {e}");
     }
     Ok(Box::new(intaken))
+}
+
+fn review_requests(env: &TaskEnv, review: &ReviewConfig) -> Result<Vec<PrHead>, String> {
+    let main = GitEngine::open(&env.root)
+        .and_then(|git| git.main_worktree_path())
+        .map_err(|e| e.to_string())?;
+    if !review.auto_reviews(&main) {
+        return Ok(Vec::new());
+    }
+    pr_intake::review_requests(&env.root).map_err(|e| e.to_string())
 }
 
 fn save_pr_meta(env: &TaskEnv, pr_number: u64, meta: &pr_intake::FetchedPr) -> Result<(), String> {

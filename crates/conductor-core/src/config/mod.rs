@@ -82,6 +82,12 @@ impl Config {
             .as_deref()
             .map(|p| expand_tilde(Path::new(p)).to_string_lossy().into_owned());
         self.review.style_path = self.review.style_path.as_deref().map(expand_tilde);
+        let review = &mut self.review;
+        review.auto_review_repos = review
+            .auto_review_repos
+            .iter()
+            .map(|p| expand_tilde(p))
+            .collect();
     }
 }
 

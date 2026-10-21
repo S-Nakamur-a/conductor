@@ -159,16 +159,14 @@ fn other(e: impl std::fmt::Display) -> PrIntakeError {
 }
 
 /// gh はカレントディレクトリの remote から問い合わせ先を決めるので、repo_path で走らせる。
-fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeError> {
+fn gh<T: serde::de::DeserializeOwned>(
+    repo_path: &Path,
+    args: &[&str],
+    failed: impl FnOnce(&str) -> PrIntakeError,
+) -> Result<T, PrIntakeError> {
     let output = Command::new("gh")
         .current_dir(repo_path)
-        .args([
-            "pr",
-            "view",
-            &pr_number.to_string(),
-            "--json",
-            "number,title,headRefName,baseRefName,headRepositoryOwner,url,isCrossRepository,state",
-        ])
+        .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output();
@@ -182,13 +180,48 @@ fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeErr
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(classify_failure_text(pr_number, &stderr));
+        return Err(failed(&String::from_utf8_lossy(&output.stderr)));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str::<PrMeta>(&stdout)
-        .map_err(|e| PrIntakeError::Other(format!("failed to parse `gh pr view` output: {e}")))
+    serde_json::from_slice(&output.stdout).map_err(|e| {
+        other(format!(
+            "failed to parse `gh {}` output: {e}",
+            args[..2].join(" ")
+        ))
+    })
+}
+
+fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeError> {
+    gh(
+        repo_path,
+        &[
+            "pr",
+            "view",
+            &pr_number.to_string(),
+            "--json",
+            "number,title,headRefName,baseRefName,headRepositoryOwner,url,isCrossRepository,state",
+        ],
+        |stderr| classify_failure_text(pr_number, stderr),
+    )
+}
+
+/// 自分に直接レビューが依頼されている open な PR。チーム宛ての依頼は含めない。
+/// 含めると、チームに来た PR を全部取り込んで解析することになる。
+pub fn review_requests(repo_path: &Path) -> Result<Vec<PrHead>, PrIntakeError> {
+    gh(
+        repo_path,
+        &[
+            "pr",
+            "list",
+            "--search",
+            "user-review-requested:@me",
+            "--state",
+            "open",
+            "--json",
+            "number,headRefName,isCrossRepository,state",
+        ],
+        |stderr| other(stderr.trim()),
+    )
 }
 
 /// gh から取った PR のメタデータ。
