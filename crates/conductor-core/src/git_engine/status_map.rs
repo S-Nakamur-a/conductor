@@ -1,9 +1,10 @@
 //! パスから git status を引く一発スナップショット。Explorer のリフレッシュごとに
 //! 1 回だけ読み、ファイルツリーの薄暗い表示と Changed files の色分けで共有する。
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::{Context, Result, bail};
 use git2::{Index, Repository, Status};
@@ -165,10 +166,13 @@ impl GitStatusMap {
 /// `-uall` は付けない (4.2 秒。未追跡が 1 件も無くても全走査する)。畳まれたディレクトリは
 /// [GitStatusMap::classify] が継承で開く。
 fn porcelain(worktree_path: &Path) -> Result<HashMap<String, Status>> {
-    let out = Command::new("git")
+    let mut git = Command::new("git");
+    if !first_status_in_this_process(worktree_path) {
         // 付けないと status が index を書き戻し、利用者や Claude Code が同じ worktree で
         // 打った git add / commit を index.lock で弾く。ウォッチャー毎に走るので当たる。
-        .arg("--no-optional-locks")
+        git.arg("--no-optional-locks");
+    }
+    let out = git
         .arg("-C")
         .arg(worktree_path)
         // --no-renames が無いと git はリネームを 1 レコードに畳み、元のパスが引けなく
@@ -189,6 +193,17 @@ fn porcelain(worktree_path: &Path) -> Result<HashMap<String, Status>> {
         );
     }
     Ok(parse_porcelain(&out.stdout))
+}
+
+static VISITED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Mutex::default);
+
+/// 素の status は untracked cache を書き戻すので、初回の 1 回だけ温めに使う
+/// (冷えたままだと 17 万ファイルで 5.2s、温まれば 0.23s)。
+fn first_status_in_this_process(worktree_path: &Path) -> bool {
+    VISITED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(worktree_path.to_path_buf())
 }
 
 /// `XY<空白>PATH` を NUL で区切った並び。
