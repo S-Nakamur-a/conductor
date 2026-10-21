@@ -122,6 +122,7 @@ pub enum Task {
         regex: bool,
         case_sensitive: bool,
         seq: u64,
+        cancel: Arc<AtomicBool>,
     },
     /// パネルが pin している Claude セッションの .jsonl。数 MB になるので UI では読まない。
     ReadTranscript {
@@ -595,9 +596,10 @@ impl Task {
                 regex,
                 case_sensitive,
                 seq,
+                cancel,
             } => {
                 svc.spawn(
-                    move || (seq, grep(&root, &query, regex, case_sensitive)),
+                    move || (seq, grep(&root, &query, regex, case_sensitive, &cancel)),
                     |(seq, found)| TaskResult::Grep { seq, found },
                 );
             }
@@ -1216,10 +1218,11 @@ fn grep(
     query: &str,
     regex: bool,
     case_sensitive: bool,
+    cancel: &AtomicBool,
 ) -> Result<Vec<GrepMatch>, String> {
     let re =
         grep_search::compile_pattern(query, regex, case_sensitive).map_err(|e| e.to_string())?;
-    Ok(grep_search::search_tree(root, &re))
+    Ok(grep_search::search_tree(root, &re, cancel))
 }
 
 fn persist(what: &Persist) -> Result<(), String> {
