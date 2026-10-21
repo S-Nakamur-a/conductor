@@ -977,6 +977,54 @@ fn status_fixture() -> TestRepo {
 }
 
 #[test]
+fn 初回のstatusだけがindexを書き戻してuntracked_cacheを温める() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let repo = TestRepo::with_base_commit();
+    assert!(
+        std::process::Command::new("git")
+            .args([
+                "-C",
+                repo.path.to_str().unwrap(),
+                "config",
+                "core.untrackedCache",
+                "true"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    repo.file("newdir/a.txt", "a\n");
+    let index = repo.path.join(".git").join("index");
+    let stale = UNIX_EPOCH + Duration::from_secs(1000);
+    let touch_stale = || {
+        std::fs::File::options()
+            .write(true)
+            .open(&index)
+            .unwrap()
+            .set_modified(stale)
+            .unwrap();
+    };
+    let modified = || std::fs::metadata(&index).unwrap().modified().unwrap();
+
+    touch_stale();
+    GitStatusMap::load(&repo.path).unwrap();
+    assert_ne!(
+        modified(),
+        stale,
+        "初回は index を書き戻して cache を温める"
+    );
+
+    touch_stale();
+    GitStatusMap::load(&repo.path).unwrap();
+    assert_eq!(
+        modified(),
+        stale,
+        "2 回目からは --no-optional-locks で index に触らない"
+    );
+}
+
+#[test]
 fn 分類は各フィクスチャが作られた状態を答える() {
     let repo = status_fixture();
     let map = GitStatusMap::load(&repo.path).unwrap();
