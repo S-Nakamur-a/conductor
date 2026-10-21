@@ -401,6 +401,8 @@ impl Workspace {
     pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
             TaskResult::Tree(_)
+            | TaskResult::FileIndex { .. }
+            | TaskResult::GitStatus { .. }
             | TaskResult::Diff(_)
             | TaskResult::HeadLog { .. }
             | TaskResult::CommitOverview(_) => self.panels.explorer.apply_result(result),

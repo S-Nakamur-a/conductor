@@ -55,6 +55,8 @@ pub struct ExplorerPanel {
     /// 投げたまま結果がまだ届いていない走査 (ツリー・ファイル一覧・git status) の数。
     pending: usize,
     refresh_queued: bool,
+    /// 走査中に git の状態が動いた。全体ではなく差分と色分けだけを待たせる。
+    git_refresh_queued: bool,
 }
 
 impl ExplorerPanel {
@@ -157,6 +159,25 @@ impl ExplorerPanel {
             .map(Effect::Spawn)
             .chain([self.changes.reload()])
             .collect()
+    }
+
+    /// 走査は投げ直さず、色分けと差分だけ読み直す。走査中なら終わってから投げる
+    /// — 走っている diff は動く前の内容を読んでいる。
+    pub fn refresh_git(&mut self) -> Vec<Effect> {
+        if self.tree.root().as_os_str().is_empty() {
+            return Vec::new();
+        }
+        if self.pending > 0 {
+            self.git_refresh_queued = true;
+            return Vec::new();
+        }
+        self.pending += 1;
+        vec![
+            Effect::Spawn(Task::LoadGitStatus {
+                root: self.tree.root().to_path_buf(),
+            }),
+            self.changes.reload(),
+        ]
     }
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
@@ -340,8 +361,15 @@ impl ExplorerPanel {
 
     fn survey_settled(&mut self) -> Vec<Effect> {
         self.pending = self.pending.saturating_sub(1);
-        if self.pending == 0 && std::mem::take(&mut self.refresh_queued) {
+        if self.pending > 0 {
+            return Vec::new();
+        }
+        if std::mem::take(&mut self.refresh_queued) {
+            self.git_refresh_queued = false;
             return self.refresh();
+        }
+        if std::mem::take(&mut self.git_refresh_queued) {
+            return self.refresh_git();
         }
         Vec::new()
     }
@@ -349,6 +377,7 @@ impl ExplorerPanel {
     fn forget_in_flight(&mut self) {
         self.pending = 0;
         self.refresh_queued = false;
+        self.git_refresh_queued = false;
     }
 
     pub fn apply_result(&mut self, result: TaskResult) -> Vec<Effect> {
@@ -476,10 +505,86 @@ mod tests {
         ws.panels.explorer.changes.cursor().selected()
     }
 
+    /// 走査 3 本の結果が全部 Explorer に届かないと pending が残り、以後の投げ直しが
+    /// 全部キューに溜まったまま出てこない。Git Changes は worktree を切り替えるまで凍る。
+    #[test]
+    fn 走査の結果は3本とも_explorerに届いて待ちが0に戻る() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
+
+        assert!(
+            !ws.panels.explorer.is_loading(),
+            "走査の結果のどれかが Explorer に届いていない"
+        );
+        assert!(
+            !ws.panels.explorer.refresh().is_empty(),
+            "投げ直しがキューに残ったまま"
+        );
+    }
+
     #[test]
     fn 根が決まる前は走査もdiffも投げない() {
         let mut panel = ExplorerPanel::default();
         assert!(panel.refresh().is_empty());
+    }
+
+    #[test]
+    fn git変更の読み直しは走査を投げ直さず差分と色分けだけ投げる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut panel = ExplorerPanel::default();
+        panel.set_root(dir.path().to_path_buf(), "main");
+        panel.forget_in_flight();
+
+        let effects = panel.refresh_git();
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Spawn(Task::LoadGitStatus { .. }),
+                    Effect::Spawn(Task::ComputeDiff { .. }),
+                ]
+            ),
+            "{effects:?}"
+        );
+        assert!(panel.refresh().is_empty(), "status が返る前に走査を重ねた");
+    }
+
+    #[test]
+    fn 走査中のgit変更は走査が終わってから差分だけ投げる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut panel = ExplorerPanel::default();
+        let root = dir.path().to_path_buf();
+        panel.set_root(root.clone(), "main");
+        assert!(panel.refresh_git().is_empty(), "走査中に投げた");
+
+        let mut effects = Vec::new();
+        for result in [
+            TaskResult::FileIndex {
+                root: root.clone(),
+                files: Vec::new(),
+            },
+            TaskResult::GitStatus {
+                root: root.clone(),
+                status: None,
+            },
+            TaskResult::Tree(Box::new(tree::survey(&root, &[]))),
+        ] {
+            effects.extend(panel.apply_result(result));
+        }
+
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Spawn(Task::LoadGitStatus { .. }),
+                    Effect::Spawn(Task::ComputeDiff { .. }),
+                ]
+            ),
+            "{effects:?}"
+        );
     }
 
     #[test]

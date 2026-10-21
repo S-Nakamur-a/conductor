@@ -21,11 +21,14 @@ use conductor_svc::{EventKind, Services};
 use crate::effect::{Effect, apply};
 use crate::layout::{Layout, Region, layout};
 use crate::liveness::{Liveness, liveness};
+use crate::panels::explorer::ExplorerPanel;
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
-use crate::timer::{CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL};
+use crate::timer::{
+    CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, Timer, WORKTREE_POLL,
+};
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
 /// フレームを描く前にイベントを捌き続ける上限。高速スクロール中に中間フレームが
@@ -39,6 +42,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 /// watcher の合図が静まるのを待つ締切。
 struct Debounces {
     fs: Debounce,
+    git: Debounce,
     config: Debounce,
 }
 
@@ -103,6 +107,7 @@ pub fn run(
     let mut dirty = true;
     let mut debounces = Debounces {
         fs: Debounce::new(FS_DEBOUNCE),
+        git: Debounce::new(GIT_DEBOUNCE),
         config: Debounce::new(CONFIG_DEBOUNCE),
     };
     let mut file_watch = FileWatch::default();
@@ -192,6 +197,7 @@ pub fn run(
         dirty |= ws.tick_viewer();
         dirty |= tick_editor(ws, svc);
         dirty |= tick_fs_refresh(ws, svc, &mut debounces.fs, Instant::now());
+        dirty |= tick_git_refresh(ws, svc, &mut debounces.git, Instant::now());
         dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
         dirty |= ws.panels.terminal.took_output();
         ws.panels.terminal.nudge();
@@ -269,6 +275,10 @@ fn watch_effects(
             debounces.fs.touch(now);
             Vec::new()
         }
+        WatchEvent::GitChanged => {
+            debounces.git.touch(now);
+            Vec::new()
+        }
         WatchEvent::ConfigChanged => {
             debounces.config.touch(now);
             Vec::new()
@@ -284,10 +294,29 @@ fn tick_fs_refresh(
     debounce: &mut Debounce,
     now: Instant,
 ) -> bool {
+    tick_explorer(ws, svc, debounce, now, ExplorerPanel::refresh)
+}
+
+fn tick_git_refresh(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    debounce: &mut Debounce,
+    now: Instant,
+) -> bool {
+    tick_explorer(ws, svc, debounce, now, ExplorerPanel::refresh_git)
+}
+
+fn tick_explorer(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    debounce: &mut Debounce,
+    now: Instant,
+    refresh: fn(&mut ExplorerPanel) -> Vec<Effect>,
+) -> bool {
     if !debounce.fire(now) {
         return false;
     }
-    let effects = ws.panels.explorer.refresh();
+    let effects = refresh(&mut ws.panels.explorer);
     apply(ws, svc, effects);
     true
 }
@@ -760,6 +789,7 @@ mod tests {
     fn test_debounces() -> Debounces {
         Debounces {
             fs: Debounce::new(FS_DEBOUNCE),
+            git: Debounce::new(GIT_DEBOUNCE),
             config: Debounce::new(CONFIG_DEBOUNCE),
         }
     }
@@ -1536,6 +1566,130 @@ mod tests {
     }
 
     #[test]
+    fn リモートブランチは作る直前に_fetch_して最新で切る() {
+        let repo = crate::testing::TestRepo::new();
+        repo.remote_branch("feature/remote-only");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        let origin = repo.origin();
+        repo.git(&[
+            "-C",
+            origin.to_str().unwrap(),
+            "update-ref",
+            "refs/heads/feature/remote-only",
+            &tip,
+        ]);
+
+        type_text(&mut ws, &mut svc, "remote-only");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "feature/remote-only")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Success, "{}", status.text);
+    }
+
+    #[test]
+    fn ベースが取れなくてもリモートブランチは最新で作られ_画面に警告が出る() {
+        let repo = crate::testing::TestRepo::new();
+        repo.remote_branch("feature/remote-only");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        ws.repo.main_branch = "gone".into();
+        run_command(&mut ws, &mut svc, crate::command::CommandId::SwitchBranch);
+        crate::testing::pump(&mut ws, &mut svc);
+
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        let origin = repo.origin();
+        repo.git(&[
+            "-C",
+            origin.to_str().unwrap(),
+            "update-ref",
+            "refs/heads/feature/remote-only",
+            &tip,
+        ]);
+
+        type_text(&mut ws, &mut svc, "remote-only");
+        on_key(&mut ws, &mut svc, key(KeyCode::Enter));
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "feature/remote-only")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Warning, "{}", status.text);
+        assert!(status.text.contains("gone"), "{}", status.text);
+        assert!(!status.text.contains('\n'), "{}", status.text);
+    }
+
+    #[test]
+    fn 新しいworktreeは作る直前にoriginを取り直して最新のベースから切る() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        repo.commit_in(&repo.root(), "b.txt", "beta\n", "second");
+        let tip = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        repo.git(&["push", "origin", "main"]);
+        // 手元だけ 1 つ前に戻し、origin が先に進んだことを知らない状態にする。
+        repo.git(&["update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+        repo.git(&["reset", "-q", "--hard", "HEAD~1"]);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(Task::CreateWorktree {
+                branch: "topic".into(),
+            })],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let created = ws
+            .panels
+            .worktree
+            .list()
+            .iter()
+            .find(|w| w.branch == "topic")
+            .unwrap_or_else(|| panic!("{:?}", ws.panels.worktree.list()));
+        assert_eq!(created.head_oid.as_deref(), Some(tip.as_str()));
+    }
+
+    #[test]
+    fn originが無いリポジトリでは_worktree作成に警告が出ない() {
+        let repo = crate::testing::TestRepo::new();
+        repo.git(&["remote", "remove", "origin"]);
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(Task::CreateWorktree {
+                branch: "topic".into(),
+            })],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+
+        let status = ws.chrome.status.as_ref().expect("status");
+        assert_eq!(status.level, StatusLevel::Success, "{}", status.text);
+    }
+
+    #[test]
     fn prune_は消えたworktreeを数えて確認してから消す() {
         let repo = crate::testing::TestRepo::new();
         let gone = repo.worktree("feature/gone");
@@ -1829,6 +1983,16 @@ needle here
         assert!(
             debounces.config.fire(now + CONFIG_DEBOUNCE),
             "ConfigChanged が設定の猶予を触っていない"
+        );
+
+        assert!(watch_effects(&mut ws, WatchEvent::GitChanged, &mut debounces, now).is_empty());
+        assert!(
+            !debounces.fs.fire(now + FS_DEBOUNCE),
+            "GitChanged がファイル変更の猶予 (ツリーの走査) を触っている"
+        );
+        assert!(
+            debounces.git.fire(now + GIT_DEBOUNCE),
+            "GitChanged が git の猶予を触っていない"
         );
     }
 

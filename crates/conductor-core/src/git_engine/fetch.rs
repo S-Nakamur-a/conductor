@@ -11,6 +11,11 @@ use anyhow::{Context, Result};
 use super::GitEngine;
 
 impl GitEngine {
+    /// origin が登録されているか。無ければ fetch も fast-forward も追いつく先が無い。
+    pub fn has_origin(&self) -> bool {
+        self.repo.find_remote("origin").is_ok()
+    }
+
     /// `git fetch --prune origin`。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
     pub fn fetch_origin(&self) -> Result<()> {
         self.run_git_fetch(&["--prune", "origin"])
@@ -20,6 +25,19 @@ impl GitEngine {
     /// だけを取る。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
     pub fn fetch_refspec(&self, refspec: &str) -> Result<()> {
         self.run_git_fetch(&["origin", refspec])
+    }
+
+    /// `git fetch <remote> refs/heads/<branch>...`。リモート追跡 ref だけを進め、ローカル
+    /// ブランチは触らない。裸の名前だと同名のタグがあればそちらを取って追跡 ref が
+    /// 進まない。ネットワーク I/O を伴うので UI スレッドから呼ばないこと。
+    pub fn fetch_branches(&self, remote: &str, branches: &[&str]) -> Result<()> {
+        let refs: Vec<String> = branches
+            .iter()
+            .map(|branch| format!("refs/heads/{branch}"))
+            .collect();
+        let mut args = vec![remote];
+        args.extend(refs.iter().map(String::as_str));
+        self.run_git_fetch(&args)
     }
 
     fn run_git_fetch(&self, args: &[&str]) -> Result<()> {

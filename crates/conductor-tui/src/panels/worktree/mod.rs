@@ -232,12 +232,16 @@ impl WorktreePanel {
             TaskResult::WorktreeCreated(result) => {
                 self.pending = self.pending.saturating_sub(1);
                 match result {
-                    Ok((path, branch)) => {
-                        self.select_when_listed(path);
-                        vec![
-                            Effect::Status(StatusLevel::Success, format!("created '{branch}'")),
-                            Effect::Spawn(Task::ListWorktrees),
-                        ]
+                    Ok(created) => {
+                        self.select_when_listed(created.path);
+                        let text = format!("created '{}'", created.branch);
+                        let status = match created.warning {
+                            Some(warning) => {
+                                Effect::Status(StatusLevel::Warning, format!("{text} ({warning})"))
+                            }
+                            None => Effect::Status(StatusLevel::Success, text),
+                        };
+                        vec![status, Effect::Spawn(Task::ListWorktrees)]
                     }
                     Err(e) => vec![Effect::Status(StatusLevel::Error, format!("create: {e}"))],
                 }

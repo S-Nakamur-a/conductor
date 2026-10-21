@@ -101,7 +101,7 @@ impl TestRepo {
         self.base.join("repo")
     }
 
-    fn origin(&self) -> PathBuf {
+    pub fn origin(&self) -> PathBuf {
         self.base.join("origin")
     }
 

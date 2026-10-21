@@ -12,6 +12,7 @@ use similar::{ChangeTag, TextDiff};
 use super::{
     DiffHunk, DiffLine, DiffLineTag, DiffSource, DiffState, FileDiff, FileStatus, InlineSegment,
 };
+use crate::git_engine::GitStatusMap;
 
 const CONTEXT_LINES: u32 = 3;
 const FUNC_HEADER_MAX_BYTES: usize = 80;
@@ -79,12 +80,24 @@ fn workdir_diff<'r>(
         Err(e) => (head_commit.tree()?, Some(format!("{e:#}"))),
     };
 
+    // 作業ツリー全体を歩くと 187k ファイルで 9〜12 秒かかる。変わったパスは git 本体
+    // (fsmonitor が効く) に聞き、libgit2 にはそのパスだけ読ませる (同じ場所で 0.45 秒)。
+    let paths = changed_paths(repo, &base_tree, &head_commit.tree()?)?;
+    if paths.is_empty() {
+        let empty = repo.diff_tree_to_tree(Some(&base_tree), Some(&base_tree), None)?;
+        return Ok((empty, base_error, HashSet::new()));
+    }
     let mut opts = git2::DiffOptions::new();
     opts.include_untracked(true);
     opts.recurse_untracked_dirs(true);
     // これが無いと未追跡ファイルは一覧に出るだけで中身が読まれず、追加行数が 0 になる。
     opts.show_untracked_content(true);
     opts.context_lines(CONTEXT_LINES);
+    // 前方一致なので、git が畳んで返す未追跡ディレクトリ (new/) はその配下ごと通る。
+    opts.disable_pathspec_match(true);
+    for path in &paths {
+        opts.pathspec(path);
+    }
     let diff = repo.diff_tree_to_workdir_with_index(Some(&base_tree), Some(&mut opts))?;
 
     let skip = case_only_rename_indices(&diff)
@@ -92,6 +105,30 @@ fn workdir_diff<'r>(
         .copied()
         .collect();
     Ok((diff, base_error, skip))
+}
+
+/// ベースと作業ツリーの間で変わりうるパス。コミット済みの分は base と HEAD の tree 同士、
+/// 未コミットの分は git status から。両方で変わって元に戻ったファイルも混ざるが、
+/// libgit2 が読んで差が無ければデルタにならない。
+fn changed_paths(
+    repo: &Repository,
+    base_tree: &git2::Tree<'_>,
+    head_tree: &git2::Tree<'_>,
+) -> Result<Vec<String>> {
+    let committed = repo.diff_tree_to_tree(Some(base_tree), Some(head_tree), None)?;
+    let mut paths: Vec<String> = committed
+        .deltas()
+        .flat_map(|delta| [delta.old_file().path(), delta.new_file().path()])
+        .flatten()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    let workdir = repo
+        .workdir()
+        .context("bare repository has no working tree")?;
+    paths.extend(GitStatusMap::load(workdir)?.paths().map(str::to_string));
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
 fn commit_diff<'r>(repo: &'r Repository, oid: &str) -> Result<git2::Diff<'r>> {
@@ -117,22 +154,36 @@ fn merge_base_tree<'r>(repo: &'r Repository, base: &str, head: Oid) -> Result<gi
         .context("cannot get merge-base tree")
 }
 
-/// revparse なので git と同じく タグ > ブランチ の順で解決し、リモート追跡 ref も通る。
-/// 裸の名前 (develop) が refs/remotes/origin/develop にしか無いことがあるので origin/ を
-/// 補って再試行するが、エラーには利用者が設定した綴りの方を残す。
+/// origin/<base> と利用者の綴り (ローカルブランチ、タグ) のうち進んでいる方。
+/// git fetch はローカルのブランチを進めないので、ローカルを常に取ると merge-base が
+/// 古いままになり上流に載った他人の変更まで差分に出る。逆に Merge into main の直後は
+/// ローカルだけが進んでいて、origin を常に取るとマージした分が全部出る。分岐して
+/// いれば origin。エラーには利用者が設定した綴りの方を残す。
 fn resolve_base_commit(repo: &Repository, base: &str) -> Result<Oid> {
-    let resolved = repo.revparse_single(base).or_else(|primary| {
-        if base.starts_with("origin/") {
-            return Err(primary);
+    let commit_of = |spec: &str| {
+        repo.revparse_single(spec)
+            .ok()
+            .and_then(|obj| obj.peel_to_commit().ok())
+            .map(|commit| commit.id())
+    };
+    let origin = if base.starts_with("origin/") {
+        commit_of(base)
+    } else {
+        commit_of(&format!("origin/{base}"))
+    };
+    let local = (!base.starts_with("origin/"))
+        .then(|| commit_of(base))
+        .flatten();
+    match (origin, local) {
+        (Some(origin), Some(local))
+            if local != origin && repo.graph_descendant_of(local, origin)? =>
+        {
+            Ok(local)
         }
-        repo.revparse_single(&format!("origin/{base}"))
-            .map_err(|_| primary)
-    });
-    let obj = resolved.with_context(|| format!("base ref '{base}' cannot be resolved"))?;
-    let commit = obj
-        .peel_to_commit()
-        .with_context(|| format!("cannot peel '{base}' to commit"))?;
-    Ok(commit.id())
+        (Some(origin), _) => Ok(origin),
+        (None, Some(local)) => Ok(local),
+        (None, None) => anyhow::bail!("base ref '{base}' cannot be resolved"),
+    }
 }
 
 /// 内容に変化の無いデルタ (大文字小文字を区別しない FS の stat 不一致で出る) は None。

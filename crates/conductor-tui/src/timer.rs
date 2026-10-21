@@ -10,6 +10,9 @@ pub const PTY_CLEANUP: Duration = Duration::from_secs(10);
 /// ファイルウォッチャーの通知をまとめる猶予。エディタ保存や git checkout は
 /// 短時間に何件も飛んでくるので、都度 Explorer を投げ直すと無駄が積み重なる。
 pub const FS_DEBOUNCE: Duration = Duration::from_millis(500);
+/// git の状態 (HEAD、index、refs) の変更をまとめる猶予。commit 1 回で index と ref が
+/// 続けて動く。読み直すのは差分と色分けだけなので、ファイル変更より短くてよい。
+pub const GIT_DEBOUNCE: Duration = Duration::from_millis(200);
 /// 設定ファイルの変更をまとめる猶予。
 pub const CONFIG_DEBOUNCE: Duration = Duration::from_millis(300);
 

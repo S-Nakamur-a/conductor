@@ -347,8 +347,7 @@ pub enum TaskResult {
         path: PathBuf,
         counts: Option<ChangeCounts>,
     },
-    /// 作成できた worktree のパスと、そのブランチ。
-    WorktreeCreated(Result<(PathBuf, String), String>),
+    WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
     Tree(Box<tree::Snapshot>),
@@ -942,15 +941,57 @@ fn remote_branches(env: &TaskEnv, fetch: bool) -> Result<Vec<String>, String> {
     })
 }
 
-fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<(PathBuf, String), String> {
-    let branch = remote_branch
-        .strip_prefix("origin/")
-        .unwrap_or(remote_branch)
-        .to_string();
+/// 作った worktree。ベースを最新にできなかったときはその理由を添え、Git Changes の
+/// 差分が広がりうることを画面に出す。
+#[derive(Debug)]
+pub struct Created {
+    pub path: PathBuf,
+    pub branch: String,
+    pub warning: Option<String>,
+}
+
+/// git の stderr は複数行で、ステータスバーは改行を捨てて 1 行に繋ぐ。lock の競合では
+/// 1 行目が `From <url>` で理由は後ろの行にあるので、fatal: / error: の行を優先する。
+fn reason_line(e: &anyhow::Error) -> String {
+    let text = format!("{e:#}");
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or_default();
+    lines
+        .find(|line| line.starts_with("fatal:") || line.starts_with("error:"))
+        .unwrap_or(first)
+        .to_string()
+}
+
+/// 一覧を開いたときの fetch とは競走になるので、作る直前にもう一度取る。ベースも取るのは
+/// Git Changes の差分がそこから測られるため。ただしベースが取れなくても作成は止めない
+/// — 上流で既定ブランチが改名されていても、目的のブランチは取り込める。
+fn create_from_remote(env: &TaskEnv, remote_branch: &str) -> Result<Created, String> {
+    let (remote, branch) = remote_branch
+        .split_once('/')
+        .unwrap_or(("origin", remote_branch));
     git(env, |git| {
-        git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())
+        let with_base = remote == "origin";
+        let wanted = [branch, env.main_branch.as_str()];
+        let wanted = if with_base { &wanted[..] } else { &wanted[..1] };
+        let warning = match git.fetch_branches(remote, wanted) {
+            Ok(()) => None,
+            Err(e) if with_base => {
+                git.fetch_branches(remote, &[branch])?;
+                Some(format!(
+                    "base '{}' not fetched: {}",
+                    env.main_branch,
+                    reason_line(&e)
+                ))
+            }
+            Err(e) => return Err(e),
+        };
+        let path = git.create_worktree_from_remote(remote_branch, env.worktree_dir.as_deref())?;
+        Ok(Created {
+            path,
+            branch: branch.to_string(),
+            warning,
+        })
     })
-    .map(|path| (path, branch))
 }
 
 /// wt-grab が指す worktree が消えていれば、その状態ごと片付ける。
@@ -1332,16 +1373,30 @@ fn list_worktrees(env: &TaskEnv) -> Result<Vec<WorktreeInfo>, String> {
         .map_err(|e| e.to_string())
 }
 
-fn create_worktree(env: &TaskEnv, branch: &str) -> Result<(PathBuf, String), String> {
+fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
     let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
     let base = git.resolve_base_ref(&env.main_branch);
-    // 分岐していれば触らないので、失敗しても作成そのものは続けられる。
-    if let Err(e) = git.ensure_base_ref_available(&env.main_branch) {
-        log::warn!("could not fast-forward the base ref: {e:#}");
-    }
-    git.create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
-        .map(|path| (path, branch.to_string()))
-        .map_err(|e| e.to_string())
+    // 分岐していれば触らないので、失敗しても作成そのものは続けられる。origin が無い
+    // リポジトリでは追いつく先が無いので、取れなかった警告も出さない。
+    let warning = git
+        .has_origin()
+        .then(|| git.ensure_base_ref_available(&env.main_branch).err())
+        .flatten()
+        .map(|e| {
+            format!(
+                "base '{}' not fast-forwarded: {}",
+                env.main_branch,
+                reason_line(&e)
+            )
+        });
+    let path = git
+        .create_worktree_from_base(branch, &base, env.worktree_dir.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(Created {
+        path,
+        branch: branch.to_string(),
+        warning,
+    })
 }
 
 fn smart_worktree(
@@ -1377,6 +1432,24 @@ fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, S
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn 通知に出す理由はfatalかerrorの行で_無ければ先頭行() {
+        let locked =
+            anyhow::anyhow!("From ../origin\nerror: cannot lock ref 'refs/remotes/origin/main'")
+                .context("git fetch failed (exit 1)");
+        assert_eq!(
+            super::reason_line(&locked),
+            "error: cannot lock ref 'refs/remotes/origin/main'"
+        );
+
+        let missing = anyhow::anyhow!("fatal: couldn't find remote ref refs/heads/gone")
+            .context("git fetch failed (exit 128)");
+        assert_eq!(
+            super::reason_line(&missing),
+            "git fetch failed (exit 128): fatal: couldn't find remote ref refs/heads/gone"
+        );
+    }
+
     use super::*;
 
     fn api(provider: &str, model: &str, command: &[&str]) -> ApiConfig {

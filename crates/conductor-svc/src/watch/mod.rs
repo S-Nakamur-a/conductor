@@ -24,6 +24,9 @@ pub enum WatchEvent {
     /// パスは .git/ .conductor/ を除いた変更先の 1 件。リネームイベントは (from, to) の
     /// 両方を運ぶことがあるので、送るのは先頭要素固定ではなく実際の変更先。
     FsChanged(PathBuf),
+    /// worktree の git 側 (HEAD、index、refs) が動いた。commit や fetch は作業ツリーの
+    /// ファイルを触らないので、FsChanged では届かない。
+    GitChanged,
     /// 設定ファイルが作成・変更・置換された。
     ConfigChanged,
     /// Claude Code パネルの active/waiting 状態が変わった。

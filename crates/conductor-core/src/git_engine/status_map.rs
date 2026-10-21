@@ -81,6 +81,11 @@ impl GitStatusMap {
         })
     }
 
+    /// status に出た全パス。未追跡ディレクトリは git が畳んだ `newdir/` のまま。
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.by_path.keys().map(String::as_str)
+    }
+
     /// git status が報告した生のビット。変更なしの tracked ファイルは None。
     /// 畳まれた未追跡ディレクトリの配下は Changed files に 1 行ずつ出るので、
     /// 未追跡だけは祖先から継承する (None だとそこだけ clean と同じ色になる)。
@@ -189,7 +194,8 @@ fn status_bits(index: u8, worktree: u8) -> Status {
         _ => Status::empty(),
     };
     let unstaged = match worktree {
-        b'?' => Status::WT_NEW,
+        // ` A` は git add -N (intent-to-add)。index には空のエントリだけで中身は作業ツリー側。
+        b'?' | b'A' => Status::WT_NEW,
         b'M' => Status::WT_MODIFIED,
         b'D' => Status::WT_DELETED,
         b'T' => Status::WT_TYPECHANGE,
