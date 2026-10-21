@@ -10,8 +10,9 @@ terminal keybindings keep working while you review:
    Switch Branch (Remote)…* does; if a worktree already has that branch, it is
    pulled up to `origin` instead. It then focuses the Explorer's changed-files
    list and starts the AI review below on it. A PR from a fork has no branch on
-   `origin`, so it lands on `pr-<N>` from GitHub's `pull/<N>/head`, and an
-   existing `pr-<N>` is reused as it is.
+   `origin`, and a merged or closed one may have lost it, so those land on
+   `pr-<N>` from GitHub's `pull/<N>/head` instead, and an existing `pr-<N>` is
+   reused as it is.
 2. **Changed files and comments** — the Explorer's bottom pane cycles between
    the changed-files diff list and the review comment list.
 3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`

@@ -90,11 +90,11 @@ fn エラー文は次の手が分かる形になっている() {
 }
 
 #[test]
-fn forkのprは既にあるworktreeへ通信無しで入り直す() {
+fn pull_headから取ったprは既にあるworktreeへ通信無しで入り直す() {
     let (_parent, repo_path, wt_dir) = repo_with_existing_pr_dir(true);
     let engine = GitEngine::open(&repo_path).unwrap();
 
-    let path = checkout_fork_head(&engine, 42, "main", None).unwrap();
+    let path = checkout_pull_head(&engine, 42, "main", None).unwrap();
     assert_eq!(path, wt_dir);
 }
 
@@ -104,8 +104,33 @@ fn 壊れたディレクトリでは手の打てるエラーで落ちる() {
     let (_parent, repo_path, wt_dir) = repo_with_existing_pr_dir(false);
     let engine = GitEngine::open(&repo_path).unwrap();
 
-    let error = checkout_fork_head(&engine, 42, "main", None).unwrap_err();
+    let error = checkout_pull_head(&engine, 42, "main", None).unwrap_err();
     assert!(error.to_string().contains(&wt_dir.display().to_string()));
+}
+
+/// gh pr view の実出力 (PR #396) の state と isCrossRepository だけを振る。
+fn pr_head(state: &str, from_fork: bool) -> PrHead {
+    serde_json::from_str(&format!(
+        r#"{{"headRefName":"feature/pty-daemon","isCrossRepository":{from_fork},"number":396,"state":"{state}"}}"#
+    ))
+    .unwrap()
+}
+
+#[test]
+fn originからheadを取るのは同じリポジトリのopenなprだけ() {
+    let cases = [
+        ("OPEN", false, "feature/pty-daemon"),
+        ("OPEN", true, "pr-396"),
+        ("MERGED", false, "pr-396"),
+        ("CLOSED", false, "pr-396"),
+    ];
+    for (state, from_fork, want) in cases {
+        assert_eq!(
+            pr_head(state, from_fork).local_branch(),
+            want,
+            "{state} fork={from_fork}"
+        );
+    }
 }
 
 /// origin は feature/x を checkout した状態で返すので、そのまま commit すれば push 相当になる。
@@ -163,6 +188,30 @@ fn 既にあるheadブランチのworktreeはoriginの最新まで進める() {
 }
 
 #[test]
+fn upstreamがmainを向いていてもheadブランチはmainへ進めない() {
+    let (origin, clone) = clone_with_remote_branch();
+    let engine = clone.engine();
+    let worktrees = clone.worktrees_dir();
+    let (path, _) = checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+    let worktree = Tree::open(path);
+    worktree
+        .repo
+        .find_branch("feature/x", git2::BranchType::Local)
+        .unwrap()
+        .set_upstream(Some("origin/main"))
+        .unwrap();
+    origin.checkout("main");
+    origin
+        .file("c.txt", "main moved\n")
+        .add("c.txt")
+        .commit("main moved on");
+
+    checkout_head_branch(&engine, "feature/x", "main", Some(&worktrees)).unwrap();
+
+    assert_eq!(worktree.tip("feature/x"), origin.tip("feature/x"));
+}
+
+#[test]
 fn レビューdbのauthorにはheadリポジトリの所有者が入る() {
     let fetched = FetchedPr {
         branch: "pr-7".to_string(),
@@ -186,12 +235,11 @@ fn レビューdbのauthorにはheadリポジトリの所有者が入る() {
 }
 
 /// 実在の GitHub リモートとマージ済み PR (refs/pull/<N>/head はマージ後も解決
-/// できる) に対する fork 経路の end-to-end。ネットワークが要るので既定では
-/// 走らせない。このリポジトリ自身の worktree に触らないよう一時ディレクトリへ
-/// clone する。
+/// できる) に対する end-to-end。ネットワークが要るので既定では走らせない。
+/// このリポジトリ自身の worktree に触らないよう一時ディレクトリへ clone する。
 #[test]
 #[ignore]
-fn 実在するprのheadをforkと同じ経路で取り込む() {
+fn マージ済みのprはpull_headから取り込める() {
     let parent = tempfile::tempdir().unwrap();
     let repo_path = parent.path().join("repo");
     let mut fetch_opts = git2::FetchOptions::new();
@@ -202,6 +250,6 @@ fn 実在するprのheadをforkと同じ経路で取り込む() {
         .expect("clone should succeed");
 
     let engine = GitEngine::open(&repo_path).unwrap();
-    let path = checkout_fork_head(&engine, 279, "main", None).unwrap();
+    let path = checkout_pull_head(&engine, 279, "main", None).unwrap();
     assert_eq!(Tree::open(path).head_branch(), "pr-279");
 }

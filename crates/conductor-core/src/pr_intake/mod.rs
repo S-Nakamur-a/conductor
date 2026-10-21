@@ -9,7 +9,7 @@ use std::process::Command;
 use crate::git_engine::GitEngine;
 use crate::review_store::PrReviewMeta;
 
-/// fork の PR の head を指すローカルブランチ名。
+/// head を origin から取れない PR を、pull/<N>/head から取ったローカルブランチ名。
 ///
 /// pr/<N> ではなくハイフンなのは、リポジトリが自分の作業で既に使っている
 /// pr/ 名前空間のブランチと衝突するため。
@@ -17,19 +17,44 @@ pub fn local_branch_name(pr_number: u64) -> String {
     format!("pr-{pr_number}")
 }
 
+/// PR の head。どこから取ってどのローカルブランチへ乗せるかはこれだけで決まる。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PrHead {
+    pub number: u64,
+    #[serde(rename = "headRefName")]
+    head_ref: String,
+    #[serde(rename = "isCrossRepository")]
+    from_fork: bool,
+    state: String,
+}
+
+impl PrHead {
+    /// fork の head は origin に無く、閉じた PR の head は消されていることがある。
+    /// open の PR は head ブランチを消すと GitHub が閉じるので、origin にあると言える。
+    fn on_origin(&self) -> bool {
+        !self.from_fork && self.state == "OPEN"
+    }
+
+    pub fn local_branch(&self) -> String {
+        if self.on_origin() {
+            self.head_ref.clone()
+        } else {
+            local_branch_name(self.number)
+        }
+    }
+}
+
 /// gh pr view --json が返す形。
 #[derive(Debug, Clone, serde::Deserialize)]
 struct PrMeta {
+    #[serde(flatten)]
+    head: PrHead,
     title: String,
-    #[serde(rename = "headRefName")]
-    head_ref: String,
     #[serde(rename = "baseRefName")]
     base_ref: String,
     #[serde(rename = "headRepositoryOwner")]
     head_owner: Option<GhOwner>,
     url: String,
-    #[serde(rename = "isCrossRepository")]
-    from_fork: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -142,7 +167,7 @@ fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeErr
             "view",
             &pr_number.to_string(),
             "--json",
-            "number,title,headRefName,baseRefName,headRepositoryOwner,url,isCrossRepository",
+            "number,title,headRefName,baseRefName,headRepositoryOwner,url,isCrossRepository,state",
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -216,7 +241,8 @@ pub fn intake_pr(
     let pr_number = parse_pr_input(input)?;
     let engine = GitEngine::open(repo_path).map_err(other)?;
     let pr_meta = fetch_pr_meta(repo_path, pr_number)?;
-    if let Some(name) = [&pr_meta.head_ref, &pr_meta.base_ref]
+    let head = &pr_meta.head;
+    if let Some(name) = [&head.head_ref, &pr_meta.base_ref]
         .into_iter()
         .find(|name| is_suspicious_ref(name))
     {
@@ -225,18 +251,17 @@ pub fn intake_pr(
         )));
     }
 
-    let (worktree_path, branch, pulled) = if pr_meta.from_fork {
-        let path =
-            checkout_fork_head(&engine, pr_number, &pr_meta.base_ref, worktree_dir_override)?;
-        (path, local_branch_name(pr_number), None)
-    } else {
-        let (path, pulled) = checkout_head_branch(
+    let (worktree_path, pulled) = if head.on_origin() {
+        checkout_head_branch(
             &engine,
-            &pr_meta.head_ref,
+            &head.head_ref,
             &pr_meta.base_ref,
             worktree_dir_override,
-        )?;
-        (path, pr_meta.head_ref.clone(), pulled)
+        )?
+    } else {
+        let path =
+            checkout_pull_head(&engine, pr_number, &pr_meta.base_ref, worktree_dir_override)?;
+        (path, None)
     };
 
     Ok(IntakenPr {
@@ -244,10 +269,10 @@ pub fn intake_pr(
         worktree_path,
         pulled,
         meta: FetchedPr {
-            branch,
+            branch: head.local_branch(),
             title: pr_meta.title,
             base_ref: pr_meta.base_ref,
-            head_ref: pr_meta.head_ref,
+            head_ref: pr_meta.head.head_ref,
             url: pr_meta.url,
             head_owner_login: pr_meta.head_owner.map(|o| o.login),
         },
@@ -256,33 +281,38 @@ pub fn intake_pr(
 
 /// origin の head ブランチを Switch Branch (Remote) と同じ形で worktree にする。
 /// 既にどこかの worktree で checkout されていれば、作らずにそこを origin へ早送りする。
+/// 早送りの相手は upstream ではなく origin/<head>。upstream は利用者が何に向けていても
+/// よく、origin/main を向いていれば main の先端までブランチを動かしてしまう。
 fn checkout_head_branch(
     engine: &GitEngine,
     head: &str,
     base: &str,
     worktree_dir_override: Option<&Path>,
 ) -> Result<(PathBuf, Option<String>), PrIntakeError> {
+    engine
+        .fetch_branches("origin", &[head, base])
+        .map_err(other)?;
+    let remote_branch = format!("origin/{head}");
     let existing = engine
         .list_worktrees()
         .map_err(other)?
         .into_iter()
         .find(|w| w.branch == head);
     if let Some(worktree) = existing {
-        let pulled = engine.pull_worktree(&worktree.path).map_err(other)?;
+        let pulled = engine
+            .fast_forward_worktree(&worktree.path, head, &remote_branch)
+            .map_err(other)?;
         return Ok((worktree.path, Some(pulled)));
     }
-    engine
-        .fetch_branches("origin", &[head, base])
-        .map_err(other)?;
     let path = engine
-        .create_worktree_from_remote(&format!("origin/{head}"), worktree_dir_override)
+        .create_worktree_from_remote(&remote_branch, worktree_dir_override)
         .map_err(other)?;
     Ok((path, None))
 }
 
-/// fork の head は origin に無いので、GitHub が base 側に置く pull/<N>/head を取る。
+/// head を origin から取れない PR は、GitHub が base 側に置く pull/<N>/head を取る。
 /// 既にあれば取り直さずに使う。checkout 中のブランチへの fetch は git が拒む。
-fn checkout_fork_head(
+fn checkout_pull_head(
     engine: &GitEngine,
     pr_number: u64,
     base: &str,
