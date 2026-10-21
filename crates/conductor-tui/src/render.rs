@@ -479,9 +479,9 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
             editor.title(),
             editor_lines(editor, &ws.theme, area.width * 60 / 100),
         ),
-        Modal::ListingPicker(picker) => (
-            crate::modal::listing::title(),
-            crate::modal::listing::lines(picker, &ws.theme),
+        Modal::Popup(popup) => (
+            crate::modal::popup::title(popup),
+            crate::modal::popup::lines(popup, &ws.theme),
         ),
         Modal::CommentList(_) => unreachable!("上で返している"),
     };
@@ -490,7 +490,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
     // 枠が伸び縮みして読みにくい。
     // 押した場所に紐づくポップアップは中央に置かない。指定が無いものは今まで通り。
     let rect = match modal {
-        Modal::ListingPicker(picker) => crate::modal::listing::rect(picker, area),
+        Modal::Popup(popup) => crate::modal::popup::rect(popup, area),
         _ if wide(modal) => big,
         _ => centered(area, 60, (body.len() as u16 + 2).min(area.height)),
     };
