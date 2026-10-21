@@ -7,8 +7,9 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 use regex::{Regex, RegexBuilder};
 
 #[cfg(test)]
@@ -84,29 +85,39 @@ pub fn search_files(root: &Path, rel_paths: &[String], re: &Regex) -> Vec<GrepMa
     results
 }
 
-/// root 以下を .gitignore を尊重して走査し、全文検索する。
+/// root 以下を .gitignore を尊重して並列に走査し、全文検索する。
+/// 結果はスレッドが見つけた順に並ぶので、パス順ではない。
 pub fn search_tree(root: &Path, re: &Regex) -> Vec<GrepMatch> {
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .build();
+        .build_parallel();
 
-    let mut results = Vec::new();
-    for entry in walker {
-        let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_some_and(|ft| ft.is_file()) {
-            continue;
-        }
-        let path = entry.path();
-        let rel_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+    let results = Mutex::new(Vec::new());
+    walker.run(|| {
+        Box::new(|entry| {
+            let Ok(entry) = entry else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|ft| ft.is_file()) {
+                return WalkState::Continue;
+            }
+            let path = entry.path();
+            let rel_path = path.strip_prefix(root).unwrap_or(path).to_string_lossy();
+            let found = search_file(root, &rel_path, re);
 
-        results.extend(search_file(root, &rel_path, re));
-        if results.len() >= MAX_RESULTS {
-            results.truncate(MAX_RESULTS);
-            break;
-        }
-    }
+            let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
+            if results.len() >= MAX_RESULTS {
+                return WalkState::Quit;
+            }
+            results.extend(found);
+            WalkState::Continue
+        })
+    });
+
+    let mut results = results.into_inner().unwrap_or_else(|e| e.into_inner());
+    results.truncate(MAX_RESULTS);
     results
 }
