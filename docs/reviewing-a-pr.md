@@ -5,9 +5,13 @@ no separate full-screen mode to enter or exit, so all the usual navigation and
 terminal keybindings keep working while you review:
 
 1. **Pull Request → local worktree** — menu: *Review ▸ Review Pull Request…*,
-   enter a PR number or URL. Conductor fetches it (via `gh`) into a worktree,
-   focuses the Explorer's changed-files list, and offers to run the AI review
-   below on it.
+   enter a PR number or URL. Conductor asks `gh` for the PR's branch and checks
+   it out of `origin` into a worktree named after it, the same way *Worktree ▸
+   Switch Branch (Remote)…* does; if a worktree already has that branch, it is
+   pulled up to `origin` instead. It then focuses the Explorer's changed-files
+   list and starts the AI review below on it. A PR from a fork has no branch on
+   `origin`, so it lands on `pr-<N>` from GitHub's `pull/<N>/head`, and an
+   existing `pr-<N>` is reused as it is.
 2. **Changed files and comments** — the Explorer's bottom pane cycles between
    the changed-files diff list and the review comment list.
 3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`

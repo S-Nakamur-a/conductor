@@ -3,6 +3,8 @@
 //! メニュー・パレット・キーマップはどれもここを通る。行き先が 1 本なので、
 //! メニューに行を足してもコマンドの意味は増えない。
 
+use std::path::PathBuf;
+
 use conductor_core::keymap::Action;
 use conductor_svc::pty::SessionKind;
 use ratatui::layout::Rect;
@@ -360,9 +362,17 @@ fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
     ))]
 }
 
-/// 既定でキャッシュは効くので、diff が動いていなければ AI は起動せず即座に返る。
 fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
-    let branch = ws.branch().to_string();
+    analyze_worktree(ws, ws.worktree_path(), ws.branch().to_string(), force)
+}
+
+/// 既定でキャッシュは効くので、diff が動いていなければ AI は起動せず即座に返る。
+pub fn analyze_worktree(
+    ws: &Workspace,
+    worktree: PathBuf,
+    branch: String,
+    force: bool,
+) -> Vec<Effect> {
     if branch.is_empty() {
         return vec![Effect::Status(
             StatusLevel::Warning,
@@ -378,7 +388,7 @@ fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
     let scope = ws.panels.revidere.scope();
     vec![
         Effect::Spawn(Task::Analyze {
-            worktree: ws.worktree_path(),
+            worktree,
             branch,
             scope,
             force,
