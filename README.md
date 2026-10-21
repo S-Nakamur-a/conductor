@@ -106,6 +106,12 @@ an empty pane, a smart session, the startup auto-resume and the resume after
 grabbing a branch. To add Chrome to a session that ran without it, close its tab
 and reopen it from *Resume Claude Session*, choosing "Resume + Chrome".
 
+Quitting (Ctrl+q) does not stop the Claude Code and shell sessions: a background
+`conductor pty-host` holds them, so a turn that is mid-task keeps working and the
+next window you open on the repository shows each one where it has got to. To end
+them as you leave, use *Repo ▸ Quit and Stop Sessions*. Deleting a worktree stops
+the sessions in it; a `$EDITOR` pane still closes with the window.
+
 ## Reviewing a Pull Request
 
 PR review runs inside the normal Explorer/Viewer/Terminal accordion — there is
@@ -211,7 +217,8 @@ you already have, start the second one with `--second-window`. It takes no lock 
 *declines* those per-repository channels rather than taking them over, so the first
 window keeps working. The trade is that the second window has no MCP refresh and no
 Claude Code session hooks — its monitor strip stays blank and a panel's `/clear` is
-not followed — while the review database and the code index stay shared as usual.
+not followed — and its sessions end with it, while the review database and the code
+index stay shared as usual.
 
 CI checks formatting and clippy on every pull request. `.githooks/pre-commit`
 runs the same `cargo fmt --all -- --check` locally if you want to catch it before

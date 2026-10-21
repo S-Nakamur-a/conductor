@@ -1,22 +1,24 @@
 //! PTY セッションの保管庫。
 //!
-//! portable-pty で Claude Code / シェル / $EDITOR を起動し、reader スレッドが出力を
-//! vt100 パーサと行バッファへ流し込む。
+//! 子プロセスと PTY のマスターは [host] が握り、ここが持つのはその画面の写し。
+//! ホストから届くバイト列を vt100 パーサと行バッファへ流し込む。ウィンドウを閉じても
+//! ホストは残るので、次に開いたウィンドウは [PtyStore::attach] で同じセッションに戻る。
 //!
 //! ここだけ [crate::Services] の Event 経路に乗せていない。PTY のバイト列は描画より
 //! 高頻度で届くのでチャネルが詰まる。UI は描画のたびに [PtyStore::screen] を直接
 //! ロックし、届いたことの通知だけ [PtyStore::take_output_notify] で受け取る。
 
-use std::collections::{HashSet, VecDeque};
-use std::io::Write;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime};
 
-use anyhow::{Context, Result};
-use portable_pty::NativePtySystem;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
+mod client;
+mod host;
 mod io;
 mod locale;
 mod reader;
@@ -24,7 +26,10 @@ mod screen;
 mod spawn;
 #[cfg(test)]
 mod tests;
+mod wire;
 
+pub use client::Attached;
+pub use host::run as run_host;
 pub use io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence};
 pub use spawn::{Launch, Spawn};
 
@@ -41,7 +46,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// PTY セッションで動いているプロセスの種類。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionKind {
     ClaudeCode,
     Shell,
@@ -49,7 +54,7 @@ pub enum SessionKind {
     Editor,
 }
 
-/// reader スレッドとセッションが共有する状態。
+/// ホストからの受信スレッドとセッションが共有する状態。
 #[derive(Clone)]
 struct SharedIo {
     lines: Arc<Mutex<Vec<String>>>,
@@ -66,10 +71,34 @@ struct SharedIo {
     /// 子が最後にカーソルを見せていたときの位置。描画中に隠している間 (DECTCEM off) は
     /// カーソルが本文の中を走るので、その瞬間の位置は IME の変換窓の置き場にならない。
     shown_cursor: Arc<Mutex<(u16, u16)>>,
-    /// オルタネートスクリーンへの遷移を reader スレッドが立てる。
-    alt_screen_entered: Arc<AtomicBool>,
+    /// まだ改行の来ていない行の続き。
+    partial: Arc<Mutex<String>>,
+    exited: Arc<AtomicBool>,
     /// store 全体で 1 つ。新しい出力が届いたことをメインループへ知らせる。
     output_notify: Arc<AtomicBool>,
+}
+
+impl SharedIo {
+    fn new(
+        kind: SessionKind,
+        rows: u16,
+        cols: u16,
+        scrollback: usize,
+        output_notify: &Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            lines: Arc::new(Mutex::new(Vec::new())),
+            line_limit: Arc::new(Mutex::new(scrollback)),
+            screen: Arc::new(Mutex::new(vt100::Parser::new(rows, cols, scrollback))),
+            raw_history: (kind == SessionKind::Shell)
+                .then(|| Arc::new(Mutex::new(VecDeque::new()))),
+            last_output: Arc::new(Mutex::new(Instant::now())),
+            shown_cursor: Arc::new(Mutex::new((0, 0))),
+            partial: Arc::new(Mutex::new(String::new())),
+            exited: Arc::new(AtomicBool::new(false)),
+            output_notify: Arc::clone(output_notify),
+        }
+    }
 }
 
 /// 1 つの PTY セッション。
@@ -87,16 +116,10 @@ pub struct PtySession {
     /// 子プロセスの起動時刻。古いセッションを --resume すると pin したログの mtime が
     /// 何日も前になりうるので、ローテーション追跡はこれを下限に使う。
     spawned_at: SystemTime,
+    /// このセッションを握っているホストの鍵 ([PtyStore::host_of])。
+    host: PathBuf,
 
-    master: Box<dyn portable_pty::MasterPty + Send>,
-    /// reader スレッドとも共有する。端末クエリへ最小レイテンシで応答するため。
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
     io: SharedIo,
-
-    /// オルタネートスクリーン突入を観測してからナッジを送り続ける期限。
-    nudge_until: Option<Instant>,
-    last_nudge: Option<Instant>,
 }
 
 impl PtySession {
@@ -111,9 +134,12 @@ impl PtySession {
     }
 }
 
-/// PTY セッションの一覧を持ち、その寿命を握る。
+/// PTY セッションの一覧。寿命はホストが握り、ここは画面の写しと操作の口を持つ。
 pub struct PtyStore {
-    pty_system: NativePtySystem,
+    /// ホストごとの接続。必要になったときに張る。
+    links: HashMap<PathBuf, client::Link>,
+    /// [PtyStore::attach] が成功していれば、別プロセスのホストへのつなぎ方。
+    detached: Option<client::Detached>,
     sessions: Vec<PtySession>,
     active_scrollback: usize,
     inactive_scrollback: usize,
@@ -123,7 +149,8 @@ pub struct PtyStore {
 impl PtyStore {
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
-            pty_system: NativePtySystem::default(),
+            links: HashMap::new(),
+            detached: None,
             sessions: Vec::new(),
             active_scrollback,
             inactive_scrollback,
@@ -190,25 +217,30 @@ impl PtyStore {
     pub fn kill_session(&mut self, idx: usize) -> Result<()> {
         let session = self
             .sessions
-            .get_mut(idx)
-            .context("session index out of bounds")?;
-        session
-            .child
-            .kill()
-            .map_err(|e| anyhow::anyhow!("failed to kill session child process: {e}"))
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("session index out of bounds"))?;
+        let id = session.id.clone();
+        self.link_of(session)?.send(&wire::ToHost::Kill { id })
     }
 
-    /// idx のセッションを取り除く。drop で PTY マスターが閉じ、reader スレッドは
-    /// EOF を見て終わる。
+    /// idx のセッションを取り除く。ホストは生きていれば殺してからマスターを閉じる。
     pub fn remove_session(&mut self, idx: usize) {
-        if idx < self.sessions.len() {
-            self.sessions.remove(idx);
+        if idx >= self.sessions.len() {
+            return;
+        }
+        let session = self.sessions.remove(idx);
+        let Ok(link) = self.link_of(&session) else {
+            return;
+        };
+        link.forget(&session.id);
+        if let Err(e) = link.send(&wire::ToHost::Remove { id: session.id }) {
+            log::warn!("could not ask the PTY host to drop a session: {e:#}");
         }
     }
 
-    pub fn is_session_alive(&mut self, idx: usize) -> bool {
+    pub fn is_session_alive(&self, idx: usize) -> bool {
         self.sessions
-            .get_mut(idx)
-            .is_some_and(|s| matches!(s.child.try_wait(), Ok(None)))
+            .get(idx)
+            .is_some_and(|s| !s.io.exited.load(Ordering::Relaxed))
     }
 }

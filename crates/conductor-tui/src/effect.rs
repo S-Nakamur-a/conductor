@@ -87,6 +87,9 @@ pub enum Effect {
     PopModal,
     Play(crate::fx::Kind, crate::fx::Target),
     Spawn(Task),
+    /// 端末のセッションを止める。worktree を渡せばそこのものだけ、無ければすべて。
+    /// ホストはウィンドウより長生きするので、止めなければ裏で動き続ける。
+    StopSessions(Option<PathBuf>),
     Quit,
 }
 
@@ -225,6 +228,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 ws.panels.revidere.note_spawned(&task);
                 task.spawn(svc, &ws.task_env());
             }
+            Effect::StopSessions(worktree) => ws.panels.terminal.stop_sessions(worktree.as_deref()),
             Effect::Quit => ws.should_quit = true,
         }
     }

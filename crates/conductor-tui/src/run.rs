@@ -200,7 +200,7 @@ pub fn run(
         dirty |= tick_git_refresh(ws, svc, &mut debounces.git, Instant::now());
         dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
         dirty |= ws.panels.terminal.took_output();
-        ws.panels.terminal.nudge();
+        ws.panels.terminal.flush_deferred();
         dirty |= run_timers(
             ws,
             svc,
@@ -926,6 +926,54 @@ mod tests {
         ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
         on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
         assert_eq!(ws.focus, Focus::TerminalClaude);
+    }
+
+    #[test]
+    fn 止めて終了はセッションがあるときだけ確かめてから止めて閉じる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let id = crate::command::CommandId::QuitAndStopSessions;
+        assert!(matches!(
+            crate::command::execute(&mut ws, id).as_slice(),
+            [Effect::Quit]
+        ));
+
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let effects = crate::command::execute(&mut ws, id);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::PushModal(Modal::Confirm(_))]
+        ));
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopSessions(None), Effect::Quit],
+        );
+        assert_eq!(ws.panels.terminal.session_count(), 0);
+        assert!(ws.should_quit);
+    }
+
+    #[test]
+    fn 消したworktreeのセッションだけを止める() {
+        let (kept, deleted) = (
+            tempfile::TempDir::new().unwrap(),
+            tempfile::TempDir::new().unwrap(),
+        );
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.panels
+            .terminal
+            .show_shell_as_claude_for_test(kept.path());
+        ws.panels
+            .terminal
+            .show_shell_as_claude_for_test(deleted.path());
+
+        let stop = Effect::StopSessions(Some(deleted.path().to_path_buf()));
+        apply(&mut ws, &mut svc, vec![stop]);
+
+        assert_eq!(ws.panels.terminal.session_count(), 1);
+        assert!(!ws.panels.terminal.has_claude_session(deleted.path()));
     }
 
     #[test]

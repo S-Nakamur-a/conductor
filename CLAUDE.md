@@ -59,7 +59,8 @@ does *not* go through MCP — its artifact is a JSON file written by `revidere`.
 links the old file to the new one, so a panel pinned to its spawn-time
 `--session-id` would show the pre-clear transcript forever. A `SessionStart` hook
 runs inside the panel's own Claude process and reports the current id back over a
-Unix socket, which `conductor-svc`'s `watch/cc_notify.rs` listens on. `cc-signal`
+Unix socket, which the PTY host (below) listens on through `conductor-svc`'s
+`watch/cc_notify.rs` and relays to the window. `cc-signal`
 rides the same socket with the waiting/active state the monitor strip shows.
 `pty/spawn.rs` writes `.conductor/claude-hooks.json` and passes it as `--settings`
 on every spawn (that *adds a layer*, so the user's own settings keep working),
@@ -81,6 +82,49 @@ it off `conductor_dir` rather than the worktree root is what makes every linked
 worktree share the one listener. Clients that cannot read the environment — the
 plugin's shell scripts — find the path in `.conductor/cc-notify.path`, written
 before the `bind`.
+
+### PTY host (`conductor pty-host`, `crates/conductor-svc/src/pty/host.rs`)
+
+Closing a PTY's master sends its child SIGHUP, so whoever holds the masters decides
+whether a Claude panel survives the window closing. The window does not hold them:
+the first window on a repository starts `conductor pty-host <repo>` under `setsid`,
+and every window after it attaches to the same host. Closing the window — or the
+terminal it ran in — leaves the work running; the next window gets each session's
+current screen and carries on from there. Measured: a Claude turn kept calling tools
+with no window open, and the window opened later showed it mid-tool.
+
+- **The window holds a mirror, not the PTY.** `PtyStore` keeps the same API and its
+  own vt100 parser, fed by bytes the host relays (`pty/wire.rs`: length-prefixed
+  frames, JSON for control, raw bytes for output and keystrokes). The renderer still
+  reads `PtyStore::screen` directly. The handshake hands over `state_formatted()` —
+  input modes included, or bracketed paste and wheel forwarding are wrong after a
+  reattach — behind a shell's raw history, so it can still reflow. The raw history is
+  trimmed and may have lost its leading mode switches, which is why the current state
+  always comes last.
+- **The host answers what nobody else can while the window is away:** cursor-position
+  queries (`CSI 6 n`), the alternate-screen SIGWINCH nudge, and cc-notify. It keeps
+  each panel's session id and the last active/waiting for each cwd that still has a
+  live Claude, and replays them on attach, which is what keeps the transcript and the
+  strip right across a reopen.
+- **Lock order is window → each session's parser.** Building the handshake under the
+  window lock is what makes snapshot and stream meet with no gap and no repeat.
+- **The child's environment is the window's, sent whole with each spawn.** The host's
+  own environment belongs to whichever window started it.
+- One per repository: `.conductor/pty-host.lock` (flock) and `<key>.pty.sock` beside
+  the cc-notify socket. **A session goes to the host of the repository its working
+  directory belongs to**, not the one the window opened with — `switch_repo` keeps the
+  previous repository's sessions running, so a window talks to several hosts. A host
+  talks to only one window, and a second one that reaches it (a switch into a repository
+  another window has open) is answered `Busy` instead of taking over.
+- A session ends only with its own exit, closing its tab, deleting its worktree, and
+  **Repo ▸ Quit and Stop Sessions**. Editors are the exception and die
+  with the window that opened them. The host exits
+  once it has had no sessions and no window for 3s. **A host of another version is
+  kept while it has sessions** (the status bar says so) and is told to `Shutdown`
+  when it has none; the frame protocol carries its own number for that reason.
+- `--second-window`, tests, and a window whose host would not start run an
+  in-process host over a socketpair, so there is one code path and those sessions
+  end with the window.
 
 ### Review analyser (`crates/revidere`)
 
@@ -350,8 +394,8 @@ under one guard), and the per-worktree change counts; each one grew this same ho
 independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
-channel, so `PtyStore` lives in svc and the renderer reads it directly. There is
-no tokio; threads and mpsc are enough.
+channel, so `PtyStore` (the mirror of the PTY host's screens) lives in svc and the
+renderer reads it directly. There is no tokio; threads and mpsc are enough.
 
 `liveness(&Workspace, input_recent) -> Liveness { Idle, Active, Terminal }` is
 the one definition of why the screen is moving, read by both the tick rate and
@@ -382,7 +426,7 @@ the accordion — it takes the main area whole as three columns (reading order |
 | `tui/workspace.rs` · `effect.rs` · `task.rs` | State, the effect vocabulary, every long-running job and its result |
 | `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together |
 | `tui/command/` · `index.rs` · `markdown/` | The command table with `exec` and `enabled` · both indexes and their rebuilds · markdown, shared by the Viewer and the transcript |
-| `svc/pty/` · `svc/watch/` | PTY spawn/read/write/resize and the vt100 screen · the filesystem, config, cc-notify and refresh-pipe watchers |
+| `svc/pty/` · `svc/watch/` | The PTY host (holds the masters), its window-side mirror and the vt100 screen · the filesystem, config and refresh-pipe watchers (cc-notify's listener runs in the PTY host) |
 | `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |
 | `core/claude_log/` · `claude_sessions/` · `keymap/` · `theme/` · `config/` | The transcript `.jsonl` format · which one backs a panel · actions and layers · colour themes · `~/.config/conductor/config.toml` |
 | `core/instance_lock/` | `.conductor/conductor.lock` の flock による単独起動の担保 — リポジトリ (全 worktree 込み) につき 1 ウィンドウ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |
@@ -405,6 +449,7 @@ Nothing else may follow it out: the rest of git stays on `git2`.
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
 - **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
+- **PTY host log:** `<main worktree>/.conductor/pty-host.log` — the host's stderr; its socket sits beside the cc-notify one
 - **Unknown tools:** `<repo-root>/.conductor/unknown-tools.log` — one line per tool name `claude_log::classify` did not recognise, so a transcript that renders thin is traceable to the tool the table is missing (`mcp__*` names are excluded)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 

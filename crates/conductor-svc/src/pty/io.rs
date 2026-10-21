@@ -1,7 +1,6 @@
 //! セッションへの入力: 生バイト、チャンク書き込み、サニタイズ済みペースト、
 //! マウスホイールの転送。
 
-use std::io::Write;
 use std::thread;
 use std::time::Duration;
 
@@ -21,19 +20,13 @@ impl PtyStore {
             .sessions
             .get(idx)
             .context("session index out of bounds")?;
-        let mut writer = lock(&session.writer);
-        writer.write_all(data).context("failed to write to PTY")?;
-        writer.flush().context("failed to flush PTY writer")
+        self.link_of(session)?.send_bytes(&session.id, data)
     }
 
     /// 大きなテキストを、通常のタイプ入力として (bracketed paste は使わずに) 送る。
     /// 受け手のアプリに全文を表示させたいプロンプト注入で使う。
     pub fn write_chunked_to_session(&self, idx: usize, text: &str) -> Result<()> {
-        let session = self
-            .sessions
-            .get(idx)
-            .context("session index out of bounds")?;
-        write_chunks(&mut lock(&session.writer), text)
+        write_chunks(text, |chunk| self.write_to_session(idx, chunk))
     }
 
     /// クリップボードの内容をサニタイズしてから送る。
@@ -47,22 +40,14 @@ impl PtyStore {
             .sessions
             .get(idx)
             .context("session index out of bounds")?;
-
-        // writer を取る前に screen のロックを手放す。
         let bracketed = lock(&session.io.screen).screen().bracketed_paste();
-        let mut writer = lock(&session.writer);
 
         if bracketed {
-            writer
-                .write_all(b"\x1b[200~")
-                .context("failed to write paste-start to PTY")?;
+            self.write_to_session(idx, b"\x1b[200~")?;
         }
-        write_chunks(&mut writer, &cleaned)?;
+        write_chunks(&cleaned, |chunk| self.write_to_session(idx, chunk))?;
         if bracketed {
-            writer
-                .write_all(b"\x1b[201~")
-                .context("failed to write paste-end to PTY")?;
-            writer.flush().context("failed to flush PTY writer")?;
+            self.write_to_session(idx, b"\x1b[201~")?;
         }
         Ok(())
     }
@@ -119,12 +104,9 @@ impl PtyStore {
 
 /// チャンクは UTF-8 の文字境界で分ける。途中で切れたチャンクは不完全なマルチバイト
 /// 列としてフラッシュされ、受け手が誤ってデコードする。
-fn write_chunks(writer: &mut Box<dyn Write + Send>, text: &str) -> Result<()> {
+fn write_chunks(text: &str, mut send: impl FnMut(&[u8]) -> Result<()>) -> Result<()> {
     for chunk in utf8_chunks(text, CHUNK_SIZE) {
-        writer
-            .write_all(chunk.as_bytes())
-            .context("failed to write chunk to PTY")?;
-        writer.flush().context("failed to flush PTY writer")?;
+        send(chunk.as_bytes())?;
         if chunk.len() == CHUNK_SIZE {
             thread::sleep(CHUNK_DELAY);
         }

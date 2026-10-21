@@ -3,6 +3,7 @@
 //! それぞれ自前のスレッド (notify 系は notify 自身の内部スレッド) で待ち受け、
 //! [crate::EventSender::send_watch] で 1 本の mpsc へ直接送る。UI 側は
 //! [crate::Services::try_recv] で他の Event と同じ経路から受け取るだけでよい。
+//! cc-notify だけは PTY ホストが持ち、ホストとの接続越しに同じ経路へ合流する。
 
 mod cc_notify;
 mod config_watcher;
@@ -44,4 +45,27 @@ pub enum WatchEvent {
 pub enum CcState {
     Active,
     Waiting,
+}
+
+impl From<conductor_core::cc_hook::Notification> for WatchEvent {
+    fn from(notification: conductor_core::cc_hook::Notification) -> Self {
+        use conductor_core::cc_hook::Notification;
+        match notification {
+            Notification::Active { cwd } => Self::CcState {
+                kind: CcState::Active,
+                cwd,
+            },
+            Notification::Waiting { cwd } => Self::CcState {
+                kind: CcState::Waiting,
+                cwd,
+            },
+            Notification::Session {
+                panel_id,
+                session_id,
+            } => Self::CcSessionRotated {
+                panel_id,
+                session_id,
+            },
+        }
+    }
 }

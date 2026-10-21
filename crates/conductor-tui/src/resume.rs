@@ -46,6 +46,11 @@ pub fn accept(
         main_grabbed.as_deref(),
         ws.config.general.auto_resume_main,
     );
+    // ホストに生き残っているセッションの横に、同じ会話をもう 1 本開かない。
+    let plan: Vec<_> = plan
+        .into_iter()
+        .filter(|(worktree, _)| !ws.panels.terminal.has_claude_session(worktree))
+        .collect();
     let mut resumed = 0;
     for (worktree, session_id) in plan {
         match ws

@@ -80,6 +80,7 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::RebuildCodeIndex, "Rebuild Code Index"),
             SEP,
             cmd(CommandId::Quit, "Quit Conductor"),
+            cmd(CommandId::QuitAndStopSessions, "Quit and Stop Sessions"),
         ],
     },
     Menu {

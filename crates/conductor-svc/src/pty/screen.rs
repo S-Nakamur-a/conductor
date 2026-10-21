@@ -1,13 +1,10 @@
-//! vt100 画面の読み出し、リサイズとリフロー、オルタネート画面のナッジ、入力待ちの検出。
+//! vt100 画面の読み出し、リサイズとリフロー、入力待ちの検出。
 
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use portable_pty::PtySize;
-
-use super::{PtyStore, SessionKind, lock};
+use super::{PtyStore, SessionKind, lock, wire};
 
 impl PtyStore {
     /// idx のセッションの vt100 パーサ。UI が描画のあいだロックできるよう Arc を返す。
@@ -47,89 +44,37 @@ impl PtyStore {
             .is_some_and(|s| lock(&s.io.screen).screen().application_cursor())
     }
 
-    /// PTY と vt100 パーサの両方をリサイズする。生バイトの再生でパーサを組み直した
+    /// PTY と写しのパーサの両方をリサイズする。生バイトの再生でパーサを組み直した
     /// (新しい幅でリフローした) 場合に true。
-    ///
-    /// vt100 の set_size はリフローしない — 列が変わるとラップフラグを消して行を
-    /// 切り詰め/パディングするだけなので、以前ラップされていた行は旧幅のまま残る。
-    /// 生履歴を持つセッションは記録から組み直して再ラップさせ、それ以外は set_size に落ちる。
     pub fn resize_session(&mut self, idx: usize, rows: u16, cols: u16) -> bool {
         // vt100::Parser::new は非ゼロの寸法を要求する。
         let rows = rows.max(1);
         let cols = cols.max(1);
-        let scrollback = self.inactive_scrollback;
         let Some(session) = self.sessions.get(idx) else {
             return false;
         };
 
         // 実 PTY のリサイズは SIGWINCH を配送し、子がライブ領域を描き直す。
-        let _ = session.master.resize(PtySize {
+        let resize = wire::ToHost::Resize {
+            id: session.id.clone(),
             rows,
             cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        });
-
-        let mut parser = lock(&session.io.screen);
-        let width_changed = parser.screen().size().1 != cols;
-        let Some(history) = session.io.raw_history.as_ref().filter(|_| width_changed) else {
-            parser.set_size(rows, cols);
-            return false;
         };
-
-        // screen のロックを持ったまま履歴を読む。同じロックの下で追記している reader
-        // スレッドとの整合を保つため。
-        *parser = rebuild_parser(&lock(history), rows, cols, scrollback);
-        true
-    }
-
-    /// 最近オルタネート画面に入ったセッションへ、SIGWINCH のナッジを繰り返し送る。
-    ///
-    /// fzf のようなプログラムはリサイズシグナルを受けるまで初期 UI を描かず、1 回だけの
-    /// ナッジでは相手の準備前に届いてしまうことがある。macOS の PTY バッファリングの癖を
-    /// 避けるため、遷移から 500ms のあいだ 100ms ごとに送る。
-    pub fn nudge_alt_screen_sessions(&mut self) {
-        const NUDGE_WINDOW: Duration = Duration::from_millis(500);
-        const NUDGE_INTERVAL: Duration = Duration::from_millis(100);
-
-        for session in &mut self.sessions {
-            if session.io.alt_screen_entered.swap(false, Ordering::Relaxed) {
-                session.nudge_until = Some(Instant::now() + NUDGE_WINDOW);
-                session.last_nudge = None;
-            }
-            let Some(until) = session.nudge_until else {
-                continue;
-            };
-            if Instant::now() > until {
-                session.nudge_until = None;
-                continue;
-            }
-            if session
-                .last_nudge
-                .is_some_and(|t| t.elapsed() < NUDGE_INTERVAL)
-            {
-                continue;
-            }
-
-            session.last_nudge = Some(Instant::now());
-            let (rows, cols) = lock(&session.io.screen).screen().size();
-            // macOS はサイズが実際に変わったときにしか SIGWINCH を配送しないので、
-            // 一瞬だけ 1 行縮めてから戻す。
-            if rows > 1 {
-                let _ = session.master.resize(PtySize {
-                    rows: rows - 1,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                });
-            }
-            let _ = session.master.resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            });
+        if let Err(e) = self.link_of(session).and_then(|link| link.send(&resize)) {
+            log::warn!("could not resize a PTY session: {e:#}");
         }
+
+        // screen のロックを持ったまま履歴を読む。同じロックの下で追記している受信
+        // スレッドとの整合を保つため。
+        let mut parser = lock(&session.io.screen);
+        let history = session.io.raw_history.as_ref().map(|h| lock(h));
+        resize_parser(
+            &mut parser,
+            history.as_deref(),
+            rows,
+            cols,
+            self.inactive_scrollback,
+        )
     }
 
     /// idx の Claude Code セッションがユーザー入力待ちに見えるか。
@@ -172,8 +117,32 @@ fn row_text(screen: &vt100::Screen, row: u16) -> String {
     text
 }
 
+/// vt100 の set_size はリフローしない — 列が変わるとラップフラグを消して行を
+/// 切り詰め/パディングするだけなので、以前ラップされていた行は旧幅のまま残る。
+/// 生履歴を持つセッションは記録から組み直して再ラップさせ、それ以外は set_size に落ちる。
+/// ホストの画面と写しで同じ判断をしないと、つなぎ直したときの画面がずれる。
+pub(super) fn resize_parser(
+    parser: &mut vt100::Parser,
+    history: Option<&VecDeque<u8>>,
+    rows: u16,
+    cols: u16,
+    scrollback: usize,
+) -> bool {
+    let width_changed = parser.screen().size().1 != cols;
+    match history.filter(|_| width_changed) {
+        Some(history) => {
+            *parser = rebuild_parser(history, rows, cols, scrollback);
+            true
+        }
+        None => {
+            parser.set_size(rows, cols);
+            false
+        }
+    }
+}
+
 /// 記録済みの生バイトを再生して、指定サイズのパーサを組み直す。
-/// resize_session のリフロー経路の中核を、実 PTY 無しで試せるよう切り出したもの。
+/// resize_parser のリフロー経路の中核を、実 PTY 無しで試せるよう切り出したもの。
 pub(super) fn rebuild_parser(
     history: &VecDeque<u8>,
     rows: u16,

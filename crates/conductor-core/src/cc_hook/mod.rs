@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 
 mod settings;
 
-pub use settings::{ensure_runtime_dir, install_settings, socket_path, socket_pointer_path};
+pub use settings::{
+    ensure_runtime_dir, install_settings, pty_host_socket_path, socket_path, socket_pointer_path,
+};
 
 pub const PANEL_ID_ENV: &str = "CONDUCTOR_PANEL_ID";
 pub const NOTIFY_SOCK_ENV: &str = "CONDUCTOR_NOTIFY_SOCK";
