@@ -2,7 +2,8 @@
 //!
 //! ソケットのパスと電文の書式は [conductor_core::cc_hook] が定める
 //! (フック側とここが同じ規約を共有する必要があるため)。ここはバックグラウンド
-//! スレッドで接続を受け付け、パースした結果を [WatchEvent] として送るだけ。
+//! スレッドで接続を受け付け、パースした結果を渡された関数へ渡すだけ。
+//! 持ち主は PTY ホストで、ウィンドウが閉じている間に届いた通知も取りこぼさない。
 
 use std::io::Read;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -13,9 +14,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use conductor_core::cc_hook::Notification;
-
-use super::{CcState, WatchEvent};
-use crate::EventSender;
 
 /// 1 接続から読み取るメッセージの上限。行儀の悪いクライアントにメモリを食わせないための歯止め。
 const MAX_MESSAGE_BYTES: usize = 8 * 1024;
@@ -33,9 +31,9 @@ pub struct CcNotifyListener {
 
 impl CcNotifyListener {
     /// repo_path のリポジトリの cc-notify ソケットに bind したリスナを作る。
-    pub fn new<P: Send + 'static>(
+    pub fn new(
         repo_path: &std::path::Path,
-        sender: EventSender<P>,
+        on_notification: impl Fn(Notification) + Send + 'static,
     ) -> anyhow::Result<Self> {
         conductor_core::cc_hook::ensure_runtime_dir()?;
         let socket_path = conductor_core::cc_hook::socket_path(repo_path);
@@ -65,7 +63,7 @@ impl CcNotifyListener {
 
         let thread = std::thread::Builder::new()
             .name("cc-notify".into())
-            .spawn(move || Self::accept_loop(listener, sender, shutdown_flag))?;
+            .spawn(move || Self::accept_loop(listener, on_notification, shutdown_flag))?;
 
         Ok(Self {
             socket_path,
@@ -75,9 +73,9 @@ impl CcNotifyListener {
         })
     }
 
-    fn accept_loop<P: Send + 'static>(
+    fn accept_loop(
         listener: UnixListener,
-        sender: EventSender<P>,
+        on_notification: impl Fn(Notification),
         shutdown: Arc<AtomicBool>,
     ) {
         for stream in listener.incoming() {
@@ -113,27 +111,7 @@ impl CcNotifyListener {
             }
 
             match Notification::parse(msg) {
-                Some(Notification::Active { cwd }) => {
-                    sender.send_watch(WatchEvent::CcState {
-                        kind: CcState::Active,
-                        cwd,
-                    });
-                }
-                Some(Notification::Waiting { cwd }) => {
-                    sender.send_watch(WatchEvent::CcState {
-                        kind: CcState::Waiting,
-                        cwd,
-                    });
-                }
-                Some(Notification::Session {
-                    panel_id,
-                    session_id,
-                }) => {
-                    sender.send_watch(WatchEvent::CcSessionRotated {
-                        panel_id,
-                        session_id,
-                    });
-                }
+                Some(notification) => on_notification(notification),
                 None => log::debug!("cc-notify: unrecognized message: {msg:?}"),
             }
         }
@@ -158,20 +136,17 @@ impl Drop for CcNotifyListener {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
+    use std::sync::mpsc;
 
     use super::*;
-    use crate::Services;
 
-    fn recv_watch(svc: &Services<()>) -> Option<WatchEvent> {
-        for _ in 0..200 {
-            if let Some(event) = svc.try_recv()
-                && let crate::EventKind::Watch(w) = event.kind
-            {
-                return Some(w);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        None
+    fn listen(repo: &std::path::Path) -> (CcNotifyListener, mpsc::Receiver<Notification>) {
+        let (tx, rx) = mpsc::channel();
+        let listener = CcNotifyListener::new(repo, move |n| {
+            let _ = tx.send(n);
+        })
+        .unwrap();
+        (listener, rx)
     }
 
     fn send(socket_path: &std::path::Path, msg: &str) {
@@ -182,16 +157,13 @@ mod tests {
     #[test]
     fn 状態のメッセージが届く() {
         let repo = tempfile::tempdir().unwrap();
-        let svc = Services::<()>::new();
-        let listener = CcNotifyListener::new(repo.path(), svc.sender()).unwrap();
+        let (listener, rx) = listen(repo.path());
 
         send(&listener.socket_path, "waiting /tmp/wt");
 
-        let event = recv_watch(&svc).expect("event should arrive");
         assert_eq!(
-            event,
-            WatchEvent::CcState {
-                kind: CcState::Waiting,
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Notification::Waiting {
                 cwd: PathBuf::from("/tmp/wt")
             }
         );
@@ -200,15 +172,13 @@ mod tests {
     #[test]
     fn セッションのローテーションが届く() {
         let repo = tempfile::tempdir().unwrap();
-        let svc = Services::<()>::new();
-        let listener = CcNotifyListener::new(repo.path(), svc.sender()).unwrap();
+        let (listener, rx) = listen(repo.path());
 
         send(&listener.socket_path, "session panel-1 sess-2");
 
-        let event = recv_watch(&svc).expect("event should arrive");
         assert_eq!(
-            event,
-            WatchEvent::CcSessionRotated {
+            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Notification::Session {
                 panel_id: "panel-1".to_string(),
                 session_id: "sess-2".to_string()
             }
@@ -218,8 +188,7 @@ mod tests {
     #[test]
     fn dropでソケットファイルが片付く() {
         let repo = tempfile::tempdir().unwrap();
-        let svc = Services::<()>::new();
-        let listener = CcNotifyListener::new(repo.path(), svc.sender()).unwrap();
+        let (listener, _rx) = listen(repo.path());
         let socket_path = listener.socket_path.clone();
         assert!(socket_path.exists());
 

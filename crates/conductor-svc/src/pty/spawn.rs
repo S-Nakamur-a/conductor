@@ -1,20 +1,16 @@
-//! セッションの起動: コマンド行を組み立て、reader スレッド・vt100 パーサ・
-//! 共有バッファを配線する。
+//! セッションの起動: コマンド行を組み立ててホストに起こさせ、写しを用意する。
 
-use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Instant;
+use std::time::SystemTime;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use conductor_core::cc_hook;
-use portable_pty::{CommandBuilder, PtySize, PtySystem};
+use portable_pty::CommandBuilder;
 use uuid::Uuid;
 
 use super::locale::utf8_locale_overrides;
-use super::{PtySession, PtyStore, SessionKind, SharedIo};
+use super::wire::{SessionInfo, SpawnSpec};
+use super::{PtySession, PtyStore, SessionKind};
 
 /// 何を起動するか。必要な材料は種類ごとに違うので、それぞれの枝が持つ。
 pub enum Launch<'a> {
@@ -66,56 +62,33 @@ impl PtyStore {
         let panel_id = Uuid::new_v4().to_string();
         let kind = req.launch.kind();
         let (cmd, claude_session_id) = build_command(&req.launch, &panel_id);
-
-        let pair = self
-            .pty_system
-            .openpty(PtySize {
-                rows: req.rows,
-                cols: req.cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .context("failed to open PTY pair")?;
-
-        let mut cmd = cmd;
-        cmd.cwd(req.working_dir);
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .context("failed to spawn command in PTY")?;
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .context("failed to clone PTY reader")?;
-        let writer: Arc<Mutex<Box<dyn std::io::Write + Send>>> = Arc::new(Mutex::new(
-            pair.master
-                .take_writer()
-                .context("failed to take PTY writer")?,
-        ));
-
-        let io = SharedIo {
-            lines: Arc::new(Mutex::new(Vec::new())),
-            line_limit: Arc::new(Mutex::new(self.inactive_scrollback)),
-            screen: Arc::new(Mutex::new(vt100::Parser::new(
-                req.rows,
-                req.cols,
-                self.inactive_scrollback,
-            ))),
-            raw_history: matches!(kind, SessionKind::Shell)
-                .then(|| Arc::new(Mutex::new(VecDeque::new()))),
-            last_output: Arc::new(Mutex::new(Instant::now())),
-            shown_cursor: Arc::new(Mutex::new((0, 0))),
-            alt_screen_entered: Arc::new(AtomicBool::new(false)),
-            output_notify: Arc::clone(&self.output_notify),
+        let spawned_at = SystemTime::now();
+        let info = SessionInfo {
+            id: panel_id.clone(),
+            label: req.label.to_string(),
+            kind,
+            worktree: req.worktree.to_string(),
+            working_dir: req.working_dir.to_path_buf(),
+            claude_session_id: claude_session_id.clone(),
+            spawned_at_ms: spawned_at
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64),
+            rows: req.rows,
+            cols: req.cols,
         };
-
-        let reader_io = io.clone();
-        let reader_writer = Arc::clone(&writer);
-        thread::Builder::new()
-            .name(format!("pty-reader-{}", req.label))
-            .spawn(move || super::reader::run(reader, reader_io, reader_writer))
-            .context("failed to spawn PTY reader thread")?;
+        let spec = SpawnSpec {
+            info,
+            argv: cmd
+                .get_argv()
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect(),
+            env: cmd
+                .iter_full_env_as_str()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        };
+        let io = self.spawn_on_host(spec)?;
 
         self.sessions.push(PtySession {
             id: panel_id,
@@ -124,13 +97,8 @@ impl PtyStore {
             worktree: req.worktree.to_string(),
             working_dir: req.working_dir.to_path_buf(),
             claude_session_id,
-            spawned_at: std::time::SystemTime::now(),
-            master: pair.master,
-            writer,
-            child,
+            spawned_at,
             io,
-            nudge_until: None,
-            last_nudge: None,
         });
         Ok(self.sessions.len() - 1)
     }

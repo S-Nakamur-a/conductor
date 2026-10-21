@@ -1,88 +1,51 @@
-//! バックグラウンドの reader スレッド。生バイトを vt100 へ供給し、行バッファを保ち、
-//! カーソル位置クエリに答え、リフロー用の生履歴を残す。
+//! ホストから届いた出力を写しへ流す: vt100 へ供給し、行バッファを保ち、
+//! リフロー用の生履歴を残す。
 
 use std::collections::VecDeque;
-use std::io::{Read, Write};
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use super::{MAX_RAW_HISTORY_BYTES, SharedIo, lock};
 
-/// PTY が閉じる (EOF か読み取りエラー) まで回る。
-///
-/// writer を持つのは、カーソル位置レポート (CSI 6 n) にこのスレッドから即答するため。
-/// fzf やシェルは描画位置を決めるためにこれを送り、返事が無いとタイムアウトするか
-/// ユーザが何か打つまで止まる。
-pub(super) fn run(
-    mut reader: Box<dyn Read + Send>,
-    io: SharedIo,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-) {
-    let mut read_buf = [0u8; 4096];
-    let mut partial = String::new();
-    let mut prev_alt_screen = false;
+pub(super) fn feed(io: &SharedIo, bytes: &[u8]) {
+    *lock(&io.last_output) = Instant::now();
+    io.output_notify.store(true, Ordering::Relaxed);
 
-    loop {
-        let n = match reader.read(&mut read_buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        let bytes = &read_buf[..n];
+    {
+        let mut parser = lock(&io.screen);
+        parser.process(bytes);
+        note_shown_cursor(parser.screen(), &mut lock(&io.shown_cursor));
 
-        *lock(&io.last_output) = Instant::now();
-        io.output_notify.store(true, Ordering::Relaxed);
-
-        // パーサはバイトを消費してしまうので、供給する前に数える。
-        let cpr_count = count_csi_dsr(bytes);
-
-        {
-            let mut parser = lock(&io.screen);
-            parser.process(bytes);
-            note_shown_cursor(parser.screen(), &mut lock(&io.shown_cursor));
-
-            // 記録はパーサへの供給と同じロックの下で行う。並行するリサイズの再構築から
-            // 見ても、履歴とパーサの内容が食い違わないようにするため。
-            if let Some(raw_history) = &io.raw_history {
-                let mut history = lock(raw_history);
-                history.extend(bytes.iter().copied());
-                trim_raw_history(&mut history, MAX_RAW_HISTORY_BYTES);
-            }
-
-            if cpr_count > 0 {
-                let cursor = parser.screen().cursor_position();
-                // 端末座標は 1 始まり。
-                let response = format!("\x1b[{};{}R", cursor.0 + 1, cursor.1 + 1);
-                if let Ok(mut w) = writer.lock() {
-                    for _ in 0..cpr_count {
-                        let _ = w.write_all(response.as_bytes());
-                    }
-                    let _ = w.flush();
-                }
-            }
-
-            let is_alt = parser.screen().alternate_screen();
-            if is_alt && !prev_alt_screen {
-                io.alt_screen_entered.store(true, Ordering::Relaxed);
-            }
-            prev_alt_screen = is_alt;
-        }
-
-        partial.push_str(&String::from_utf8_lossy(bytes));
-        while let Some(pos) = partial.find('\n') {
-            let line: String = partial.drain(..=pos).collect();
-            push_line(
-                &io,
-                line.trim_end_matches('\n')
-                    .trim_end_matches('\r')
-                    .to_string(),
-            );
+        // 記録はパーサへの供給と同じロックの下で行う。並行するリサイズの再構築から
+        // 見ても、履歴とパーサの内容が食い違わないようにするため。
+        if let Some(raw_history) = &io.raw_history {
+            let mut history = lock(raw_history);
+            history.extend(bytes.iter().copied());
+            trim_raw_history(&mut history, MAX_RAW_HISTORY_BYTES);
         }
     }
 
-    if !partial.is_empty() {
-        push_line(&io, partial);
+    let mut partial = lock(&io.partial);
+    partial.push_str(&String::from_utf8_lossy(bytes));
+    while let Some(pos) = partial.find('\n') {
+        let line: String = partial.drain(..=pos).collect();
+        push_line(
+            io,
+            line.trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string(),
+        );
     }
+}
+
+/// 子が終わった。改行の来なかった最後の行も行バッファへ入れる。
+pub(super) fn finish(io: &SharedIo) {
+    let rest = std::mem::take(&mut *lock(&io.partial));
+    if !rest.is_empty() {
+        push_line(io, rest);
+    }
+    io.exited.store(true, Ordering::Relaxed);
+    io.output_notify.store(true, Ordering::Relaxed);
 }
 
 pub(super) fn note_shown_cursor(screen: &vt100::Screen, shown: &mut (u16, u16)) {
@@ -123,12 +86,4 @@ fn push_line(io: &SharedIo, line: String) {
         let excess = lines.len() - limit;
         lines.drain(..excess);
     }
-}
-
-/// プログラムは「カーソルはどこか」を尋ねるためにこれを送り、CSI row ; col R を待つ。
-fn count_csi_dsr(bytes: &[u8]) -> usize {
-    if bytes.len() < 4 {
-        return 0;
-    }
-    bytes.windows(4).filter(|w| *w == b"\x1b[6n").count()
 }

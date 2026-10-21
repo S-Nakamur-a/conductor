@@ -16,7 +16,7 @@ use conductor_core::keymap::KeyMap;
 use conductor_core::theme::Theme;
 use conductor_core::{cc_hook, config, instance_lock, semantic_index, term_caps};
 use conductor_svc::Services;
-use conductor_svc::watch::{CcNotifyListener, ConfigWatcher, RefreshPipe};
+use conductor_svc::watch::{ConfigWatcher, RefreshPipe, WatchEvent};
 use crossterm::execute;
 use crossterm::terminal::SetTitle;
 use ratatui::Terminal;
@@ -66,15 +66,10 @@ pub fn run(version: &'static str) -> Result<()> {
     // リポジトリにつき 1 つしかない口は、2 つ目のウィンドウでは先客に譲る。FIFO は
     // 作り直しが先客の読み口を消し、ソケットは宛先を奪う。どちらも黙って壊れる。
     let repo_channels = !options.second_window;
-    // Claude Code のフックがこのソケットへ active/waiting とセッション id を送る。
-    let _cc_notify = if repo_channels {
-        started(
-            "cc-notify listener",
-            CcNotifyListener::new(&ws.repo.root, svc.sender()),
-        )
-    } else {
-        None
-    };
+    // Claude Code のフックが送る active/waiting とセッション id もホストが受けて中継する。
+    if repo_channels {
+        attach_pty_host(&mut ws, &svc, version);
+    }
     // MCP がレビュー DB を書いたら、この FIFO 越しに読み直しを促してくる。
     let _refresh = if repo_channels {
         started(
@@ -117,6 +112,30 @@ pub fn run(version: &'static str) -> Result<()> {
         relaunch(&exe, &relaunch_args);
     }
     result
+}
+
+/// 前のウィンドウから残っているセッションに戻る。ホストが居なければここで起こす。
+fn attach_pty_host<P: Send + 'static>(ws: &mut Workspace, svc: &Services<P>, version: &str) {
+    let sender = svc.sender();
+    let notify = move |n| sender.send_watch(WatchEvent::from(n));
+    let text = match ws
+        .panels
+        .terminal
+        .attach_host(&ws.repo.root, version, notify)
+    {
+        Ok(attached) if attached.host_version == version => return,
+        Ok(attached) => format!(
+            "The PTY host is still v{}; it is replaced once its sessions have all ended",
+            attached.host_version
+        ),
+        Err(e) => format!("PTY host unavailable, sessions will end with this window: {e:#}"),
+    };
+    log::warn!("{text}");
+    ws.chrome.status = Some(StatusMessage {
+        level: StatusLevel::Warning,
+        text,
+        shown_at: std::time::Instant::now(),
+    });
 }
 
 /// 同じ引数で自分自身を exec し直す (戻らない)。プロセスイメージを置き換えるので、
@@ -256,8 +275,18 @@ fn cli_fast_path(version: &str) -> Option<Result<()>> {
             )),
         }),
         "index" => Some(build_index()),
+        "pty-host" => Some(run_pty_host(version)),
         _ => None,
     }
+}
+
+fn run_pty_host(version: &str) -> Result<()> {
+    let root = arg_path(std::env::args().nth(2))?;
+    let scrollback = Config::load()
+        .unwrap_or_default()
+        .terminal
+        .inactive_scrollback;
+    conductor_svc::pty::run_host(&root, version, scrollback)
 }
 
 fn build_index() -> Result<()> {
@@ -286,6 +315,7 @@ Usage: conductor [REPO_PATH] [--second-window]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
        conductor cc-signal <active|waiting>
+       conductor pty-host [REPO_PATH]
 
   REPO_PATH    Git repository to open (defaults to the current directory)
 
@@ -313,6 +343,11 @@ Commands:
                conductor whether the panel in this directory is working or
                waiting for you, which drives the worktree monitor strip. Wired
                up the same way as cc-hook; not usually run by hand.
+
+  pty-host     Hold the repository's Claude Code and shell sessions so they
+               keep running after the window closes. Started by conductor
+               and exits once it has no sessions and no window; not usually
+               run by hand.
 
 Options:
   --second-window  Open a repository that another conductor already has open.

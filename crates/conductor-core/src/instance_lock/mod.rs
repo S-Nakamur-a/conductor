@@ -42,7 +42,15 @@ pub fn locked_repo_root(repo_path: &Path) -> PathBuf {
 /// 呼び出し側は警告だけ出して起動を続ける。排他できないことを理由にリポジトリを
 /// 開けなくするほうが害が大きい。
 pub fn acquire(repo_path: &Path) -> Result<Option<InstanceLock>> {
-    let path = lock_path(repo_path);
+    acquire_file(&lock_path(repo_path))
+}
+
+/// PTY ホストの排他。ウィンドウのロックとは別で、ウィンドウを閉じた後もホストは残る。
+pub fn acquire_pty_host(repo_path: &Path) -> Result<Option<InstanceLock>> {
+    acquire_file(&crate::git_engine::conductor_dir(repo_path).join("pty-host.lock"))
+}
+
+fn acquire_file(path: &Path) -> Result<Option<InstanceLock>> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("could not create {}", dir.display()))?;
@@ -52,7 +60,7 @@ pub fn acquire(repo_path: &Path) -> Result<Option<InstanceLock>> {
         .read(true)
         .truncate(false)
         .write(true)
-        .open(&path)
+        .open(path)
         .with_context(|| format!("could not open {}", path.display()))?;
 
     // SAFETY: fd は file が所有していて有効。

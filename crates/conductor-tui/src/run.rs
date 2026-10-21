@@ -200,7 +200,7 @@ pub fn run(
         dirty |= tick_git_refresh(ws, svc, &mut debounces.git, Instant::now());
         dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
         dirty |= ws.panels.terminal.took_output();
-        ws.panels.terminal.nudge();
+        ws.panels.terminal.flush_deferred();
         dirty |= run_timers(
             ws,
             svc,

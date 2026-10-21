@@ -54,6 +54,11 @@ pub fn socket_path(repo_root: &Path) -> PathBuf {
     runtime_dir().join(format!("{}.sock", repo_key(repo_root)))
 }
 
+/// このリポジトリの PTY ホストが待ち受けるソケット。
+pub fn pty_host_socket_path(repo_root: &Path) -> PathBuf {
+    runtime_dir().join(format!("{}.pty.sock", repo_key(repo_root)))
+}
+
 /// ソケットの居場所を書き残す先。環境変数を受け取れないクライアント (プラグインの
 /// シェルスクリプト) はここを読んで宛先を知る。
 pub fn socket_pointer_path(repo_root: &Path) -> PathBuf {
@@ -116,8 +121,8 @@ fn runtime_dir_in(bases: impl IntoIterator<Item = PathBuf>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp").join(&name))
 }
 
-/// "/" + 16 桁の鍵 + ".sock"。
-const SOCKET_NAME_MAX: usize = 1 + 16 + 5;
+/// "/" + 16 桁の鍵 + ".pty.sock"。
+const SOCKET_NAME_MAX: usize = 1 + 16 + 9;
 
 // 鍵は conductor_dir 越しに採る。linked worktree もメイン側と同じ 1 本を指す必要があり、
 // フックへパスを渡す spawn.rs も同じ解決をしないと行き違う。
@@ -220,14 +225,18 @@ mod tests {
 
     #[test]
     fn 深いリポジトリでもソケットのパスはsun_pathに収まる() {
-        let path = socket_path(Path::new(DEEP_REPO));
-        assert!(
-            path.as_os_str().len() <= SUN_PATH_MAX,
-            "{} バイト: {}",
-            path.as_os_str().len(),
-            path.display()
-        );
-        assert!(!path.starts_with(DEEP_REPO), "{}", path.display());
+        for path in [
+            socket_path(Path::new(DEEP_REPO)),
+            pty_host_socket_path(Path::new(DEEP_REPO)),
+        ] {
+            assert!(
+                path.as_os_str().len() <= SUN_PATH_MAX,
+                "{} バイト: {}",
+                path.as_os_str().len(),
+                path.display()
+            );
+            assert!(!path.starts_with(DEEP_REPO), "{}", path.display());
+        }
     }
 
     #[test]

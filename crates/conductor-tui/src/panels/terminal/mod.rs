@@ -12,11 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use conductor_core::cc_hook::Notification;
 use conductor_core::claude_log::LogEntry;
 use conductor_core::config::Config;
 use conductor_core::keymap::Action;
 use conductor_core::theme::Theme;
-use conductor_svc::pty::{Launch, PtyStore, SessionKind, Spawn};
+use conductor_svc::pty::{Attached, Launch, PtyStore, SessionKind, Spawn};
 use conductor_svc::watch::{CcState, WatchEvent};
 use crossterm::event::KeyEvent;
 
@@ -139,6 +140,24 @@ impl TerminalPanel {
 
     pub fn leave_session_hooks_alone(&mut self) {
         self.session_hooks = false;
+    }
+
+    /// 前のウィンドウが残したセッションのホストへつなぐ。映すのは worktree が決まってから。
+    pub fn attach_host(
+        &mut self,
+        repo_root: &Path,
+        version: &str,
+        on_notify: impl Fn(Notification) + Send + Sync + 'static,
+    ) -> Result<Attached> {
+        self.pty.attach(repo_root, version, on_notify)
+    }
+
+    /// worktree に Claude のセッションが既にあるか。起動時の復帰はそこを飛ばす。
+    pub fn has_claude_session(&self, worktree: &Path) -> bool {
+        self.pty
+            .sessions()
+            .iter()
+            .any(|s| s.kind == SessionKind::ClaudeCode && s.working_dir == worktree)
     }
 
     pub fn is_waiting(&self, worktree: &Path) -> bool {
@@ -1036,12 +1055,6 @@ impl TerminalPanel {
             }
         }
         removed
-    }
-
-    /// オルタネート画面へ入った直後のセッションを突く。fzf はこれを待っている。
-    pub fn nudge(&mut self) {
-        self.pty.nudge_alt_screen_sessions();
-        self.flush_deferred();
     }
 }
 

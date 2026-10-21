@@ -455,6 +455,8 @@ dependencies = [
  "log",
  "notify",
  "portable-pty",
+ "serde",
+ "serde_json",
  "tempfile",
  "uuid",
  "vt100",
