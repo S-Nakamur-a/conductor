@@ -33,8 +33,8 @@ pub struct WorktreePanel {
     grabbed: Option<GrabState>,
     /// ストリップの空白へのクリック。
     blank_clicks: ClickTracker,
-    /// 自分へのレビュー依頼を問い合わせている最中。gh が周期より遅くても重ねない。
-    asking_review_requests: bool,
+    /// レビュー依頼の問い合わせか、そこから始めた取り込みの最中。
+    handling_review_request: bool,
     /// このウィンドウで自動の取り込みを始めた PR。消した worktree を次の周回で作り直さない。
     auto_reviewed: HashSet<u64>,
 }
@@ -65,8 +65,12 @@ impl WorktreePanel {
         self.listing
     }
 
-    pub fn is_asking_review_requests(&self) -> bool {
-        self.asking_review_requests
+    pub fn is_handling_review_request(&self) -> bool {
+        self.handling_review_request
+    }
+
+    pub fn finish_review_request(&mut self) {
+        self.handling_review_request = false;
     }
 
     pub fn grabbed(&self) -> Option<&GrabState> {
@@ -209,7 +213,7 @@ impl WorktreePanel {
             }
             TaskResult::GitDone(outcome) => self.git_done(outcome),
             TaskResult::ReviewRequests(requested) => {
-                self.asking_review_requests = false;
+                self.finish_review_request();
                 match requested {
                     Ok(requested) => self.start_next_review(requested),
                     Err(e) => vec![Effect::Status(
@@ -390,8 +394,11 @@ impl WorktreePanel {
         if matches!(task, Task::ListWorktrees) {
             self.listing = true;
         }
-        if matches!(task, Task::ListReviewRequests { .. }) {
-            self.asking_review_requests = true;
+        if matches!(
+            task,
+            Task::ListReviewRequests { .. } | Task::IntakeRequestedPr { .. }
+        ) {
+            self.handling_review_request = true;
         }
     }
 

@@ -360,10 +360,7 @@ fn run_timers(
         // 一覧と同じ周期で見直す。作り直しに失敗しても次の周回で試し直せる。
         dirty |= file_watch.sync(ws, svc);
     }
-    if review_request_poll.due(now)
-        && !ws.config.review.auto_review_repos.is_empty()
-        && !ws.panels.worktree.is_asking_review_requests()
-    {
+    if review_request_poll.due(now) && ws.may_ask_review_requests() {
         let review = ws.config.review.clone();
         apply(
             ws,
@@ -1609,11 +1606,12 @@ mod tests {
         })
     }
 
-    fn analyses(effects: &[Effect], worktree: &std::path::Path) -> bool {
+    fn analyses(effects: &[Effect], worktree: &std::path::Path, branch: &str) -> bool {
         effects.iter().any(|e| {
             matches!(
                 e,
-                Effect::Spawn(crate::task::Task::Analyze { worktree: w, .. }) if w == worktree
+                Effect::Spawn(crate::task::Task::Analyze { worktree: w, branch: b, .. })
+                    if w == worktree && b == branch
             )
         })
     }
@@ -1631,7 +1629,10 @@ mod tests {
             &fetched,
             "feature/pr-head",
         ))));
-        assert!(analyses(&effects, &fetched), "{effects:?}");
+        assert!(
+            analyses(&effects, &fetched, "feature/pr-head"),
+            "{effects:?}"
+        );
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
 
@@ -1656,7 +1657,10 @@ mod tests {
             number: 9,
             outcome: Ok(intaken(&fetched, "feature/requested")),
         });
-        assert!(analyses(&effects, &fetched), "{effects:?}");
+        assert!(
+            analyses(&effects, &fetched, "feature/requested"),
+            "{effects:?}"
+        );
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
 

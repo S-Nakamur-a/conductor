@@ -623,13 +623,20 @@ impl Workspace {
         }
     }
 
-    /// 頼まれて取り込んだ PR では選択もフォーカスも動かさない。見ている worktree から
-    /// 引き剥がさず、一覧に増えたことと解析が走っていることだけを知らせる。
+    /// 解析は 1 分より長くかかるので、残っているうちに次を始めると周回ごとに並ぶ。
+    pub fn may_ask_review_requests(&self) -> bool {
+        !self.config.review.auto_review_repos.is_empty()
+            && !self.panels.worktree.is_handling_review_request()
+            && self.panels.revidere.is_idle()
+    }
+
+    /// 頼まれて取り込んだ PR では、見ている worktree から引き剥がさないよう選択もフォーカスも動かさない。
     fn accept_requested_pr(
         &mut self,
         number: u64,
         outcome: Result<Box<IntakenPr>, String>,
     ) -> Vec<Effect> {
+        self.panels.worktree.finish_review_request();
         let IntakenPr {
             worktree_path,
             meta,
@@ -852,6 +859,31 @@ fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Eff
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 取り込みか解析が残っているうちは次のレビュー依頼を問い合わせない() {
+        let mut ws = Workspace::for_test();
+        assert!(!ws.may_ask_review_requests(), "設定が空");
+        ws.config.review.auto_review_repos = vec!["/r".into()];
+        assert!(ws.may_ask_review_requests());
+
+        ws.panels
+            .worktree
+            .note_spawned(&Task::IntakeRequestedPr { number: 1 });
+        assert!(!ws.may_ask_review_requests(), "取り込み中");
+        ws.panels.worktree.finish_review_request();
+
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: "/r".into(),
+            branch: "feature/a".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        });
+        assert!(!ws.may_ask_review_requests(), "解析中");
+    }
 
     #[test]
     fn 設定に差が無ければ何も起きない() {

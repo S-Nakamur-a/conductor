@@ -124,7 +124,7 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #
 # While one of these repositories is open, a pull request that requests your review
 # (directly, not through a team) is checked out into a worktree and revidere runs on
-# it, one PR per minute. Write the main worktree's path.
+# it, one PR at a time. Write the main worktree's path.
 # auto_review_repos = ["~/src/my-repo"]
 
 [updates]

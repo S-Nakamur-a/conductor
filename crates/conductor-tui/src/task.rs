@@ -1145,9 +1145,11 @@ fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
 }
 
 fn review_requests(env: &TaskEnv, review: &ReviewConfig) -> Result<Vec<PrHead>, String> {
-    let main = GitEngine::open(&env.root)
-        .and_then(|git| git.main_worktree_path())
-        .map_err(|e| e.to_string())?;
+    // git でないディレクトリも開けるので、開けないのは設定の対象外として黙る。
+    let Ok(git) = GitEngine::open(&env.root) else {
+        return Ok(Vec::new());
+    };
+    let main = git.main_worktree_path().map_err(|e| e.to_string())?;
     if !review.auto_reviews(&main) {
         return Ok(Vec::new());
     }
@@ -1482,6 +1484,21 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn gitでないディレクトリではレビュー依頼を問い合わせずに黙る() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ws = crate::workspace::Workspace::for_test();
+        ws.repo.root = dir.path().to_path_buf();
+        let review = ReviewConfig {
+            auto_review_repos: vec!["/elsewhere".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_requests(&ws.task_env(), &review).map(|v| v.len()),
+            Ok(0)
+        );
+    }
 
     fn api(provider: &str, model: &str, command: &[&str]) -> ApiConfig {
         ApiConfig {

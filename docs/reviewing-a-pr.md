@@ -18,8 +18,10 @@ terminal keybindings keep working while you review:
    `[review] auto_review_repos` in the config. While it is open, Conductor asks
    GitHub once a minute for open PRs that request *your* review — directly, not
    through one of your teams — and takes in the first one that has no worktree
-   yet, without moving you off the worktree you are on. A worktree you delete is
-   not brought back until the next start.
+   yet, without moving you off the worktree you are on. It asks again only once
+   that PR is in and no review is running, so the AI reviews do not pile up. A
+   worktree you delete is not brought back until you switch repositories or
+   restart.
 2. **Changed files and comments** — the Explorer's bottom pane cycles between
    the changed-files diff list and the review comment list.
 3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`

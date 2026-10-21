@@ -135,6 +135,7 @@ pub struct ReviewConfig {
 }
 
 impl ReviewConfig {
+    /// 設定に書いたパスと git が返すパスは symlink で食い違うので、実体で比べる。
     pub fn auto_reviews(&self, main_worktree: &Path) -> bool {
         let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let main = canonical(main_worktree);
