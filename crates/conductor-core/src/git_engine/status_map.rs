@@ -8,6 +8,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use git2::{Index, Repository, Status};
 
+use super::ChangeCounts;
+
 /// ファイルツリーの薄暗い表示のための大まかな分類。staged / unstaged の区別は
 /// [GitStatusMap::status] 側。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +86,38 @@ impl GitStatusMap {
     /// status に出た全パス。未追跡ディレクトリは git が畳んだ `newdir/` のまま。
     pub fn paths(&self) -> impl Iterator<Item = &str> {
         self.by_path.keys().map(String::as_str)
+    }
+
+    /// added / modified / deleted はファイルごとに 1 バケットだが、staged だけは
+    /// それらと重複して数える (理由は ChangeCounts::staged)。
+    pub fn change_counts(&self) -> ChangeCounts {
+        const STAGED: Status = Status::INDEX_NEW
+            .union(Status::INDEX_MODIFIED)
+            .union(Status::INDEX_DELETED)
+            .union(Status::INDEX_TYPECHANGE);
+        const INDEX_MODIFIED: Status = Status::INDEX_MODIFIED.union(Status::INDEX_TYPECHANGE);
+        const WT_MODIFIED: Status = Status::WT_MODIFIED.union(Status::WT_TYPECHANGE);
+
+        let mut counts = ChangeCounts::default();
+        for s in self.by_path.values() {
+            if s.intersects(STAGED) {
+                counts.staged += 1;
+            }
+            if s.intersects(Status::INDEX_NEW) {
+                counts.added += 1;
+            } else if s.intersects(INDEX_MODIFIED) {
+                counts.modified += 1;
+            } else if s.intersects(Status::INDEX_DELETED) {
+                counts.deleted += 1;
+            } else if s.intersects(Status::WT_NEW) {
+                counts.added += 1;
+            } else if s.intersects(WT_MODIFIED) {
+                counts.modified += 1;
+            } else if s.intersects(Status::WT_DELETED) {
+                counts.deleted += 1;
+            }
+        }
+        counts
     }
 
     /// git status が報告した生のビット。変更なしの tracked ファイルは None。

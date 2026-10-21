@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use git2::{Repository, Status, StatusOptions, StatusShow};
+use git2::Repository;
 
-use super::{ChangeCounts, GitEngine, ReviewState, WorktreeInfo};
+use super::{ChangeCounts, GitEngine, GitStatusMap, ReviewState, WorktreeInfo};
 
 impl GitEngine {
     /// main と linked のすべての worktree を、ブランチつきで返す (件数は数えない)。
@@ -203,53 +203,7 @@ impl GitEngine {
 
     /// 1 つの worktree の変更件数。
     pub fn change_counts_at(path: &Path) -> Result<ChangeCounts> {
-        let repo = Repository::open(path)
-            .with_context(|| format!("cannot open repo at {}", path.display()))?;
-        Self::change_counts(&repo)
-    }
-
-    /// added / modified / deleted はファイルごとに 1 バケットだが、staged だけは
-    /// それらと重複して数える (理由は ChangeCounts::staged)。
-    fn change_counts(repo: &Repository) -> Result<ChangeCounts> {
-        const STAGED: Status = Status::INDEX_NEW
-            .union(Status::INDEX_MODIFIED)
-            .union(Status::INDEX_DELETED)
-            .union(Status::INDEX_RENAMED)
-            .union(Status::INDEX_TYPECHANGE);
-        const INDEX_MODIFIED: Status = Status::INDEX_MODIFIED
-            .union(Status::INDEX_RENAMED)
-            .union(Status::INDEX_TYPECHANGE);
-        const WT_MODIFIED: Status = Status::WT_MODIFIED
-            .union(Status::WT_RENAMED)
-            .union(Status::WT_TYPECHANGE);
-
-        let mut opts = StatusOptions::new();
-        opts.show(StatusShow::IndexAndWorkdir)
-            .include_untracked(true)
-            .renames_head_to_index(true);
-        let statuses = repo.statuses(Some(&mut opts))?;
-
-        let mut counts = ChangeCounts::default();
-        for entry in statuses.iter() {
-            let s = entry.status();
-            if s.intersects(STAGED) {
-                counts.staged += 1;
-            }
-            if s.intersects(Status::INDEX_NEW) {
-                counts.added += 1;
-            } else if s.intersects(INDEX_MODIFIED) {
-                counts.modified += 1;
-            } else if s.intersects(Status::INDEX_DELETED) {
-                counts.deleted += 1;
-            } else if s.intersects(Status::WT_NEW) {
-                counts.added += 1;
-            } else if s.intersects(WT_MODIFIED) {
-                counts.modified += 1;
-            } else if s.intersects(Status::WT_DELETED) {
-                counts.deleted += 1;
-            }
-        }
-        Ok(counts)
+        Ok(GitStatusMap::load(path)?.change_counts())
     }
 }
 
