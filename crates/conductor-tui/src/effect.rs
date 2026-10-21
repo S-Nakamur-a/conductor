@@ -67,6 +67,7 @@ pub enum Effect {
     ResumeSession {
         id: String,
         worktree: Option<PathBuf>,
+        chrome: bool,
     },
     /// 開いているファイルを埋め込みエディタで開く。パスは絶対。
     OpenInEditor(PathBuf),
@@ -185,9 +186,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     )
                 })
             }
-            Effect::ResumeSession { id, worktree } => {
-                new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree, false)
-            }
+            Effect::ResumeSession {
+                id,
+                worktree,
+                chrome,
+            } => new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree, chrome),
             Effect::OpenInEditor(path) => queue.extend(open_in_editor(ws, &path)),
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },

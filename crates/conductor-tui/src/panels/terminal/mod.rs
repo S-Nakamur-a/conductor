@@ -21,8 +21,11 @@ use conductor_svc::watch::{CcState, WatchEvent};
 use crossterm::event::KeyEvent;
 
 use crate::click::ClickTracker;
+use crate::command::CommandId;
 use crate::effect::Effect;
 use crate::layout::{Layout, Region};
+use crate::modal::Modal;
+use crate::modal::popup::{Choices, Popup};
 use crate::panels::viewer::syntax::Highlighter;
 use crate::task::Task;
 use crate::workspace::{Ctx, Focus, StatusLevel};
@@ -32,6 +35,16 @@ use reflow::{Handled, Reflow};
 
 /// セッションのラベルに使う番号。同じ worktree で空いている一番小さいものを取る。
 const SESSION_SLOTS: usize = 9;
+
+fn claude_launches() -> Choices {
+    vec![
+        ("Claude Code", Effect::Command(CommandId::NewClaudeCode)),
+        (
+            "Claude Code + Chrome",
+            Effect::Command(CommandId::NewClaudeCodeWithChrome),
+        ),
+    ]
+}
 
 /// 端末パネル 1 枚。
 pub struct Pane {
@@ -167,18 +180,18 @@ impl TerminalPanel {
         tabs::row(pane.kind, &labelled, pane.session.as_deref(), width)
     }
 
-    /// タブ行のクリック。x は枠の内側からの相対列。押せる区画に当たらなければ
-    /// None を返して、空の区画のダブルクリック起動へ渡す。
-    pub fn tab_click(&mut self, focus: Focus, x: u16, width: u16) -> Option<Vec<Effect>> {
+    /// タブ行のクリック。押せる区画に当たらなければ None を返して、空の区画の
+    /// ダブルクリック起動へ渡す。
+    pub fn tab_click(&mut self, focus: Focus, column: u16, tabs: Rect) -> Option<Vec<Effect>> {
         let region = match focus {
             Focus::TerminalClaude => Region::TerminalClaude,
             Focus::TerminalShell => Region::TerminalShell,
             _ => return None,
         };
         let slot = self
-            .tab_slots(region, width)
+            .tab_slots(region, tabs.width)
             .into_iter()
-            .find(|slot| slot.contains(x))?;
+            .find(|slot| slot.contains(column - tabs.x))?;
         match slot.kind {
             tabs::SlotKind::Tab { session, .. } => {
                 // 今映しているタブを押しただけならスクロール位置を捨てない。
@@ -194,6 +207,14 @@ impl TerminalPanel {
             tabs::SlotKind::Close { session } => {
                 self.close_session(focus, &session);
                 Some(Vec::new())
+            }
+            tabs::SlotKind::Add if region == Region::TerminalClaude => {
+                Some(vec![Effect::PushModal(Modal::Popup(Popup::new(
+                    "New",
+                    claude_launches(),
+                    Some((tabs.x + slot.start, tabs.y + 1)),
+                    0,
+                )))])
             }
             tabs::SlotKind::Add => Some(vec![Effect::NewSession(self.pane(region).kind)]),
             tabs::SlotKind::Hint => None,
@@ -1178,13 +1199,13 @@ mod tests {
         let add = x_of(&tabs::SlotKind::Add);
 
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, second, WIDTH),
+            panel.tab_click(Focus::TerminalShell, second, Rect::new(0, 0, WIDTH, 1)),
             Some(Vec::new()),
             "タブを選ぶのに Effect は要らない"
         );
         assert_eq!(panel.shell.session.as_deref(), Some(ids[1].as_str()));
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, add, WIDTH),
+            panel.tab_click(Focus::TerminalShell, add, Rect::new(0, 0, WIDTH, 1)),
             Some(vec![Effect::NewSession(SessionKind::Shell)])
         );
 
@@ -1193,7 +1214,7 @@ mod tests {
             session: ids[1].clone(),
         });
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, close, WIDTH),
+            panel.tab_click(Focus::TerminalShell, close, Rect::new(0, 0, WIDTH, 1)),
             Some(Vec::new())
         );
         let left: Vec<String> = panel
@@ -1211,7 +1232,7 @@ mod tests {
             .find(|slot| matches!(slot.kind, tabs::SlotKind::Close { .. }))
             .unwrap()
             .start;
-        panel.tab_click(Focus::TerminalShell, close, WIDTH);
+        panel.tab_click(Focus::TerminalShell, close, Rect::new(0, 0, WIDTH, 1));
         assert!(panel.sessions(SessionKind::Shell).is_empty());
         assert_eq!(panel.shell.session, None);
     }
@@ -1509,6 +1530,33 @@ mod tests {
             panel.transcript.is_none(),
             "取り消した後に届いた結果は載せない"
         );
+    }
+
+    #[test]
+    fn claudeの追加チップはchromeで起動するかを聞く() {
+        let mut panel = TerminalPanel::new(&Config::default());
+        let tabs = Rect::new(30, 3, 80, 1);
+        let add = panel
+            .tab_slots(Region::TerminalClaude, tabs.width)
+            .into_iter()
+            .find(|slot| slot.kind == tabs::SlotKind::Add)
+            .expect("チップが無い");
+
+        let mut effects = panel
+            .tab_click(Focus::TerminalClaude, tabs.x + add.start, tabs)
+            .unwrap();
+        let [Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice() else {
+            panic!("{effects:?}");
+        };
+        let screen = Rect::new(0, 0, 120, 40);
+        let inner = crate::list::inner(crate::modal::popup::rect(popup, screen));
+        assert!(matches!(
+            popup.click(inner.x, inner.y + 1, screen).as_slice(),
+            [
+                Effect::PopModal,
+                Effect::Command(CommandId::NewClaudeCodeWithChrome)
+            ]
+        ));
     }
 
     #[test]

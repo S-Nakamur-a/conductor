@@ -303,6 +303,7 @@ impl WorktreePanel {
             effects.push(Effect::ResumeSession {
                 id,
                 worktree: Some(worktree),
+                chrome: false,
             });
         }
         effects

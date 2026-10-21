@@ -8,7 +8,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::effect::Effect;
+use crate::modal::Modal;
 use crate::modal::picker::{Cursor, Filtered, filtered_key, scroll_for};
+use crate::modal::popup::Popup;
 use crate::task::Task;
 use crate::workspace::Ctx;
 
@@ -62,7 +64,7 @@ impl ResumePicker {
                 return match id {
                     Some(id) => vec![
                         Effect::PopModal,
-                        Effect::ResumeSession { id, worktree: None },
+                        Effect::PushModal(Modal::Popup(launch_choice(id))),
                     ],
                     None => Vec::new(),
                 };
@@ -83,6 +85,19 @@ impl ResumePicker {
         }
         Vec::new()
     }
+}
+
+fn launch_choice(id: String) -> Popup {
+    let resume = |id, chrome| Effect::ResumeSession {
+        id,
+        worktree: None,
+        chrome,
+    };
+    let choices = vec![
+        ("Resume", resume(id.clone(), false)),
+        ("Resume + Chrome", resume(id, true)),
+    ];
+    Popup::new("Resume", choices, None, 0)
 }
 
 pub fn title(picker: &ResumePicker) -> String {
@@ -186,11 +201,23 @@ mod tests {
     }
 
     #[test]
-    fn 選ぶと閉じてそのidで開き直す() {
+    fn 選ぶとchromeで開き直すかを聞いてからそのidで開き直す() {
         let (mut picker, ws) = picker();
         picker.update(key(KeyCode::Down), &ws.ctx());
-        let effects = picker.update(key(KeyCode::Enter), &ws.ctx());
-        let [Effect::PopModal, Effect::ResumeSession { id, .. }] = effects.as_slice() else {
+        let mut effects = picker.update(key(KeyCode::Enter), &ws.ctx());
+        let [Effect::PopModal, Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        popup.update(key(KeyCode::Down), &ws.ctx());
+        let effects = popup.update(key(KeyCode::Enter), &ws.ctx());
+        let [
+            Effect::PopModal,
+            Effect::ResumeSession {
+                id, chrome: true, ..
+            },
+        ] = effects.as_slice()
+        else {
             panic!("{effects:?}");
         };
         assert_eq!(id, "s2");

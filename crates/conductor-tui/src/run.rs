@@ -528,8 +528,8 @@ fn on_mouse(
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // 開いているポップアップが先。区画に渡すと裏の一覧が反応してしまう。
-            if let Some(crate::modal::Modal::ListingPicker(picker)) = ws.modals.last() {
-                let effects = picker.click(mouse.column, mouse.row, layout.area);
+            if let Some(crate::modal::Modal::Popup(popup)) = ws.modals.last_mut() {
+                let effects = popup.click(mouse.column, mouse.row, layout.area);
                 apply(ws, svc, effects);
                 return;
             }
@@ -569,10 +569,7 @@ fn on_mouse(
                     .rect(region)
                     .map(crate::panels::terminal::render::tab_area)
                 && tabs.contains(Position::new(mouse.column, mouse.row))
-                && let Some(effects) =
-                    ws.panels
-                        .terminal
-                        .tab_click(focus, mouse.column - tabs.x, tabs.width)
+                && let Some(effects) = ws.panels.terminal.tab_click(focus, mouse.column, tabs)
             {
                 apply(ws, svc, effects);
                 return;
@@ -693,9 +690,18 @@ fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Opt
         (_, crate::panels::explorer::git_changes::Listing::Log) => 1,
         _ => 0,
     };
-    Some(vec![Effect::PushModal(crate::modal::Modal::ListingPicker(
-        crate::modal::listing::ListingPicker::new(rect.x, rect.y + 1, current),
+    Some(vec![Effect::PushModal(crate::modal::Modal::Popup(
+        crate::modal::popup::Popup::new("Show", listings(), Some((rect.x, rect.y + 1)), current),
     ))])
+}
+
+fn listings() -> crate::modal::popup::Choices {
+    use crate::command::CommandId;
+    vec![
+        ("Changes", Effect::Command(CommandId::ShowDiffList)),
+        ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
+        ("Comments", Effect::Command(CommandId::ShowCommentList)),
+    ]
 }
 
 /// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
