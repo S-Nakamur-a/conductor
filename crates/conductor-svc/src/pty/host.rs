@@ -46,8 +46,10 @@ impl HostSession {
     }
 
     fn snapshot(&self) -> Vec<u8> {
+        // resize と同じ parser → raw_history の順で取る。逆だと互いを待つ。
+        let parser = lock(&self.parser);
         let history = self.raw_history.as_ref().map(|h| lock(h));
-        snapshot(history.as_deref(), lock(&self.parser).screen())
+        snapshot(history.as_deref(), parser.screen())
     }
 }
 

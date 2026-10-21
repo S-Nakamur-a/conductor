@@ -155,8 +155,6 @@ impl WorktreePanel {
                 worktree.branch
             ),
         };
-        let question =
-            format!("{question} Its Claude Code and shell sessions are stopped, even mid-task.");
         Effect::PushModal(Modal::Confirm(
             Confirm::destructive(
                 question,
@@ -168,6 +166,8 @@ impl WorktreePanel {
                     }),
                 ],
             )
+            // 質問は 1 行で折り返さないので、足すと枠からはみ出して読めない。
+            .detail("Its Claude Code and shell sessions will be stopped, even mid-task.")
             .title("Delete worktree"),
         ))
     }
