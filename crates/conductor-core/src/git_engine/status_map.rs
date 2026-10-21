@@ -1,10 +1,11 @@
 //! パスから git status を引く一発スナップショット。Explorer のリフレッシュごとに
 //! 1 回だけ読み、ファイルツリーの薄暗い表示と Changed files の色分けで共有する。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use git2::{Index, Repository, Status};
@@ -79,8 +80,13 @@ pub struct GitStatusMap {
 
 impl GitStatusMap {
     pub fn load(worktree_path: &Path) -> Result<Self> {
+        Self::load_with(worktree_path, COLD_STATUS)
+    }
+
+    /// しきい値を差し替えるテスト用の入口。
+    pub(crate) fn load_with(worktree_path: &Path, cold_after: Duration) -> Result<Self> {
         Ok(Self {
-            by_path: porcelain(worktree_path)?,
+            by_path: porcelain(worktree_path, cold_after)?,
         })
     }
 
@@ -165,13 +171,15 @@ impl GitStatusMap {
 ///
 /// `-uall` は付けない (4.2 秒。未追跡が 1 件も無くても全走査する)。畳まれたディレクトリは
 /// [GitStatusMap::classify] が継承で開く。
-fn porcelain(worktree_path: &Path) -> Result<HashMap<String, Status>> {
+fn porcelain(worktree_path: &Path, cold_after: Duration) -> Result<HashMap<String, Status>> {
+    let warming = take_warm_turn(worktree_path);
     let mut git = Command::new("git");
-    if !first_status_in_this_process(worktree_path) {
+    if !warming {
         // 付けないと status が index を書き戻し、利用者や Claude Code が同じ worktree で
         // 打った git add / commit を index.lock で弾く。ウォッチャー毎に走るので当たる。
         git.arg("--no-optional-locks");
     }
+    let started = Instant::now();
     let out = git
         .arg("-C")
         .arg(worktree_path)
@@ -192,18 +200,68 @@ fn porcelain(worktree_path: &Path) -> Result<HashMap<String, Status>> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
+    if !warming {
+        note_speed(worktree_path, started.elapsed() > cold_after);
+    }
     Ok(parse_porcelain(&out.stdout))
 }
 
-static VISITED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Mutex::default);
+/// 温まった untracked cache なら 17 万ファイルでも 0.5s 以内、冷えていれば 1〜6s。
+const COLD_STATUS: Duration = Duration::from_secs(1);
 
-/// 素の status は untracked cache を書き戻すので、初回の 1 回だけ温めに使う
-/// (冷えたままだと 17 万ファイルで 5.2s、温まれば 0.23s)。
-fn first_status_in_this_process(worktree_path: &Path) -> bool {
-    VISITED
+/// 温めが効かなかった (checkout や利用者が index.lock を握っていた、untrackedCache が無効) 後に
+/// 次の素の status を試すまでの間隔。失敗が続くたびに倍にする。
+const RETRY_FLOOR: Duration = Duration::from_secs(30);
+const RETRY_CEILING: Duration = Duration::from_secs(600);
+
+struct Warmth {
+    cold: bool,
+    retry_after: Option<Instant>,
+    backoff: Duration,
+}
+
+impl Default for Warmth {
+    fn default() -> Self {
+        Self {
+            cold: false,
+            retry_after: None,
+            backoff: RETRY_FLOOR,
+        }
+    }
+}
+
+static WARMTH: LazyLock<Mutex<HashMap<PathBuf, Warmth>>> = LazyLock::new(Mutex::default);
+
+fn warmth() -> std::sync::MutexGuard<'static, HashMap<PathBuf, Warmth>> {
+    WARMTH
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(worktree_path.to_path_buf())
+}
+
+/// 遅さで判定するのは、小さいリポジトリに index.lock を取る素の status を一度も打たせないため。
+/// 素の status が書き戻せたかはここでは分からない (ロックを取れなくても rc=0) ので、
+/// 効いたかは次の status の速さで見る。
+fn take_warm_turn(worktree_path: &Path) -> bool {
+    let mut warmth = warmth();
+    let entry = warmth.entry(worktree_path.to_path_buf()).or_default();
+    let now = Instant::now();
+    let due = entry.cold && entry.retry_after.is_none_or(|at| now >= at);
+    if due {
+        entry.cold = false;
+        entry.retry_after = Some(now + entry.backoff);
+        entry.backoff = (entry.backoff * 2).min(RETRY_CEILING);
+    }
+    due
+}
+
+fn note_speed(worktree_path: &Path, slow: bool) {
+    let mut warmth = warmth();
+    let entry = warmth.entry(worktree_path.to_path_buf()).or_default();
+    entry.cold = slow;
+    if !slow {
+        entry.retry_after = None;
+        entry.backoff = RETRY_FLOOR;
+    }
 }
 
 /// `XY<空白>PATH` を NUL で区切った並び。

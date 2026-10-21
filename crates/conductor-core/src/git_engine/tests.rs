@@ -976,8 +976,8 @@ fn status_fixture() -> TestRepo {
     repo
 }
 
-#[test]
-fn 初回のstatusだけがindexを書き戻してuntracked_cacheを温める() {
+/// untracked cache を有効にしたリポジトリと、index を書き戻したかを mtime で見る道具。
+fn untracked_cache_repo() -> (TestRepo, impl Fn(), impl Fn() -> bool) {
     use std::time::{Duration, UNIX_EPOCH};
 
     let repo = TestRepo::with_base_commit();
@@ -997,31 +997,73 @@ fn 初回のstatusだけがindexを書き戻してuntracked_cacheを温める() 
     repo.file("newdir/a.txt", "a\n");
     let index = repo.path.join(".git").join("index");
     let stale = UNIX_EPOCH + Duration::from_secs(1000);
-    let touch_stale = || {
-        std::fs::File::options()
-            .write(true)
-            .open(&index)
-            .unwrap()
-            .set_modified(stale)
-            .unwrap();
+    let touch_stale = {
+        let index = index.clone();
+        move || {
+            std::fs::File::options()
+                .write(true)
+                .open(&index)
+                .unwrap()
+                .set_modified(stale)
+                .unwrap();
+        }
     };
-    let modified = || std::fs::metadata(&index).unwrap().modified().unwrap();
+    let index_written = move || std::fs::metadata(&index).unwrap().modified().unwrap() != stale;
+    (repo, touch_stale, index_written)
+}
+
+#[test]
+fn 遅かったstatusの次の1回だけがindexを書き戻してuntracked_cacheを温める() {
+    let (repo, touch_stale, index_written) = untracked_cache_repo();
+    let never_fast_enough = std::time::Duration::ZERO;
 
     touch_stale();
-    GitStatusMap::load(&repo.path).unwrap();
-    assert_ne!(
-        modified(),
-        stale,
-        "初回は index を書き戻して cache を温める"
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    assert!(!index_written(), "遅さが分かる前は index に触らない");
+
+    touch_stale();
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    assert!(
+        index_written(),
+        "遅かった次の 1 回は素の status で cache を書き戻す"
     );
 
     touch_stale();
-    GitStatusMap::load(&repo.path).unwrap();
-    assert_eq!(
-        modified(),
-        stale,
-        "2 回目からは --no-optional-locks で index に触らない"
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    assert!(
+        !index_written(),
+        "温めた直後も遅ければ効かなかった印で、間隔が空くまで書き戻さない"
     );
+}
+
+#[test]
+fn 温めが効いた後にまた冷えれば待たずに温め直す() {
+    let (repo, touch_stale, index_written) = untracked_cache_repo();
+    let never_fast_enough = std::time::Duration::ZERO;
+    let always_fast_enough = std::time::Duration::from_secs(3600);
+
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    GitStatusMap::load_with(&repo.path, always_fast_enough).unwrap();
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+
+    touch_stale();
+    GitStatusMap::load_with(&repo.path, never_fast_enough).unwrap();
+    assert!(
+        index_written(),
+        "温めの後に速い status を見たら効いた印で、次に冷えたときは間隔を待たない (pull や merge が cache を捨てた後)"
+    );
+}
+
+#[test]
+fn 速いリポジトリのstatusはindexに触らない() {
+    let (repo, touch_stale, index_written) = untracked_cache_repo();
+
+    for _ in 0..3 {
+        touch_stale();
+        GitStatusMap::load(&repo.path).unwrap();
+        assert!(!index_written(), "速ければ素の status は一度も打たない");
+    }
 }
 
 #[test]
