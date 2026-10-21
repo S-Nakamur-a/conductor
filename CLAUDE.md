@@ -113,7 +113,9 @@ with no window open, and the window opened later showed it mid-tool.
 - One per repository: `.conductor/pty-host.lock` (flock) and `<key>.pty.sock` beside
   the cc-notify socket. **A session goes to the host of the repository its working
   directory belongs to**, not the one the window opened with — `switch_repo` keeps the
-  previous repository's sessions running, so a window talks to several hosts.
+  previous repository's sessions running, so a window talks to several hosts. A host
+  talks to only one window, and a second one that reaches it (a switch into a repository
+  another window has open) is answered `Busy` instead of taking over.
 - A session ends only with its own exit, closing its tab, deleting its worktree, and
   **Repo ▸ Quit and Stop Sessions**. Editors are the exception and die
   with the window that opened them. The host exits

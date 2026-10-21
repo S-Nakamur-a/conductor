@@ -165,7 +165,7 @@ fn listen(
                     on_notify(notification);
                 }
             }
-            Ok(Frame::Control(ToWindow::Welcome { .. })) => {}
+            Ok(Frame::Control(ToWindow::Welcome { .. } | ToWindow::Busy)) => {}
             Err(e) => {
                 log::warn!("lost the PTY host: {e}");
                 routes.mark_all_exited();
@@ -180,6 +180,17 @@ pub struct Attached {
     /// つないだホストの版。ウィンドウより古いままのことがある。
     pub host_version: String,
 }
+
+#[derive(Debug)]
+struct HostBusy;
+
+impl std::fmt::Display for HostBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another conductor window holds this repository's sessions")
+    }
+}
+
+impl std::error::Error for HostBusy {}
 
 struct Welcome {
     version: String,
@@ -211,6 +222,7 @@ fn handshake(mut stream: UnixStream, version: &str) -> Result<(UnixStream, Welco
             sessions,
             notifications,
         },
+        Frame::Control(ToWindow::Busy) => return Err(HostBusy.into()),
         _ => bail!("the PTY host answered out of turn"),
     };
     stream.set_read_timeout(None)?;
@@ -251,6 +263,7 @@ impl PtyStore {
         let (mut stream, mut welcome) =
             match handshake(connect_or_start(&socket, &start)?, &detached.version) {
                 Ok(greeted) => greeted,
+                Err(e) if e.is::<HostBusy>() => return Err(e),
                 Err(_) => {
                     wait_until_gone(&socket);
                     handshake(connect_or_start(&socket, &start)?, &detached.version)?
@@ -274,6 +287,9 @@ impl PtyStore {
                 (detached.on_notify)(notification);
             }
         }
+        // 張り直す前の写しは、もう誰も更新しない。残すと同じ id が 2 つになり、
+        // 古い方を片付ける Remove が新しい接続越しに生きた子を殺す。
+        self.sessions.retain(|s| s.host != socket);
         let routes = Routes::default();
         for info in welcome.sessions {
             self.adopt(info, &socket, &routes);

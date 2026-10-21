@@ -94,7 +94,11 @@ impl Host {
         ) {
             return;
         }
-        let Some(generation) = stream.try_clone().ok().and_then(|s| self.attach(s).ok()) else {
+        let Some(generation) = stream
+            .try_clone()
+            .ok()
+            .and_then(|s| self.attach(s).ok().flatten())
+        else {
             return;
         };
         loop {
@@ -120,7 +124,9 @@ impl Host {
                 }
             }
             ToHost::Kill { id } => {
-                if let Some(session) = self.find(&id) {
+                if let Some(session) = self.find(&id)
+                    && !session.exited.load(Ordering::Relaxed)
+                {
                     let _ = lock(&session.child).kill();
                 }
             }
@@ -134,8 +140,20 @@ impl Host {
         }
     }
 
-    fn attach(&self, mut stream: UnixStream) -> std::io::Result<u64> {
+    /// 別のウィンドウがまだつながっていれば断って None。ホストが話せる相手は 1 窓だけ。
+    fn attach(&self, mut stream: UnixStream) -> std::io::Result<Option<u64>> {
         let mut window = lock(&self.shared.window);
+        if let Some(current) = window.as_mut() {
+            // 閉じたウィンドウの接続は、切断を読む前にここへ来ることがある。書けるかで見分ける。
+            let probe = ToWindow::Notify {
+                line: String::new(),
+            };
+            if wire::write_control(&mut current.stream, &probe).is_ok() {
+                wire::write_control(&mut stream, &ToWindow::Busy)?;
+                return Ok(None);
+            }
+            self.lose_window(&mut window);
+        }
         // エディタは開いたウィンドウの持ち物。前のウィンドウのものを引き継いでも、
         // 新しいウィンドウには閉じた後に読み直す先が無い。
         self.drop_editors();
@@ -161,7 +179,7 @@ impl Host {
         if let Some(old) = window.replace(Window { stream, generation }) {
             let _ = old.stream.shutdown(std::net::Shutdown::Both);
         }
-        Ok(generation)
+        Ok(Some(generation))
     }
 
     /// 生きた Claude が居る cwd の状態だけ。閉じたタブの waiting をホストの寿命の間
@@ -240,8 +258,10 @@ impl Host {
         }
     }
 
+    /// master を握ったまま画面まで直す。nudge が読む大きさと食い違わせないため。
     fn resize(&self, session: &HostSession, rows: u16, cols: u16) {
-        let _ = lock(&session.master).resize(PtySize {
+        let master = lock(&session.master);
+        let _ = master.resize(PtySize {
             rows,
             cols,
             pixel_width: 0,
@@ -619,6 +639,32 @@ mod tests {
         wait_until("the same shell answering", || {
             screen_text(&second, 0).contains("still-yes")
         });
+    }
+
+    #[test]
+    fn 別のウィンドウがつながっている間は割り込まずに断る() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, socket) = serve(dir.path());
+        let mut first = window(&socket);
+        let idx = launch(&mut first, dir.path(), Launch::Shell { program: "/bin/sh" });
+
+        let mut second = PtyStore::new(100, 100);
+        let to = socket.clone();
+        let detached = Detached {
+            version: "test".into(),
+            on_notify: Arc::new(|_| {}),
+            socket_of: Arc::new(move |_| to.clone()),
+            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+        };
+        assert!(second.attach_with(Path::new("/"), detached).is_err());
+
+        first
+            .write_to_session(idx, b"echo still-$((40+2))\n")
+            .unwrap();
+        wait_until("the first window keeping its shell", || {
+            screen_text(&first, idx).contains("still-42")
+        });
+        assert!(first.is_session_alive(idx));
     }
 
     #[test]

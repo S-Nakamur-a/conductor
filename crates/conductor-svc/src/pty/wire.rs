@@ -87,6 +87,8 @@ pub(super) enum ToWindow {
     Notify {
         line: String,
     },
+    /// 別のウィンドウがつながっている。
+    Busy,
 }
 
 pub(super) enum Frame<T> {

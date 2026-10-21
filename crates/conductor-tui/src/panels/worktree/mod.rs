@@ -126,8 +126,8 @@ impl WorktreePanel {
         }
     }
 
-    /// 消えるもの (未コミットの変更、main へ入っていないコミット) を確認文に出す。
-    /// 反射的な y で黙って失わせないため。
+    /// 消えるもの (未コミットの変更、main へ入っていないコミット、止まるセッション) を
+    /// 確認文に出す。反射的な y で黙って失わせないため。
     fn delete_modal(&self, index: usize) -> Effect {
         let Some(worktree) = self.list.get(index) else {
             return Effect::Status(StatusLevel::Warning, "no worktree selected".into());
@@ -155,6 +155,8 @@ impl WorktreePanel {
                 worktree.branch
             ),
         };
+        let question =
+            format!("{question} Its Claude Code and shell sessions are stopped, even mid-task.");
         Effect::PushModal(Modal::Confirm(
             Confirm::destructive(
                 question,
