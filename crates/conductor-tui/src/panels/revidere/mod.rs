@@ -101,6 +101,10 @@ impl RevidereState {
         self.running.contains_key(branch)
     }
 
+    pub fn is_idle(&self) -> bool {
+        self.running.is_empty()
+    }
+
     /// 確認ダイアログの文言と、貯めた応答を捨てるかどうかを決める 1 つの判定。
     ///
     /// 成果物が書き残す HEAD は短縮 oid、worktree 一覧が持つのは完全な oid。

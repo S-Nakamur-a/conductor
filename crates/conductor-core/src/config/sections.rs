@@ -1,6 +1,6 @@
 //! config.toml のセクションごとの構造体。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -129,6 +129,20 @@ pub struct ReviewConfig {
     pub style_path: Option<PathBuf>,
     /// 本文の口調を直接書いたもの。[Self::style_path] より優先する。
     pub style: Option<String>,
+    /// 開いている間、自分にレビューが依頼された PR を取り込んで revidere を走らせる
+    /// リポジトリ。main worktree のパスで書く。
+    pub auto_review_repos: Vec<PathBuf>,
+}
+
+impl ReviewConfig {
+    /// 設定に書いたパスと git が返すパスは symlink で食い違うので、実体で比べる。
+    pub fn auto_reviews(&self, main_worktree: &Path) -> bool {
+        let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let main = canonical(main_worktree);
+        self.auto_review_repos
+            .iter()
+            .any(|repo| canonical(repo) == main)
+    }
 }
 
 /// [updates] セクション。GitHub Releases との照合。

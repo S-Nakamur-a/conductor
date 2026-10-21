@@ -83,6 +83,7 @@ fn non_default() -> Config {
         review: ReviewConfig {
             style_path: Some(PathBuf::from("/s.md")),
             style: Some(String::from("短く書く")),
+            auto_review_repos: vec![PathBuf::from("/r")],
         },
     }
 }
@@ -270,17 +271,34 @@ fn 読み込み時にパスのチルダを展開する() {
     std::fs::write(
         &path,
         "[general]\nrepo = \"~/r\"\nrepos = [\"~/a\"]\nworktree_dir = \"~/w\"\n\
-         [viewer]\nsyntax_theme_file = \"~/t.tmTheme\"\n",
+         [viewer]\nsyntax_theme_file = \"~/t.tmTheme\"\n\
+         [review]\nauto_review_repos = [\"~/p\"]\n",
     )
     .unwrap();
     let cfg = Config::load_from(&path).unwrap();
     assert_eq!(cfg.general.repo, Some(home().join("r")));
     assert_eq!(cfg.general.repos, vec![home().join("a")]);
+    assert_eq!(cfg.review.auto_review_repos, vec![home().join("p")]);
     assert_eq!(cfg.general.worktree_dir, Some(home().join("w")));
     assert_eq!(
         cfg.viewer.syntax_theme_file.as_deref(),
         Some(home().join("t.tmTheme").to_str().unwrap())
     );
+}
+
+#[test]
+fn 自動レビューはsymlinkを辿った先が同じリポジトリでも効く() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&repo, &link).unwrap();
+    let review = ReviewConfig {
+        auto_review_repos: vec![link],
+        ..Default::default()
+    };
+    assert!(review.auto_reviews(&repo));
+    assert!(!review.auto_reviews(dir.path()));
 }
 
 #[test]

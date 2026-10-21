@@ -121,6 +121,11 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #
 # style = "Keep it short. Skip the polite register."   # written here, sent as-is
 # style_path = "~/.claude/output-styles/my-style.md"   # a Claude Code output-style file
+#
+# While one of these repositories is open, a pull request that requests your review
+# (directly, not through a team) is checked out into a worktree and revidere runs on
+# it, one PR at a time. Write the main worktree's path.
+# auto_review_repos = ["~/src/my-repo"]
 
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup

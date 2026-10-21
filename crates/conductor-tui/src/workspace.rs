@@ -431,6 +431,9 @@ impl Workspace {
             }
             TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
+            TaskResult::RequestedPrIntake { number, outcome } => {
+                self.accept_requested_pr(number, outcome)
+            }
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
             TaskResult::RevidereLoaded(outcome) => self.panels.revidere.install(*outcome),
@@ -618,6 +621,48 @@ impl Workspace {
                 _ => vec![Effect::Status(StatusLevel::Error, e)],
             },
         }
+    }
+
+    /// 解析は 1 分より長くかかるので、残っているうちに次を始めると周回ごとに並ぶ。
+    pub fn may_ask_review_requests(&self) -> bool {
+        !self.config.review.auto_review_repos.is_empty()
+            && !self.panels.worktree.is_handling_review_request()
+            && self.panels.revidere.is_idle()
+    }
+
+    /// 頼まれて取り込んだ PR では、見ている worktree から引き剥がさないよう選択もフォーカスも動かさない。
+    fn accept_requested_pr(
+        &mut self,
+        number: u64,
+        outcome: Result<Box<IntakenPr>, String>,
+    ) -> Vec<Effect> {
+        self.panels.worktree.finish_review_request();
+        let IntakenPr {
+            worktree_path,
+            meta,
+            ..
+        } = match outcome {
+            Ok(pr) => *pr,
+            Err(e) => {
+                return vec![Effect::Status(
+                    StatusLevel::Warning,
+                    format!("review requested on PR #{number}: {e}"),
+                )];
+            }
+        };
+        let text = format!(
+            "Your review was requested on PR #{number} \u{2014} revidere is analysing '{}'.",
+            meta.branch
+        );
+        let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
+        effects.extend(crate::command::analyze_worktree(
+            self,
+            worktree_path,
+            meta.branch,
+            false,
+        ));
+        effects.push(Effect::Status(StatusLevel::Info, text));
+        effects
     }
 
     fn accept_publishable(
@@ -814,6 +859,31 @@ fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Eff
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 取り込みか解析が残っているうちは次のレビュー依頼を問い合わせない() {
+        let mut ws = Workspace::for_test();
+        assert!(!ws.may_ask_review_requests(), "設定が空");
+        ws.config.review.auto_review_repos = vec!["/r".into()];
+        assert!(ws.may_ask_review_requests());
+
+        ws.panels
+            .worktree
+            .note_spawned(&Task::IntakeRequestedPr { number: 1 });
+        assert!(!ws.may_ask_review_requests(), "取り込み中");
+        ws.panels.worktree.finish_review_request();
+
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: "/r".into(),
+            branch: "feature/a".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        });
+        assert!(!ws.may_ask_review_requests(), "解析中");
+    }
 
     #[test]
     fn 設定に差が無ければ何も起きない() {

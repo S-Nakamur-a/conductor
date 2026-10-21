@@ -117,6 +117,16 @@ fn pr_head(state: &str, from_fork: bool) -> PrHead {
 }
 
 #[test]
+fn gh_pr_listの出力は1行ずつprのheadになる() {
+    let listed: Vec<PrHead> = serde_json::from_str(
+        r#"[{"headRefName":"feature/pty-daemon","isCrossRepository":false,"number":396,"state":"MERGED"},{"headRefName":"fix/warm-when-cold","isCrossRepository":false,"number":395,"state":"MERGED"}]"#,
+    )
+    .unwrap();
+    let numbers: Vec<u64> = listed.iter().map(|pr| pr.number).collect();
+    assert_eq!(numbers, [396, 395]);
+}
+
+#[test]
 fn originからheadを取るのは同じリポジトリのopenなprだけ() {
     let cases = [
         ("OPEN", false, "feature/pty-daemon"),

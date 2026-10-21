@@ -166,7 +166,8 @@ proportions), `[updates]` (the GitHub release check), `[keybinds]` (per-chord
 overrides layered over the defaults, globally or per panel), `[api]` (the
 LLM provider shared by every AI feature), and `[review]` (the voice the AI
 review writes its prose in, either inline or as a path to a Claude Code
-output-style file).
+output-style file, and the repositories where a PR that requests your review is
+taken in and reviewed on its own).
 
 ## Development
 
