@@ -99,9 +99,12 @@ command by name.
 | **Esc** · **Ctrl+q** | back / close overlay · quit |
 
 To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code
-Session (Chrome)* (or "New Claude Code (Chrome)" in the palette). It launches
-`claude --chrome`; it has no key, and sessions started any other way — including
-resumed ones — run without it.
+Session (Chrome)* (or "New Claude Code (Chrome)" in the palette), or pick
+"Claude Code + Chrome" from the `[+]` on the Claude Code tab row. It launches
+`claude --chrome`. Every other start runs without it: Ctrl+n, a double click on
+an empty pane, a smart session, the startup auto-resume and the resume after
+grabbing a branch. To add Chrome to a session that ran without it, close its tab
+and reopen it from *Resume Claude Session*, choosing "Resume + Chrome".
 
 ## Reviewing a Pull Request
 
