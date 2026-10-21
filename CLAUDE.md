@@ -98,17 +98,25 @@ with no window open, and the window opened later showed it mid-tool.
   frames, JSON for control, raw bytes for output and keystrokes). The renderer still
   reads `PtyStore::screen` directly. The handshake hands over `state_formatted()` —
   input modes included, or bracketed paste and wheel forwarding are wrong after a
-  reattach — and a shell's raw history instead, so it can still reflow.
+  reattach — behind a shell's raw history, so it can still reflow. The raw history is
+  trimmed and may have lost its leading mode switches, which is why the current state
+  always comes last.
 - **The host answers what nobody else can while the window is away:** cursor-position
   queries (`CSI 6 n`), the alternate-screen SIGWINCH nudge, and cc-notify. It keeps
-  each panel's session id and the last active/waiting per cwd and replays them on
-  attach, which is what keeps the transcript and the strip right across a reopen.
+  each panel's session id and the last active/waiting for each cwd that still has a
+  live Claude, and replays them on attach, which is what keeps the transcript and the
+  strip right across a reopen.
 - **Lock order is window → each session's parser.** Building the handshake under the
   window lock is what makes snapshot and stream meet with no gap and no repeat.
 - **The child's environment is the window's, sent whole with each spawn.** The host's
   own environment belongs to whichever window started it.
 - One per repository: `.conductor/pty-host.lock` (flock) and `<key>.pty.sock` beside
-  the cc-notify socket. Editors die with the window that opened them. The host exits
+  the cc-notify socket. **A session goes to the host of the repository its working
+  directory belongs to**, not the one the window opened with — `switch_repo` keeps the
+  previous repository's sessions running, so a window talks to several hosts.
+- A session ends only with its own exit, closing its tab, deleting its worktree, and
+  **Repo ▸ Quit and Stop Sessions**. Editors are the exception and die
+  with the window that opened them. The host exits
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`
   when it has none; the frame protocol carries its own number for that reason.
@@ -416,7 +424,7 @@ the accordion — it takes the main area whole as three columns (reading order |
 | `tui/workspace.rs` · `effect.rs` · `task.rs` | State, the effect vocabulary, every long-running job and its result |
 | `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together |
 | `tui/command/` · `index.rs` · `markdown/` | The command table with `exec` and `enabled` · both indexes and their rebuilds · markdown, shared by the Viewer and the transcript |
-| `svc/pty/` · `svc/watch/` | PTY spawn/read/write/resize and the vt100 screen · the filesystem, config, cc-notify and refresh-pipe watchers |
+| `svc/pty/` · `svc/watch/` | The PTY host (holds the masters), its window-side mirror and the vt100 screen · the filesystem, config and refresh-pipe watchers (cc-notify's listener runs in the PTY host) |
 | `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |
 | `core/claude_log/` · `claude_sessions/` · `keymap/` · `theme/` · `config/` | The transcript `.jsonl` format · which one backs a panel · actions and layers · colour themes · `~/.config/conductor/config.toml` |
 | `core/instance_lock/` | `.conductor/conductor.lock` の flock による単独起動の担保 — リポジトリ (全 worktree 込み) につき 1 ウィンドウ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |

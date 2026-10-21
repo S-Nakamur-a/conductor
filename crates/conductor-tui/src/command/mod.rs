@@ -80,6 +80,7 @@ pub enum CommandId {
     CheckForUpdate,
     UpdateAndRestart,
     Quit,
+    QuitAndStopSessions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,6 +222,7 @@ commands! {
     CheckForUpdate, "App: Check for Updates", App, None, "update upgrade version check latest release new github";
     UpdateAndRestart, "App: Update and Restart", App, None, "update upgrade restart download version";
     Quit, "Quit Conductor", App, Some(Action::Quit), "exit close";
+    QuitAndStopSessions, "Quit and Stop Sessions", App, None, "exit close kill stop end terminate sessions claude shell background";
 }
 
 pub fn find(id: CommandId) -> &'static Command {

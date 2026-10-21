@@ -152,12 +152,35 @@ impl TerminalPanel {
         self.pty.attach(repo_root, version, on_notify)
     }
 
-    /// worktree に Claude のセッションが既にあるか。起動時の復帰はそこを飛ばす。
+    /// worktree で Claude が動いているか。起動時の復帰はそこを飛ばす。
     pub fn has_claude_session(&self, worktree: &Path) -> bool {
+        self.pty.sessions().iter().enumerate().any(|(i, s)| {
+            s.kind == SessionKind::ClaudeCode
+                && s.working_dir == worktree
+                && self.pty.is_session_alive(i)
+        })
+    }
+
+    /// エディタを除いた、動いているセッションの数。
+    pub fn session_count(&self) -> usize {
         self.pty
             .sessions()
             .iter()
-            .any(|s| s.kind == SessionKind::ClaudeCode && s.working_dir == worktree)
+            .enumerate()
+            .filter(|(i, s)| s.kind != SessionKind::Editor && self.pty.is_session_alive(*i))
+            .count()
+    }
+
+    pub fn stop_sessions(&mut self, worktree: Option<&Path>) {
+        for index in (0..self.pty.sessions().len()).rev() {
+            let session = &self.pty.sessions()[index];
+            if session.kind != SessionKind::Editor
+                && worktree.is_none_or(|w| session.working_dir == w)
+            {
+                self.pty.remove_session(index);
+            }
+        }
+        self.show_survivors();
     }
 
     pub fn is_waiting(&self, worktree: &Path) -> bool {
@@ -297,10 +320,19 @@ impl TerminalPanel {
         self.discard_editor();
         self.wants_clear = true;
         for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
-            let first = self.sessions(kind).first().map(|(_, id, _)| id.to_string());
-            match kind {
-                SessionKind::Shell => self.shell.show(first),
-                _ => self.claude.show(first),
+            let sessions = self.sessions(kind);
+            let first = sessions.first().map(|(_, id, _)| id.to_string());
+            let indices: Vec<usize> = sessions.iter().map(|(i, _, _)| *i).collect();
+            let pane = match kind {
+                SessionKind::Shell => &mut self.shell,
+                _ => &mut self.claude,
+            };
+            pane.show(first);
+            // 別の worktree を見ている間の区画の大きさの変化は、ここのセッションに
+            // 届いていない。前のウィンドウの大きさのまま残っていることもある。
+            let (rows, cols) = pane.size;
+            for index in indices {
+                self.pty.resize_session(index, rows, cols);
             }
         }
         self.activate_visible();
@@ -1038,23 +1070,27 @@ impl TerminalPanel {
             removed = true;
         }
         if removed {
-            // id で指しているので添字の詰め直しは要らない。消えたものだけ落とす。
-            for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
-                let alive: Vec<String> = self
-                    .sessions(kind)
-                    .iter()
-                    .map(|(_, id, _)| (*id).to_string())
-                    .collect();
-                let pane = match kind {
-                    SessionKind::Shell => &mut self.shell,
-                    _ => &mut self.claude,
-                };
-                if !pane.session.as_ref().is_some_and(|id| alive.contains(id)) {
-                    pane.show(alive.first().cloned());
-                }
-            }
+            self.show_survivors();
         }
         removed
+    }
+
+    /// id で指しているので添字の詰め直しは要らない。消えたものを映していた区画だけ移す。
+    fn show_survivors(&mut self) {
+        for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
+            let alive: Vec<String> = self
+                .sessions(kind)
+                .iter()
+                .map(|(_, id, _)| (*id).to_string())
+                .collect();
+            let pane = match kind {
+                SessionKind::Shell => &mut self.shell,
+                _ => &mut self.claude,
+            };
+            if !pane.session.as_ref().is_some_and(|id| alive.contains(id)) {
+                pane.show(alive.first().cloned());
+            }
+        }
     }
 }
 

@@ -8,7 +8,7 @@
 //! 高頻度で届くのでチャネルが詰まる。UI は描画のたびに [PtyStore::screen] を直接
 //! ロックし、届いたことの通知だけ [PtyStore::take_output_notify] で受け取る。
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -116,6 +116,8 @@ pub struct PtySession {
     /// 子プロセスの起動時刻。古いセッションを --resume すると pin したログの mtime が
     /// 何日も前になりうるので、ローテーション追跡はこれを下限に使う。
     spawned_at: SystemTime,
+    /// このセッションを握っているホストの鍵 ([PtyStore::host_of])。
+    host: PathBuf,
 
     io: SharedIo,
 }
@@ -134,10 +136,11 @@ impl PtySession {
 
 /// PTY セッションの一覧。寿命はホストが握り、ここは画面の写しと操作の口を持つ。
 pub struct PtyStore {
-    /// 最初の spawn か [PtyStore::attach] で繋ぐ。
-    link: Option<client::Link>,
+    /// ホストごとの接続。必要になったときに張る。
+    links: HashMap<PathBuf, client::Link>,
+    /// [PtyStore::attach] が成功していれば、別プロセスのホストへのつなぎ方。
+    detached: Option<client::Detached>,
     sessions: Vec<PtySession>,
-    routes: client::Routes,
     active_scrollback: usize,
     inactive_scrollback: usize,
     output_notify: Arc<AtomicBool>,
@@ -146,9 +149,9 @@ pub struct PtyStore {
 impl PtyStore {
     pub fn new(active_scrollback: usize, inactive_scrollback: usize) -> Self {
         Self {
-            link: None,
+            links: HashMap::new(),
+            detached: None,
             sessions: Vec::new(),
-            routes: client::Routes::default(),
             active_scrollback,
             inactive_scrollback,
             output_notify: Arc::new(AtomicBool::new(false)),
@@ -212,8 +215,12 @@ impl PtyStore {
     }
 
     pub fn kill_session(&mut self, idx: usize) -> Result<()> {
-        let id = self.session_id(idx)?;
-        self.link()?.send(&wire::ToHost::Kill { id })
+        let session = self
+            .sessions
+            .get(idx)
+            .ok_or_else(|| anyhow::anyhow!("session index out of bounds"))?;
+        let id = session.id.clone();
+        self.link_of(session)?.send(&wire::ToHost::Kill { id })
     }
 
     /// idx のセッションを取り除く。ホストは生きていれば殺してからマスターを閉じる。
@@ -222,24 +229,18 @@ impl PtyStore {
             return;
         }
         let session = self.sessions.remove(idx);
-        self.routes.remove(&session.id);
-        if let Some(link) = &self.link
-            && let Err(e) = link.send(&wire::ToHost::Remove { id: session.id })
-        {
+        let Ok(link) = self.link_of(&session) else {
+            return;
+        };
+        link.forget(&session.id);
+        if let Err(e) = link.send(&wire::ToHost::Remove { id: session.id }) {
             log::warn!("could not ask the PTY host to drop a session: {e:#}");
         }
     }
 
-    pub fn is_session_alive(&mut self, idx: usize) -> bool {
+    pub fn is_session_alive(&self, idx: usize) -> bool {
         self.sessions
             .get(idx)
             .is_some_and(|s| !s.io.exited.load(Ordering::Relaxed))
-    }
-
-    fn session_id(&self, idx: usize) -> Result<String> {
-        self.sessions
-            .get(idx)
-            .map(|s| s.id.clone())
-            .ok_or_else(|| anyhow::anyhow!("session index out of bounds"))
     }
 }

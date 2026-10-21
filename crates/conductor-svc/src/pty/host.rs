@@ -45,13 +45,9 @@ impl HostSession {
         lock(&self.info).id.clone()
     }
 
-    /// つないだばかりのウィンドウに渡す画面。生履歴があるならそれを丸ごと渡し、
-    /// ウィンドウ側でもリサイズ時に組み直せるようにする。
     fn snapshot(&self) -> Vec<u8> {
-        match &self.raw_history {
-            Some(history) => lock(history).iter().copied().collect(),
-            None => lock(&self.parser).screen().state_formatted(),
-        }
+        let history = self.raw_history.as_ref().map(|h| lock(h));
+        snapshot(history.as_deref(), lock(&self.parser).screen())
     }
 }
 
@@ -63,9 +59,7 @@ struct Window {
 #[derive(Default)]
 struct Shared {
     sessions: Mutex<Vec<Arc<HostSession>>>,
-    /// ロックの順序は window → 各セッションの parser。reader はこの順で取るので、
-    /// 挨拶の返事を組む間はどのセッションも画面を進められず、写しと差分の継ぎ目に
-    /// 抜けも重複も出ない。
+    /// ロックの順序は window → 各セッションの parser。pump もこの順で取る。
     window: Mutex<Option<Window>>,
     generation: Mutex<u64>,
     /// 最後に届いた active / waiting を cwd ごとに。つなぎ直したウィンドウへ再生する。
@@ -150,7 +144,7 @@ impl Host {
             version: self.shared.version.clone(),
             protocol: wire::PROTOCOL,
             sessions: sessions.iter().map(|s| lock(&s.info).clone()).collect(),
-            notifications: lock(&self.shared.states).values().cloned().collect(),
+            notifications: self.live_states(&sessions),
         };
         wire::write_control(&mut stream, &welcome)?;
         for session in &sessions {
@@ -168,6 +162,23 @@ impl Host {
             let _ = old.stream.shutdown(std::net::Shutdown::Both);
         }
         Ok(generation)
+    }
+
+    /// 生きた Claude が居る cwd の状態だけ。閉じたタブの waiting をホストの寿命の間
+    /// 出し続けないため。
+    fn live_states(&self, sessions: &[Arc<HostSession>]) -> Vec<String> {
+        let live: Vec<PathBuf> = sessions
+            .iter()
+            .filter(|s| !s.exited.load(Ordering::Relaxed))
+            .map(|s| lock(&s.info))
+            .filter(|info| info.kind == SessionKind::ClaudeCode)
+            .map(|info| info.working_dir.clone())
+            .collect();
+        lock(&self.shared.states)
+            .iter()
+            .filter(|(cwd, _)| live.contains(cwd))
+            .map(|(_, line)| line.clone())
+            .collect()
     }
 
     fn detach(&self, generation: u64) {
@@ -194,7 +205,7 @@ impl Host {
         if let Some(w) = window.as_mut().filter(|w| w.generation == generation)
             && wire::write_control(&mut w.stream, msg).is_err()
         {
-            *window = None;
+            self.lose_window(&mut window);
         }
     }
 
@@ -203,8 +214,15 @@ impl Host {
         if let Some(w) = window.as_mut()
             && wire::write_control(&mut w.stream, msg).is_err()
         {
-            *window = None;
+            self.lose_window(&mut window);
         }
+    }
+
+    /// 書けなかった時点でウィンドウは居ない。後から来る detach は generation が
+    /// 合わずに素通りするので、エディタはここで片付ける。
+    fn lose_window(&self, window: &mut Option<Window>) {
+        *window = None;
+        self.drop_editors();
     }
 
     fn find(&self, id: &str) -> Option<Arc<HostSession>> {
@@ -246,7 +264,10 @@ impl Host {
         let mut sessions = lock(&self.shared.sessions);
         if let Some(at) = sessions.iter().position(|s| lock(&s.info).id == id) {
             let session = sessions.remove(at);
-            let _ = lock(&session.child).kill();
+            // 回収済みの pid は別のプロセスに使い回されているかもしれない。
+            if !session.exited.load(Ordering::Relaxed) {
+                let _ = lock(&session.child).kill();
+            }
         }
     }
 
@@ -336,7 +357,7 @@ impl Host {
             if let Some(w) = window.as_mut()
                 && wire::write_bytes(&mut w.stream, &id, bytes).is_err()
             {
-                *window = None;
+                self.lose_window(&mut window);
             }
             drop(window);
             if entered_alt {
@@ -401,8 +422,7 @@ impl Host {
         }
     }
 
-    /// ウィンドウと同じプロセスの中で動かす。2 つ目のウィンドウとテストが使う。
-    /// cc-notify は持たない (先客のウィンドウの宛先を奪うため)。
+    /// ウィンドウと同じプロセスの中で動かす。cc-notify は持たない (先客のウィンドウの宛先を奪うため)。
     pub(super) fn in_process(version: &str, scrollback: usize) -> std::io::Result<UnixStream> {
         let (window, host_end) = UnixStream::pair()?;
         let host = Self::new(version, scrollback, None);
@@ -411,6 +431,21 @@ impl Host {
         thread::spawn(move || host.serve(host_end));
         Ok(window)
     }
+}
+
+/// つないだばかりのウィンドウに渡す画面。生履歴は削られて先頭のモード切り替え
+/// (代替画面、DECCKM、マウス) を失っていることがあるので、今の状態を後ろに足す。
+/// 生履歴を先に渡すのは、ウィンドウ側でもスクロールバックとリフローを持たせるため。
+fn snapshot(history: Option<&VecDeque<u8>>, screen: &vt100::Screen) -> Vec<u8> {
+    let mut bytes: Vec<u8> = history
+        .map(|h| h.iter().copied().collect())
+        .unwrap_or_default();
+    // vt100 の状態の書き出しは代替画面に居ることを含まない。
+    if screen.alternate_screen() {
+        bytes.extend_from_slice(b"\x1b[?1049h");
+    }
+    bytes.extend(screen.state_formatted());
+    bytes
 }
 
 /// ホストが退くときに片付けるもの。プロセスごと抜けるので Drop は走らない。
@@ -434,8 +469,9 @@ fn exit_host(paths: &HostPaths) -> ! {
 /// 送らないので、1 行縮めてから戻す。
 fn nudge(session: &HostSession) {
     for _ in 0..5 {
-        let (rows, cols) = lock(&session.parser).screen().size();
+        // 大きさは master を握ってから読む。間に Resize が入ると旧サイズへ戻してしまう。
         let master = lock(&session.master);
+        let (rows, cols) = lock(&session.parser).screen().size();
         if rows > 1 {
             let _ = master.resize(PtySize {
                 rows: rows - 1,
@@ -455,17 +491,22 @@ fn nudge(session: &HostSession) {
     }
 }
 
-/// プログラムは「カーソルはどこか」を尋ねるためにこれを送り、CSI row ; col R を待つ。
-/// 返事が無いとタイムアウトするか、誰かが何か打つまで止まる。
+/// 返事が無いと、問い合わせた側 (fzf やシェル) はタイムアウトまで止まる。
 fn count_cursor_queries(bytes: &[u8]) -> usize {
     bytes.windows(4).filter(|w| *w == b"\x1b[6n").count()
 }
 
 /// `conductor pty-host <repo>`。ウィンドウが起こし、セッションが尽きるまで残る。
 pub fn run(repo_root: &Path, version: &str, scrollback: usize) -> Result<()> {
-    let Some(_lock) = conductor_core::instance_lock::acquire_pty_host(repo_root)? else {
-        // 先客が居る。起こした側はそちらへ繋ぐ。
-        return Ok(());
+    // 退いたばかりのホストは、ソケットを消してからロックを手放すまでに少し間がある。
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let _lock = loop {
+        match conductor_core::instance_lock::acquire_pty_host(repo_root)? {
+            Some(lock) => break lock,
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            // 先客が居る。起こした側はそちらへ繋ぐ。
+            None => return Ok(()),
+        }
     };
     cc_hook::ensure_runtime_dir()?;
     let paths = HostPaths {
@@ -495,6 +536,7 @@ mod tests {
     use std::sync::mpsc;
 
     use super::*;
+    use crate::pty::client::Detached;
     use crate::pty::{Launch, PtyStore, Spawn};
 
     fn serve(dir: &Path) -> (Host, PathBuf) {
@@ -512,11 +554,14 @@ mod tests {
         on_notify: impl Fn(Notification) + Send + Sync + 'static,
     ) -> PtyStore {
         let mut store = PtyStore::new(100, 100);
-        store
-            .attach_to(socket, "test", Arc::new(on_notify), || {
-                anyhow::bail!("the host should already be up")
-            })
-            .unwrap();
+        let socket = socket.to_path_buf();
+        let detached = Detached {
+            version: "test".into(),
+            on_notify: Arc::new(on_notify),
+            socket_of: Arc::new(move |_| socket.clone()),
+            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+        };
+        store.attach_with(Path::new("/"), detached).unwrap();
         store
     }
 
@@ -594,16 +639,20 @@ mod tests {
     }
 
     #[test]
-    fn ウィンドウが居ない間の通知も次のウィンドウに届く() {
+    fn ウィンドウが居ない間の通知は_claudeが居るcwdの分だけ次のウィンドウに届く() {
         let dir = tempfile::tempdir().unwrap();
         let (host, socket) = serve(dir.path());
         let mut first = window(&socket);
         let idx = launch(&mut first, dir.path(), Launch::Shell { program: "/bin/sh" });
         let id = first.sessions()[idx].id.clone();
         drop(first);
+        // 本物の claude は起こせないので、居るセッションを Claude ということにする。
+        lock(&host.find(&id).unwrap().info).kind = SessionKind::ClaudeCode;
 
+        let closed_tab = PathBuf::from("/closed-tab");
+        host.on_notification(Notification::Waiting { cwd: closed_tab });
         host.on_notification(Notification::Waiting {
-            cwd: PathBuf::from("/wt"),
+            cwd: dir.path().to_path_buf(),
         });
         host.on_notification(Notification::Session {
             panel_id: id,
@@ -614,16 +663,70 @@ mod tests {
         let second = window_with(&socket, move |n| {
             let _ = tx.send(n);
         });
+        let replayed: Vec<Notification> = rx.try_iter().collect();
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Notification::Waiting {
-                cwd: PathBuf::from("/wt")
-            }
+            replayed,
+            [Notification::Waiting {
+                cwd: dir.path().to_path_buf()
+            }]
         );
         assert_eq!(
             second.claude_session_ref(0).map(|(_, id, _)| id).as_deref(),
             Some("after-clear")
         );
+    }
+
+    #[test]
+    fn 削られた生履歴からでも写しは代替画面と入力モードを保つ() {
+        let mut host_screen = vt100::Parser::new(10, 40, 100);
+        host_screen.process(b"\x1b[?1049h\x1b[?1h\x1b[?1000h\x1b[?2004hTOP-LINE");
+        let trimmed: VecDeque<u8> = b"later output\r\n".iter().copied().collect();
+
+        let mut mirror = vt100::Parser::new(10, 40, 100);
+        mirror.process(&snapshot(Some(&trimmed), host_screen.screen()));
+
+        let screen = mirror.screen();
+        assert!(screen.alternate_screen());
+        assert!(screen.application_cursor());
+        assert!(screen.bracketed_paste());
+        assert_ne!(screen.mouse_protocol_mode(), vt100::MouseProtocolMode::None);
+        assert!(
+            screen.contents().starts_with("TOP-LINE"),
+            "{:?}",
+            screen.contents()
+        );
+    }
+
+    #[test]
+    fn 別のリポジトリで開いたセッションはそのリポジトリのホストに載る() {
+        let (repo_a, repo_b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (_a, socket_a) = serve(repo_a.path());
+        let (_b, socket_b) = serve(repo_b.path());
+        let mut store = PtyStore::new(100, 100);
+        let root_b = repo_b.path().to_path_buf();
+        let (to_a, to_b) = (socket_a.clone(), socket_b.clone());
+        let detached = Detached {
+            version: "test".into(),
+            on_notify: Arc::new(|_| {}),
+            socket_of: Arc::new(move |dir| {
+                if dir.starts_with(&root_b) {
+                    to_b.clone()
+                } else {
+                    to_a.clone()
+                }
+            }),
+            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+        };
+        store.attach_with(repo_a.path(), detached).unwrap();
+        launch(
+            &mut store,
+            repo_b.path(),
+            Launch::Shell { program: "/bin/sh" },
+        );
+        drop(store);
+
+        assert!(window(&socket_a).sessions().is_empty());
+        assert_eq!(window(&socket_b).sessions().len(), 1);
     }
 
     #[test]

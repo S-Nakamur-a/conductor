@@ -88,7 +88,7 @@ impl PtyStore {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
         };
-        let io = self.spawn_on_host(spec)?;
+        let (io, host) = self.spawn_on_host(spec)?;
 
         self.sessions.push(PtySession {
             id: panel_id,
@@ -98,6 +98,7 @@ impl PtyStore {
             working_dir: req.working_dir.to_path_buf(),
             claude_session_id,
             spawned_at,
+            host,
             io,
         });
         Ok(self.sessions.len() - 1)

@@ -125,7 +125,7 @@ fn attach_pty_host<P: Send + 'static>(ws: &mut Workspace, svc: &Services<P>, ver
     {
         Ok(attached) if attached.host_version == version => return,
         Ok(attached) => format!(
-            "The PTY host is still v{}; it is replaced once its sessions have all ended",
+            "The PTY host is still v{}; it is replaced at the next start after its sessions have all ended",
             attached.host_version
         ),
         Err(e) => format!("PTY host unavailable, sessions will end with this window: {e:#}"),
@@ -283,7 +283,10 @@ fn cli_fast_path(version: &str) -> Option<Result<()>> {
 fn run_pty_host(version: &str) -> Result<()> {
     let root = arg_path(std::env::args().nth(2))?;
     let scrollback = Config::load()
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            log::warn!("config: {e:#}");
+            Config::default()
+        })
         .terminal
         .inactive_scrollback;
     conductor_svc::pty::run_host(&root, version, scrollback)

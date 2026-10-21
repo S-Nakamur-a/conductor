@@ -171,6 +171,16 @@ pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             repo::RepoPicker::open(ws.repo.known_index()),
         ))],
         CommandId::Quit => vec![Effect::Quit],
+        CommandId::QuitAndStopSessions => match ws.panels.terminal.session_count() {
+            0 => vec![Effect::Quit],
+            n => vec![Effect::PushModal(Modal::Confirm(
+                Confirm::destructive(
+                    format!("Stop {n} running session(s) and quit? Work they are doing ends."),
+                    vec![Effect::StopSessions(None), Effect::Quit],
+                )
+                .title("Quit and stop"),
+            ))],
+        },
 
         CommandId::SwitchBranch => {
             let (picker, load) = branch::BranchPicker::remote();

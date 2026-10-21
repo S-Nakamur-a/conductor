@@ -20,7 +20,7 @@ impl PtyStore {
             .sessions
             .get(idx)
             .context("session index out of bounds")?;
-        self.linked()?.send_bytes(&session.id, data)
+        self.link_of(session)?.send_bytes(&session.id, data)
     }
 
     /// 大きなテキストを、通常のタイプ入力として (bracketed paste は使わずに) 送る。

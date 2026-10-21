@@ -55,15 +55,13 @@ impl PtyStore {
         };
 
         // 実 PTY のリサイズは SIGWINCH を配送し、子がライブ領域を描き直す。
-        if let Some(link) = &self.link {
-            let resize = wire::ToHost::Resize {
-                id: session.id.clone(),
-                rows,
-                cols,
-            };
-            if let Err(e) = link.send(&resize) {
-                log::warn!("could not resize a PTY session: {e:#}");
-            }
+        let resize = wire::ToHost::Resize {
+            id: session.id.clone(),
+            rows,
+            cols,
+        };
+        if let Err(e) = self.link_of(session).and_then(|link| link.send(&resize)) {
+            log::warn!("could not resize a PTY session: {e:#}");
         }
 
         // screen のロックを持ったまま履歴を読む。同じロックの下で追記している受信
@@ -144,7 +142,7 @@ pub(super) fn resize_parser(
 }
 
 /// 記録済みの生バイトを再生して、指定サイズのパーサを組み直す。
-/// resize_session のリフロー経路の中核を、実 PTY 無しで試せるよう切り出したもの。
+/// resize_parser のリフロー経路の中核を、実 PTY 無しで試せるよう切り出したもの。
 pub(super) fn rebuild_parser(
     history: &VecDeque<u8>,
     rows: u16,

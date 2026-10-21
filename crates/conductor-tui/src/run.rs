@@ -929,6 +929,54 @@ mod tests {
     }
 
     #[test]
+    fn 止めて終了はセッションがあるときだけ確かめてから止めて閉じる() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let id = crate::command::CommandId::QuitAndStopSessions;
+        assert!(matches!(
+            crate::command::execute(&mut ws, id).as_slice(),
+            [Effect::Quit]
+        ));
+
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let effects = crate::command::execute(&mut ws, id);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::PushModal(Modal::Confirm(_))]
+        ));
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopSessions(None), Effect::Quit],
+        );
+        assert_eq!(ws.panels.terminal.session_count(), 0);
+        assert!(ws.should_quit);
+    }
+
+    #[test]
+    fn 消したworktreeのセッションだけを止める() {
+        let (kept, deleted) = (
+            tempfile::TempDir::new().unwrap(),
+            tempfile::TempDir::new().unwrap(),
+        );
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.panels
+            .terminal
+            .show_shell_as_claude_for_test(kept.path());
+        ws.panels
+            .terminal
+            .show_shell_as_claude_for_test(deleted.path());
+
+        let stop = Effect::StopSessions(Some(deleted.path().to_path_buf()));
+        apply(&mut ws, &mut svc, vec![stop]);
+
+        assert_eq!(ws.panels.terminal.session_count(), 1);
+        assert!(!ws.panels.terminal.has_claude_session(deleted.path()));
+    }
+
+    #[test]
     fn 本文から始めたドラッグは行番号を外した文字列を書き出す() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("a.rs"), "alpha\nbravo\n").unwrap();

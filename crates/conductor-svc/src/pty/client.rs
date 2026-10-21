@@ -1,8 +1,12 @@
 //! ウィンドウ側の接続。ホストへ操作を送り、届いたバイト列を写しへ流す。
+//!
+//! ホストはリポジトリごとに 1 つで、ウィンドウはリポジトリを切り替えても前のセッションを
+//! 落とさないので、訪れたリポジトリの数だけ接続を持つ。セッションは自分の作業ディレクトリが
+//! 属するリポジトリのホストに置く。
 
 use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -20,16 +24,26 @@ const START_TIMEOUT: Duration = Duration::from_secs(5);
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 type OnNotify = Arc<dyn Fn(Notification) + Send + Sync>;
+type StartHost = Arc<dyn Fn(&Path) -> Result<()> + Send + Sync>;
+
+/// 別プロセスのホストへのつなぎ方。持っていなければ、ホストはウィンドウと同じプロセスに置く。
+#[derive(Clone)]
+pub(super) struct Detached {
+    pub version: String,
+    pub on_notify: OnNotify,
+    pub socket_of: Arc<dyn Fn(&Path) -> PathBuf + Send + Sync>,
+    pub start: StartHost,
+}
 
 #[derive(Clone, Default)]
-pub(super) struct Routes(Arc<Mutex<HashMap<String, SharedIo>>>);
+struct Routes(Arc<Mutex<HashMap<String, SharedIo>>>);
 
 impl Routes {
-    pub(super) fn insert(&self, id: &str, io: SharedIo) {
+    fn insert(&self, id: &str, io: SharedIo) {
         lock(&self.0).insert(id.to_string(), io);
     }
 
-    pub(super) fn remove(&self, id: &str) {
+    fn remove(&self, id: &str) {
         lock(&self.0).remove(id);
     }
 
@@ -49,6 +63,8 @@ type Replies = Arc<Mutex<HashMap<String, mpsc::Sender<Option<String>>>>>;
 pub(super) struct Link {
     stream: Mutex<UnixStream>,
     replies: Replies,
+    routes: Routes,
+    alive: Arc<AtomicBool>,
 }
 
 impl Link {
@@ -59,22 +75,22 @@ impl Link {
         on_notify: OnNotify,
     ) -> Result<Self> {
         let replies = Replies::default();
+        let alive = Arc::new(AtomicBool::new(true));
         let incoming = stream.try_clone()?;
-        let listen_replies = Arc::clone(&replies);
+        let (listen_routes, listen_replies, listen_alive) =
+            (routes.clone(), Arc::clone(&replies), Arc::clone(&alive));
         thread::Builder::new()
             .name("pty-link".into())
             .spawn(move || {
-                listen(
-                    incoming,
-                    &routes,
-                    &listen_replies,
-                    &output_notify,
-                    &*on_notify,
-                )
+                listen(incoming, &listen_routes, &listen_replies, &*on_notify);
+                listen_alive.store(false, Ordering::Relaxed);
+                output_notify.store(true, Ordering::Relaxed);
             })?;
         Ok(Self {
             stream: Mutex::new(stream),
             replies,
+            routes,
+            alive,
         })
     }
 
@@ -86,20 +102,31 @@ impl Link {
         wire::write_bytes(&mut *lock(&self.stream), id, data).context("the PTY host is gone")
     }
 
-    fn spawn(&self, spec: SpawnSpec) -> Result<()> {
+    pub(super) fn forget(&self, id: &str) {
+        self.routes.remove(id);
+    }
+
+    fn spawn(&self, spec: SpawnSpec, io: SharedIo) -> Result<()> {
         let (tx, rx) = mpsc::channel();
         let id = spec.info.id.clone();
+        self.routes.insert(&id, io);
         lock(&self.replies).insert(id.clone(), tx);
-        let sent = self.send(&ToHost::Spawn(spec));
-        let answer = sent.and_then(|()| {
+        let answer = self.send(&ToHost::Spawn(spec)).and_then(|()| {
             rx.recv_timeout(SPAWN_TIMEOUT)
                 .context("the PTY host did not answer the spawn")
         });
         lock(&self.replies).remove(&id);
-        match answer? {
-            None => Ok(()),
-            Some(error) => bail!(error),
-        }
+        let result = match answer {
+            Ok(None) => return Ok(()),
+            Ok(Some(error)) => Err(anyhow::anyhow!(error)),
+            // 遅れて起きたセッションを、誰も知らないタブとしてホストに残さない。
+            Err(e) => {
+                let _ = self.send(&ToHost::Remove { id: id.clone() });
+                Err(e)
+            }
+        };
+        self.routes.remove(&id);
+        result
     }
 }
 
@@ -114,7 +141,6 @@ fn listen(
     mut stream: UnixStream,
     routes: &Routes,
     replies: &Replies,
-    output_notify: &AtomicBool,
     on_notify: &(dyn Fn(Notification) + Send + Sync),
 ) {
     loop {
@@ -143,7 +169,6 @@ fn listen(
             Err(e) => {
                 log::warn!("lost the PTY host: {e}");
                 routes.mark_all_exited();
-                output_notify.store(true, Ordering::Relaxed);
                 return;
             }
         }
@@ -194,34 +219,47 @@ fn handshake(mut stream: UnixStream, version: &str) -> Result<(UnixStream, Welco
 
 impl PtyStore {
     /// このリポジトリのホストにつなぐ。居なければ起こす。
-    ///
-    /// ホストの版が違っても、セッションを持っているなら殺さずにそのまま使う。
-    /// 持っていなければ退かせて今の版で起こし直す。
     pub fn attach(
         &mut self,
         repo_root: &Path,
         version: &str,
         on_notify: impl Fn(Notification) + Send + Sync + 'static,
     ) -> Result<Attached> {
-        let socket = cc_hook::pty_host_socket_path(repo_root);
-        self.attach_to(&socket, version, Arc::new(on_notify), || {
-            start_host(repo_root)
-        })
+        self.attach_with(
+            repo_root,
+            Detached {
+                version: version.to_string(),
+                on_notify: Arc::new(on_notify),
+                socket_of: Arc::new(cc_hook::pty_host_socket_path),
+                start: Arc::new(start_host),
+            },
+        )
     }
 
-    pub(super) fn attach_to(
-        &mut self,
-        socket: &Path,
-        version: &str,
-        on_notify: OnNotify,
-        start: impl Fn() -> Result<()>,
-    ) -> Result<Attached> {
-        anyhow::ensure!(self.link.is_none(), "already linked to a PTY host");
-        let (mut stream, mut welcome) = handshake(connect_or_start(socket, &start)?, version)?;
-        if welcome.version != version && welcome.sessions.is_empty() {
+    pub(super) fn attach_with(&mut self, repo_root: &Path, detached: Detached) -> Result<Attached> {
+        let attached = self.connect(repo_root, &detached);
+        if attached.is_ok() {
+            self.detached = Some(detached);
+        }
+        attached
+    }
+
+    fn connect(&mut self, working_dir: &Path, detached: &Detached) -> Result<Attached> {
+        let socket = (detached.socket_of)(working_dir);
+        let start = || (detached.start)(working_dir);
+        // 退く直前のホストに当たると挨拶が返らない。そのときは起こし直してもう 1 回。
+        let (mut stream, mut welcome) =
+            match handshake(connect_or_start(&socket, &start)?, &detached.version) {
+                Ok(greeted) => greeted,
+                Err(_) => {
+                    wait_until_gone(&socket);
+                    handshake(connect_or_start(&socket, &start)?, &detached.version)?
+                }
+            };
+        if welcome.version != detached.version && welcome.sessions.is_empty() {
             let _ = wire::write_control(&mut stream, &ToHost::Shutdown);
-            wait_until_gone(socket);
-            (stream, welcome) = handshake(connect_or_start(socket, &start)?, version)?;
+            wait_until_gone(&socket);
+            (stream, welcome) = handshake(connect_or_start(&socket, &start)?, &detached.version)?;
         }
         anyhow::ensure!(
             welcome.protocol == wire::PROTOCOL,
@@ -230,27 +268,29 @@ impl PtyStore {
             welcome.protocol,
             wire::PROTOCOL
         );
-        for info in welcome.sessions {
-            self.adopt(info);
-        }
-        self.link = Some(Link::start(
-            stream,
-            self.routes.clone(),
-            Arc::clone(&self.output_notify),
-            Arc::clone(&on_notify),
-        )?);
+        // 受信を始める前に流す。後にすると、届いたばかりの通知を古い再生が上書きしうる。
         for line in &welcome.notifications {
             if let Some(notification) = Notification::parse(line) {
-                on_notify(notification);
+                (detached.on_notify)(notification);
             }
         }
+        let routes = Routes::default();
+        for info in welcome.sessions {
+            self.adopt(info, &socket, &routes);
+        }
+        let link = Link::start(
+            stream,
+            routes,
+            Arc::clone(&self.output_notify),
+            Arc::clone(&detached.on_notify),
+        )?;
+        self.links.insert(socket, link);
         Ok(Attached {
             host_version: welcome.version,
         })
     }
 
-    /// ホストに居るセッションの写しを作る。画面は挨拶の直後に届く。
-    fn adopt(&mut self, info: SessionInfo) {
+    fn adopt(&mut self, info: SessionInfo, host: &Path, routes: &Routes) {
         let io = SharedIo::new(
             info.kind,
             info.rows,
@@ -258,7 +298,7 @@ impl PtyStore {
             self.inactive_scrollback,
             &self.output_notify,
         );
-        self.routes.insert(&info.id, io.clone());
+        routes.insert(&info.id, io.clone());
         self.sessions.push(PtySession {
             id: info.id,
             label: info.label,
@@ -267,30 +307,57 @@ impl PtyStore {
             working_dir: info.working_dir,
             claude_session_id: info.claude_session_id,
             spawned_at: SystemTime::UNIX_EPOCH + Duration::from_millis(info.spawned_at_ms),
+            host: host.to_path_buf(),
             io,
         });
     }
 
-    /// ホストへの接続。[PtyStore::attach] していなければ、このプロセスの中にホストを置く。
-    pub(super) fn link(&mut self) -> Result<&Link> {
-        if self.link.is_none() {
-            let stream = Host::in_process(env!("CARGO_PKG_VERSION"), self.inactive_scrollback)?;
-            let (stream, _) = handshake(stream, env!("CARGO_PKG_VERSION"))?;
-            self.link = Some(Link::start(
-                stream,
-                self.routes.clone(),
-                Arc::clone(&self.output_notify),
-                Arc::new(|_| {}),
-            )?);
+    /// working_dir のセッションを置くホストの鍵。同じプロセスのホストは空のパス。
+    pub(super) fn host_of(&self, working_dir: &Path) -> PathBuf {
+        self.detached
+            .as_ref()
+            .map_or_else(PathBuf::new, |d| (d.socket_of)(working_dir))
+    }
+
+    /// 死んだ接続は捨てて張り直す。ホストが落ちた後もこのウィンドウで新しいセッションを開ける。
+    fn link_for(&mut self, working_dir: &Path) -> Result<&Link> {
+        let key = self.host_of(working_dir);
+        if self
+            .links
+            .get(&key)
+            .is_some_and(|l| !l.alive.load(Ordering::Relaxed))
+        {
+            self.links.remove(&key);
         }
-        Ok(self.link.as_ref().expect("linked above"))
+        if !self.links.contains_key(&key) {
+            match self.detached.clone() {
+                Some(detached) => {
+                    self.connect(working_dir, &detached)?;
+                }
+                None => {
+                    let version = env!("CARGO_PKG_VERSION");
+                    let stream = Host::in_process(version, self.inactive_scrollback)?;
+                    let (stream, _) = handshake(stream, version)?;
+                    let link = Link::start(
+                        stream,
+                        Routes::default(),
+                        Arc::clone(&self.output_notify),
+                        Arc::new(|_| {}),
+                    )?;
+                    self.links.insert(key.clone(), link);
+                }
+            }
+        }
+        self.links.get(&key).context("no PTY host for this session")
     }
 
-    pub(super) fn linked(&self) -> Result<&Link> {
-        self.link.as_ref().context("no PTY host is linked yet")
+    pub(super) fn link_of(&self, session: &PtySession) -> Result<&Link> {
+        self.links
+            .get(&session.host)
+            .context("the PTY host of this session is gone")
     }
 
-    pub(super) fn spawn_on_host(&mut self, spec: SpawnSpec) -> Result<SharedIo> {
+    pub(super) fn spawn_on_host(&mut self, spec: SpawnSpec) -> Result<(SharedIo, PathBuf)> {
         let io = SharedIo::new(
             spec.info.kind,
             spec.info.rows,
@@ -298,13 +365,9 @@ impl PtyStore {
             self.inactive_scrollback,
             &self.output_notify,
         );
-        let id = spec.info.id.clone();
-        self.routes.insert(&id, io.clone());
-        let spawned = self.link().and_then(|link| link.spawn(spec));
-        if spawned.is_err() {
-            self.routes.remove(&id);
-        }
-        spawned.map(|()| io)
+        let working_dir = spec.info.working_dir.clone();
+        self.link_for(&working_dir)?.spawn(spec, io.clone())?;
+        Ok((io, self.host_of(&working_dir)))
     }
 }
 

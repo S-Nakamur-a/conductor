@@ -158,10 +158,13 @@ impl WorktreePanel {
         Effect::PushModal(Modal::Confirm(
             Confirm::destructive(
                 question,
-                vec![Effect::Spawn(Task::DeleteWorktree {
-                    path: worktree.path.clone(),
-                    branch: worktree.branch.clone(),
-                })],
+                vec![
+                    Effect::StopSessions(Some(worktree.path.clone())),
+                    Effect::Spawn(Task::DeleteWorktree {
+                        path: worktree.path.clone(),
+                        branch: worktree.branch.clone(),
+                    }),
+                ],
             )
             .title("Delete worktree"),
         ))
