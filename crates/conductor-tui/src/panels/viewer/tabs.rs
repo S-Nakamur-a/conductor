@@ -4,6 +4,8 @@
 //! [Tab::stashed] へ退避される。実体が「タブの中」と「パネルの直下」の 2 か所に
 //! 現れると、どちらを書いたかで表示がずれる。
 
+use std::path::PathBuf;
+
 use super::{Content, DiffPane, FoldState, Scroll, Search, Selection, ViewerPanel};
 use crate::effect::Effect;
 
@@ -48,6 +50,14 @@ struct Stashed {
     fold: FoldState,
     selection: Selection,
     scroll: Scroll,
+}
+
+/// 根を離れている間のタブ一式。
+#[derive(Debug, Default)]
+pub(super) struct Parked {
+    tabs: Vec<Tab>,
+    active: usize,
+    tab_scroll: usize,
 }
 
 impl ViewerPanel {
@@ -144,28 +154,32 @@ impl ViewerPanel {
         self.request(path, None, None, true)
     }
 
-    /// 新しい根に無いファイルのタブを閉じる。
-    pub(super) fn prune_tabs_to_root(&mut self) -> Vec<Effect> {
-        let before = self.tabs.len();
-        let active_path = self.active_path().map(str::to_string);
-        let root = self.root().to_path_buf();
-        self.tabs.retain(|t| root.join(&t.path).is_file());
-        if self.tabs.len() == before {
-            return Vec::new();
-        }
-        if let Some(idx) = active_path.and_then(|p| self.tabs.iter().position(|t| t.path == p)) {
-            self.active = idx;
-            return Vec::new();
-        }
-        self.clear_active();
-        self.active = 0;
-        let Some(tab) = self.tabs.first_mut() else {
-            return Vec::new();
+    /// 離れる根のタブを預け、入る根で前に開いていたタブへ戻す。戻ったタブは
+    /// [Self::focus_tab] と同じくディスクから読み直す。
+    pub(super) fn swap_tabs(&mut self, leaving: PathBuf) -> Vec<Effect> {
+        self.stash();
+        // 前の根で投げた読み込みが、ここで開くタブの中身に化けないように。
+        self.load = None;
+        let parked = Parked {
+            tabs: std::mem::take(&mut self.tabs),
+            active: self.active,
+            tab_scroll: self.tab_scroll,
         };
-        // 別の根で溜めた状態は捨て、新しい根のファイルとして開き直す。
-        tab.stashed = None;
-        let path = tab.path.clone();
-        self.request(path, None, None, false)
+        self.parked.insert(leaving, parked);
+        let Parked {
+            tabs,
+            active,
+            tab_scroll,
+        } = self.parked.remove(&self.root).unwrap_or_default();
+        self.tabs = tabs;
+        self.active = active;
+        self.tab_scroll = tab_scroll;
+        if self.tabs.is_empty() {
+            return Vec::new();
+        }
+        self.restore(active);
+        let path = self.tabs[active].path.clone();
+        self.request(path, None, None, true)
     }
 
     /// preview は必ずアクティブなので、呼ぶのはフォーカスが他へ移る直前だけ。閉じたタブ

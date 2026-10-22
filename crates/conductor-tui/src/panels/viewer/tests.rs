@@ -46,6 +46,11 @@ impl Harness {
         self.run(effects);
     }
 
+    fn switch_root(&mut self, root: &Path) {
+        let effects = self.viewer().set_root(root.to_path_buf());
+        self.run(effects);
+    }
+
     fn peek(&mut self, path: &str) {
         let effects = self.viewer().open(Path::new(path), None, None, true);
         self.run(effects);
@@ -237,18 +242,45 @@ fn 別のタブへ移るとpreviewは閉じる() {
 }
 
 #[test]
-fn 根が変わると無いファイルのタブは落ちる() {
-    let a = fixture(&[("both.txt", "A\n"), ("only_a.txt", "A\n")]);
-    let b = fixture(&[("both.txt", "B\n")]);
+fn タブはworktreeごとに持ち戻ると読みかけの位置で読み直す() {
+    let long = |tag: &str| -> String { (0..50).map(|i| format!("{tag}{i}\n")).collect() };
+    let a = fixture(&[("same.txt", long("a").as_str()), ("only_a.txt", "A\n")]);
+    let b = fixture(&[("same.txt", "B\n")]);
     let mut h = Harness::at(a.path());
-    h.open("both.txt");
     h.open("only_a.txt");
-    assert_eq!(h.tabs().len(), 2);
+    h.open("same.txt");
+    h.viewer().scroll.line = 30;
 
-    let effects = h.viewer().set_root(b.path().to_path_buf());
-    h.run(effects);
-    assert_eq!(h.tabs(), ["both.txt"]);
-    assert_eq!(h.body(), ["B"], "新しい根の中身を読む");
+    h.switch_root(b.path());
+    assert!(
+        h.tabs().is_empty(),
+        "同じ名前のファイルがあっても引き継がない"
+    );
+    assert!(h.body().is_empty());
+    h.open("same.txt");
+
+    std::fs::write(a.path().join("same.txt"), long("A2-")).unwrap();
+    h.switch_root(a.path());
+    assert_eq!(h.tabs(), ["only_a.txt", "same.txt"]);
+    assert_eq!(h.body()[0], "A2-0", "離れている間の書き換えを読み直す");
+    assert_eq!(h.ws.panels.viewer.scroll.line, 30);
+
+    h.switch_root(b.path());
+    assert_eq!(h.tabs(), ["same.txt"]);
+    assert_eq!(h.body(), ["B"]);
+}
+
+#[test]
+fn 読み込み中にworktreeを移っても前のファイルは出ない() {
+    let a = fixture(&[("a.txt", "A\n")]);
+    let b = fixture(&[]);
+    let mut h = Harness::at(a.path());
+    let effects = h.viewer().open(Path::new("a.txt"), None, None, false);
+    apply(&mut h.ws, &mut h.svc, effects);
+
+    h.switch_root(b.path());
+    assert!(h.body().is_empty());
+    assert_eq!(h.ws.panels.viewer.content.path, None);
 }
 
 #[test]
