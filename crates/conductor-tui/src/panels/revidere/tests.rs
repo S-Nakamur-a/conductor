@@ -55,6 +55,32 @@ fn round(base: &str, previous: Option<&str>) -> String {
     )
 }
 
+#[test]
+fn 比較範囲はworktreeごとに持つ() {
+    let repo = TestRepo::new();
+    let feature = repo.worktree("feature/x");
+    let (mut ws, mut svc) = workspace_for(&repo);
+    let main = ws.worktree_path();
+    let index_of = |path: &Path| {
+        ws.panels
+            .worktree
+            .list()
+            .iter()
+            .position(|w| w.path == path)
+            .expect("worktree が一覧に無い")
+    };
+    let (main_at, feature_at) = (index_of(&main), index_of(&feature));
+    ws.panels.revidere.scope = Scope::SincePrevious;
+
+    apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(feature_at)]);
+    pump(&mut ws, &mut svc);
+    assert_eq!(ws.panels.revidere.scope(), Scope::Base);
+
+    apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(main_at)]);
+    pump(&mut ws, &mut svc);
+    assert_eq!(ws.panels.revidere.scope(), Scope::SincePrevious);
+}
+
 /// 成果物が無いのは正常。ここを Broken に畳むと、走らせていないだけの worktree で
 /// エラーが出続ける。
 #[test]

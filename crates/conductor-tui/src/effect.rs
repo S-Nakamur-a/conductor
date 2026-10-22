@@ -260,7 +260,8 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     let Some(worktree) = ws.panels.worktree.selected().map(|w| w.path.clone()) else {
         return Vec::new();
     };
-    let review = swap_review(ws, leaving, &worktree);
+    let review = swap_review(ws, leaving.clone(), &worktree);
+    ws.panels.revidere.swap_scope(leaving, &worktree);
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
     effects.extend(
