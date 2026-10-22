@@ -17,7 +17,7 @@ pub mod syntax;
 pub mod tabs;
 pub mod thread;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::OpenDiff;
@@ -37,7 +37,7 @@ use fold::FoldState;
 pub use mouse::Selection;
 use search::Search;
 use syntax::Highlighter;
-use tabs::{Tab, TabStatus};
+use tabs::{Parked, Tab, TabStatus};
 use thread::ThreadFolds;
 
 /// 半ページの行数。
@@ -74,6 +74,8 @@ pub struct ViewerPanel {
     root: PathBuf,
     tabs: Vec<Tab>,
     active: usize,
+    /// 今の根以外の worktree で開いていたタブ。
+    parked: HashMap<PathBuf, Parked>,
     pub content: Content,
     pub diff: DiffPane,
     pub search: Search,
@@ -108,6 +110,7 @@ impl ViewerPanel {
             root: PathBuf::new(),
             tabs: Vec::new(),
             active: 0,
+            parked: HashMap::new(),
             content: Content::default(),
             diff: DiffPane {
                 side_by_side: config.diff.default_view
@@ -229,14 +232,13 @@ impl ViewerPanel {
         Vec::new()
     }
 
-    /// worktree が変わった。相対パスは根が変わると別のファイルを指すので、
-    /// 新しい根に無いファイルのタブは閉じる。
+    /// worktree が変わった。タブは worktree ごとに持ち、引き継がない。
     pub fn set_root(&mut self, root: PathBuf) -> Vec<Effect> {
         if self.root == root {
             return Vec::new();
         }
-        self.root = root;
-        self.prune_tabs_to_root()
+        let leaving = std::mem::replace(&mut self.root, root);
+        self.swap_tabs(leaving)
     }
 
     /// ファイルを開く唯一の入口。既に開いていればタブを増やさず、そこへ戻る。
