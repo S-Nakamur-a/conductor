@@ -401,6 +401,19 @@ fn base_refはoriginが先に進んでいれば早送りされる() {
 }
 
 #[test]
+fn base_refはチェックアウト中なら早送りしない() {
+    let origin = Origin::new();
+    let repo = TestRepo::with_remote_and_main(&origin);
+    repo.checkout("main");
+    let before = repo.tip("main");
+    origin.commit_on("main", "a later commit on main");
+
+    repo.engine().ensure_base_ref_available("main").unwrap();
+
+    assert_eq!(repo.tip("main"), before);
+}
+
+#[test]
 fn base_refは分岐していれば触らない() {
     let origin = Origin::new();
     let repo = TestRepo::with_remote_and_main(&origin);
