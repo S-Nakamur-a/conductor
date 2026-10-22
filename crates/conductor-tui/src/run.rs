@@ -1496,6 +1496,36 @@ mod tests {
         assert_eq!(liveness(&ws, false), Liveness::Idle);
     }
 
+    #[test]
+    fn レビュー画面を開いているかはworktreeごとに覚える() {
+        let repo = crate::testing::TestRepo::new();
+        let feature = repo.worktree("feature/x");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let main = ws.worktree_path();
+        let index_of = |path: &std::path::Path| {
+            ws.panels
+                .worktree
+                .list()
+                .iter()
+                .position(|w| w.path == path)
+                .expect("worktree が一覧に無い")
+        };
+        let (main_at, feature_at) = (index_of(&main), index_of(&feature));
+
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::Revidere)]);
+        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(feature_at)]);
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(!ws.reviewing(), "開いていない worktree へ持ち越した");
+
+        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(main_at)]);
+        crate::testing::pump(&mut ws, &mut svc);
+        assert_eq!(
+            ws.focus,
+            Focus::Revidere,
+            "開いていた worktree へ戻ると開き直す"
+        );
+    }
+
     /// 取り消せない git 操作は必ず確認を挟む。
     #[test]
     fn メニューからのmergeは確認を通ってからタスクになる() {

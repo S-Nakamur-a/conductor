@@ -108,6 +108,8 @@ pub struct Chrome {
     /// レビュー画面が main を占めている。右端の Claude へフォーカスを移しても
     /// 開いたままにするために、フォーカスとは別に持つ。
     pub review_open: bool,
+    /// レビュー画面を開いたまま離れた worktree と、そのときのフォーカス。
+    pub review_open_in: std::collections::HashMap<std::path::PathBuf, Focus>,
     /// つかんでいる境界。離すまで持つ。
     pub drag: Option<crate::layout::Divider>,
     /// マウスで選んでいる区画内の範囲。次のクリック・スクロール・キーで消える。

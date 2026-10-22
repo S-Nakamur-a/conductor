@@ -255,10 +255,12 @@ fn open_file(
 /// 根は Explorer と Viewer が別々に持つ。相対パスの解決先は Viewer なので、
 /// ツリーだけが新しい根に切り替わる瞬間を作らないよう同じ場所で書く。
 fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
+    let leaving = ws.worktree_path();
     ws.panels.worktree.select(index);
     let Some(worktree) = ws.panels.worktree.selected().map(|w| w.path.clone()) else {
         return Vec::new();
     };
+    let review = swap_review(ws, leaving, &worktree);
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
     effects.extend(
@@ -271,7 +273,24 @@ fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     // 確認ダイアログが「作り直しか、初めてか」を答えられるよう、成果物も先に読む。
     // UI スレッドでファイルを読まないので、訊かれてから調べることはできない。
     effects.push(ws.panels.revidere.reload(worktree));
+    effects.extend(review);
     effects
+}
+
+/// レビュー画面を開いているかは worktree ごとに持ち、引き継がない。
+fn swap_review(ws: &mut Workspace, leaving: PathBuf, entering: &std::path::Path) -> Vec<Effect> {
+    if leaving == entering {
+        return Vec::new();
+    }
+    if ws.reviewing() {
+        ws.chrome.review_open_in.insert(leaving, ws.focus);
+    }
+    match ws.chrome.review_open_in.remove(entering) {
+        // Claude へのフォーカスがレビュー画面の一部になるのは、画面が開いている間だけ。
+        Some(focus) => vec![Effect::Focus(Focus::Revidere), Effect::Focus(focus)],
+        None if ws.reviewing() => vec![Effect::Focus(Focus::Explorer)],
+        None => Vec::new(),
+    }
 }
 
 /// 見えているシェルへ 1 行送る。走っていなければ起こしてから送る — 押した人は
