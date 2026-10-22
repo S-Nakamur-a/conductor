@@ -7,7 +7,6 @@ use std::path::Path;
 
 use conductor_core::cc_hook::UiRequest;
 
-use crate::command::CommandId;
 use crate::effect::Effect;
 use crate::workspace::{StatusLevel, Workspace};
 
@@ -22,12 +21,12 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
         )];
     };
     let shown = ws.worktree_path() == root;
-    let mut effects = Vec::new();
     match request {
         UiRequest::OpenFile { path, line, diff } => {
-            if !shown {
-                effects.push(Effect::SelectWorktree(index));
-            }
+            let mut effects = match show(ws, index, &root, shown) {
+                Ok(effects) => effects,
+                Err(refusal) => return refusal,
+            };
             effects.push(match (diff, relative(&root, &path)) {
                 (true, Some(rel)) => Effect::OpenChangedFile { path: rel, line },
                 _ => Effect::OpenFile {
@@ -37,28 +36,52 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
                     preview: false,
                 },
             });
+            effects
         }
         // 閉じるために画面を移ると、閉じた結果ではなく移った先が見える。
-        UiRequest::CloseFile { path } => {
-            let closed = shown
-                .then(|| relative(&root, &path))
-                .flatten()
-                .and_then(|rel| ws.panels.viewer.close_path(&rel));
-            effects.extend(closed.unwrap_or_else(|| {
+        UiRequest::CloseFile { path } => shown
+            .then(|| relative(&root, &path))
+            .flatten()
+            .and_then(|rel| ws.panels.viewer.close_path(&rel))
+            .unwrap_or_else(|| {
                 vec![Effect::Status(
                     StatusLevel::Warning,
                     format!("Claude asked to close {path}, which is not open here."),
                 )]
-            }));
-        }
+            }),
+        // 移った後の worktree で確認の文言を組むので、移るのはここで済ませておく。
         UiRequest::AnalyzeReview => {
-            if !shown {
-                effects.push(Effect::SelectWorktree(index));
-            }
-            effects.push(Effect::Command(CommandId::AnalyzeRevidere));
+            let mut effects = match show(ws, index, &root, shown) {
+                Ok(effects) => effects,
+                Err(refusal) => return refusal,
+            };
+            effects.extend(crate::command::confirm_requested_analyze(ws));
+            effects
         }
     }
-    effects
+}
+
+/// worktree を移るとエディタは閉じられる。保存していない編集を Claude の都合で
+/// 失わせないよう、開いている間は移らずに断る。
+fn show(
+    ws: &mut Workspace,
+    index: usize,
+    root: &Path,
+    shown: bool,
+) -> Result<Vec<Effect>, Vec<Effect>> {
+    if shown {
+        return Ok(Vec::new());
+    }
+    if let Some(editor) = ws.panels.terminal.editor_name() {
+        return Err(vec![Effect::Status(
+            StatusLevel::Warning,
+            format!(
+                "Claude asked to show {}; close {editor} first.",
+                root.display()
+            ),
+        )]);
+    }
+    Ok(crate::effect::select_worktree(ws, index))
 }
 
 /// worktree はネストしうるので、cwd を含むうち最も深いもの。
@@ -83,7 +106,12 @@ fn relative(root: &Path, path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conductor_core::diff_state::{DiffSource, DiffState};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use crate::effect::apply;
+    use crate::modal::Modal;
+    use crate::task::TaskResult;
     use crate::testing::{TestRepo, pump, workspace_for};
 
     fn open_diff(path: &Path) -> UiRequest {
@@ -130,6 +158,66 @@ mod tests {
         apply(&mut ws, &mut svc, asked);
 
         assert!(ws.panels.viewer.tabs().is_empty());
+    }
+
+    #[test]
+    fn 移る前に投げた差分が届いても移った先で開く() {
+        let repo = TestRepo::new();
+        let feat = repo.worktree("feat");
+        std::fs::write(feat.join("a.txt"), "feat change\n").unwrap();
+        let (mut ws, mut svc) = workspace_for(&repo);
+        let previous = ws.worktree_path();
+        let mut stale = DiffState::new(DiffSource::working_tree("main"));
+        stale.load(&previous, false, 4);
+
+        let asked = effects(&mut ws, &feat, open_diff(&feat.join("a.txt")));
+        apply(&mut ws, &mut svc, asked);
+        let follow = ws.accept(TaskResult::Diff {
+            root: previous,
+            diff: Box::new(stale),
+        });
+        apply(&mut ws, &mut svc, follow);
+        pump(&mut ws, &mut svc);
+
+        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+    }
+
+    #[test]
+    fn エディタを開いている間は別のworktreeへ移らない() {
+        let repo = TestRepo::new();
+        let feat = repo.worktree("feat");
+        let (mut ws, mut svc) = workspace_for(&repo);
+        let root = ws.worktree_path();
+        let argv = ["/bin/sh", "-c", "sleep 30"].map(String::from);
+        ws.panels
+            .terminal
+            .open_editor(&root.join("a.txt"), &root, &argv)
+            .unwrap();
+
+        let asked = effects(&mut ws, &feat, UiRequest::AnalyzeReview);
+        apply(&mut ws, &mut svc, asked);
+
+        assert!(ws.panels.terminal.editor_name().is_some());
+        assert_eq!(ws.worktree_path(), root);
+    }
+
+    #[test]
+    fn 頼まれた解析の確認はenterで承認されない() {
+        let repo = TestRepo::new();
+        let feat = repo.worktree("feat");
+        let (mut ws, mut svc) = workspace_for(&repo);
+
+        let asked = effects(&mut ws, &feat, UiRequest::AnalyzeReview);
+        apply(&mut ws, &mut svc, asked);
+        let Some(Modal::Confirm(confirm)) = ws.modals.last_mut() else {
+            panic!("確認が出ていない");
+        };
+        let answered = confirm.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(
+            !answered.iter().any(|e| matches!(e, Effect::Spawn(_))),
+            "{answered:?}"
+        );
     }
 
     #[test]
