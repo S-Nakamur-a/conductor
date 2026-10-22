@@ -50,6 +50,8 @@ pub struct RevidereState {
     error: Option<String>,
     loading: bool,
     scope: Scope,
+    /// 今の worktree 以外で選んでいた比較範囲。
+    scopes: HashMap<PathBuf, Scope>,
     selected: usize,
     column: Column,
     show_overview: bool,
@@ -117,6 +119,12 @@ impl RevidereState {
             Some(head) if !analysed.is_empty() && head.starts_with(analysed) => Artifact::Current,
             _ => Artifact::Stale,
         }
+    }
+
+    /// 比較範囲は worktree ごとに持つ。
+    pub fn swap_scope(&mut self, leaving: PathBuf, entering: &Path) {
+        self.scopes.insert(leaving, self.scope);
+        self.scope = self.scopes.remove(entering).unwrap_or_default();
     }
 
     pub fn reload(&mut self, worktree: PathBuf) -> Effect {

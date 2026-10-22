@@ -5,6 +5,7 @@ pub mod render;
 pub mod tour_stops;
 pub mod tree;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::DiffState;
@@ -57,6 +58,15 @@ pub struct ExplorerPanel {
     refresh_queued: bool,
     /// 走査中に git の状態が動いた。全体ではなく差分と色分けだけを待たせる。
     git_refresh_queued: bool,
+    parked: HashMap<PathBuf, ParkedView>,
+}
+
+/// 根を離れている間の下区画。
+#[derive(Debug, Default)]
+struct ParkedView {
+    pane: Pane,
+    bottom: BottomView,
+    tour: TourStops,
 }
 
 impl ExplorerPanel {
@@ -124,10 +134,25 @@ impl ExplorerPanel {
         if self.tree.root() == root {
             return Vec::new();
         }
+        self.swap_view(&root);
         self.tree.set_root(root.clone());
         self.tree_cursor = ListCursor::default();
         self.changes.reset(root, base);
         self.refresh()
+    }
+
+    /// 台本も預ける。開いたときにしか読まないので、残すと別の worktree の停車駅が出る。
+    fn swap_view(&mut self, entering: &Path) {
+        let leaving = ParkedView {
+            pane: self.pane,
+            bottom: self.bottom,
+            tour: std::mem::take(&mut self.tour),
+        };
+        self.parked.insert(self.tree.root().to_path_buf(), leaving);
+        let ParkedView { pane, bottom, tour } = self.parked.remove(entering).unwrap_or_default();
+        self.pane = pane;
+        self.bottom = bottom;
+        self.tour = tour;
     }
 
     /// ツリーと diff を投げ直す。根が決まる前は何も投げない。worktree 一覧が
@@ -816,6 +841,33 @@ mod tests {
             "a.rs",
             "古い出どころの結果で上書きしない"
         );
+    }
+
+    #[test]
+    fn 下区画で見ていたものと台本はworktreeごとに持つ() {
+        let a = tempfile::TempDir::new().unwrap();
+        let b = tempfile::TempDir::new().unwrap();
+        let script = conductor_core::tour::artifact_path(a.path());
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        std::fs::write(&script, "not json").unwrap();
+        let mut panel = ExplorerPanel::default();
+        panel.set_root(a.path().to_path_buf(), "main");
+        panel.show(BottomView::TourStops);
+        assert!(panel.tour.error().is_some());
+
+        panel.set_root(b.path().to_path_buf(), "main");
+        assert_eq!(
+            (panel.pane(), panel.bottom()),
+            (Pane::Tree, BottomView::GitChanges)
+        );
+        assert!(panel.tour.error().is_none(), "別の worktree の台本が残った");
+
+        panel.set_root(a.path().to_path_buf(), "main");
+        assert_eq!(
+            (panel.pane(), panel.bottom()),
+            (Pane::Bottom, BottomView::TourStops)
+        );
+        assert!(panel.tour.error().is_some());
     }
 
     #[test]
