@@ -39,6 +39,11 @@ pub enum WatchEvent {
     },
     /// MCP からレビューデータの refresh 要求が届いた。
     RefreshRequested,
+    /// パネルの Claude が MCP 越しに画面操作を頼んだ。
+    UiRequest {
+        cwd: PathBuf,
+        request: conductor_core::cc_hook::UiRequest,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +71,7 @@ impl From<conductor_core::cc_hook::Notification> for WatchEvent {
                 panel_id,
                 session_id,
             },
+            Notification::Ui { cwd, request } => Self::UiRequest { cwd, request },
         }
     }
 }

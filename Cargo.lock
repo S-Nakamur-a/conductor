@@ -437,6 +437,7 @@ dependencies = [
  "git2",
  "libc",
  "log",
+ "revidere",
  "rmcp",
  "schemars",
  "serde",

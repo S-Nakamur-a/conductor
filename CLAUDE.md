@@ -50,6 +50,13 @@ does *not* go through MCP — its artifact is a JSON file written by `revidere`.
   Their doc comments become the JSON Schema descriptions the model reads, so
   changing one changes the tool's public contract — treat them as API, not
   commentary.
+- **The window tools** (`open_file` / `close_file` / `analyze_review`) ride the
+  cc-notify socket as one `ui <json>` line (`cc_hook::UiRequest`), relayed by the
+  PTY host like `cc-signal`. They can only answer *sent*: a host with no window
+  drops the line, and it is deliberately not replayed on attach. An open_file /
+  analyze_review request from another worktree switches the window there first;
+  close_file does not, and only acts on the worktree being shown. `get_review` reads
+  `review.json` directly and needs no window.
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
 

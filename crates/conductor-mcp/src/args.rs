@@ -114,3 +114,21 @@ pub struct ReadSymbol {
     #[serde(default)]
     pub kind: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OpenFile {
+    /// 開くファイル。リポジトリルートからの相対パスか絶対パス
+    pub path: String,
+    /// スクロールして見せる行（1始まり）
+    #[serde(default)]
+    pub line: Option<u32>,
+    /// true ならベースブランチとの差分として開く。変更されていないファイルは開けない
+    #[serde(default)]
+    pub diff: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CloseFile {
+    /// 閉じるファイル。リポジトリルートからの相対パスか絶対パス
+    pub path: String,
+}

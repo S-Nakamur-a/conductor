@@ -15,6 +15,8 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 mod settings;
 
 pub use settings::{
@@ -27,6 +29,7 @@ pub const NOTIFY_SOCK_ENV: &str = "CONDUCTOR_NOTIFY_SOCK";
 /// cc-notify ソケットを流れる 1 行。書く側 (フック) と聞く側 (リスナ) の共通語彙。
 ///
 /// どの id も UUID、cwd は行末まで丸ごとなので、空白区切りで曖昧にならない。
+/// ui だけは行末が JSON。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notification {
     Active {
@@ -40,12 +43,45 @@ pub enum Notification {
         panel_id: String,
         session_id: String,
     },
+    /// パネルの Claude が MCP 越しに頼んだ画面操作。cwd はどの worktree の話か。
+    Ui {
+        cwd: PathBuf,
+        request: UiRequest,
+    },
+}
+
+/// Claude から画面への頼みごと。パスは絶対パス。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum UiRequest {
+    OpenFile {
+        path: String,
+        line: Option<usize>,
+        diff: bool,
+    },
+    CloseFile {
+        path: String,
+    },
+    AnalyzeReview,
+}
+
+#[derive(Serialize, Deserialize)]
+struct UiLine {
+    cwd: String,
+    request: UiRequest,
 }
 
 impl Notification {
     pub fn parse(line: &str) -> Option<Self> {
         let (verb, rest) = line.trim().split_once(' ')?;
         match verb {
+            "ui" => {
+                let UiLine { cwd, request } = serde_json::from_str(rest).ok()?;
+                Some(Self::Ui {
+                    cwd: PathBuf::from(cwd),
+                    request,
+                })
+            }
             "active" => Some(Self::Active {
                 cwd: PathBuf::from(rest),
             }),
@@ -72,6 +108,14 @@ impl Notification {
                 panel_id,
                 session_id,
             } => format!("session {panel_id} {session_id}\n"),
+            Self::Ui { cwd, request } => {
+                let line = UiLine {
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    request: request.clone(),
+                };
+                let json = serde_json::to_string(&line).expect("UiLine は文字列と数値だけ");
+                format!("ui {json}\n")
+            }
         }
     }
 }
@@ -129,14 +173,18 @@ pub enum CcSignal {
     Waiting,
 }
 
-// 届かないことは咎めない — Conductor が居ないだけでもここへ来る。
+/// 届いたかは答えない — ソケットに書けても、ウィンドウが閉じていれば読まれない。
 // 1 回の write で送りきる。write! はフォーマット断片ごとに write を呼ぶので、
 // 受け手が 1 回の read で拾うと "session" だけ届くことがあった。
+pub fn send(sock_path: &Path, message: &Notification) -> std::io::Result<()> {
+    let mut stream = UnixStream::connect(sock_path)?;
+    stream.write_all(message.to_line().as_bytes())?;
+    stream.flush()
+}
+
+// 届かないことは咎めない — Conductor が居ないだけでもここへ来る。
 fn notify(sock_path: &Path, message: &Notification) {
-    if let Ok(mut stream) = UnixStream::connect(sock_path) {
-        let _ = stream.write_all(message.to_line().as_bytes());
-        let _ = stream.flush();
-    }
+    let _ = send(sock_path, message);
 }
 
 fn session_id_from_payload(payload: &str) -> Option<String> {
@@ -195,6 +243,24 @@ mod tests {
                     session_id: "sess-2".to_string(),
                 },
             ),
+            (
+                r#"ui {"cwd":"/tmp/my wt","request":{"op":"open_file","path":"/tmp/my wt/a b.rs","line":3,"diff":true}}"#,
+                Notification::Ui {
+                    cwd: PathBuf::from("/tmp/my wt"),
+                    request: UiRequest::OpenFile {
+                        path: "/tmp/my wt/a b.rs".to_string(),
+                        line: Some(3),
+                        diff: true,
+                    },
+                },
+            ),
+            (
+                r#"ui {"cwd":"/tmp/wt","request":{"op":"analyze_review"}}"#,
+                Notification::Ui {
+                    cwd: PathBuf::from("/tmp/wt"),
+                    request: UiRequest::AnalyzeReview,
+                },
+            ),
         ];
         for (line, want) in cases {
             assert_eq!(Notification::parse(line).as_ref(), Some(&want), "{line}");
@@ -209,6 +275,8 @@ mod tests {
             "session only-one-id",
             "session  sess",
             "bogus /tmp/wt",
+            "ui not-json",
+            r#"ui {"cwd":"/tmp/wt","request":{"op":"format_disk"}}"#,
         ] {
             assert!(Notification::parse(line).is_none(), "{line}");
         }
