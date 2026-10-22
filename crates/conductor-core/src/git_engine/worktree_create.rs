@@ -171,8 +171,9 @@ impl GitEngine {
 
     /// base_branch のローカルブランチを用意し、origin の tip の純粋な子孫なら
     /// fast-forward する。分岐していれば触らない。どこかの worktree でチェックアウト
-    /// 中でも触らない。ref だけを進めると index と作業ツリーが置き去りになり、
-    /// 進めた分を打ち消す変更が staged に現れる。
+    /// 中のブランチも触らない (fetch で origin/<base> を最新にするところまでは行う)。
+    /// ref だけを進めると index と作業ツリーが置き去りになり、進めた分を打ち消す
+    /// 変更が staged に現れる。
     pub fn ensure_base_ref_available(&self, base_branch: &str) -> Result<()> {
         if self
             .repo
@@ -181,10 +182,10 @@ impl GitEngine {
         {
             return self.fetch_refspec(&format!("{base_branch}:refs/heads/{base_branch}"));
         }
-        if self.branch_checked_out_elsewhere(base_branch)? {
-            return Ok(());
-        }
+        let may_advance = !self.branch_checked_out_elsewhere(base_branch)?;
 
+        // 直接 fetch すると分岐時に non-fast-forward で拒否されエラーになる。分岐は
+        // 「触らない」が正常系なので、scratch ref に取って自分で比べる。
         const SCRATCH_REF: &str = "refs/conductor/pr-intake-base-update";
         self.fetch_refspec(&format!("{base_branch}:{SCRATCH_REF}"))?;
 
@@ -200,7 +201,10 @@ impl GitEngine {
             .peel_to_commit()?
             .id();
 
-        if fetched_oid != local_oid && self.repo.graph_descendant_of(fetched_oid, local_oid)? {
+        if may_advance
+            && fetched_oid != local_oid
+            && self.repo.graph_descendant_of(fetched_oid, local_oid)?
+        {
             self.repo
                 .find_reference(&format!("refs/heads/{base_branch}"))?
                 .set_target(

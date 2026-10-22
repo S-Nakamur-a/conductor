@@ -406,22 +406,24 @@ fn base_refはチェックアウト中なら早送りしない() {
     let repo = TestRepo::with_remote_and_main(&origin);
     repo.checkout("main");
     let before = repo.tip("main");
-    origin.commit_on("main", "a later commit on main");
+    let later = origin.commit_on("main", "a later commit on main");
 
     repo.engine().ensure_base_ref_available("main").unwrap();
 
     assert_eq!(repo.tip("main"), before);
+    let tracking = repo
+        .repo
+        .find_reference("refs/remotes/origin/main")
+        .unwrap();
+    assert_eq!(tracking.target(), Some(later));
 }
 
 #[test]
 fn base_refは分岐していれば触らない() {
     let origin = Origin::new();
     let repo = TestRepo::with_remote_and_main(&origin);
-    repo.checkout("main");
-    let local_only = repo
-        .file("local.txt", "1\n")
-        .add("local.txt")
-        .commit("local-only");
+    let local_only = repo.commit_tree(Some(repo.tip("main")), &[("local.txt", b"1\n")]);
+    repo.branch_at("main", local_only);
     origin.commit_on("main", "origin-only commit");
 
     repo.engine().ensure_base_ref_available("main").unwrap();
