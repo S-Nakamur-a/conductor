@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn 頼まれた解析の確認はenterで承認されない() {
+    fn 頼まれた解析の確認は打ちかけの文字とenterで承認されない() {
         let repo = TestRepo::new();
         let feat = repo.worktree("feat");
         let (mut ws, mut svc) = workspace_for(&repo);
@@ -212,7 +212,11 @@ mod tests {
         let Some(Modal::Confirm(confirm)) = ws.modals.last_mut() else {
             panic!("確認が出ていない");
         };
-        let answered = confirm.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let typed = "cargo build".chars().map(KeyCode::Char);
+        let answered: Vec<Effect> = typed
+            .chain([KeyCode::Enter])
+            .flat_map(|code| confirm.update(KeyEvent::new(code, KeyModifiers::NONE)))
+            .collect();
 
         assert!(
             !answered.iter().any(|e| matches!(e, Effect::Spawn(_))),

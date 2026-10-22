@@ -325,10 +325,8 @@ fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
     confirm_analyze_with(ws, Confirm::ask)
 }
 
-/// 外から頼まれた解析の確認。人が別の区画で打っている最中に出るので、そこで押された
-/// Enter が承認にならないよう、既定を No にする。
 pub fn confirm_requested_analyze(ws: &Workspace) -> Vec<Effect> {
-    confirm_analyze_with(ws, Confirm::destructive)
+    confirm_analyze_with(ws, Confirm::letters_only)
 }
 
 fn confirm_analyze_with(

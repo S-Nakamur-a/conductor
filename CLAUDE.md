@@ -57,9 +57,9 @@ to start it, and `get_review` reads the artifact it wrote.
   drops the line, and it is deliberately not replayed on attach. An open_file /
   analyze_review request from another worktree switches the window there first —
   unless an editor is open, which the switch would kill; close_file does not, and
-  only acts on the worktree being shown. The analyse confirmation it raises defaults
-  to No, since it pops up while someone may be typing elsewhere — but a typed `y`, or
-  a selection-moving key (`h` / `l` / Tab / arrows) before Enter, still approves it. `get_review` reads
+  only acts on the worktree being shown. The analyse confirmation it raises answers
+  only to `y` / `n` / Esc, since it pops up while someone may be typing elsewhere —
+  Enter and the selection keys are ignored, but a typed `y` still approves it. `get_review` reads
   `review.json` directly and needs no window.
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.

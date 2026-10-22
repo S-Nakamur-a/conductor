@@ -29,6 +29,7 @@ pub struct Choice {
     yes: &'static str,
     no: &'static str,
     selected: Answer,
+    letters_only: bool,
 }
 
 impl Choice {
@@ -37,6 +38,7 @@ impl Choice {
             yes: "Yes",
             no: "No",
             selected: default,
+            letters_only: false,
         }
     }
 
@@ -50,6 +52,7 @@ impl Choice {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Some(Answer::Yes),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(Answer::No),
+            _ if self.letters_only => None,
             KeyCode::Enter => Some(self.selected),
             KeyCode::Tab
             | KeyCode::BackTab
@@ -76,11 +79,16 @@ impl Choice {
             };
             Span::styled(format!(" {label} "), style)
         };
+        let keys = if self.letters_only {
+            "   y / n"
+        } else {
+            "   y / n · tab"
+        };
         Line::from(vec![
             button(self.yes, Answer::Yes),
             Span::raw("  "),
             button(self.no, Answer::No),
-            Span::styled("   y / n · tab", Style::default().fg(theme.hint)),
+            Span::styled(keys, Style::default().fg(theme.hint)),
         ])
     }
 }
@@ -104,6 +112,14 @@ impl Confirm {
     /// 失うものがある確認。Enter を反射で押しても何も起きない。
     pub fn destructive(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
         Self::with_default(Answer::No, question.into(), on_yes)
+    }
+
+    /// 外から出る確認。別の区画で打っていた Enter や h / l が答えにならないよう、
+    /// y / n でしか答えられない。
+    pub fn letters_only(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
+        let mut confirm = Self::destructive(question, on_yes);
+        confirm.choice.letters_only = true;
+        confirm
     }
 
     fn with_default(default: Answer, question: String, on_yes: Vec<Effect>) -> Self {
@@ -211,6 +227,20 @@ mod tests {
         }
         let mut confirm = Confirm::ask("go?", vec![Effect::Quit]);
         assert!(confirm.update(key(KeyCode::Char('j'))).is_empty());
+    }
+
+    #[test]
+    fn 文字だけの確認は選択の移動とenterに答えない() {
+        let mut confirm = Confirm::letters_only("analyse?", vec![Effect::Quit]);
+        for code in [
+            KeyCode::Char('l'),
+            KeyCode::Tab,
+            KeyCode::Right,
+            KeyCode::Enter,
+        ] {
+            assert!(confirm.update(key(code)).is_empty(), "{code:?}");
+        }
+        assert!(answered(&confirm.update(key(KeyCode::Char('y')))));
     }
 
     /// 文言が変わるだけでは、どちらにいるか一目で分からない。
