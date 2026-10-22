@@ -44,7 +44,8 @@ MCP tools together, which is the point: they used to be two artifacts on two
 release channels and drifted apart. `plugins/conductor/.mcp.json` starts it for
 the Claude Code sessions inside the TUI, resolving the DB from
 `$CONDUCTOR_DB_PATH` (injected by `conductor-svc`'s `pty/spawn.rs`). The AI review
-does *not* go through MCP — its artifact is a JSON file written by `revidere`.
+itself is still made by `revidere`, not by MCP: `analyze_review` only asks the window
+to start it, and `get_review` reads the artifact it wrote.
 
 - **Tool contract:** the `#[tool]` handlers in `crates/conductor-mcp/src/tools.rs`.
   Their doc comments become the JSON Schema descriptions the model reads, so
