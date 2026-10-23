@@ -122,7 +122,7 @@ impl FleetPanel {
     }
 
     pub fn open(&mut self, from: Focus, own: Vec<OwnSession>) {
-        if from != Focus::Fleet {
+        if !matches!(from, Focus::Fleet | Focus::FleetSession) {
             self.came_from = Some(from);
         }
         self.set_own(own);
@@ -391,7 +391,10 @@ impl FleetPanel {
         }
     }
 
-    pub fn update(&mut self, action: Action, _ctx: &Ctx) -> Option<Vec<Effect>> {
+    pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if ctx.focus == Focus::FleetSession {
+            return (action == Action::LeaveTerminal).then(|| vec![Effect::Focus(Focus::Fleet)]);
+        }
         let rows = self.visual_rows();
         let at = rows.iter().position(|r| self.is_selected(r));
         let last = rows.len().saturating_sub(1);
@@ -409,6 +412,7 @@ impl FleetPanel {
                 );
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
+            Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
             _ => return None,
         };
         if let Some(row) = rows.get(target) {

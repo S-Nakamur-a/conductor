@@ -87,7 +87,10 @@ in any repository and in any window or terminal, one line each, grouped by
 repository, with the ones waiting for you (a question or a permission) repeated at
 the top. A line shows the state (waiting / working / finished and not yet looked at
 / idle), how long it has been in it, the session's title and how much context it
-holds. `Enter` opens that session's worktree in the main screen with the session in
+holds. A session this window runs shows live on the right: **Tab** steps into it to
+type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
+there resizes it, so the Claude panel loses what had scrolled off (the transcript view
+still has it). `Enter` opens that session's worktree in the main screen with the session in
 the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
 another conductor window or a plain terminal runs are listed with their state, but
 cannot be opened or typed into from here. The states come from the files Claude

@@ -88,6 +88,10 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
 }
 
 pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    if let Some(session) = ws.fleet_session() {
+        crate::panels::terminal::render::fleet(frame, rect, ws, &session);
+        return;
+    }
     let inner = inner(rect);
     let theme = &ws.theme;
     let Some(row) = ws.panels.fleet.selected_row() else {
