@@ -22,7 +22,7 @@ use crate::workspace::{Focus, Workspace};
 #[cfg(test)]
 use super::TerminalPanel;
 
-/// 枠だけを除いた PTY のグリッド。エディタはセッションタブを持たない。
+/// 枠だけを除いた PTY のグリッド。エディタと一覧の右はセッションタブを持たない。
 pub fn editor_area(panel: Rect) -> Rect {
     panel.inner(Margin::new(1, 1))
 }
@@ -46,7 +46,7 @@ pub fn content_area(panel: Rect) -> Rect {
     }
 }
 
-fn lock(parser: &Mutex<vt100::Parser>) -> std::sync::MutexGuard<'_, vt100::Parser> {
+pub(super) fn lock(parser: &Mutex<vt100::Parser>) -> std::sync::MutexGuard<'_, vt100::Parser> {
     parser.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -206,14 +206,36 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
-/// 埋め込みエディタの中身。タブ行もスクロールバックも無く、PTY のグリッドだけ。
+/// 埋め込みエディタの中身。
 pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let session = ws
+        .panels
+        .terminal
+        .editor
+        .as_ref()
+        .map(|e| e.session.as_str());
+    grid(frame, rect, ws, session, ws.focus == Focus::Editor);
+}
+
+/// 一覧の右に映す、この窓のセッション。
+pub fn fleet(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
+    grid(
+        frame,
+        rect,
+        ws,
+        Some(session),
+        ws.focus == Focus::FleetSession,
+    );
+}
+
+/// タブ行もスクロールバックも無く、PTY のグリッドだけ。
+fn grid(frame: &mut Frame, rect: Rect, ws: &Workspace, session: Option<&str>, focused: bool) {
     let panel = &ws.panels.terminal;
     let content = editor_area(rect);
     if content.width == 0 || content.height == 0 {
         return;
     }
-    let Some(index) = panel.index_of(panel.editor.as_ref().map(|e| e.session.as_str())) else {
+    let Some(index) = panel.index_of(session) else {
         return;
     };
     let Some((screen, cursor)) = panel.pty.screen(index).zip(panel.pty.shown_cursor(index)) else {
@@ -224,7 +246,7 @@ pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     for (row, line) in snapshot.lines.iter().enumerate() {
         buffer.set_line(content.x, content.y + row as u16, line, content.width);
     }
-    if ws.focus == Focus::Editor {
+    if focused {
         place_cursor(frame, ws, content, &snapshot);
     }
 }

@@ -30,13 +30,15 @@ pub enum Focus {
     Revidere,
     /// マシン上の全 Claude の一覧。
     Fleet,
+    /// 一覧の右に映した、この窓のセッション。
+    FleetSession,
 }
 
 impl Focus {
     pub fn is_pty(self) -> bool {
         matches!(
             self,
-            Self::TerminalClaude | Self::TerminalShell | Self::Editor
+            Self::TerminalClaude | Self::TerminalShell | Self::Editor | Self::FleetSession
         )
     }
 
@@ -47,7 +49,9 @@ impl Focus {
             Self::Explorer => Self::Viewer,
             Self::Viewer | Self::Editor => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
-            Self::TerminalShell | Self::Revidere | Self::Fleet => Self::Explorer,
+            Self::TerminalShell | Self::Revidere | Self::Fleet | Self::FleetSession => {
+                Self::Explorer
+            }
         }
     }
 
@@ -57,7 +61,7 @@ impl Focus {
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
-            Self::Revidere | Self::Fleet => Self::Explorer,
+            Self::Revidere | Self::Fleet | Self::FleetSession => Self::Explorer,
         }
     }
 
@@ -72,6 +76,7 @@ impl Focus {
             Self::Editor => "Editor",
             Self::Revidere => "Review",
             Self::Fleet => "Sessions",
+            Self::FleetSession => "Session",
         }
     }
 
@@ -81,7 +86,7 @@ impl Focus {
             Self::Fleet => KeyContext::Fleet,
             Self::Explorer => KeyContext::Explorer,
             Self::Viewer => KeyContext::Viewer,
-            Self::TerminalClaude | Self::TerminalShell => KeyContext::Terminal,
+            Self::TerminalClaude | Self::TerminalShell | Self::FleetSession => KeyContext::Terminal,
             Self::Editor => KeyContext::Editor,
             Self::Revidere => KeyContext::Revidere,
         }
@@ -389,7 +394,7 @@ impl Workspace {
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
             Focus::Revidere => panels.revidere.update(action, &ctx),
-            Focus::Fleet => panels.fleet.update(action, &ctx),
+            Focus::Fleet | Focus::FleetSession => panels.fleet.update(action, &ctx),
             _ => None,
         }
     }
@@ -415,14 +420,7 @@ impl Workspace {
         match result {
             TaskResult::FleetStatus(status) => {
                 let own = self.panels.terminal.own_claude_sessions();
-                let visible = self.panels.terminal.visible_claude().map(str::to_string);
-                self.panels.fleet.apply(
-                    *status,
-                    own,
-                    visible.as_deref(),
-                    self.chrome.fleet_open,
-                    std::time::SystemTime::now(),
-                );
+                self.apply_fleet(*status, own);
                 Vec::new()
             }
             TaskResult::Tree(_)
@@ -740,6 +738,53 @@ impl Workspace {
         }
     }
 
+    /// 打っていたセッションの行が消えて選び直したら、選び直した先へは打たせない。
+    pub(crate) fn apply_fleet(
+        &mut self,
+        status: crate::panels::fleet::FleetStatus,
+        own: Vec<crate::panels::fleet::OwnSession>,
+    ) {
+        let typing_into = self.fleet_session();
+        let visible = self.panels.terminal.visible_claude().map(str::to_string);
+        self.panels.fleet.apply(
+            status,
+            own,
+            visible.as_deref(),
+            self.chrome.fleet_open,
+            std::time::SystemTime::now(),
+        );
+        let shown = self.fleet_session();
+        if self.focus == Focus::FleetSession && (shown.is_none() || shown != typing_into) {
+            self.focus = Focus::Fleet;
+        }
+    }
+
+    /// 一覧の右に映っている、この窓のセッション。
+    pub fn fleet_session(&self) -> Option<String> {
+        if !self.chrome.fleet_open {
+            return None;
+        }
+        match self.panels.fleet.selected_row()?.key {
+            crate::panels::fleet::RowKey::Panel(id) => {
+                self.panels.terminal.has_session(&id).then_some(id)
+            }
+            crate::panels::fleet::RowKey::Pid(_) => None,
+        }
+    }
+
+    /// キーと貼り付けを受け取るセッション。
+    pub fn pty_session(&self) -> Option<String> {
+        match self.focus {
+            Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => {
+                self.panels.terminal.session_in(self.focus)
+            }
+            Focus::FleetSession => self.fleet_session(),
+            Focus::Worktree | Focus::Explorer | Focus::Viewer | Focus::Revidere | Focus::Fleet => {
+                None
+            }
+        }
+    }
+
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
         self.sync_review_fx();
@@ -793,7 +838,10 @@ impl Workspace {
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
         self.panels.viewer.sync_layout(layout);
-        self.panels.terminal.sync_sizes(layout);
+        let fleet_session = self.fleet_session();
+        self.panels
+            .terminal
+            .sync_sizes(layout, fleet_session.as_deref());
         self.panels.revidere.sync_layout(layout);
         let modal = crate::render::comment_list_rect(layout.area);
         for open in &mut self.modals {

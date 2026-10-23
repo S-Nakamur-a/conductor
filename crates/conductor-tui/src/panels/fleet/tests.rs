@@ -722,3 +722,234 @@ mod screen {
         assert!(ws.panels.terminal.editor_name().is_some());
     }
 }
+
+mod pane {
+    use std::path::Path;
+
+    use conductor_svc::Services;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::layout::Rect;
+
+    use super::*;
+    use crate::effect::apply;
+    use crate::layout::Region;
+    use crate::panels::terminal::render::{content_area, editor_area};
+    use crate::run::{on_key, on_paste};
+
+    type Svc = Services<crate::task::TaskResult>;
+
+    fn opened() -> (Workspace, Svc, tempfile::TempDir) {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.focus = Focus::Viewer;
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        (ws, svc, tempfile::tempdir().unwrap())
+    }
+
+    /// 中身はシェル。Claude 区画に映すが、一覧の外で大きさを合わせるのはシェル区画。
+    fn spawn(ws: &mut Workspace, dir: &Path) -> String {
+        ws.panels.terminal.show_shell_as_claude_for_test(dir);
+        ws.panels.terminal.visible_claude().unwrap().to_string()
+    }
+
+    fn list(ws: &mut Workspace, dir: &Path, ids: &[&str]) {
+        let cwd = dir.to_string_lossy();
+        let own = ids.iter().map(|id| own(id, &cwd, None)).collect();
+        ws.apply_fleet(FleetStatus::default(), own);
+    }
+
+    fn press(ws: &mut Workspace, svc: &mut Svc, code: KeyCode, modifiers: KeyModifiers) {
+        on_key(ws, svc, KeyEvent::new(code, modifiers));
+    }
+
+    fn shows(ws: &Workspace, id: &str, text: &str) -> bool {
+        ws.panels
+            .terminal
+            .screen_for_test(id)
+            .contents()
+            .contains(text)
+    }
+
+    fn size_of(ws: &Workspace, id: &str) -> (u16, u16) {
+        ws.panels.terminal.screen_for_test(id).size()
+    }
+
+    fn grid_after_layout(ws: &mut Workspace, area: Rect, region: Region) -> (u16, u16) {
+        let layout = crate::layout::layout(ws, area);
+        ws.sync_layout(&layout);
+        let rect = layout.rect(region).unwrap();
+        let grid = match region {
+            Region::FleetSession => editor_area(rect),
+            _ => content_area(rect),
+        };
+        (grid.height, grid.width)
+    }
+
+    #[test]
+    fn tab_で右に入ると打鍵は一覧で選んだセッションへ行く() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        let hidden = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        press(&mut ws, &mut svc, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(ws.focus, Focus::FleetSession);
+        for c in "echo typed-$((40+2))".chars() {
+            press(&mut ws, &mut svc, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        press(&mut ws, &mut svc, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(crate::testing::wait_for(|| shows(&ws, &listed, "typed-42")));
+        assert!(!shows(&ws, &hidden, "typed"));
+    }
+
+    #[test]
+    fn 右に入っていれば日本語の貼り付けもファイルのドロップもそのセッションへ() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        let hidden = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        let file = dir.path().join("dropped.txt");
+        std::fs::write(&file, "x").unwrap();
+        on_paste(&mut ws, &mut svc, "日本語".into());
+        on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
+        assert!(crate::testing::wait_for(|| {
+            shows(&ws, &listed, "日本語") && shows(&ws, &listed, "dropped.txt")
+        }));
+        assert!(ws.chrome.status.is_none(), "{:?}", ws.chrome.status);
+        assert_eq!(ws.focus, Focus::FleetSession);
+        assert!(!shows(&ws, &hidden, "dropped.txt"));
+    }
+
+    #[test]
+    fn 右の区画にはセッションの画面が描かれる() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        on_paste(&mut ws, &mut svc, "echo drawn-$((1+1))\n".into());
+        assert!(crate::testing::wait_for(|| shows(&ws, &listed, "drawn-2")));
+        let backend = ratatui::backend::TestBackend::new(200, 50);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut right = Rect::default();
+        terminal
+            .draw(|frame| {
+                let layout = crate::layout::layout(&ws, frame.area());
+                right = layout.rect(Region::FleetSession).unwrap();
+                crate::render::render(frame, &ws, &layout);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let drawn: String = (right.y..right.bottom())
+            .flat_map(|y| (right.x..right.right()).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol())
+            .collect();
+        assert!(drawn.contains("drawn-2"), "{drawn}");
+    }
+
+    #[test]
+    fn この窓の外の行では_tab_で右に入らない() {
+        let (mut ws, mut svc, _dir) = opened();
+        let outside = live(9, "/r/a", "s9", Status::Working, Owner::Elsewhere);
+        ws.apply_fleet(status(vec![outside]), Vec::new());
+        press(&mut ws, &mut svc, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 右で_ctrl_esc_を押すと一覧の左へ戻る() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        press(&mut ws, &mut svc, KeyCode::Esc, KeyModifiers::CONTROL);
+        assert!(ws.chrome.fleet_open);
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 右から一覧を開き直しても_esc_は一覧に入る前の画面へ戻る() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        press(&mut ws, &mut svc, KeyCode::Char('1'), KeyModifiers::ALT);
+        assert_eq!(ws.focus, Focus::Fleet);
+        let effects = ws.dispatch(Action::ExitSubPanel).unwrap();
+        apply(&mut ws, &mut svc, effects);
+        assert!(!ws.chrome.fleet_open);
+        assert_eq!(ws.focus, Focus::Viewer);
+    }
+
+    #[test]
+    fn 打っていたセッションの行が消えたら一覧の左へ戻り選び直した先へは打たない() {
+        let (mut ws, mut svc, dir) = opened();
+        let a = spawn(&mut ws, dir.path());
+        let b = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&a, &b]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        let typing = ws.fleet_session().unwrap();
+        let rest = if typing == a { b } else { a };
+        list(&mut ws, dir.path(), &[&rest]);
+        assert_eq!(ws.fleet_session(), Some(rest));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 打っていたセッションが片付いた後の一覧で外の行が選ばれたら一覧の左へ戻る() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        ws.panels.terminal.stop_sessions(None);
+        assert_eq!(ws.pty_session(), None);
+        let outside = live(9, "/r/a", "s9", Status::Working, Owner::Elsewhere);
+        ws.apply_fleet(status(vec![outside]), Vec::new());
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 他のセッションの行が消えても右に映すものと打つ先は変わらない() {
+        let (mut ws, mut svc, dir) = opened();
+        let a = spawn(&mut ws, dir.path());
+        let b = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&a, &b]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        let typing = ws.fleet_session().unwrap();
+        list(&mut ws, dir.path(), &[&typing]);
+        assert_eq!(ws.fleet_session(), Some(typing));
+        assert_eq!(ws.focus, Focus::FleetSession);
+    }
+
+    #[test]
+    fn 右は区画の大きさに合わせ_一覧を閉じると今の画面の区画の大きさへ戻す() {
+        const AREA: Rect = Rect::new(0, 0, 200, 50);
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.focus = Focus::Viewer;
+        let dir = tempfile::tempdir().unwrap();
+        let listed = spawn(&mut ws, dir.path());
+        let screen = grid_after_layout(&mut ws, AREA, Region::TerminalShell);
+        assert_eq!(size_of(&ws, &listed), screen);
+
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        list(&mut ws, dir.path(), &[&listed]);
+        let fleet = grid_after_layout(&mut ws, AREA, Region::FleetSession);
+        assert_ne!(fleet, screen);
+        assert_eq!(size_of(&ws, &listed), fleet);
+
+        let effects = ws.dispatch(Action::ExitSubPanel).unwrap();
+        apply(&mut ws, &mut svc, effects);
+        grid_after_layout(&mut ws, AREA, Region::TerminalShell);
+        assert_eq!(size_of(&ws, &listed), screen);
+    }
+
+    #[test]
+    fn 端末の窓の大きさが変われば右のセッションも追従する() {
+        let (mut ws, _svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        grid_after_layout(&mut ws, Rect::new(0, 0, 160, 40), Region::FleetSession);
+        let wider = grid_after_layout(&mut ws, Rect::new(0, 0, 220, 60), Region::FleetSession);
+        assert_eq!(size_of(&ws, &listed), wider);
+    }
+}
