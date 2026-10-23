@@ -372,7 +372,10 @@ pub enum TaskResult {
         status: Option<Box<GitStatusMap>>,
     },
     /// DiffState は失敗の理由を自分の中に持つので Result にしない。
-    Diff(Box<DiffState>),
+    Diff {
+        root: PathBuf,
+        diff: Box<DiffState>,
+    },
     /// どのコミットの結果かは DiffState の source が持つ。
     CommitOverview(Box<DiffState>),
     /// `skip` は log 側の照合用にそのまま返す。
@@ -515,9 +518,9 @@ impl Task {
                     move || {
                         let mut diff = DiffState::new(source);
                         diff.load(&worktree, env.word_diff, env.tab_width);
-                        Box::new(diff)
+                        (worktree, Box::new(diff))
                     },
-                    TaskResult::Diff,
+                    |(root, diff)| TaskResult::Diff { root, diff },
                 );
             }
             Task::CommitOverview { worktree, source } => {

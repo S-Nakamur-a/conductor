@@ -84,7 +84,7 @@ fn text_of(result: &CallToolResult) -> &str {
 }
 
 #[test]
-fn 公開するツールはちょうど9つ() {
+fn 公開するツールはちょうど13() {
     let tools = McpServer::tool_router().list_all();
     let names: BTreeSet<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert_eq!(
@@ -99,6 +99,10 @@ fn 公開するツールはちょうど9つ() {
             "get_change_summary",
             "search_symbols",
             "read_symbol",
+            "open_file",
+            "close_file",
+            "analyze_review",
+            "get_review",
         ]
         .into_iter()
         .collect()
@@ -253,4 +257,35 @@ fn 自己レビューが増えると注意書きが付く() {
     }
     let over = f.create("src/foo.rs", SELF_REVIEW_SOFT_LIMIT as u32 + 1, None);
     assert!(text_of(&over).contains(NUDGE));
+}
+
+#[test]
+fn 無いファイルは画面に頼まずに断る() {
+    let f = Fixture::new();
+    let args = OpenFile {
+        path: "src/missing.rs".into(),
+        line: None,
+        diff: None,
+    };
+    let result = block_on(f.server.open_file(Parameters(args))).unwrap();
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text_of(&result).contains("No such file"),
+        "{}",
+        text_of(&result)
+    );
+}
+
+#[test]
+fn レビューの成果物をそのまま返す() {
+    let f = Fixture::new();
+    let missing = block_on(f.server.get_review()).unwrap();
+    assert!(text_of(&missing).contains("analyze_review"));
+
+    let root = f.repo.workdir().unwrap();
+    let path = revidere::review::artifact_path(root, revidere::review::Scope::Base);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"{"head":"abc"}"#).unwrap();
+    let found = block_on(f.server.get_review()).unwrap();
+    assert_eq!(text_of(&found), r#"{"head":"abc"}"#);
 }

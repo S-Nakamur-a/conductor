@@ -322,6 +322,17 @@ fn show_revidere(ws: &mut Workspace) -> Vec<Effect> {
 /// メニューの隣の行を選んだだけで走り出さないようにする。worktree が無いときや
 /// 既に走っているときの断り方は解析側が持っているので、そこには確認を挟まずそのまま渡す。
 fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
+    confirm_analyze_with(ws, Confirm::ask)
+}
+
+pub fn confirm_requested_analyze(ws: &Workspace) -> Vec<Effect> {
+    confirm_analyze_with(ws, Confirm::letters_only)
+}
+
+fn confirm_analyze_with(
+    ws: &Workspace,
+    ask: impl FnOnce(&'static str, Vec<Effect>) -> Confirm,
+) -> Vec<Effect> {
     let branch = ws.branch().to_string();
     if branch.is_empty() || ws.panels.revidere.is_running(&branch) {
         return analyze(ws, false);
@@ -353,7 +364,7 @@ fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
     let base = revidere::git::guess_base(&ws.worktree_path())
         .unwrap_or_else(|_| "(cannot guess \u{2014} nothing to compare against)".into());
     vec![Effect::PushModal(Modal::Confirm(
-        Confirm::ask(situation, on_yes)
+        ask(situation, on_yes)
             .title(title)
             .detail(format!("{branch} [{scope}]"))
             .detail(format!("Against {base}"))

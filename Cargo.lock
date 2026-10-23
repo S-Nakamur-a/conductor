@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "3.10.4"
+version = "3.11.0"
 dependencies = [
  "anyhow",
  "conductor-tui",
@@ -437,6 +437,7 @@ dependencies = [
  "git2",
  "libc",
  "log",
+ "revidere",
  "rmcp",
  "schemars",
  "serde",

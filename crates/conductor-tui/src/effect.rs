@@ -254,7 +254,7 @@ fn open_file(
 ///
 /// 根は Explorer と Viewer が別々に持つ。相対パスの解決先は Viewer なので、
 /// ツリーだけが新しい根に切り替わる瞬間を作らないよう同じ場所で書く。
-fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
+pub(crate) fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     let leaving = ws.worktree_path();
     ws.panels.worktree.select(index);
     let Some(worktree) = ws.panels.worktree.selected().map(|w| w.path.clone()) else {

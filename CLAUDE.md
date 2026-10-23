@@ -44,12 +44,23 @@ MCP tools together, which is the point: they used to be two artifacts on two
 release channels and drifted apart. `plugins/conductor/.mcp.json` starts it for
 the Claude Code sessions inside the TUI, resolving the DB from
 `$CONDUCTOR_DB_PATH` (injected by `conductor-svc`'s `pty/spawn.rs`). The AI review
-does *not* go through MCP — its artifact is a JSON file written by `revidere`.
+itself is still made by `revidere`, not by MCP: `analyze_review` only asks the window
+to start it, and `get_review` reads the artifact it wrote.
 
 - **Tool contract:** the `#[tool]` handlers in `crates/conductor-mcp/src/tools.rs`.
   Their doc comments become the JSON Schema descriptions the model reads, so
   changing one changes the tool's public contract — treat them as API, not
   commentary.
+- **The window tools** (`open_file` / `close_file` / `analyze_review`) ride the
+  cc-notify socket as one `ui <json>` line (`cc_hook::UiRequest`), relayed by the
+  PTY host like `cc-signal`. They can only answer *sent*: a host with no window
+  drops the line, and it is deliberately not replayed on attach. An open_file /
+  analyze_review request from another worktree switches the window there first —
+  unless an editor is open, which the switch would kill; close_file does not, and
+  only acts on the worktree being shown. The analyse confirmation it raises answers
+  only to `y` / `n` / Esc, since it pops up while someone may be typing elsewhere —
+  Enter and the selection keys are ignored, but a typed `y` still approves it. `get_review` reads
+  `review.json` directly and needs no window.
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
 

@@ -430,7 +430,11 @@ impl ExplorerPanel {
                 }
                 self.survey_settled()
             }
-            TaskResult::Diff(diff) => self.changes.install(*diff),
+            // worktree をまたぐと出どころ (作業ツリー対 main) が同じになり、source では見分けられない。
+            TaskResult::Diff { root, diff } if root == self.tree.root() => {
+                self.changes.install(*diff)
+            }
+            TaskResult::Diff { .. } => Vec::new(),
             TaskResult::HeadLog { skip, commits } => self.changes.install_log(skip, commits),
             TaskResult::CommitOverview(diff) => {
                 self.changes.install_overview(*diff);
@@ -807,9 +811,10 @@ mod tests {
         drive(&mut ws, &[Action::GoToBottom]);
         assert_eq!(selected(&ws), 2);
 
-        ws.panels
-            .explorer
-            .apply_result(TaskResult::Diff(Box::new(working_tree(&["c.rs"]))));
+        ws.panels.explorer.apply_result(TaskResult::Diff {
+            root: PathBuf::new(),
+            diff: Box::new(working_tree(&["c.rs"])),
+        });
         assert_eq!(
             ws.panels
                 .explorer
@@ -832,9 +837,10 @@ mod tests {
         let mut stale = DiffState::new(DiffSource::commit("a"));
         stale.files = vec![file("stale.rs")];
         stale.rebuild_display_list();
-        ws.panels
-            .explorer
-            .apply_result(TaskResult::Diff(Box::new(stale)));
+        ws.panels.explorer.apply_result(TaskResult::Diff {
+            root: PathBuf::new(),
+            diff: Box::new(stale),
+        });
         assert!(ws.panels.explorer.changes.is_loading());
         assert_eq!(
             ws.panels.explorer.diff().files[0].path,
@@ -989,10 +995,10 @@ mod tests {
             "{effect:?}"
         );
 
-        let effects = ws
-            .panels
-            .explorer
-            .apply_result(TaskResult::Diff(Box::new(working_tree(&["a.rs"]))));
+        let effects = ws.panels.explorer.apply_result(TaskResult::Diff {
+            root: PathBuf::new(),
+            diff: Box::new(working_tree(&["a.rs"])),
+        });
         let [Effect::OpenChangedFile { path, line }] = effects.as_slice() else {
             panic!("{effects:?}");
         };
@@ -1004,10 +1010,10 @@ mod tests {
         let mut ws = with_changes(&["a.rs"]);
         let mut broken = working_tree(&[]);
         broken.error = Some("no such ref".into());
-        let effects = ws
-            .panels
-            .explorer
-            .apply_result(TaskResult::Diff(Box::new(broken)));
+        let effects = ws.panels.explorer.apply_result(TaskResult::Diff {
+            root: PathBuf::new(),
+            diff: Box::new(broken),
+        });
         assert!(matches!(
             effects.as_slice(),
             [Effect::Status(StatusLevel::Warning, _)]

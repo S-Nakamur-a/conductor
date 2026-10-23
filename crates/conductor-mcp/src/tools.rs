@@ -1,5 +1,5 @@
-//! stdio 越しに公開する 9 つのツール — レビュー DB 7 つと、コード索引を読む
-//! `search_symbols` / `read_symbol`。
+//! stdio 越しに公開する 13 のツール — レビュー DB 7 つ、コード索引を読む
+//! `search_symbols` / `read_symbol`、Conductor の画面を動かす 3 つと review.json を読む 1 つ。
 //!
 //! ワイヤ上の契約 — ツール名、引数名、description、返信文の一字一句 — はあえて
 //! 変えない。既に世に出ているセッションとスラッシュコマンドがそれに依存する。
@@ -15,12 +15,13 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 
+use conductor_core::cc_hook::{self, Notification, UiRequest};
 use conductor_core::review_store::{Author, CommentKind, CommentStatus, NewReview, ReviewStore};
 use conductor_core::semantic_index::{self, SymbolEntry};
 
 use crate::args::{
-    CommentIdOnly, CreateComment, GetChangeSummary, GetPendingComments, ReadSymbol, ReplyToComment,
-    SearchSymbols, SetChangeSummary,
+    CloseFile, CommentIdOnly, CreateComment, GetChangeSummary, GetPendingComments, OpenFile,
+    ReadSymbol, ReplyToComment, SearchSymbols, SetChangeSummary,
 };
 use crate::refresh_signal::signal_refresh;
 use crate::reply::{
@@ -131,12 +132,41 @@ impl McpServer {
         self.store().resolve_id_prefix(comment_id).map_err(db_error)
     }
 
-    /// 呼び出しごとに読み直すのは、索引が裏 (TUI の再生成) で置き換わるため。
-    fn load_symbols(&self) -> Option<(PathBuf, Vec<SymbolEntry>)> {
-        let root = git2::Repository::discover(&self.inner.repo_root)
+    fn ask_window(&self, cwd: PathBuf, request: UiRequest) -> Result<CallToolResult, ErrorData> {
+        let Ok(sock) = std::env::var(cc_hook::NOTIFY_SOCK_ENV) else {
+            return err_text(
+                "Not running inside a Conductor terminal panel, so there is no Conductor window to ask.",
+            );
+        };
+        match cc_hook::send(Path::new(&sock), &Notification::Ui { cwd, request }) {
+            Ok(()) => ok_text(
+                "Sent to Conductor. It takes effect only while a Conductor window is open on this repository; this tool cannot confirm that it did.",
+            ),
+            Err(e) => err_text(format!("Conductor is not listening ({e}).")),
+        }
+    }
+
+    fn resolve_file(&self, path: &str) -> Result<(PathBuf, PathBuf), String> {
+        let root = self
+            .workdir()
+            .ok_or("This directory is not inside a git worktree.")?;
+        let abs = root.join(path);
+        if !abs.is_file() {
+            return Err(format!("No such file: {}", abs.display()));
+        }
+        Ok((root, abs))
+    }
+
+    fn workdir(&self) -> Option<PathBuf> {
+        git2::Repository::discover(&self.inner.repo_root)
             .ok()?
             .workdir()
-            .map(Path::to_path_buf)?;
+            .map(Path::to_path_buf)
+    }
+
+    /// 呼び出しごとに読み直すのは、索引が裏 (TUI の再生成) で置き換わるため。
+    fn load_symbols(&self) -> Option<(PathBuf, Vec<SymbolEntry>)> {
+        let root = self.workdir()?;
         let (_survey, store) = semantic_index::survey_and_load(&root, &root, None, &[]);
         Some((root, store?.symbols()))
     }
@@ -392,6 +422,68 @@ impl McpServer {
     }
 
     #[tool(
+        description = "Open a file in the Conductor window's Viewer, as a tab. Use it to show the user the code you are talking about. With diff=true it opens the file's diff against the base branch (only files changed on this branch). If the window is showing another worktree, it switches to this one first."
+    )]
+    async fn open_file(
+        &self,
+        Parameters(args): Parameters<OpenFile>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (root, abs) = match self.resolve_file(&args.path) {
+            Ok(found) => found,
+            Err(msg) => return err_text(msg),
+        };
+        self.ask_window(
+            root,
+            UiRequest::OpenFile {
+                path: abs.to_string_lossy().into_owned(),
+                line: args.line.map(|n| n as usize),
+                diff: args.diff.unwrap_or(false),
+            },
+        )
+    }
+
+    #[tool(
+        description = "Close a file's tab (plain or diff) in the Conductor window's Viewer. Only acts while the window is showing this worktree."
+    )]
+    async fn close_file(
+        &self,
+        Parameters(args): Parameters<CloseFile>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Some(root) = self.workdir() else {
+            return err_text("This directory is not inside a git worktree.");
+        };
+        let path = root.join(&args.path).to_string_lossy().into_owned();
+        self.ask_window(root, UiRequest::CloseFile { path })
+    }
+
+    #[tool(
+        description = "Ask the Conductor window to create its AI review (revidere) of this worktree's diff against the base branch. The window asks the user to confirm first, and the analysis takes minutes. Read the result with get_review."
+    )]
+    async fn analyze_review(&self) -> Result<CallToolResult, ErrorData> {
+        let Some(root) = self.workdir() else {
+            return err_text("This directory is not inside a git worktree.");
+        };
+        self.ask_window(root, UiRequest::AnalyzeReview)
+    }
+
+    #[tool(
+        description = "Read the AI review (revidere) of this worktree as JSON: every changed line sorted into sections by importance, with explanations. Its head field names the commit it was made for; it may be older than the working tree."
+    )]
+    async fn get_review(&self) -> Result<CallToolResult, ErrorData> {
+        let Some(root) = self.workdir() else {
+            return err_text("This directory is not inside a git worktree.");
+        };
+        let path = revidere::review::artifact_path(&root, revidere::review::Scope::Base);
+        match std::fs::read_to_string(&path) {
+            Ok(json) => ok_text(json),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                ok_text("No review for this worktree yet. Call analyze_review to create one.")
+            }
+            Err(e) => err_text(format!("Cannot read {}: {e}", path.display())),
+        }
+    }
+
+    #[tool(
         description = "Return the source text of one definition — doc comment, attributes and body — by name, without reading the whole file. `name` is the symbol name (`Type::name` for members); `path` (substring) and `kind` narrow it when several definitions share the name; when still ambiguous, the candidates are listed instead. If the file changed since the index was built, no lines are returned (they would be wrong) — Read the file instead."
     )]
     async fn read_symbol(
@@ -450,7 +542,8 @@ impl ServerHandler for McpServer {
         info.server_info = Implementation::new("conductor", self.inner.version.clone());
         info.instructions = Some(
             "Conductor's review database: inline comments and change summaries \
-             for the branch checked out in this working directory."
+             for the branch checked out in this working directory. Also drives the \
+             Conductor window: open and close files, create and read its AI review."
                 .into(),
         );
         info

@@ -432,6 +432,8 @@ impl Host {
             Notification::Active { cwd } | Notification::Waiting { cwd } => {
                 lock(&self.shared.states).insert(cwd.clone(), line.clone());
             }
+            // 覚えない。次に繋いだウィンドウで再生すると、昔の頼みごとが今の画面を動かす。
+            Notification::Ui { .. } => {}
         }
         self.send_any(&ToWindow::Notify { line });
     }

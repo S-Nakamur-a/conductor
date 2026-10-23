@@ -18,6 +18,7 @@ pub mod markdown;
 pub mod menu;
 pub mod modal;
 pub mod panels;
+pub mod remote;
 pub mod render;
 pub mod resume;
 pub mod review;

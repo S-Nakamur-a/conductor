@@ -417,7 +417,17 @@ impl GitChanges {
             self.pending_open = Some((path.to_string(), line));
             return Some(self.set_source(DiffSource::working_tree(&self.base)));
         }
-        let path = self.diff.resolve_changed_path(path)?;
+        // worktree を移った直後は一覧が空なので、届くのを待つ。
+        let Some(path) = self.diff.resolve_changed_path(path) else {
+            if !self.loading {
+                return None;
+            }
+            self.pending_open = Some((path.to_string(), line));
+            return Some(Effect::Status(
+                StatusLevel::Info,
+                format!("Opening {path} once the diff loads\u{2026}"),
+            ));
+        };
         let row = self.diff.reveal_path(&path)?;
         self.cursor
             .select(row, self.diff.display_list.len(), self.view);

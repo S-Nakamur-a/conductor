@@ -272,6 +272,7 @@ fn watch_effects(
     use conductor_svc::watch::WatchEvent;
     match watch {
         WatchEvent::RefreshRequested => vec![Effect::Spawn(Task::LoadReview)],
+        WatchEvent::UiRequest { cwd, request } => crate::remote::effects(ws, &cwd, request),
         // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
         WatchEvent::FsChanged(path) => {
             crate::index::note_change(ws, &path);

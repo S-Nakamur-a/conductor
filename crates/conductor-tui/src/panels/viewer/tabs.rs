@@ -154,6 +154,12 @@ impl ViewerPanel {
         self.request(path, None, None, true)
     }
 
+    /// relative_path のタブを閉じる。開いていなければ None。
+    pub fn close_path(&mut self, relative_path: &str) -> Option<Vec<Effect>> {
+        let idx = self.tabs.iter().position(|t| t.path == relative_path)?;
+        Some(self.close_tab(idx))
+    }
+
     /// 離れる根のタブを預け、入る根で前に開いていたタブへ戻す。戻ったタブは
     /// [Self::focus_tab] と同じくディスクから読み直す。
     pub(super) fn swap_tabs(&mut self, leaving: PathBuf) -> Vec<Effect> {

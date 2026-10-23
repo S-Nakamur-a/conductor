@@ -406,7 +406,7 @@ impl Workspace {
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
-            | TaskResult::Diff(_)
+            | TaskResult::Diff { .. }
             | TaskResult::HeadLog { .. }
             | TaskResult::CommitOverview(_) => self.panels.explorer.apply_result(result),
             TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
