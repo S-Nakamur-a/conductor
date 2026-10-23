@@ -280,17 +280,28 @@ impl Host {
         );
     }
 
-    /// 生きていても殺してから外す。reader が Arc を握っている間はマスターが閉じないので、
-    /// drop だけでは子に SIGHUP が届かない。
+    /// reader が Arc を握っている間はマスターが閉じないので、drop だけでは子に SIGHUP が届かない。
+    /// 生きていれば kill して回収する。
     fn remove(&self, id: &str) {
-        let mut sessions = lock(&self.shared.sessions);
-        if let Some(at) = sessions.iter().position(|s| lock(&s.info).id == id) {
-            let session = sessions.remove(at);
-            // 回収済みの pid は別のプロセスに使い回されているかもしれない。
-            if !session.exited.load(Ordering::Relaxed) {
-                let _ = lock(&session.child).kill();
-            }
+        let session = {
+            let mut sessions = lock(&self.shared.sessions);
+            let Some(at) = sessions.iter().position(|s| lock(&s.info).id == id) else {
+                return;
+            };
+            sessions.remove(at)
+        };
+        // 回収済みの pid は別のプロセスに使い回されているかもしれない。
+        if session.exited.load(Ordering::Relaxed) {
+            return;
         }
+        // kill は SIGHUP から SIGKILL まで 200ms ほど待つので、sessions のロックも呼び出し元
+        // (detach は window のロックを持っている) も待たせない。外した後は reap の対象外なので、
+        // ここで wait しないと子がゾンビのまま残る。
+        thread::spawn(move || {
+            let mut child = lock(&session.child);
+            let _ = child.kill();
+            let _ = child.wait();
+        });
     }
 
     fn spawn(&self, spec: SpawnSpec) -> Result<()> {
@@ -686,6 +697,80 @@ mod tests {
         drop(first);
 
         assert!(window(&socket).sessions().is_empty());
+    }
+
+    fn process_stat(pid: u32) -> String {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// script を走らせるエディタを起こし、`PID:<pid>:` と名乗るまで待って pid を返す。
+    fn launch_naming_pid(store: &mut PtyStore, dir: &Path, script: &str) -> (usize, u32) {
+        let args = ["-c".to_string(), script.to_string(), "sh".to_string()];
+        let editor = Launch::Editor {
+            program: "/bin/sh",
+            args: &args,
+            file: Path::new("file"),
+        };
+        let idx = launch(store, dir, editor);
+        let mut pid = None;
+        wait_until("the child naming its pid", || {
+            pid = screen_text(store, idx)
+                .split_once("PID:")
+                .and_then(|(_, rest)| rest.split_once(':'))
+                .and_then(|(n, _)| n.parse::<u32>().ok());
+            pid.is_some()
+        });
+        (idx, pid.unwrap())
+    }
+
+    /// テスト側は waitpid しない (自分で拾ってしまい、ホストが拾わなくても通るため)。
+    fn wait_until_gone(pid: u32) {
+        wait_until(
+            &format!("pid {pid} to leave the process table (stat stays Z when nobody waits)"),
+            || process_stat(pid).is_empty(),
+        );
+    }
+
+    /// remove_session だけで外す。Quit and Stop Sessions と worktree の削除が通る経路。
+    fn remove_and_expect_gone(script: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, socket) = serve(dir.path());
+        let mut store = window(&socket);
+        let (idx, pid) = launch_naming_pid(&mut store, dir.path(), script);
+
+        store.remove_session(idx);
+
+        wait_until_gone(pid);
+    }
+
+    #[test]
+    fn 外したセッションの子が_sighupを無視してもゾンビで残らない() {
+        remove_and_expect_gone("trap '' HUP; echo PID:$$:; exec sleep 100");
+    }
+
+    #[test]
+    fn 外したセッションの子が_sighupで終わるならプロセス表から消える() {
+        remove_and_expect_gone("echo PID:$$:; exec sleep 100");
+    }
+
+    #[test]
+    fn ウィンドウが落ちて片付けたエディタの子が_sighupを無視してもゾンビで残らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, socket) = serve(dir.path());
+        let mut store = window(&socket);
+        let (_, pid) = launch_naming_pid(
+            &mut store,
+            dir.path(),
+            "trap '' HUP; echo PID:$$:; exec sleep 100",
+        );
+
+        drop(store);
+
+        wait_until_gone(pid);
     }
 
     #[test]
