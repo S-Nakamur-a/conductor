@@ -151,6 +151,7 @@ pub const MENUS: &[Menu] = &[
         title: "Panel",
         icon: icons::MENU_PANEL,
         items: &[
+            cmd(CommandId::FocusSessions, "Sessions"),
             cmd(CommandId::FocusWorktree, "Focus Worktree"),
             cmd(CommandId::FocusExplorer, "Focus Explorer"),
             cmd(CommandId::FocusViewer, "Focus Viewer"),

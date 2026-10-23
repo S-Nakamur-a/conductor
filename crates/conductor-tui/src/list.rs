@@ -149,6 +149,11 @@ pub fn row_line(
     if !selected {
         return line;
     }
+    line.style(selection(theme, focused))
+}
+
+/// 選んだ行の地。行の一部だけを塗るときに使う。
+pub fn selection(theme: &Theme, focused: bool) -> Style {
     // 選択は背景だけで示し、行の色は残す。selected_bg は多くのテーマで accent と同値で、
     // 行の文字色と衝突して読めなくなるため使わない。Line のスタイルは fg を持つ Span に
     // 負けるので、fg を渡しても効かない。
@@ -161,10 +166,10 @@ pub fn row_line(
         false => Theme::darken(theme.selected_bg_inactive, 0.6),
     };
     let style = Style::default().bg(bg);
-    line.style(match focused {
+    match focused {
         true => style.add_modifier(Modifier::BOLD),
         false => style,
-    })
+    }
 }
 
 #[cfg(test)]

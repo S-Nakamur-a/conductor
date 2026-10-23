@@ -17,6 +17,10 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Generation(u64);
 
+impl Generation {
+    const UNSCOPED: Generation = Generation(u64::MAX);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(u64);
 
@@ -112,7 +116,7 @@ impl<P: Send + 'static> Services<P> {
     pub fn try_recv(&self) -> Option<Event<P>> {
         loop {
             let event = self.rx.try_recv().ok()?;
-            if event.generation == self.generation() {
+            if event.generation == self.generation() || event.generation == Generation::UNSCOPED {
                 return Some(event);
             }
         }
@@ -128,6 +132,16 @@ pub struct EventSender<P> {
 impl<P> EventSender<P> {
     pub fn send_watch(&self, event: watch::WatchEvent) {
         self.send(EventKind::Watch(event));
+    }
+
+    /// 世代をまたいで届ける。ホストが中継する Claude の状態は、どの repo を開いていても
+    /// 成り立つ — repo を切り替えた瞬間に捨てると、そのセッションを見失う。
+    pub fn send_watch_unscoped(&self, event: watch::WatchEvent) {
+        let _ = self.tx.send(Event {
+            generation: Generation::UNSCOPED,
+            req: None,
+            kind: EventKind::Watch(event),
+        });
     }
 
     /// 途中経過を返す仕事のための送信口。1 回で終わる仕事は [Services::spawn] を使う。
@@ -229,6 +243,20 @@ mod tests {
             recv_blocking(&svc).map(|e| e.kind),
             Some(EventKind::Watch(watch::WatchEvent::ConfigChanged))
         ));
+    }
+
+    #[test]
+    fn 世代をまたぐ合図は_切り替えの前に送ったものも届く() {
+        let mut svc = Services::<u32>::new();
+        let sender = svc.sender();
+        sender.send_watch(watch::WatchEvent::ConfigChanged);
+        sender.send_watch_unscoped(watch::WatchEvent::GitChanged);
+        svc.bump_generation();
+        assert!(matches!(
+            recv_blocking(&svc).map(|e| e.kind),
+            Some(EventKind::Watch(watch::WatchEvent::GitChanged))
+        ));
+        assert!(svc.try_recv().is_none(), "世代つきの合図は捨てられる");
     }
 
     #[test]

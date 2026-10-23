@@ -27,8 +27,8 @@ use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
 use crate::timer::{
-    CONFIG_DEBOUNCE, Debounce, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, REVIEW_REQUEST_POLL, Timer,
-    WORKTREE_POLL,
+    CONFIG_DEBOUNCE, Debounce, FLEET_POLL, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP,
+    REVIEW_REQUEST_POLL, Timer, WORKTREE_POLL,
 };
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -100,6 +100,7 @@ pub fn run(
     let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
     let mut review_request_poll = Timer::new(REVIEW_REQUEST_POLL, last_input);
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
+    let mut fleet_poll = Timer::new(FLEET_POLL, last_input);
     let update_interval = Duration::from_secs(ws.config.updates.check_interval_secs);
     let mut update_poll = ws
         .config
@@ -117,6 +118,7 @@ pub fn run(
     let mut startup = vec![
         Effect::Spawn(Task::ListWorktrees),
         Effect::Spawn(Task::LoadGrabState),
+        Effect::OpenFleet,
     ];
     if update_poll.is_some() {
         startup.push(Effect::Spawn(Task::CheckForUpdate {
@@ -212,6 +214,7 @@ pub fn run(
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
+        poll_fleet(ws, svc, &mut fleet_poll, Instant::now());
         dirty |= ws.fx.tick();
 
         if ws.should_quit {
@@ -387,6 +390,25 @@ fn run_timers(
     dirty
 }
 
+fn poll_fleet(ws: &mut Workspace, svc: &mut Services<TaskResult>, timer: &mut Timer, now: Instant) {
+    if !timer.due(now) || ws.panels.fleet.is_polling() {
+        return;
+    }
+    let own = ws
+        .panels
+        .terminal
+        .own_claude_sessions()
+        .into_iter()
+        .filter_map(|s| Some((s.working_dir, s.claude_session_id?)))
+        .collect();
+    let known = ws.panels.fleet.known_transcripts();
+    apply(
+        ws,
+        svc,
+        vec![Effect::Spawn(Task::FleetStatus { known, own })],
+    );
+}
+
 fn tick_rate(liveness: Liveness) -> Duration {
     match liveness {
         Liveness::Terminal => Duration::from_millis(8),
@@ -450,6 +472,17 @@ pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent)
 pub fn on_paste(ws: &mut Workspace, svc: &mut Services<TaskResult>, data: String) {
     if let Some(modal) = ws.modals.last_mut() {
         modal.paste(&data);
+        return;
+    }
+    if ws.chrome.fleet_open && dropped_file(&data).is_some() {
+        apply(
+            ws,
+            svc,
+            vec![Effect::Status(
+                StatusLevel::Warning,
+                "Leave the session list to drop a file into Claude.".into(),
+            )],
+        );
         return;
     }
     if dropped_file(&data).is_some() && ws.panels.terminal.paste(&data, Focus::TerminalClaude) {
@@ -773,6 +806,7 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::RevidereOrder | Region::RevidereDiff => Some(Focus::Revidere),
+        Region::FleetList | Region::FleetSession => Some(Focus::Fleet),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
 }

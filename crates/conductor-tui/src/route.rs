@@ -60,13 +60,20 @@ pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
         // レビュー中の輪は読む順と Claude の 2 つだけ。アコーディオンの続きへ進むと、
         // 出ていない区画がフォーカスされて画面ごと入れ替わる。
         Action::CycleFocusForward | Action::CycleFocusBackward if ws.reviewing() => {
-            vec![Effect::Focus(match ws.focus {
-                Focus::Revidere => Focus::TerminalClaude,
-                _ => Focus::Revidere,
-            })]
+            crate::command::by_hand(
+                ws,
+                vec![Effect::Focus(match ws.screen_focus() {
+                    Focus::Revidere => Focus::TerminalClaude,
+                    _ => Focus::Revidere,
+                })],
+            )
         }
-        Action::CycleFocusForward => vec![Effect::Focus(ws.focus.next())],
-        Action::CycleFocusBackward => vec![Effect::Focus(ws.focus.prev())],
+        Action::CycleFocusForward => {
+            crate::command::by_hand(ws, vec![Effect::Focus(ws.screen_focus().next())])
+        }
+        Action::CycleFocusBackward => {
+            crate::command::by_hand(ws, vec![Effect::Focus(ws.screen_focus().prev())])
+        }
         Action::FocusMenuBar => vec![Effect::FocusMenuBar],
         Action::CommandPalette => vec![Effect::PushModal(Modal::Palette(Palette::default()))],
         Action::OpenCommentList => vec![crate::comment_list::open_modal()],
