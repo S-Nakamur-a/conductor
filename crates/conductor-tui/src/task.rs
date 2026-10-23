@@ -53,6 +53,12 @@ pub struct TaskEnv {
 #[derive(Debug)]
 pub enum Task {
     ListWorktrees,
+    /// マシン上の Claude の状態と、会話ログの題。`known` は前に読んだ会話ログの mtime で、
+    /// 変わっていないものは読み直さない。`own` は状態ファイルが無くても題を読みたいこの窓の分。
+    FleetStatus {
+        known: std::collections::HashMap<String, std::time::SystemTime>,
+        own: Vec<(PathBuf, String)>,
+    },
     /// 1 つの worktree の変更件数。一覧とは別に走らせる (理由は WorktreeInfo::counts)。
     WorktreeCounts {
         path: PathBuf,
@@ -351,6 +357,7 @@ pub enum ReviewWrite {
 #[derive(Debug)]
 pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
+    FleetStatus(Box<crate::panels::fleet::FleetStatus>),
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
         path: PathBuf,
@@ -451,6 +458,12 @@ impl Task {
         match self {
             Task::ListWorktrees => {
                 svc.spawn(move || list_worktrees(&env), TaskResult::Worktrees);
+            }
+            Task::FleetStatus { known, own } => {
+                svc.spawn(
+                    move || Box::new(fleet_status(&known, own)),
+                    TaskResult::FleetStatus,
+                );
             }
             Task::WorktreeCounts { path } => {
                 svc.spawn(
@@ -1145,6 +1158,39 @@ fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
         log::warn!("could not record the PR metadata: {e}");
     }
     Ok(Box::new(intaken))
+}
+
+fn fleet_status(
+    known: &std::collections::HashMap<String, std::time::SystemTime>,
+    own: Vec<(PathBuf, String)>,
+) -> crate::panels::fleet::FleetStatus {
+    use conductor_core::claude_log::summary;
+    use conductor_core::claude_sessions::registry;
+
+    let sessions = registry::sessions_dir();
+    let live = registry::read_live(&sessions, &registry::SystemProcesses);
+    let home = conductor_core::claude_sessions::ClaudeHome::at(
+        sessions.parent().unwrap_or(&sessions).to_path_buf(),
+    );
+    let mut asked = std::collections::HashSet::new();
+    let summaries = live
+        .iter()
+        .map(|l| (l.cwd.clone(), l.session_id.clone()))
+        .chain(own)
+        .filter(|(_, id)| asked.insert(id.clone()))
+        .filter_map(|(cwd, id)| {
+            let path = home.projects_dir_for(&cwd).join(format!("{id}.jsonl"));
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            if known.get(&id) == Some(&mtime) {
+                return None;
+            }
+            let summary = summary::summarize(&path)
+                .inspect_err(|e| log::debug!("could not read {}: {e}", path.display()))
+                .ok()?;
+            Some((id, mtime, summary))
+        })
+        .collect();
+    crate::panels::fleet::FleetStatus { live, summaries }
 }
 
 fn review_requests(env: &TaskEnv, review: &ReviewConfig) -> Result<Vec<PrHead>, String> {

@@ -28,6 +28,8 @@ pub enum Focus {
     TerminalShell,
     Editor,
     Revidere,
+    /// マシン上の全 Claude の一覧。
+    Fleet,
 }
 
 impl Focus {
@@ -45,7 +47,7 @@ impl Focus {
             Self::Explorer => Self::Viewer,
             Self::Viewer | Self::Editor => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
-            Self::TerminalShell | Self::Revidere => Self::Explorer,
+            Self::TerminalShell | Self::Revidere | Self::Fleet => Self::Explorer,
         }
     }
 
@@ -55,7 +57,7 @@ impl Focus {
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
-            Self::Revidere => Self::Explorer,
+            Self::Revidere | Self::Fleet => Self::Explorer,
         }
     }
 
@@ -69,12 +71,14 @@ impl Focus {
             Self::TerminalShell => "Shell",
             Self::Editor => "Editor",
             Self::Revidere => "Review",
+            Self::Fleet => "Sessions",
         }
     }
 
     pub fn key_context(self) -> KeyContext {
         match self {
             Self::Worktree => KeyContext::Worktree,
+            Self::Fleet => KeyContext::Fleet,
             Self::Explorer => KeyContext::Explorer,
             Self::Viewer => KeyContext::Viewer,
             Self::TerminalClaude | Self::TerminalShell => KeyContext::Terminal,
@@ -118,6 +122,9 @@ pub struct Chrome {
     pub copy_requested: bool,
     /// 走っているものより新しいリリース。タイトルバーのバッジが読む。
     pub update: Option<UpdateInfo>,
+    /// 一覧が main を占めている。開いているかはフォーカスから導かない — 今の画面の
+    /// どこかがフォーカスを動かしても、一覧から落ちないように。
+    pub fleet_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +190,7 @@ impl Appearance {
 
 /// パネルの状態はここに 1 つずつ。
 pub struct Panels {
+    pub fleet: crate::panels::fleet::FleetPanel,
     pub worktree: WorktreePanel,
     pub explorer: ExplorerPanel,
     pub viewer: ViewerPanel,
@@ -241,6 +249,7 @@ impl Workspace {
         version: &'static str,
     ) -> Self {
         let panels = Panels {
+            fleet: crate::panels::fleet::FleetPanel::default(),
             worktree: WorktreePanel::default(),
             explorer: ExplorerPanel::default(),
             viewer: ViewerPanel::new(&config),
@@ -380,6 +389,7 @@ impl Workspace {
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
             Focus::Revidere => panels.revidere.update(action, &ctx),
+            Focus::Fleet => panels.fleet.update(action, &ctx),
             _ => None,
         }
     }
@@ -403,6 +413,18 @@ impl Workspace {
     /// svc から届いた結果を持ち主のパネルへ渡す。[Self::dispatch] と同じ理由でここに置く。
     pub fn accept(&mut self, result: TaskResult) -> Vec<Effect> {
         match result {
+            TaskResult::FleetStatus(status) => {
+                let own = self.panels.terminal.own_claude_sessions();
+                let visible = self.panels.terminal.visible_claude().map(str::to_string);
+                self.panels.fleet.apply(
+                    *status,
+                    own,
+                    visible.as_deref(),
+                    self.chrome.fleet_open,
+                    std::time::SystemTime::now(),
+                );
+                Vec::new()
+            }
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
@@ -694,10 +716,28 @@ impl Workspace {
         ))]
     }
 
-    /// レビュー画面が出ているか。
+    /// 今の画面がレビュー画面か。一覧に隠れていても。
     pub fn reviewing(&self) -> bool {
-        self.focus == Focus::Revidere
-            || (self.chrome.review_open && self.focus == Focus::TerminalClaude)
+        let focus = self.screen_focus();
+        focus == Focus::Revidere || (self.chrome.review_open && focus == Focus::TerminalClaude)
+    }
+
+    /// 一覧に隠れている間も、その下の今の画面のフォーカス。
+    pub fn screen_focus(&self) -> Focus {
+        if self.chrome.fleet_open {
+            self.panels.fleet.came_from()
+        } else {
+            self.focus
+        }
+    }
+
+    /// 一覧の上では一覧を出たときの行き先にする。打っている先が見えない区画に変わるので。
+    pub fn set_screen_focus(&mut self, focus: Focus) {
+        if self.chrome.fleet_open {
+            self.panels.fleet.defer_focus(focus);
+        } else {
+            self.focus = focus;
+        }
     }
 
     /// 描く直前に、本文から導かれる重い成果物を整える。

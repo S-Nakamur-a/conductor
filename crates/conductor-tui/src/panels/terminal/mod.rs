@@ -105,6 +105,8 @@ pub struct TerminalPanel {
     /// Claude 区画に重ねているトランスクリプト。
     transcript: Option<Reflow>,
     pending_transcript: Option<PendingTranscript>,
+    /// 一覧から別の repo のセッションへ入った。その worktree が選ばれたら Claude 区画に映す。
+    pending_show: Option<String>,
     editor: Option<Editor>,
     wants_clear: bool,
     /// 選択中の worktree。セッションの絞り込みと spawn の作業ディレクトリ。
@@ -128,6 +130,7 @@ impl TerminalPanel {
             shell: Pane::new(SessionKind::Shell, (6, 80)),
             transcript: None,
             pending_transcript: None,
+            pending_show: None,
             editor: None,
             wants_clear: false,
             worktree: None,
@@ -150,6 +153,50 @@ impl TerminalPanel {
         on_notify: impl Fn(Notification) + Send + Sync + 'static,
     ) -> Result<Attached> {
         self.pty.attach(repo_root, version, on_notify)
+    }
+
+    /// どの worktree のものかを問わず、この窓で動いている Claude。一覧が読む。
+    pub fn own_claude_sessions(&self) -> Vec<crate::panels::fleet::OwnSession> {
+        (0..self.pty.sessions().len())
+            .filter(|&i| {
+                self.pty.sessions()[i].kind == SessionKind::ClaudeCode
+                    && self.pty.is_session_alive(i)
+            })
+            .map(|i| {
+                let session = &self.pty.sessions()[i];
+                crate::panels::fleet::OwnSession {
+                    panel_id: session.id.clone(),
+                    working_dir: session.working_dir.clone(),
+                    claude_session_id: self.pty.claude_session_ref(i).map(|(_, id, _)| id),
+                }
+            })
+            .collect()
+    }
+
+    /// 今の画面の Claude 区画が映しているセッション。
+    pub fn visible_claude(&self) -> Option<&str> {
+        self.claude.session.as_deref()
+    }
+
+    pub fn session_dir(&self, id: &str) -> Option<PathBuf> {
+        self.pty
+            .sessions()
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.working_dir.clone())
+    }
+
+    /// そのセッションを Claude 区画に映す。worktree がまだ選ばれていなければ、選ばれたときに映す。
+    pub fn show_claude_when_selected(&mut self, id: &str) {
+        let here = self
+            .session_dir(id)
+            .is_some_and(|dir| self.worktree.as_deref() == Some(dir.as_path()));
+        if here {
+            self.claude.show(Some(id.to_string()));
+            self.activate_visible();
+        } else {
+            self.pending_show = Some(id.to_string());
+        }
     }
 
     /// worktree で Claude が動いているか。起動時の復帰はそこを飛ばす。
@@ -321,13 +368,16 @@ impl TerminalPanel {
         self.wants_clear = true;
         for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
             let sessions = self.sessions(kind);
-            let first = sessions.first().map(|(_, id, _)| id.to_string());
+            let ids: Vec<String> = sessions.iter().map(|(_, id, _)| id.to_string()).collect();
             let indices: Vec<usize> = sessions.iter().map(|(i, _, _)| *i).collect();
+            let wanted = self
+                .pending_show
+                .take_if(|id| kind == SessionKind::ClaudeCode && ids.contains(id));
             let pane = match kind {
                 SessionKind::Shell => &mut self.shell,
                 _ => &mut self.claude,
             };
-            pane.show(first);
+            pane.show(wanted.or_else(|| ids.first().cloned()));
             // 別の worktree を見ている間の区画の大きさの変化は、ここのセッションに
             // 届いていない。前のウィンドウの大きさのまま残っていることもある。
             let (rows, cols) = pane.size;

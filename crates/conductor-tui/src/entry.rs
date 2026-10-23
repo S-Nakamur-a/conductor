@@ -117,7 +117,10 @@ pub fn run(version: &'static str) -> Result<()> {
 /// 前のウィンドウから残っているセッションに戻る。ホストが居なければここで起こす。
 fn attach_pty_host<P: Send + 'static>(ws: &mut Workspace, svc: &Services<P>, version: &str) {
     let sender = svc.sender();
-    let notify = move |n| sender.send_watch(WatchEvent::from(n));
+    let notify = move |n: cc_hook::Notification| match n {
+        cc_hook::Notification::Ui { .. } => sender.send_watch(WatchEvent::from(n)),
+        n => sender.send_watch_unscoped(WatchEvent::from(n)),
+    };
     let text = match ws
         .panels
         .terminal

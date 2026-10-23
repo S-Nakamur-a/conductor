@@ -80,7 +80,8 @@ fn 既定のキーが解決する() {
         ),
         (Global, alt(']'), Action::NextWorktree),
         (Global, alt('['), Action::PrevWorktree),
-        (Global, alt('1'), Action::FocusWorktree),
+        (Global, alt('1'), Action::FocusSessions),
+        (Global, ctrl('w'), Action::FocusWorktree),
         (
             Global,
             key(
@@ -92,9 +93,21 @@ fn 既定のキーが解決する() {
         // macOS の Option がグリフを送る端末向けの複数バイト文字。
         (Global, ch('˙'), Action::CycleFocusBackward),
         (Global, ch('¬'), Action::CycleFocusForward),
-        (Global, ch('¡'), Action::FocusWorktree),
+        (Global, ch('¡'), Action::FocusSessions),
         (Global, ch('§'), Action::FocusTerminalShell),
         (Global, ch('†'), Action::OpenThemePicker),
+        (Fleet, ch('j'), Action::NavigateDown),
+        (Fleet, ch('G'), Action::GoToBottom),
+        (
+            Fleet,
+            key(KeyCode::Enter, KeyModifiers::NONE),
+            Action::Select,
+        ),
+        (
+            Fleet,
+            key(KeyCode::Esc, KeyModifiers::NONE),
+            Action::ExitSubPanel,
+        ),
         (Worktree, ch('j'), Action::NavigateDown),
         (
             Worktree,
@@ -436,4 +449,12 @@ fn ユーザ設定の問題は警告になる() {
         km.resolve(&ctrl('x'), Global),
         Some(Action::Quit | Action::ShowHelp)
     ));
+}
+
+#[test]
+fn 一覧の層は_worktree_の操作を拾わない() {
+    let km = KeyMap::default();
+    for c in ['x', 'w', 'm', 'R', 'b'] {
+        assert_eq!(km.resolve(&ch(c), Fleet), None, "{c}");
+    }
 }

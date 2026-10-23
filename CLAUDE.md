@@ -434,13 +434,31 @@ every keybinding. The revidere reading view (`Focus::Revidere`, `w`) is *not* in
 the accordion — it takes the main area whole as three columns (reading order | diff
 | Claude), at fixed 24/38/38 that the accordion's ratios do not move.
 
+**Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) takes the main area too, and is
+the screen conductor opens on: every Claude on the machine, built from the state
+files Claude Code writes itself (`~/.claude/sessions/<pid>.json`, read by
+`claude_sessions::registry` once a second on a worker) joined with this window's
+PtyStore by conversation id. The hooks' waiting/active cannot be the source: they
+stay "waiting" after a permission is approved until the tool finishes, and after an
+Esc refusal until the next prompt (measured on 2.1.309). A row of this window is
+keyed by its panel id, not the conversation id, because `/clear` changes the
+latter. **Whether the list is open is not derived from `Focus`**
+(`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
+remembered as where Esc returns (`Workspace::screen_focus`, which `reviewing()` and
+the focus cycle read), so a background result never moves the keyboard to a region
+nobody can see, and window tools (`remote.rs`) do nothing but say so. Focus moves
+made by hand — commands from keys, the palette or the menu, and the focus cycle —
+go through `command::by_hand`, which turns them into `LeaveFleet`. Host notifications (Claude's
+state, session ids) are sent with `send_watch_unscoped` so a repository switch does
+not drop them; every other watch event keeps its generation.
+
 ### Key modules
 
 | Module | Role |
 |--------|------|
 | `tui/route.rs` · `layout.rs` · `liveness.rs` | Where a key goes · where a region is · why the screen moves. All pure |
 | `tui/workspace.rs` · `effect.rs` · `task.rs` | State, the effect vocabulary, every long-running job and its result |
-| `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together |
+| `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together. `panels/fleet/` is Sessions |
 | `tui/command/` · `index.rs` · `markdown/` | The command table with `exec` and `enabled` · both indexes and their rebuilds · markdown, shared by the Viewer and the transcript |
 | `svc/pty/` · `svc/watch/` | The PTY host (holds the masters), its window-side mirror and the vt100 screen · the filesystem, config and refresh-pipe watchers (cc-notify's listener runs in the PTY host) |
 | `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |

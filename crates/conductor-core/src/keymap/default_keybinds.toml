@@ -51,14 +51,14 @@
 "ctrl+t" = "new_shell"
 "ctrl+o" = "open_repo"
 "ctrl+r" = "switch_repo"
-"super+1" = "focus_worktree"
+"super+1" = "focus_sessions"
 "super+2" = "focus_explorer"
 "super+3" = "focus_explorer_diff_list"
 "super+4" = "focus_viewer"
 "super+5" = "focus_terminal_claude"
 "super+6" = "focus_terminal_shell"
 # Alt+number fallback — Cmd+number is intercepted by most macOS terminals.
-"alt+1" = "focus_worktree"
+"alt+1" = "focus_sessions"
 "alt+2" = "focus_explorer"
 "alt+3" = "focus_explorer_diff_list"
 "alt+4" = "focus_viewer"
@@ -67,7 +67,7 @@
 # Focus a panel with alt/super+digit, then maximize it with ctrl+alt+z (below) —
 # this replaces the old hard-to-press alt+shift+digit "focus+expand" combo.
 # macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
-"¡" = "focus_worktree"
+"¡" = "focus_sessions"
 "™" = "focus_explorer"
 "£" = "focus_explorer_diff_list"
 "¢" = "focus_viewer"
@@ -121,6 +121,18 @@
 "p" = "pull_worktree"
 "H" = "session_history"
 "o" = "open_pull_request"
+":" = "command_palette"
+
+# ── Sessions (every Claude on the machine) ─────────────────────────────────────
+[layers.fleet]
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"enter" = "select"
+"esc" = "exit_sub_panel"
 ":" = "command_palette"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────

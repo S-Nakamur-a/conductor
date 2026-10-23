@@ -13,6 +13,7 @@ keymap_suite::actions! {
         NextWorktree => "next_worktree",
         PrevWorktree => "prev_worktree",
         FocusWorktree => "focus_worktree",
+        FocusSessions => "focus_sessions",
         FocusExplorer => "focus_explorer",
         FocusExplorerDiffList => "focus_explorer_diff_list",
         FocusViewer => "focus_viewer",
@@ -154,6 +155,7 @@ impl Action {
             Action::NextWorktree => "Next worktree",
             Action::PrevWorktree => "Previous worktree",
             Action::FocusWorktree => "Open worktree switcher",
+            Action::FocusSessions => "Open the session list",
             Action::FocusExplorer => "Focus Explorer (file tree)",
             Action::FocusExplorerDiffList => "Focus Git Changes",
             Action::FocusViewer => "Focus Viewer",
@@ -272,6 +274,7 @@ impl Action {
                 | Action::NextSession
                 | Action::PrevSession
                 | Action::FocusWorktree
+                | Action::FocusSessions
                 | Action::FocusExplorer
                 | Action::FocusExplorerDiffList
                 | Action::FocusViewer

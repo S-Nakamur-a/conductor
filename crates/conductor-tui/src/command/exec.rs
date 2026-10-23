@@ -84,10 +84,31 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
 }
 
 pub fn execute(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
+    let effects = run(ws, id);
+    by_hand(ws, effects)
+}
+
+/// 人が起こしたフォーカスの移動は、一覧の上なら一覧を閉じてそこへ行く。人の起こした
+/// ものでない移動は、一覧の上では出たときの行き先になるだけ。
+pub fn by_hand(ws: &Workspace, effects: Vec<Effect>) -> Vec<Effect> {
+    if !ws.chrome.fleet_open {
+        return effects;
+    }
+    effects
+        .into_iter()
+        .map(|effect| match effect {
+            Effect::Focus(focus) if focus != Focus::Fleet => Effect::LeaveFleet(focus),
+            effect => effect,
+        })
+        .collect()
+}
+
+fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
     if let Enabled::No(reason) = enabled(ws, id) {
         return vec![Effect::Status(StatusLevel::Warning, reason.to_string())];
     }
     match id {
+        CommandId::FocusSessions => vec![Effect::OpenFleet],
         CommandId::FocusWorktree => vec![Effect::Focus(Focus::Worktree)],
         CommandId::FocusExplorer => vec![Effect::Focus(Focus::Explorer)],
         CommandId::FocusViewer => vec![Effect::Focus(Focus::Viewer)],

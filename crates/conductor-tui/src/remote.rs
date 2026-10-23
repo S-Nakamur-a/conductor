@@ -11,6 +11,16 @@ use crate::effect::Effect;
 use crate::workspace::{StatusLevel, Workspace};
 
 pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect> {
+    // 一覧が今の画面を隠しているので、見えない所で Claude の都合のまま画面を動かさない。
+    if ws.chrome.fleet_open {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            format!(
+                "Claude in {} asked to change the screen; leave the session list to see it.",
+                cwd.display()
+            ),
+        )];
+    }
     let Some((index, root)) = owning_worktree(ws, cwd) else {
         return vec![Effect::Status(
             StatusLevel::Warning,
