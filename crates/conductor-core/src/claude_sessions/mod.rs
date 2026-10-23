@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 mod discovery;
 mod migrate;
+pub mod registry;
 #[cfg(test)]
 mod tests;
 

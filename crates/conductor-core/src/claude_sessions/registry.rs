@@ -1,0 +1,711 @@
+//! 動いている Claude Code の写し (<設定ディレクトリ>/sessions/<pid>.json) を読む。
+//!
+//! 写しは Claude 自身が書く。ファイルが残っていることは生きている証拠にならないので、
+//! pid のプロセスを引いて、ゾンビでなく起動時刻も合うものだけを残す。
+
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde::Deserialize;
+
+/// pid の使い回しを見分ける時刻の許容差。procStart は秒単位。
+const START_TOLERANCE: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveSession {
+    pub pid: u32,
+    pub cwd: PathBuf,
+    pub session_id: String,
+    pub status: Status,
+    pub status_since: Option<SystemTime>,
+    pub owner: Owner,
+}
+
+/// busy / idle / waiting 以外 (観測では shell) は意味が未確認なので生の文字列で残す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    Working,
+    Idle,
+    Waiting(Waiting),
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Waiting {
+    Question,
+    Permission,
+    Other(String),
+}
+
+/// 親プロセスが conductor なら Conductor。それ以外は、conductor のシェルのタブで打った claude も Elsewhere。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Owner {
+    Conductor,
+    Elsewhere,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProcInfo {
+    pub zombie: bool,
+    pub parent: u32,
+    pub started: SystemTime,
+}
+
+pub trait Processes {
+    /// pid のプロセス。居なければ None。
+    fn info(&self, pid: u32) -> Option<ProcInfo>;
+    /// その pid の実行ファイル名が `conductor` か。
+    fn is_conductor(&self, pid: u32) -> bool;
+}
+
+pub struct SystemProcesses;
+
+#[cfg(target_os = "macos")]
+impl Processes for SystemProcesses {
+    fn info(&self, pid: u32) -> Option<ProcInfo> {
+        // SAFETY: proc_bsdinfo は全ビット 0 が有効な POD。proc_pidinfo は buffersize までしか書かない
+        let mut raw: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let got = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut raw as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        if got != size {
+            return None;
+        }
+        Some(ProcInfo {
+            zombie: raw.pbi_status == libc::SZOMB,
+            parent: raw.pbi_ppid,
+            started: UNIX_EPOCH
+                + Duration::new(raw.pbi_start_tvsec, (raw.pbi_start_tvusec * 1000) as u32),
+        })
+    }
+
+    fn is_conductor(&self, pid: u32) -> bool {
+        let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: buf は渡した長さぶん確保済み
+        let len = unsafe {
+            libc::proc_pidpath(
+                pid as libc::c_int,
+                buf.as_mut_ptr().cast(),
+                buf.len() as u32,
+            )
+        };
+        if len <= 0 {
+            return false;
+        }
+        buf.truncate(len as usize);
+        is_conductor_path(Path::new(&String::from_utf8_lossy(&buf).into_owned()))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Processes for SystemProcesses {
+    fn info(&self, pid: u32) -> Option<ProcInfo> {
+        let stat = parse_proc_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)?;
+        let boot = parse_btime(&std::fs::read_to_string("/proc/stat").ok()?)?;
+        // SAFETY: 引数なしの問い合わせ
+        let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        if ticks <= 0 {
+            return None;
+        }
+        Some(ProcInfo {
+            zombie: stat.state == 'Z',
+            parent: stat.parent,
+            started: UNIX_EPOCH
+                + Duration::from_secs(boot)
+                + Duration::from_secs_f64(stat.start_ticks as f64 / ticks as f64),
+        })
+    }
+
+    fn is_conductor(&self, pid: u32) -> bool {
+        std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| is_conductor_path(&exe))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl Processes for SystemProcesses {
+    fn info(&self, _pid: u32) -> Option<ProcInfo> {
+        None
+    }
+
+    fn is_conductor(&self, _pid: u32) -> bool {
+        false
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn is_conductor_path(exe: &Path) -> bool {
+    exe.file_name().is_some_and(|name| name == "conductor")
+}
+
+#[cfg(any(target_os = "linux", test))]
+struct ProcStat {
+    state: char,
+    parent: u32,
+    start_ticks: u64,
+}
+
+/// comm は空白も括弧も含みうるので、最後の ')' より後ろを欄で割る。
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_stat(stat: &str) -> Option<ProcStat> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut fields = rest.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let parent = fields.next()?.parse().ok()?;
+    // 3 番目 (state) から数えて starttime は 20 番目
+    let start_ticks = fields.nth(17)?.parse().ok()?;
+    Some(ProcStat {
+        state,
+        parent,
+        start_ticks,
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_btime(proc_stat: &str) -> Option<u64> {
+    proc_stat
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()
+}
+
+pub fn sessions_dir() -> PathBuf {
+    sessions_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+}
+
+fn sessions_dir_from(config_dir: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
+    match config_dir.filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir).join("sessions"),
+        None => home
+            .map(|home| home.join(".claude").join("sessions"))
+            .unwrap_or_default(),
+    }
+}
+
+/// 写しのうち、いま動いているプロセスのものを pid の昇順で返す。
+pub fn read_live(dir: &Path, procs: &dyn Processes) -> Vec<LiveSession> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut newest: HashMap<String, (u64, LiveSession)> = HashMap::new();
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Some((started_at, session)) = read_one(&path, procs) else {
+            continue;
+        };
+        let keep = newest
+            .get(&session.session_id)
+            .is_none_or(|(seen, _)| started_at > *seen);
+        if keep {
+            newest.insert(session.session_id.clone(), (started_at, session));
+        }
+    }
+    let mut sessions: Vec<LiveSession> = newest.into_values().map(|(_, s)| s).collect();
+    sessions.sort_by_key(|s| s.pid);
+    sessions
+}
+
+#[derive(Deserialize)]
+struct Record {
+    pid: Option<u32>,
+    cwd: Option<PathBuf>,
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
+    status: Option<String>,
+    #[serde(rename = "waitingFor")]
+    waiting_for: Option<String>,
+    #[serde(rename = "statusUpdatedAt")]
+    status_updated_at: Option<u64>,
+    #[serde(rename = "startedAt")]
+    started_at: Option<u64>,
+    #[serde(rename = "procStart")]
+    proc_start: Option<String>,
+}
+
+fn read_one(path: &Path, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
+    let record = std::fs::read_to_string(path)
+        .map_err(|e| log::debug!("{}: {e}", path.display()))
+        .ok()
+        .and_then(|text| {
+            serde_json::from_str::<Record>(&text)
+                .map_err(|e| log::debug!("{}: {e}", path.display()))
+                .ok()
+        })?;
+    let (Some(pid), Some(cwd), Some(session_id), Some(status)) =
+        (record.pid, record.cwd, record.session_id, record.status)
+    else {
+        log::debug!("{}: 必須の項目が無い", path.display());
+        return None;
+    };
+    let info = procs.info(pid).filter(|info| !info.zombie)?;
+    if let Some(proc_start) = record.proc_start.as_deref().and_then(parse_proc_start)
+        && abs_diff(proc_start, info.started) > START_TOLERANCE
+    {
+        return None;
+    }
+    let session = LiveSession {
+        pid,
+        cwd,
+        session_id,
+        status: parse_status(&status, record.waiting_for),
+        status_since: record
+            .status_updated_at
+            .map(|ms| UNIX_EPOCH + Duration::from_millis(ms)),
+        owner: if procs.is_conductor(info.parent) {
+            Owner::Conductor
+        } else {
+            Owner::Elsewhere
+        },
+    };
+    Some((record.started_at.unwrap_or(0), session))
+}
+
+fn parse_status(status: &str, waiting_for: Option<String>) -> Status {
+    match status {
+        "busy" => Status::Working,
+        "idle" => Status::Idle,
+        "waiting" => Status::Waiting(match waiting_for.as_deref() {
+            Some("input needed") => Waiting::Question,
+            Some("permission prompt") => Waiting::Permission,
+            other => Waiting::Other(other.unwrap_or_default().to_string()),
+        }),
+        other => Status::Other(other.to_string()),
+    }
+}
+
+/// procStart は UTC の ctime 形式 (`Thu Oct 22 02:05:54 2026`)。印は付かないが local ではない。
+fn parse_proc_start(text: &str) -> Option<SystemTime> {
+    let parsed = chrono::NaiveDateTime::parse_from_str(text, "%a %b %e %H:%M:%S %Y")
+        .map_err(|e| log::debug!("procStart {text:?}: {e}"))
+        .ok()?;
+    Some(parsed.and_utc().into())
+}
+
+fn abs_diff(a: SystemTime, b: SystemTime) -> Duration {
+    a.duration_since(b).unwrap_or_else(|e| e.duration())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use chrono::{TimeZone, Utc};
+    use serde_json::json;
+
+    use super::*;
+
+    const PROC_START: &str = "Thu Oct 22 02:05:54 2026";
+
+    struct Fake {
+        infos: HashMap<u32, ProcInfo>,
+        conductors: HashSet<u32>,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            Self {
+                infos: HashMap::new(),
+                conductors: HashSet::new(),
+            }
+        }
+
+        fn with(mut self, pid: u32, info: ProcInfo) -> Self {
+            self.infos.insert(pid, info);
+            self
+        }
+    }
+
+    impl Processes for Fake {
+        fn info(&self, pid: u32) -> Option<ProcInfo> {
+            self.infos.get(&pid).copied()
+        }
+
+        fn is_conductor(&self, pid: u32) -> bool {
+            self.conductors.contains(&pid)
+        }
+    }
+
+    fn started_utc() -> SystemTime {
+        Utc.with_ymd_and_hms(2026, 10, 22, 2, 5, 54).unwrap().into()
+    }
+
+    fn alive(started: SystemTime) -> ProcInfo {
+        ProcInfo {
+            zombie: false,
+            parent: 1,
+            started,
+        }
+    }
+
+    fn record(pid: u32, session_id: &str, status: &str, waiting_for: Option<&str>) -> String {
+        let mut value = json!({
+            "pid": pid,
+            "sessionId": session_id,
+            "cwd": "/Users/me/repo-worktrees/x",
+            "startedAt": 1792634755219u64,
+            "procStart": PROC_START,
+            "kind": "interactive",
+            "entrypoint": "cli",
+            "status": status,
+            "statusUpdatedAt": 1792636011219u64,
+            "name": "something",
+            "nameSource": "derived",
+            "nameSince": 1792634755219u64,
+            "pidDomain": "darwin",
+            "peerProtocol": 1,
+            "peerFeatures": [],
+            "messagingSocketPath": "/tmp/x.sock",
+        });
+        if let Some(waiting_for) = waiting_for {
+            value["waitingFor"] = json!(waiting_for);
+        }
+        value.to_string()
+    }
+
+    fn write(dir: &Path, name: &str, body: &str) {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    fn live(dir: &Path, procs: &Fake) -> Vec<LiveSession> {
+        read_live(dir, procs)
+    }
+
+    #[test]
+    fn 実物の形の三つがそれぞれの状態になる() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "10.json",
+            &record(10, "a", "waiting", Some("input needed")),
+        );
+        write(
+            dir.path(),
+            "11.json",
+            &record(11, "b", "waiting", Some("permission prompt")),
+        );
+        write(dir.path(), "12.json", &record(12, "c", "busy", None));
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()))
+            .with(12, alive(started_utc()));
+
+        let statuses: Vec<Status> = live(dir.path(), &procs)
+            .into_iter()
+            .map(|s| s.status)
+            .collect();
+
+        assert_eq!(
+            statuses,
+            vec![
+                Status::Waiting(Waiting::Question),
+                Status::Waiting(Waiting::Permission),
+                Status::Working,
+            ]
+        );
+    }
+
+    #[test]
+    fn 写しの値がそのまま載る() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "idle", None));
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        let sessions = live(dir.path(), &procs);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].pid, 10);
+        assert_eq!(sessions[0].session_id, "a");
+        assert_eq!(sessions[0].cwd, PathBuf::from("/Users/me/repo-worktrees/x"));
+        assert_eq!(sessions[0].status, Status::Idle);
+        assert_eq!(
+            sessions[0].status_since,
+            Some(UNIX_EPOCH + Duration::from_millis(1792636011219))
+        );
+    }
+
+    #[test]
+    fn shellは生の文字列で残る() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "shell", None));
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        let sessions = live(dir.path(), &procs);
+
+        assert_eq!(sessions[0].status, Status::Other("shell".into()));
+    }
+
+    #[test]
+    fn 未知の待ち理由は生の文字列で残る() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "10.json",
+            &record(10, "a", "waiting", Some("elicitation")),
+        );
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        let sessions = live(dir.path(), &procs);
+
+        assert_eq!(
+            sessions[0].status,
+            Status::Waiting(Waiting::Other("elicitation".into()))
+        );
+    }
+
+    #[test]
+    fn ゾンビは出ない() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+        let procs = Fake::new().with(
+            10,
+            ProcInfo {
+                zombie: true,
+                ..alive(started_utc())
+            },
+        );
+
+        assert!(live(dir.path(), &procs).is_empty());
+    }
+
+    #[test]
+    fn プロセスが居ない写しは出ない() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+
+        assert!(live(dir.path(), &Fake::new()).is_empty());
+    }
+
+    #[test]
+    fn 起動時刻が1時間ずれるpidの使い回しは出ない() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+        let procs = Fake::new().with(10, alive(started_utc() + Duration::from_secs(3600)));
+
+        assert!(live(dir.path(), &procs).is_empty());
+    }
+
+    #[test]
+    fn procstartはutcとして読む() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+        let jst_misread = started_utc() - Duration::from_secs(9 * 3600);
+        let procs = Fake::new().with(10, alive(jst_misread));
+
+        assert!(
+            live(dir.path(), &procs).is_empty(),
+            "UTC の起動時刻から 9 時間ずれたプロセスは別物"
+        );
+        let procs = Fake::new().with(10, alive(started_utc() + Duration::from_secs(1)));
+        assert_eq!(live(dir.path(), &procs).len(), 1);
+    }
+
+    #[test]
+    fn 日が1桁のprocstartも読める() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = record(10, "a", "busy", None).replace(PROC_START, "Thu Oct  1 02:05:54 2026");
+        write(dir.path(), "10.json", &body);
+        let started: SystemTime = Utc.with_ymd_and_hms(2026, 10, 1, 2, 5, 54).unwrap().into();
+        let procs = Fake::new().with(10, alive(started));
+
+        assert_eq!(live(dir.path(), &procs).len(), 1);
+    }
+
+    #[test]
+    fn 同じセッションidはstartedatが新しい方() {
+        let dir = tempfile::tempdir().unwrap();
+        let older = record(10, "same", "busy", None);
+        let newer = record(11, "same", "idle", None).replace("1792634755219", "1792634999999");
+        write(dir.path(), "10.json", &older);
+        write(dir.path(), "11.json", &newer);
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()));
+
+        let sessions = live(dir.path(), &procs);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].pid, 11);
+    }
+
+    #[test]
+    fn keyファイルは中身がjsonでも読まない() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.abcdef.key", &record(10, "a", "busy", None));
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        assert!(live(dir.path(), &procs).is_empty());
+    }
+
+    #[test]
+    fn 壊れた写しは飛ばして残りを読む() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "9.json", "{not json");
+        write(
+            dir.path(),
+            "8.json",
+            r#"{"pid":8,"cwd":"/x","sessionId":"z"}"#,
+        );
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+        let procs = Fake::new()
+            .with(8, alive(started_utc()))
+            .with(9, alive(started_utc()))
+            .with(10, alive(started_utc()));
+
+        let sessions = live(dir.path(), &procs);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].pid, 10);
+    }
+
+    #[test]
+    fn 親がconductorなら持ち主はconductor() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "busy", None));
+        write(dir.path(), "11.json", &record(11, "b", "busy", None));
+        let mut procs = Fake::new()
+            .with(
+                10,
+                ProcInfo {
+                    parent: 500,
+                    ..alive(started_utc())
+                },
+            )
+            .with(
+                11,
+                ProcInfo {
+                    parent: 600,
+                    ..alive(started_utc())
+                },
+            );
+        procs.conductors.insert(500);
+
+        let owners: Vec<Owner> = live(dir.path(), &procs)
+            .into_iter()
+            .map(|s| s.owner)
+            .collect();
+
+        assert_eq!(owners, vec![Owner::Conductor, Owner::Elsewhere]);
+    }
+
+    #[test]
+    fn 並びはpidの昇順() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut procs = Fake::new();
+        for pid in [30u32, 4, 200] {
+            write(
+                dir.path(),
+                &format!("{pid}.json"),
+                &record(pid, &format!("s{pid}"), "busy", None),
+            );
+            procs = procs.with(pid, alive(started_utc()));
+        }
+
+        let pids: Vec<u32> = live(dir.path(), &procs)
+            .into_iter()
+            .map(|s| s.pid)
+            .collect();
+
+        assert_eq!(pids, vec![4, 30, 200]);
+    }
+
+    #[test]
+    fn ディレクトリが無ければ空() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(live(&dir.path().join("none"), &Fake::new()).is_empty());
+    }
+
+    #[test]
+    fn 設定ディレクトリの指定が優先される() {
+        let home = Some(PathBuf::from("/home/me"));
+
+        assert_eq!(
+            sessions_dir_from(Some("/cfg".into()), home.clone()),
+            PathBuf::from("/cfg/sessions")
+        );
+        assert_eq!(
+            sessions_dir_from(Some("".into()), home.clone()),
+            PathBuf::from("/home/me/.claude/sessions")
+        );
+        assert_eq!(
+            sessions_dir_from(None, home),
+            PathBuf::from("/home/me/.claude/sessions")
+        );
+    }
+
+    #[test]
+    fn 設定ディレクトリもホームも無ければ空のパス() {
+        assert_eq!(sessions_dir_from(None, None), PathBuf::new());
+    }
+
+    #[test]
+    fn 本物のプロセス表で自分自身が引ける() {
+        let info = SystemProcesses
+            .info(std::process::id())
+            .expect("自分自身のプロセスが引けない");
+
+        assert!(!info.zombie);
+        assert!(info.started <= SystemTime::now());
+        assert!(info.started > SystemTime::now() - Duration::from_secs(24 * 3600));
+        assert!(!SystemProcesses.is_conductor(std::process::id()));
+    }
+
+    #[test]
+    fn 本物のプロセス表で終わって回収されない子は生きて見えない() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let running = SystemProcesses.info(pid).expect("動いている子が引けない");
+        assert!(!running.zombie);
+        assert_eq!(running.parent, std::process::id());
+
+        child.kill().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let gone = loop {
+            // macOS は回収前のゾンビを proc_pidinfo が返さない (ESRCH)。Linux は zombie: true
+            if SystemProcesses.info(pid).is_none_or(|info| info.zombie) {
+                break true;
+            }
+            if std::time::Instant::now() > deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        child.wait().unwrap();
+
+        assert!(gone, "kill したが wait していない子が生きて見える");
+    }
+
+    #[test]
+    fn procのstatから状態と親と起動を読む() {
+        let stat = "4242 (my (weird) cmd) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 987654 1000 100 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0";
+
+        let parsed = parse_proc_stat(stat).unwrap();
+
+        assert_eq!(parsed.state, 'S');
+        assert_eq!(parsed.parent, 1);
+        assert_eq!(parsed.start_ticks, 987654);
+        assert_eq!(parse_proc_stat("4242 (x) Z 9 0").map(|s| s.state), None);
+    }
+
+    #[test]
+    fn procのstatのbtimeを読む() {
+        let proc_stat = "cpu  1 2 3\nintr 0\nbtime 1792000000\nprocesses 10\n";
+
+        assert_eq!(parse_btime(proc_stat), Some(1792000000));
+    }
+}
