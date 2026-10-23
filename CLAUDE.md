@@ -61,6 +61,11 @@ to start it, and `get_review` reads the artifact it wrote.
   only to `y` / `n` / Esc, since it pops up while someone may be typing elsewhere —
   Enter and the selection keys are ignored, but a typed `y` still approves it. `get_review` reads
   `review.json` directly and needs no window.
+  Adding a window tool runs an action at a moment nobody chose. Open one level of
+  the callees of the action it reuses and check each side effect against someone
+  who is typing, has an editor open, or is on another worktree: #403's three bugs
+  were all visible that way (`follow_worktree` discards the editor, the top modal
+  takes keys before the PTY, a diff result outlives a worktree switch).
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
 
