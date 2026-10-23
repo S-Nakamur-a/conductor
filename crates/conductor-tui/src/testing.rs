@@ -13,16 +13,20 @@ use crate::workspace::Workspace;
 /// 負荷の高いマシンでも PTY や git が返る余裕を見た上限。
 const WAIT_LIMIT: Duration = Duration::from_secs(10);
 
-/// `done` が立つまで待つ。来ないことを言うのは呼び出し側の assert の仕事。
-pub fn wait_for(mut done: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + WAIT_LIMIT;
-    loop {
-        if done() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
+/// `done` が立つまで待つ。上限までに立たなければテストを落とす。
+#[track_caller]
+pub fn wait_for(done: impl FnMut() -> bool) {
+    wait_within(WAIT_LIMIT, done);
+}
+
+#[track_caller]
+fn wait_within(limit: Duration, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + limit;
+    while !done() {
+        assert!(
+            Instant::now() < deadline,
+            "{limit:?} 待っても条件が立たなかった"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -163,4 +167,15 @@ pub fn workspace_for(repo: &TestRepo) -> (Workspace, Services<TaskResult>) {
     );
     pump(&mut ws, &mut svc);
     (ws, svc)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "待っても条件が立たなかった")]
+    fn 立たない条件を待つとテストが落ちる() {
+        wait_within(Duration::from_millis(10), || false);
+    }
 }
