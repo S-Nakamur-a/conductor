@@ -108,6 +108,7 @@ fn 既定のキーが解決する() {
             key(KeyCode::Esc, KeyModifiers::NONE),
             Action::ExitSubPanel,
         ),
+        (Fleet, shift('D'), Action::StopSession),
         (Worktree, ch('j'), Action::NavigateDown),
         (
             Worktree,

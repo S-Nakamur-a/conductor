@@ -132,8 +132,11 @@ with no window open, and the window opened later showed it mid-tool.
   previous repository's sessions running, so a window talks to several hosts. A host
   talks to only one window, and a second one that reaches it (a switch into a repository
   another window has open) is answered `Busy` instead of taking over.
-- A session ends only with its own exit, closing its tab, deleting its worktree, and
-  **Repo ▸ Quit and Stop Sessions**. Editors are the exception and die
+- A session ends only with its own exit, closing its tab, **D** in the session list,
+  deleting its worktree, and **Repo ▸ Quit and Stop Sessions**. The list's **D** takes
+  the tab-closing path for this window's sessions; any other Claude gets SIGTERM, then
+  SIGKILL after 3s, and only while `<pid>.json` and the process start time still name
+  the process the list read (`registry::stop`). Editors are the exception and die
   with the window that opened them. The host exits
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`

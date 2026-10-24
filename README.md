@@ -96,6 +96,16 @@ another conductor window or a plain terminal runs are listed with their state, b
 cannot be opened or typed into from here. The states come from the files Claude
 Code writes under `~/.claude/sessions/`.
 
+The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
+stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
+with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too — and
+any other key cancels. Keys the list does not use
+are dropped, so a sentence typed into the list by mistake stops nothing unless a
+capital D is followed by a y somewhere in it ("Dynamic", "READY"); it then stops
+whichever line is selected at that moment, which any j, k, g or G earlier in the
+sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still there
+3s later, and only while it is still the process the list showed.
+
 ### Keybindings
 
 Press **?** in the app for the full list; **Ctrl+p** (or **:** outside a
@@ -126,8 +136,9 @@ and reopen it from *Resume Claude Session*, choosing "Resume + Chrome".
 Quitting (Ctrl+q) does not stop the Claude Code and shell sessions: a background
 `conductor pty-host` holds them, so a turn that is mid-task keeps working and the
 next window you open on the repository shows each one where it has got to. To end
-them as you leave, use *Repo ▸ Quit and Stop Sessions*. Deleting a worktree stops
-the sessions in it; a `$EDITOR` pane still closes with the window.
+them as you leave, use *Repo ▸ Quit and Stop Sessions*, or **D** on one line of
+Sessions. Deleting a worktree stops the sessions in it; a `$EDITOR` pane still
+closes with the window.
 
 ## Reviewing a Pull Request
 

@@ -37,6 +37,8 @@ use crate::review::Snapshot;
 /// 差分を読んで語る呼び出しはそのままでは打ち切られる。
 const AI_TIMEOUT_SECS: u64 = 15 * 60;
 
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Task が git を触るのに要るもの。Workspace が持っているので、Task 自身は運ばない。
 #[derive(Debug, Clone)]
 pub struct TaskEnv {
@@ -58,6 +60,11 @@ pub enum Task {
     FleetStatus {
         known: std::collections::HashMap<String, std::time::SystemTime>,
         own: Vec<(PathBuf, String)>,
+    },
+    /// この窓の外の Claude を止める。`started` は一覧に載せたときの起動時刻。
+    StopSession {
+        pid: u32,
+        started: std::time::SystemTime,
     },
     /// 1 つの worktree の変更件数。一覧とは別に走らせる (理由は WorktreeInfo::counts)。
     WorktreeCounts {
@@ -358,6 +365,7 @@ pub enum ReviewWrite {
 pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
     FleetStatus(Box<crate::panels::fleet::FleetStatus>),
+    SessionStopped(conductor_core::claude_sessions::registry::Stopped),
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
         path: PathBuf,
@@ -463,6 +471,21 @@ impl Task {
                 svc.spawn(
                     move || Box::new(fleet_status(&known, own)),
                     TaskResult::FleetStatus,
+                );
+            }
+            Task::StopSession { pid, started } => {
+                use conductor_core::claude_sessions::registry;
+                svc.spawn(
+                    move || {
+                        registry::stop(
+                            &registry::sessions_dir(),
+                            pid,
+                            started,
+                            &registry::SystemProcesses,
+                            STOP_GRACE,
+                        )
+                    },
+                    TaskResult::SessionStopped,
                 );
             }
             Task::WorktreeCounts { path } => {

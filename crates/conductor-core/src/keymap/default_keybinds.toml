@@ -136,6 +136,8 @@
 # 右に映した、この窓のセッションへ入る。戻るのは terminal 層の ctrl+esc (leave_terminal)。
 "tab" = "expand_or_right"
 ":" = "command_palette"
+# 小文字の d は、一覧に居ると気づかずに打った文 (ready など) から届いてしまう。
+"D" = "stop_session"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]

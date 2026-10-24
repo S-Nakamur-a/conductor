@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use super::{Ask, FleetPanel, Place, Row, State};
+use conductor_core::keymap::Action;
+
+use super::{Ask, FleetPanel, Place, Row, RowKey, State};
 use crate::workspace::{Focus, Workspace};
 
 const UNTITLED: &str = "(まだ何も頼んでいない)";
@@ -30,6 +32,25 @@ pub fn list_title(fleet: &FleetPanel) -> String {
 
 pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = inner(rect);
+    if inner.height == 0 {
+        return;
+    }
+    let body = Rect {
+        height: inner.height - 1,
+        ..inner
+    };
+    let footer = Rect {
+        y: body.y + body.height,
+        height: 1,
+        ..inner
+    };
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            clip(&hint(ws), usize::from(inner.width)),
+            Style::default().fg(ws.theme.hint),
+        )),
+        footer,
+    );
     let fleet = &ws.panels.fleet;
     let theme = &ws.theme;
     let now = SystemTime::now();
@@ -83,8 +104,70 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
             ));
         }
     }
-    let offset = selected_line.saturating_sub(usize::from(inner.height).saturating_sub(2));
-    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), inner);
+    let offset = selected_line.saturating_sub(usize::from(body.height).saturating_sub(2));
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), body);
+}
+
+/// 一覧の最下行。今のフォーカスと選んだ行で効くキーを、keymap の割り当てどおりに出す。
+pub fn hint(ws: &Workspace) -> String {
+    let context = ws.key_context();
+    let chord = |action| crate::render::representative_chord(&ws.keymap, context, action);
+    if ws.focus == Focus::FleetSession {
+        let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
+        return format!("{}← などは Claude に届く", back.unwrap_or_default());
+    }
+    let items: &[(Action, &str)] = match ws.panels.fleet.selected_row().map(|row| row.place) {
+        Some(Place::Mine) => &[
+            (Action::Select, "開く"),
+            (Action::ExpandOrRight, "返事"),
+            (Action::StopSession, "止める"),
+            (Action::ExitSubPanel, "閉じる"),
+        ],
+        Some(Place::OtherConductor | Place::Outside) => &[
+            (Action::StopSession, "止める"),
+            (Action::ExitSubPanel, "閉じる"),
+        ],
+        None => &[(Action::ExitSubPanel, "閉じる")],
+    };
+    items
+        .iter()
+        .filter_map(|(action, label)| chord(*action).map(|key| format!("{key} {label}")))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+pub(super) fn stop_question(row: &Row) -> String {
+    let title = row.title.as_deref().unwrap_or(UNTITLED);
+    format!("「{}」を止める?", clip(title, 30))
+}
+
+pub(super) fn stop_detail(row: &Row) -> Vec<String> {
+    let place = match row.place {
+        Place::Mine => "この窓",
+        Place::OtherConductor => "conductor の中",
+        Place::Outside => "この窓の外",
+    };
+    let pid = match row.key {
+        RowKey::Pid(pid) => format!(" (pid {pid})"),
+        RowKey::Panel(_) => String::new(),
+    };
+    let mut state = format!("状態: {}", state_text(&row.state));
+    if row.state == State::Working {
+        state.push_str("。作業の途中で止まります");
+    }
+    vec![
+        format!("場所: {place}{pid}"),
+        tail_of(&row.working_dir),
+        state,
+    ]
+}
+
+/// 確認の枠は画面幅で切れ、切れるのはパスの末尾。どの repo のどの worktree かは末尾の 2 つにある。
+fn tail_of(dir: &std::path::Path) -> String {
+    match dir.parent().and_then(|parent| parent.file_name()) {
+        Some(parent) => format!("…/{}/{}", parent.to_string_lossy(), super::dir_name(dir)),
+        None => dir.display().to_string(),
+    }
 }
 
 pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {

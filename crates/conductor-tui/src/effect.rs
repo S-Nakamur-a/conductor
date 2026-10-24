@@ -52,6 +52,8 @@ pub enum Effect {
     LeaveFleet(Focus),
     /// そのセッションの worktree を開いた今の画面に入る。
     EnterSession(crate::panels::fleet::RowKey),
+    /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
+    StopFleetSession(crate::panels::fleet::StopTarget),
     NewSession(SessionKind),
     NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す。Prompt の on_submit は関数
@@ -237,6 +239,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 queue.push_front(Effect::Focus(focus));
             }
             Effect::EnterSession(key) => queue.extend(enter_session(ws, svc, key)),
+            Effect::StopFleetSession(target) => queue.extend(stop_fleet_session(ws, target)),
             Effect::Status(level, text) => {
                 ws.chrome.status = Some(StatusMessage {
                     level,
@@ -312,6 +315,25 @@ fn enter_session(
     ws.panels.terminal.show_claude_when_selected(&id);
     effects.push(Effect::Focus(Focus::TerminalClaude));
     effects
+}
+
+/// 外のプロセスは照合と猶予で待つので裏で止める。
+fn stop_fleet_session(ws: &mut Workspace, target: crate::panels::fleet::StopTarget) -> Vec<Effect> {
+    use crate::panels::fleet::StopTarget;
+    let id = match target {
+        StopTarget::Process { pid, started } => {
+            return vec![Effect::Spawn(Task::StopSession { pid, started })];
+        }
+        StopTarget::Panel(id) => id,
+    };
+    let was_running = ws.panels.terminal.stop_claude(&id);
+    let own = ws.panels.terminal.own_claude_sessions();
+    ws.panels.fleet.forget_stopped(&id, own);
+    vec![if was_running {
+        Effect::Status(StatusLevel::Success, "Stopped the session.".into())
+    } else {
+        Effect::Status(StatusLevel::Info, "That session had already ended.".into())
+    }]
 }
 
 /// 今の repo が git でなければ別の repo とみなす。
@@ -533,4 +555,26 @@ fn switch_repo(
     }
     effects.push(Effect::Status(StatusLevel::Success, message));
     effects
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    use super::*;
+    use crate::panels::fleet::StopTarget;
+
+    #[test]
+    fn 外のプロセスを止める指示は一覧に載せたときの起動時刻のまま裏の仕事になる() {
+        let mut ws = Workspace::for_test();
+        let started = SystemTime::UNIX_EPOCH + Duration::from_secs(5);
+        let effects = stop_fleet_session(&mut ws, StopTarget::Process { pid: 9, started });
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Spawn(Task::StopSession { pid: 9, started: s })] if *s == started
+            ),
+            "{effects:?}"
+        );
+    }
 }

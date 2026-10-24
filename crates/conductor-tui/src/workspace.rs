@@ -423,6 +423,7 @@ impl Workspace {
                 self.apply_fleet(*status, own);
                 Vec::new()
             }
+            TaskResult::SessionStopped(stopped) => vec![stopped_status(stopped)],
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
@@ -944,6 +945,26 @@ fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Eff
         Effect::Status(level, message),
         Effect::Spawn(crate::task::Task::LoadReview),
     ]
+}
+
+fn stopped_status(stopped: conductor_core::claude_sessions::registry::Stopped) -> Effect {
+    use conductor_core::claude_sessions::registry::Stopped;
+    let (level, message) = match stopped {
+        Stopped::Terminated => (StatusLevel::Success, "Stopped the session.".to_string()),
+        Stopped::Killed => (
+            StatusLevel::Success,
+            "Stopped the session (it ignored SIGTERM, so it was killed).".to_string(),
+        ),
+        Stopped::AlreadyGone => (
+            StatusLevel::Info,
+            "That session had already ended.".to_string(),
+        ),
+        Stopped::Failed(error) => (
+            StatusLevel::Error,
+            format!("Could not stop the session: {error}"),
+        ),
+    };
+    Effect::Status(level, message)
 }
 
 #[cfg(test)]

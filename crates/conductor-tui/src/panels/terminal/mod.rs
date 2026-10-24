@@ -230,6 +230,16 @@ impl TerminalPanel {
         self.show_survivors();
     }
 
+    /// タブを閉じるのと同じ道で止める。Claude がまだ動いていたかを返す。
+    pub fn stop_claude(&mut self, id: &str) -> bool {
+        let Some(index) = self.index_of(Some(id)) else {
+            return false;
+        };
+        let was_running = self.pty.is_session_alive(index);
+        self.close_session(Focus::TerminalClaude, id);
+        was_running
+    }
+
     pub fn is_waiting(&self, worktree: &Path) -> bool {
         self.waiting.contains(worktree)
     }
