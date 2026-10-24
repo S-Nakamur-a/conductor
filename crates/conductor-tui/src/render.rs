@@ -289,6 +289,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("type", &[Action::ExpandOrRight]),
             ("open", &[Action::Select]),
+            ("stop", &[Action::StopSession]),
             ("back", &[Action::ExitSubPanel]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
@@ -642,6 +643,19 @@ mod tests {
             hint.contains("ctrl+esc: leave"),
             "esc ではなく ctrl+esc: {hint}"
         );
+    }
+
+    #[test]
+    fn 一覧の帯には止めるキーを出し_外せば消す() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Fleet;
+        let hint = status_line(&ws).to_string();
+        assert!(hint.contains("D: stop"), "{hint}");
+
+        let user: toml::Table = toml::from_str("[layers.fleet]\n\"D\" = false\n").unwrap();
+        ws.keymap = KeyMap::with_warnings(&user).0;
+        let hint = status_line(&ws).to_string();
+        assert!(!hint.contains("stop"), "{hint}");
     }
 
     #[test]

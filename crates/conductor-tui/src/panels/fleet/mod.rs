@@ -14,12 +14,20 @@ use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Wait
 use conductor_core::keymap::Action;
 
 use crate::effect::Effect;
+use crate::modal::{Confirm, Modal};
 use crate::workspace::{Ctx, Focus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RowKey {
     Panel(String),
     Pid(u32),
+}
+
+/// 外のプロセスは、一覧に載せたときの起動時刻で同じものかを確かめてから止める。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopTarget {
+    Panel(String),
+    Process { pid: u32, started: SystemTime },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +140,22 @@ impl FleetPanel {
 
     pub fn came_from(&self) -> Focus {
         self.came_from.unwrap_or(Focus::Explorer)
+    }
+
+    /// この窓のセッションを止めた直後に、読み直しを待たずに行を消す。組んでいた状態ファイルの
+    /// 写しも捨てないと、読み直すまで同じ Claude が pid の行で出る。
+    pub fn forget_stopped(&mut self, panel_id: &str, own: Vec<OwnSession>) {
+        let paired = self
+            .own
+            .iter()
+            .zip(self.pairing())
+            .find(|(own, _)| own.panel_id == panel_id)
+            .and_then(|(_, live)| live.map(|l| l.session_id.clone()));
+        if let Some(session) = paired {
+            self.live.retain(|l| l.session_id != session);
+        }
+        self.set_own(own);
+        self.reselect_if_gone();
     }
 
     pub fn defer_focus(&mut self, focus: Focus) {
@@ -258,7 +282,8 @@ impl FleetPanel {
             .collect()
     }
 
-    fn rows(&self) -> Vec<Row> {
+    /// own と同じ並びで、それぞれと組になった状態ファイルの写し。
+    fn pairing(&self) -> Vec<Option<&LiveSession>> {
         let by_id: Vec<Option<&LiveSession>> = self
             .own
             .iter()
@@ -268,12 +293,15 @@ impl FleetPanel {
                     .and_then(|id| self.live.iter().find(|l| l.session_id == id))
             })
             .collect();
-        let paired: Vec<Option<&LiveSession>> = self
-            .own
+        self.own
             .iter()
             .zip(&by_id)
             .map(|(own, found)| found.or_else(|| self.lone_stray(&own.working_dir, &by_id)))
-            .collect();
+            .collect()
+    }
+
+    fn rows(&self) -> Vec<Row> {
+        let paired = self.pairing();
         let matched: Vec<&str> = paired
             .iter()
             .flatten()
@@ -413,12 +441,34 @@ impl FleetPanel {
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
+            Action::StopSession => return Some(self.ask_stop().into_iter().collect()),
             _ => return None,
         };
         if let Some(row) = rows.get(target) {
             self.select(row, SystemTime::now());
         }
         Some(Vec::new())
+    }
+
+    /// 止める相手は押した時点の行で決める。確認の間に並びが変わっても相手は動かない。
+    fn ask_stop(&self) -> Option<Effect> {
+        let row = self.selected_row()?;
+        let target = match &row.key {
+            RowKey::Panel(id) => StopTarget::Panel(id.clone()),
+            RowKey::Pid(pid) => StopTarget::Process {
+                pid: *pid,
+                started: self.live.iter().find(|l| l.pid == *pid)?.started,
+            },
+        };
+        let confirm = render::stop_detail(&row).into_iter().fold(
+            Confirm::yes_only(
+                render::stop_question(&row),
+                vec![Effect::StopFleetSession(target)],
+            )
+            .title("Stop session"),
+            Confirm::detail,
+        );
+        Some(Effect::PushModal(Modal::Confirm(confirm)))
     }
 }
 

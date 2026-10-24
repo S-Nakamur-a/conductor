@@ -23,13 +23,23 @@ impl Answer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Keys {
+    /// y / n / Esc と、Enter・選択の移動。
+    Buttons,
+    /// y / n / Esc だけ。ほかは無視する。
+    Letters,
+    /// y が Yes (大文字・Ctrl・Alt 付きも) で、ほかのキーはどれも No。
+    YesOnly,
+}
+
 /// 選択中のボタンを持つ 2 択。
 #[derive(Debug)]
 pub struct Choice {
     yes: &'static str,
     no: &'static str,
     selected: Answer,
-    letters_only: bool,
+    keys: Keys,
 }
 
 impl Choice {
@@ -38,7 +48,7 @@ impl Choice {
             yes: "Yes",
             no: "No",
             selected: default,
-            letters_only: false,
+            keys: Keys::Buttons,
         }
     }
 
@@ -51,8 +61,9 @@ impl Choice {
     pub fn key(&mut self, key: KeyEvent) -> Option<Answer> {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Some(Answer::Yes),
+            _ if self.keys == Keys::YesOnly => Some(Answer::No),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(Answer::No),
-            _ if self.letters_only => None,
+            _ if self.keys == Keys::Letters => None,
             KeyCode::Enter => Some(self.selected),
             KeyCode::Tab
             | KeyCode::BackTab
@@ -79,10 +90,10 @@ impl Choice {
             };
             Span::styled(format!(" {label} "), style)
         };
-        let keys = if self.letters_only {
-            "   y / n"
-        } else {
-            "   y / n · tab"
+        let keys = match self.keys {
+            Keys::Buttons => "   y / n · tab",
+            Keys::Letters => "   y / n",
+            Keys::YesOnly => "   y / any other key: no",
         };
         Line::from(vec![
             button(self.yes, Answer::Yes),
@@ -118,7 +129,15 @@ impl Confirm {
     /// y / n でしか答えられない。
     pub fn letters_only(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
         let mut confirm = Self::destructive(question, on_yes);
-        confirm.choice.letters_only = true;
+        confirm.choice.keys = Keys::Letters;
+        confirm
+    }
+
+    /// 別の区画に打つつもりの文が届きうる場所で出す確認。文の中の y 以外の字で閉じるので、
+    /// 打ち続けた文が後の y で答えてしまわない。
+    pub fn yes_only(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
+        let mut confirm = Self::destructive(question, on_yes);
+        confirm.choice.keys = Keys::YesOnly;
         confirm
     }
 
@@ -241,6 +260,34 @@ mod tests {
             assert!(confirm.update(key(code)).is_empty(), "{code:?}");
         }
         assert!(answered(&confirm.update(key(KeyCode::Char('y')))));
+    }
+
+    #[test]
+    fn yで答える確認は大文字や修飾付きのyでも答え_ほかのどのキーでも何も起こさずに閉じる() {
+        for code in [
+            KeyCode::Char('e'),
+            KeyCode::Char('n'),
+            KeyCode::Char('l'),
+            KeyCode::Tab,
+            KeyCode::Right,
+            KeyCode::Enter,
+            KeyCode::Esc,
+        ] {
+            let mut confirm = Confirm::yes_only("stop?", vec![Effect::Quit]);
+            assert!(
+                matches!(confirm.update(key(code)).as_slice(), [Effect::PopModal]),
+                "{code:?}"
+            );
+        }
+        for yes in [
+            key(KeyCode::Char('y')),
+            key(KeyCode::Char('Y')),
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT),
+        ] {
+            let mut confirm = Confirm::yes_only("stop?", vec![Effect::Quit]);
+            assert!(answered(&confirm.update(yes)), "{yes:?}");
+        }
     }
 
     /// 文言が変わるだけでは、どちらにいるか一目で分からない。
