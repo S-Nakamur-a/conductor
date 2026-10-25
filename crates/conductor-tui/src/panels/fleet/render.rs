@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use conductor_core::theme::Theme;
@@ -61,19 +62,31 @@ pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
     Line::from(spans)
 }
 
-pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+/// 一覧の本文の 1 行が何か。描画とクリックの当たり判定が同じ並びを読む。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Slot {
+    Other,
+    Repo(Option<PathBuf>),
+    Worktree(Worktree),
+}
+
+/// 一覧の区画の中身。要約行・本文・最下行の矩形と、本文の行とスクロール量。
+pub struct Composed {
+    pub summary: Option<Rect>,
+    pub body: Rect,
+    pub footer: Rect,
+    pub lines: Vec<Line<'static>>,
+    pub slots: Vec<Slot>,
+    pub offset: usize,
+}
+
+pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
     let inner = inner(rect);
     if inner.height == 0 {
-        return;
+        return None;
     }
     let fleet = &ws.panels.fleet;
     let theme = &ws.theme;
-    if inner.height >= 2 {
-        frame.render_widget(
-            Paragraph::new(summary(fleet, theme)),
-            Rect { height: 1, ..inner },
-        );
-    }
     let body = Rect {
         y: inner.y + 1,
         height: inner.height.saturating_sub(2),
@@ -84,17 +97,11 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         height: 1,
         ..inner
     };
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            clip(&hint(ws), usize::from(inner.width)),
-            Style::default().fg(ws.theme.hint),
-        )),
-        footer,
-    );
     let now = SystemTime::now();
     let focused = ws.focus == Focus::Fleet;
     let (pinned, groups) = fleet.groups();
     let mut lines: Vec<Line> = Vec::new();
+    let mut slots: Vec<Slot> = Vec::new();
     let mut selected_line = 0;
     if pinned.is_empty() && groups.is_empty() {
         lines.push(Line::styled(
@@ -122,8 +129,10 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
             ));
         }
     }
+    slots.resize(lines.len(), Slot::Other);
     for group in &groups {
         lines.push(header(&group.name, theme.fg, inner.width));
+        slots.push(Slot::Repo(group.root.clone()));
         for node in &group.nodes {
             let indent = match &node.worktree {
                 Some(worktree) => {
@@ -138,6 +147,7 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                         selected,
                         focused,
                     ));
+                    slots.push(Slot::Worktree(worktree.clone()));
                     4
                 }
                 None => 0,
@@ -155,11 +165,41 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                     focused,
                     now,
                 ));
+                slots.push(Slot::Other);
             }
         }
     }
-    let offset = selected_line.saturating_sub(usize::from(body.height).saturating_sub(2));
-    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), body);
+    Some(Composed {
+        summary: (inner.height >= 2).then_some(Rect { height: 1, ..inner }),
+        body,
+        footer,
+        offset: selected_line.saturating_sub(usize::from(body.height).saturating_sub(2)),
+        lines,
+        slots,
+    })
+}
+
+pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let Some(composed) = compose(ws, rect) else {
+        return;
+    };
+    if let Some(summary_rect) = composed.summary {
+        frame.render_widget(
+            Paragraph::new(summary(&ws.panels.fleet, &ws.theme)),
+            summary_rect,
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            clip(&hint(ws), usize::from(composed.footer.width)),
+            Style::default().fg(ws.theme.hint),
+        )),
+        composed.footer,
+    );
+    frame.render_widget(
+        Paragraph::new(composed.lines).scroll((composed.offset as u16, 0)),
+        composed.body,
+    );
 }
 
 /// 一覧の最下行。今のフォーカスと選んだ行で効くキーを、keymap の割り当てどおりに出す。
