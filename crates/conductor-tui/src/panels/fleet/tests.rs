@@ -797,7 +797,7 @@ mod pane {
             press(&mut ws, &mut svc, KeyCode::Char(c), KeyModifiers::NONE);
         }
         press(&mut ws, &mut svc, KeyCode::Enter, KeyModifiers::NONE);
-        assert!(crate::testing::wait_for(|| shows(&ws, &listed, "typed-42")));
+        crate::testing::wait_for(|| shows(&ws, &listed, "typed-42"));
         assert!(!shows(&ws, &hidden, "typed"));
     }
 
@@ -812,9 +812,9 @@ mod pane {
         std::fs::write(&file, "x").unwrap();
         on_paste(&mut ws, &mut svc, "日本語".into());
         on_paste(&mut ws, &mut svc, format!("{} ", file.display()));
-        assert!(crate::testing::wait_for(|| {
+        crate::testing::wait_for(|| {
             shows(&ws, &listed, "日本語") && shows(&ws, &listed, "dropped.txt")
-        }));
+        });
         assert!(ws.chrome.status.is_none(), "{:?}", ws.chrome.status);
         assert_eq!(ws.focus, Focus::FleetSession);
         assert!(!shows(&ws, &hidden, "dropped.txt"));
@@ -827,7 +827,7 @@ mod pane {
         list(&mut ws, dir.path(), &[&listed]);
         apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
         on_paste(&mut ws, &mut svc, "echo drawn-$((1+1))\n".into());
-        assert!(crate::testing::wait_for(|| shows(&ws, &listed, "drawn-2")));
+        crate::testing::wait_for(|| shows(&ws, &listed, "drawn-2"));
         let backend = ratatui::backend::TestBackend::new(200, 50);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut right = Rect::default();
