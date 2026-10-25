@@ -1501,10 +1501,8 @@ mod stop {
     }
 
     #[test]
-    fn 止める確認は_y_以外のキーでやめる() {
+    fn 止める確認は_y_を押さない限り_左右以外のどのキーでも止めずに閉じる() {
         for key in [
-            KeyCode::Right,
-            KeyCode::Left,
             KeyCode::Char('l'),
             KeyCode::Char('h'),
             KeyCode::Tab,
@@ -1523,6 +1521,38 @@ mod stop {
             assert!(ws.modals.is_empty(), "{key:?}");
             assert!(present(&ws, &id), "{key:?}");
             assert_eq!(ws.focus, Focus::Fleet, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn 止める確認は左で_yes_右で_no_を選び_enter_で選択中を答える() {
+        use KeyCode::{Left, Right};
+        let cases: [(&[KeyCode], bool); 7] = [
+            (&[Left], true),
+            (&[Right], false),
+            (&[Left, Right], false),
+            (&[Right, Left], true),
+            (&[Left, Left], true),
+            (&[Right, Right], false),
+            (&[], false),
+        ];
+        for (arrows, stops) in cases {
+            let (mut ws, mut svc) = opened();
+            let dir = tempfile::tempdir().unwrap();
+            let id = spawn(&mut ws, dir.path());
+            list(&mut ws, dir.path(), &[&id]);
+            type_text(&mut ws, &mut svc, "D");
+            for arrow in arrows {
+                on_key(&mut ws, &mut svc, KeyEvent::new(*arrow, KeyModifiers::NONE));
+                assert!(asking(&ws), "{arrows:?}");
+            }
+            on_key(
+                &mut ws,
+                &mut svc,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            );
+            assert!(ws.modals.is_empty(), "{arrows:?}");
+            assert_eq!(present(&ws, &id), !stops, "{arrows:?}");
         }
     }
 
