@@ -9,6 +9,7 @@ mod model;
 mod sanitize;
 mod schema;
 mod session;
+pub mod summary;
 #[cfg(test)]
 mod tests;
 mod tool_class;
