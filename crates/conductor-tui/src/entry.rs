@@ -38,6 +38,12 @@ pub fn run(version: &'static str) -> Result<()> {
 
     // 端末に触る前に。断られたら通常スクリーンのまま理由を出して終わりたい。
     let repo_root = worktree_root(&arg_path(options.repo)?);
+    let _window_lock = if options.second_window {
+        None
+    } else {
+        acquire_window_lock()?
+    };
+    // 窓のロックを知らない古い版の窓とは、リポジトリのロックで今までどおり取り合う。
     let _lock = if options.second_window {
         None
     } else {
@@ -114,25 +120,68 @@ pub fn run(version: &'static str) -> Result<()> {
     result
 }
 
-/// 前のウィンドウから残っているセッションに戻る。ホストが居なければここで起こす。
+/// ほかのリポジトリのホストもこの窓がつなぐので、2 つ目の窓が開くとホストを取り合う。
+fn acquire_window_lock() -> Result<Option<instance_lock::InstanceLock>> {
+    let lock = cc_hook::ensure_runtime_dir().and_then(|dir| instance_lock::acquire_window(&dir));
+    match lock {
+        Ok(Some(lock)) => Ok(Some(lock)),
+        Ok(None) => anyhow::bail!(
+            "conductor is already open in another window.\n\n\
+             One window shows the sessions of every repository.\n\
+             Switch to that window, close it first, or open a second one\n\
+             for verification with --second-window."
+        ),
+        // 排他できないことを理由に開けなくするほうが害が大きい。
+        Err(e) => {
+            log::warn!("could not take the single-window lock: {e:#}");
+            Ok(None)
+        }
+    }
+}
+
+/// 前のウィンドウから残っているセッションに戻る。自分のリポジトリのホストが居なければここで起こし、
+/// ほかのリポジトリのホストは居るものにだけつなぐ。
 fn attach_pty_host<P: Send + 'static>(ws: &mut Workspace, svc: &Services<P>, version: &str) {
     let sender = svc.sender();
     let notify = move |n: cc_hook::Notification| match n {
         cc_hook::Notification::Ui { .. } => sender.send_watch(WatchEvent::from(n)),
         n => sender.send_watch_unscoped(WatchEvent::from(n)),
     };
-    let text = match ws
+    let mut warnings = Vec::new();
+    match ws
         .panels
         .terminal
         .attach_host(&ws.repo.root, version, notify)
     {
-        Ok(attached) if attached.host_version == version => return,
-        Ok(attached) => format!(
+        Ok(attached) if attached.host_version == version => {}
+        Ok(attached) => warnings.push(format!(
             "The PTY host is still v{}; it is replaced at the next start after its sessions have all ended",
             attached.host_version
-        ),
-        Err(e) => format!("PTY host unavailable, sessions will end with this window: {e:#}"),
+        )),
+        Err(e) => warnings.push(format!(
+            "PTY host unavailable, sessions will end with this window: {e:#}"
+        )),
+    }
+    let skipped = match cc_hook::ensure_runtime_dir() {
+        Ok(dir) => ws
+            .panels
+            .terminal
+            .attach_other_hosts(&cc_hook::pty_host_sockets(&dir)),
+        Err(e) => {
+            log::warn!("could not list the other PTY hosts: {e:#}");
+            0
+        }
     };
+    if skipped > 0 {
+        warnings.push(format!(
+            "{skipped} other PTY host(s) not attached: another conductor window holds them or they did not answer"
+        ));
+    }
+    if warnings.is_empty() {
+        return;
+    }
+    // ステータスは 1 枠なので、別々に出すと後勝ちで消える。
+    let text = warnings.join(" · ");
     log::warn!("{text}");
     ws.chrome.status = Some(StatusMessage {
         level: StatusLevel::Warning,

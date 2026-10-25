@@ -878,4 +878,269 @@ mod tests {
         );
         wait_until("the exit", || !store.is_session_alive(idx));
     }
+
+    /// 窓を閉じた後に、シェルを 1 つ残したほかのリポジトリのホスト。
+    fn other_host_with_shell(dir: &Path, version: &str) -> (Host, PathBuf) {
+        let socket = dir.join("other.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let host = Host::new(version, 100, None);
+        let (listening, reaping) = (host.clone(), host.clone());
+        thread::spawn(move || reaping.reap());
+        thread::spawn(move || listening.listen(&listener));
+        let mut previous = PtyStore::new(100, 100);
+        previous
+            .attach_with(Path::new("/"), detached_as(version, &socket))
+            .unwrap();
+        launch(&mut previous, dir, Launch::Shell { program: "/bin/sh" });
+        drop(previous);
+        (host, socket)
+    }
+
+    fn detached_as(version: &str, socket: &Path) -> Detached {
+        let to = socket.to_path_buf();
+        Detached {
+            version: version.into(),
+            on_notify: Arc::new(|_| {}),
+            socket_of: Arc::new(move |_| to.clone()),
+            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+        }
+    }
+
+    fn can_attach(socket: &Path) -> bool {
+        PtyStore::new(100, 100)
+            .attach_with(Path::new("/"), detached_as("test", socket))
+            .is_ok()
+    }
+
+    #[test]
+    fn ほかのリポジトリの空いたホストにつなぐと同じシェルに打てる() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = other_host_with_shell(other.path(), "test");
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(&[own_socket, other_socket]), 0);
+
+        assert_eq!(store.sessions().len(), 1);
+        store
+            .write_to_session(0, b"echo joined-$((40+2))\n")
+            .unwrap();
+        wait_until("the other repository's shell answering", || {
+            screen_text(&store, 0).contains("joined-42")
+        });
+    }
+
+    #[test]
+    fn 別の窓が握っているホストは数えて飛ばし相手のシェルもエディタも残す() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = serve(other.path());
+        let mut holder = window(&other_socket);
+        let shell = launch(
+            &mut holder,
+            other.path(),
+            Launch::Shell { program: "/bin/sh" },
+        );
+        let args = ["-c".to_string(), "sleep 30".to_string()];
+        let editor = Launch::Editor {
+            program: "/bin/sh",
+            args: &args,
+            file: Path::new("file"),
+        };
+        let editor = launch(&mut holder, other.path(), editor);
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(&[other_socket]), 1);
+
+        assert!(store.sessions().is_empty());
+        assert!(holder.is_session_alive(editor));
+        holder
+            .write_to_session(shell, b"echo kept-$((40+2))\n")
+            .unwrap();
+        wait_until("the holder keeping its shell", || {
+            screen_text(&holder, shell).contains("kept-42")
+        });
+    }
+
+    #[test]
+    fn 取り込んだホストのリポジトリで起こすセッションは同じ接続に載る() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = other_host_with_shell(other.path(), "test");
+        let mut store = PtyStore::new(100, 100);
+        let other_root = other.path().to_path_buf();
+        let (to_own, to_other) = (own_socket.clone(), other_socket.clone());
+        let detached = Detached {
+            version: "test".into(),
+            on_notify: Arc::new(|_| {}),
+            socket_of: Arc::new(move |dir| {
+                if dir.starts_with(&other_root) {
+                    to_other.clone()
+                } else {
+                    to_own.clone()
+                }
+            }),
+            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+        };
+        store.attach_with(own.path(), detached).unwrap();
+        assert_eq!(store.attach_others(std::slice::from_ref(&other_socket)), 0);
+
+        let idx = launch(
+            &mut store,
+            other.path(),
+            Launch::Shell { program: "/bin/sh" },
+        );
+
+        assert_eq!(store.sessions().len(), 2);
+        store
+            .write_to_session(idx, b"echo spawned-$((40+2))\n")
+            .unwrap();
+        wait_until("the shell spawned on the joined host", || {
+            screen_text(&store, idx).contains("spawned-42")
+        });
+    }
+
+    #[test]
+    fn 誰も居ないソケットは数えて飛ばしホストを起こさない() {
+        let own = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let stale = own.path().join("stale.sock");
+        drop(UnixListener::bind(&stale).unwrap());
+        let started = Arc::new(AtomicBool::new(false));
+        let mut store = PtyStore::new(100, 100);
+        let (to, flag) = (own_socket.clone(), Arc::clone(&started));
+        let detached = Detached {
+            version: "test".into(),
+            on_notify: Arc::new(|_| {}),
+            socket_of: Arc::new(move |_| to.clone()),
+            start: Arc::new(move |_| {
+                flag.store(true, Ordering::Relaxed);
+                anyhow::bail!("must not start a host")
+            }),
+        };
+        store.attach_with(Path::new("/"), detached).unwrap();
+
+        assert_eq!(store.attach_others(&[stale]), 1);
+
+        assert!(!started.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn セッションの無いホストにはつながず手放す() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = serve(other.path());
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(std::slice::from_ref(&other_socket)), 0);
+
+        assert!(store.sessions().is_empty());
+        wait_until("the empty host to be free again", || {
+            can_attach(&other_socket)
+        });
+    }
+
+    #[test]
+    fn 終わったセッションだけ残ったホストにもつなぐ() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = serve(other.path());
+        let mut previous = window(&other_socket);
+        let idx = launch(
+            &mut previous,
+            other.path(),
+            Launch::Shell { program: "/bin/sh" },
+        );
+        previous.write_to_session(idx, b"exit\n").unwrap();
+        wait_until("the shell to exit", || !previous.is_session_alive(idx));
+        drop(previous);
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(&[other_socket]), 0);
+
+        assert_eq!(store.sessions().len(), 1);
+    }
+
+    #[test]
+    fn 版の違うホストでもセッションがあればつなぎ退かせない() {
+        let own = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let (_other_host, other_socket) = other_host_with_shell(other.path(), "older");
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(&[other_socket]), 0);
+
+        store
+            .write_to_session(0, b"echo older-$((40+2))\n")
+            .unwrap();
+        wait_until("the older host's shell answering", || {
+            screen_text(&store, 0).contains("older-42")
+        });
+    }
+
+    #[test]
+    fn 電文の版が違うホストは数えて飛ばす() {
+        let own = tempfile::tempdir().unwrap();
+        let (_own_host, own_socket) = serve(own.path());
+        let socket = own.path().join("future.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = wire::read_frame::<ToHost>(&mut stream);
+            let session = SessionInfo {
+                id: "s1".into(),
+                label: "SH:1".into(),
+                kind: SessionKind::Shell,
+                worktree: "w".into(),
+                working_dir: PathBuf::from("/"),
+                claude_session_id: None,
+                spawned_at_ms: 0,
+                rows: 10,
+                cols: 60,
+            };
+            let welcome = ToWindow::Welcome {
+                version: "future".into(),
+                protocol: wire::PROTOCOL + 1,
+                sessions: vec![session],
+                notifications: Vec::new(),
+            };
+            wire::write_control(&mut stream, &welcome).unwrap();
+            thread::sleep(Duration::from_secs(1));
+        });
+        let mut store = window(&own_socket);
+
+        assert_eq!(store.attach_others(&[socket]), 1);
+    }
+
+    #[test]
+    fn 既につないでいるホストに二度つながない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, socket) = serve(dir.path());
+        let mut store = window(&socket);
+        launch(&mut store, dir.path(), Launch::Shell { program: "/bin/sh" });
+
+        assert_eq!(store.attach_others(std::slice::from_ref(&socket)), 0);
+
+        assert_eq!(store.sessions().len(), 1);
+        assert!(store.is_session_alive(0));
+    }
+
+    /// 自分のホストにつなげなかった窓は、通知の届け先を持たない。
+    #[test]
+    fn 自分のホストを持たない窓はほかのホストにつながない() {
+        let other = tempfile::tempdir().unwrap();
+        let (_other_host, other_socket) = other_host_with_shell(other.path(), "test");
+        let mut store = PtyStore::new(100, 100);
+
+        assert_eq!(store.attach_others(std::slice::from_ref(&other_socket)), 0);
+
+        assert!(store.sessions().is_empty());
+        assert!(can_attach(&other_socket));
+    }
 }

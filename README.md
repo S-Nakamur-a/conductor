@@ -92,9 +92,9 @@ type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showi
 there resizes it, so the Claude panel loses what had scrolled off (the transcript view
 still has it). `Enter` opens that session's worktree in the main screen with the session in
 the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
-another conductor window or a plain terminal runs are listed with their state, but
-cannot be opened or typed into from here. The states come from the files Claude
-Code writes under `~/.claude/sessions/`.
+a plain terminal runs, or that a window of an older version still holds, are listed with
+their state, but cannot be opened or typed into from here. The states come from the files
+Claude Code writes under `~/.claude/sessions/`.
 
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
@@ -243,10 +243,14 @@ so splitting the name costs no build time. Those extra binaries are outside carg
 own bookkeeping: remove one with `rm ~/.cargo/bin/conductor-<name>`, not
 `cargo uninstall`.
 
-A repository normally allows one conductor window, shared by all of its worktrees,
-because what lives under `.conductor/` — the review database, the cc-notify socket,
-the refresh FIFO — assumes a single owner. To try a build without closing the window
-you already have, start the second one with `--second-window`. It takes no lock and
+One conductor window shows the sessions of every repository, so only one may be open
+at a time; a second one is refused before it touches the terminal. When it starts it
+attaches to every repository's PTY host that is not held elsewhere, and you can answer
+any of those Claude sessions from the session list. A window of an older version still
+holds its repository's host; close it and reopen the new window to pick that host up.
+What lives under `.conductor/` — the review database, the cc-notify socket, the
+refresh FIFO — likewise assumes a single owner per repository. To try a build without closing
+the window you already have, start the second one with `--second-window`. It takes no lock and
 *declines* those per-repository channels rather than taking them over, so the first
 window keeps working. The trade is that the second window has no MCP refresh and no
 Claude Code session hooks — its monitor strip stays blank and a panel's `/clear` is

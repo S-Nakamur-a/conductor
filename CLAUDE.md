@@ -132,6 +132,17 @@ with no window open, and the window opened later showed it mid-tool.
   previous repository's sessions running, so a window talks to several hosts. A host
   talks to only one window, and a second one that reaches it (a switch into a repository
   another window has open) is answered `Busy` instead of taking over.
+- **One window per runtime dir, and it attaches every host there.** The window lock is
+  `window.lock` beside the sockets (`instance_lock::acquire_window`), so "one per Mac"
+  holds only between windows that resolve the same `$XDG_RUNTIME_DIR` / `$TMPDIR` — the
+  same ones that can see each other's hosts at all. After its own host, the window
+  attaches every other `*.pty.sock` there (`PtyStore::attach_others`): that is what makes
+  every repository's Claude answerable from the session list. It never starts, retries
+  or shuts down those hosts — they are not its repository's — and skips one with no
+  sessions, so the host can still exit; `Busy` (a window of an older version) and a
+  silent host are only counted on the status line. It happens once, at start: a host
+  freed later is picked up by reopening the window. The repository lock is still taken
+  too, because an older window knows only that one.
 - A session ends only with its own exit, closing its tab, **D** in the session list,
   deleting its worktree, and **Repo ▸ Quit and Stop Sessions**. The list's **D** takes
   the tab-closing path for this window's sessions; any other Claude gets SIGTERM, then
@@ -478,7 +489,7 @@ not drop them; every other watch event keeps its generation.
 | `svc/pty/` · `svc/watch/` | The PTY host (holds the masters), its window-side mirror and the vt100 screen · the filesystem, config and refresh-pipe watchers (cc-notify's listener runs in the PTY host) |
 | `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |
 | `core/claude_log/` · `claude_sessions/` · `keymap/` · `theme/` · `config/` | The transcript `.jsonl` format · which one backs a panel · actions and layers · colour themes · `~/.config/conductor/config.toml` |
-| `core/instance_lock/` | `.conductor/conductor.lock` の flock による単独起動の担保 — リポジトリ (全 worktree 込み) につき 1 ウィンドウ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |
+| `core/instance_lock/` | flock による単独起動の担保 — runtime dir の `window.lock` で窓は 1 つ (PTY host 節)、古い版の窓とは `.conductor/conductor.lock` でリポジトリにつき 1 つ。ロックは fd の寿命に紐づくので、クラッシュ後の後始末は要らない |
 | `core/term_caps/` · `pr_intake/` | OSC 11 background probe and the icon-set guess · `gh` PR fetch into a worktree (re-entrant) |
 
 Deliberately not abstracted: panels as a trait, an ECS, a widget tree over

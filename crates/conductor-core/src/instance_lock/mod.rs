@@ -45,6 +45,11 @@ pub fn acquire(repo_path: &Path) -> Result<Option<InstanceLock>> {
     acquire_file(&lock_path(repo_path))
 }
 
+/// dir は作らない。umask のままの権限で作ると、0700 を求めるホストが以後その dir を拒む。
+pub fn acquire_window(runtime_dir: &Path) -> Result<Option<InstanceLock>> {
+    lock_file(&runtime_dir.join("window.lock"))
+}
+
 /// PTY ホストの排他。ウィンドウのロックとは別で、ウィンドウを閉じた後もホストは残る。
 pub fn acquire_pty_host(repo_path: &Path) -> Result<Option<InstanceLock>> {
     acquire_file(&crate::git_engine::conductor_dir(repo_path).join("pty-host.lock"))
@@ -55,6 +60,10 @@ fn acquire_file(path: &Path) -> Result<Option<InstanceLock>> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("could not create {}", dir.display()))?;
     }
+    lock_file(path)
+}
+
+fn lock_file(path: &Path) -> Result<Option<InstanceLock>> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)

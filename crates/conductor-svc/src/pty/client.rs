@@ -274,6 +274,52 @@ impl PtyStore {
             wait_until_gone(&socket);
             (stream, welcome) = handshake(connect_or_start(&socket, &start)?, &detached.version)?;
         }
+        self.join(socket, stream, welcome, detached)
+    }
+
+    /// 起動時に、ほかのリポジトリのホストへもつなぐ。窓は同じ runtime dir に 1 つなので、空いている
+    /// ホストは全部この窓のもの。返すのはつなげなかった数。
+    pub fn attach_others(&mut self, sockets: &[PathBuf]) -> usize {
+        let Some(detached) = self.detached.clone() else {
+            return 0;
+        };
+        let mut skipped = 0;
+        for socket in sockets {
+            let linked = self
+                .links
+                .get(socket)
+                .is_some_and(|l| l.alive.load(Ordering::Relaxed));
+            if linked {
+                continue;
+            }
+            if let Err(e) = self.join_existing(socket, &detached) {
+                log::warn!("left the PTY host at {} alone: {e:#}", socket.display());
+                skipped += 1;
+            }
+        }
+        skipped
+    }
+
+    /// 居るホストにだけつなぐ。起こす・やり直す・Shutdown するのは自分のリポジトリのホストの話で、
+    /// 古い窓が握っているホストや退く最中のホストに手を出さない。
+    fn join_existing(&mut self, socket: &Path, detached: &Detached) -> Result<()> {
+        let (stream, welcome) = handshake(UnixStream::connect(socket)?, &detached.version)?;
+        // セッションが残るホストは (終わったものも) 誰かが片付けるまで退かない。つなぐのはそれだけで、空のホストは
+        // つなぐと退かなくなる。
+        if welcome.sessions.is_empty() {
+            return Ok(());
+        }
+        self.join(socket.to_path_buf(), stream, welcome, detached)
+            .map(|_| ())
+    }
+
+    fn join(
+        &mut self,
+        socket: PathBuf,
+        stream: UnixStream,
+        welcome: Welcome,
+        detached: &Detached,
+    ) -> Result<Attached> {
         anyhow::ensure!(
             welcome.protocol == wire::PROTOCOL,
             "the PTY host (v{}) speaks protocol {}, this window speaks {}",
