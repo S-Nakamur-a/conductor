@@ -839,15 +839,6 @@ fn expire_status(ws: &mut Workspace) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn 一覧の木はこの窓で開いた_repo_もセッションが無くても引く() {
-        let mut ws = Workspace::for_test();
-        ws.repo.known.push(PathBuf::from("/r/opened"));
-        let Task::FleetStatus { roots, .. } = fleet_status_task(&ws) else {
-            panic!("not a fleet status task");
-        };
-        assert!(roots.contains(&PathBuf::from("/r/opened")), "{roots:?}");
-    }
     use crate::modal::Modal;
     use conductor_svc::pty::SessionKind;
     use crossterm::event::KeyCode;
@@ -2308,5 +2299,15 @@ needle here
         let mut ws = Workspace::for_test();
         ws.focus = Focus::TerminalClaude;
         assert!(matches!(route(&mut ws, ctrl_n), Routed::ForwardToPty(_)));
+    }
+
+    #[test]
+    fn 一覧の木はこの窓で開いた_repo_もセッションが無くても引く() {
+        let mut ws = Workspace::for_test();
+        ws.repo.known.push(PathBuf::from("/r/opened"));
+        let Task::FleetStatus { roots, .. } = fleet_status_task(&ws) else {
+            panic!("not a fleet status task");
+        };
+        assert!(roots.contains(&PathBuf::from("/r/opened")), "{roots:?}");
     }
 }

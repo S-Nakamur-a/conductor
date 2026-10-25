@@ -1707,6 +1707,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(checkout.success());
+        let early = repo.worktree("+early");
         let sub = zeta.join("src");
         std::fs::create_dir_all(&sub).unwrap();
         let (trees, placement) = fleet_trees(&[sub.clone(), repo.root()], &[]);
@@ -1721,6 +1722,7 @@ mod tests {
             [
                 repo.root().as_path(),
                 detached.as_path(),
+                early.as_path(),
                 alpha.as_path(),
                 zeta.as_path()
             ],
@@ -1736,7 +1738,7 @@ mod tests {
         let foo = repo.worktree("foo");
         let neighbour = foo.with_file_name("foo-bar");
         std::fs::create_dir_all(&neighbour).unwrap();
-        let (_, placement) = fleet_trees(&[neighbour.clone()], &[repo.root()]);
+        let (_, placement) = fleet_trees(std::slice::from_ref(&neighbour), &[repo.root()]);
         assert_eq!(placement.get(&neighbour), None);
     }
 
@@ -1746,7 +1748,7 @@ mod tests {
         let link_dir = tempfile::tempdir().unwrap();
         let link = link_dir.path().join("link");
         std::os::unix::fs::symlink(repo.root(), &link).unwrap();
-        let (trees, placement) = fleet_trees(&[link.clone()], &[repo.root()]);
+        let (trees, placement) = fleet_trees(std::slice::from_ref(&link), &[repo.root()]);
         assert_eq!(trees.len(), 1, "同じ repo が 2 つの見出しにならない");
         assert_eq!(placement.get(&link), Some(&repo.root()));
     }
