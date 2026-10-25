@@ -11,7 +11,7 @@ members = [
 
 [package]
 name = "conductor"
-version = "4.1.1"
+version = "4.2.0"
 edition = "2024"
 
 [dependencies]

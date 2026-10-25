@@ -1,21 +1,27 @@
 //! 動いている Claude Code の写し (<設定ディレクトリ>/sessions/<pid>.json) を読む。
 //!
 //! 写しは Claude 自身が書く。ファイルが残っていることは生きている証拠にならないので、
-//! pid のプロセスを引いて、ゾンビでなく起動時刻も合うものだけを残す。
+//! pid のプロセスを引いて、ゾンビでなく起動時刻も合うものだけを残す。止めるときも
+//! 同じ照合を通してから信号を送る。
 
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
 /// pid の使い回しを見分ける時刻の許容差。procStart は秒単位。
 const START_TOLERANCE: Duration = Duration::from_secs(2);
+const STOP_POLL: Duration = Duration::from_millis(50);
+const KILL_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
     pub pid: u32,
+    /// 止める直前に、一覧に載せたときと同じプロセスかを見分ける。
+    pub started: SystemTime,
     pub cwd: PathBuf,
     pub session_id: String,
     pub status: Status,
@@ -53,11 +59,18 @@ pub struct ProcInfo {
     pub started: SystemTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signal {
+    Term,
+    Kill,
+}
+
 pub trait Processes {
     /// pid のプロセス。居なければ None。
     fn info(&self, pid: u32) -> Option<ProcInfo>;
     /// その pid の実行ファイル名が `conductor` か。
     fn is_conductor(&self, pid: u32) -> bool;
+    fn signal(&self, pid: u32, signal: Signal) -> io::Result<()>;
 }
 
 pub struct SystemProcesses;
@@ -104,6 +117,10 @@ impl Processes for SystemProcesses {
         buf.truncate(len as usize);
         is_conductor_path(Path::new(&String::from_utf8_lossy(&buf).into_owned()))
     }
+
+    fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
+        send_signal(pid, signal)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -128,6 +145,10 @@ impl Processes for SystemProcesses {
     fn is_conductor(&self, pid: u32) -> bool {
         std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| is_conductor_path(&exe))
     }
+
+    fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
+        send_signal(pid, signal)
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -139,11 +160,53 @@ impl Processes for SystemProcesses {
     fn is_conductor(&self, _pid: u32) -> bool {
         false
     }
+
+    fn signal(&self, _pid: u32, _signal: Signal) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn is_conductor_path(exe: &Path) -> bool {
     exe.file_name().is_some_and(|name| name == "conductor")
+}
+
+/// kill(2) は 0 と負の pid をプロセスグループ宛てに読み、1 は init。どれも一覧の Claude ではない。
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn signal_target(pid: u32) -> Option<libc::pid_t> {
+    libc::pid_t::try_from(pid)
+        .ok()
+        .filter(|&target| target > 1 && pid != std::process::id())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn send_signal(pid: u32, signal: Signal) -> io::Result<()> {
+    let target = signal_target(pid).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to signal pid {pid}"),
+        )
+    })?;
+    let number = match signal {
+        Signal::Term => libc::SIGTERM,
+        Signal::Kill => libc::SIGKILL,
+    };
+    // SAFETY: target は 1 より大きい単独のプロセスの pid、number は定数の信号番号
+    if unsafe { libc::kill(target, number) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(unix)]
+fn already_gone(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+fn already_gone(_error: &io::Error) -> bool {
+    false
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -234,15 +297,96 @@ struct Record {
     proc_start: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stopped {
+    Terminated,
+    /// SIGTERM では終わらず、SIGKILL で止めた。
+    Killed,
+    AlreadyGone,
+    Failed(String),
+}
+
+/// 写しを読み直し、一覧に載せたときと同じプロセスだと確かめられたときだけ SIGTERM を送る。
+/// grace のうちに終わらなければ SIGKILL。
+pub fn stop(
+    dir: &Path,
+    pid: u32,
+    started: SystemTime,
+    procs: &dyn Processes,
+    grace: Duration,
+) -> Stopped {
+    let path = dir.join(format!("{pid}.json"));
+    let confirmed = read_record(&path)
+        // 起動時刻の無い写しは、使い回された pid と見分けられない
+        .filter(|record| {
+            record
+                .proc_start
+                .as_deref()
+                .and_then(parse_proc_start)
+                .is_some()
+        })
+        .and_then(|record| live_session(&path, record, procs))
+        .is_some_and(|(_, session)| session.pid == pid && session.started == started);
+    if !confirmed {
+        return Stopped::AlreadyGone;
+    }
+    if let Err(e) = procs.signal(pid, Signal::Term) {
+        return if already_gone(&e) {
+            Stopped::AlreadyGone
+        } else {
+            Stopped::Failed(e.to_string())
+        };
+    }
+    if ended_within(pid, started, procs, grace) {
+        return Stopped::Terminated;
+    }
+    if let Err(e) = procs.signal(pid, Signal::Kill) {
+        return if already_gone(&e) {
+            Stopped::Terminated
+        } else {
+            Stopped::Failed(e.to_string())
+        };
+    }
+    if ended_within(pid, started, procs, KILL_WAIT) {
+        Stopped::Killed
+    } else {
+        Stopped::Failed(format!("pid {pid} survived SIGKILL"))
+    }
+}
+
+/// ゾンビは親が回収するまで残るだけで、もう動いていない。起動時刻が変われば pid は別人に渡った。
+fn ended_within(pid: u32, started: SystemTime, procs: &dyn Processes, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        let same = procs
+            .info(pid)
+            .is_some_and(|info| !info.zombie && info.started == started);
+        if !same {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(STOP_POLL);
+    }
+}
+
 fn read_one(path: &Path, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
-    let record = std::fs::read_to_string(path)
+    live_session(path, read_record(path)?, procs)
+}
+
+fn read_record(path: &Path) -> Option<Record> {
+    std::fs::read_to_string(path)
         .map_err(|e| log::debug!("{}: {e}", path.display()))
         .ok()
         .and_then(|text| {
             serde_json::from_str::<Record>(&text)
                 .map_err(|e| log::debug!("{}: {e}", path.display()))
                 .ok()
-        })?;
+        })
+}
+
+fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
     let (Some(pid), Some(cwd), Some(session_id), Some(status)) =
         (record.pid, record.cwd, record.session_id, record.status)
     else {
@@ -257,6 +401,7 @@ fn read_one(path: &Path, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
     }
     let session = LiveSession {
         pid,
+        started: info.started,
         cwd,
         session_id,
         status: parse_status(&status, record.waiting_for),
@@ -299,6 +444,7 @@ fn abs_diff(a: SystemTime, b: SystemTime) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::HashSet;
 
     use chrono::{TimeZone, Utc};
@@ -309,31 +455,62 @@ mod tests {
     const PROC_START: &str = "Thu Oct 22 02:05:54 2026";
 
     struct Fake {
-        infos: HashMap<u32, ProcInfo>,
+        infos: RefCell<HashMap<u32, ProcInfo>>,
         conductors: HashSet<u32>,
+        sent: RefCell<Vec<Signal>>,
+        refuse: Option<i32>,
+        /// 信号を受けた後のプロセス。None は消える。
+        after: Vec<(Signal, Option<ProcInfo>)>,
     }
 
     impl Fake {
         fn new() -> Self {
             Self {
-                infos: HashMap::new(),
+                infos: RefCell::new(HashMap::new()),
                 conductors: HashSet::new(),
+                sent: RefCell::new(Vec::new()),
+                refuse: None,
+                after: Vec::new(),
             }
         }
 
-        fn with(mut self, pid: u32, info: ProcInfo) -> Self {
-            self.infos.insert(pid, info);
+        fn with(self, pid: u32, info: ProcInfo) -> Self {
+            self.infos.borrow_mut().insert(pid, info);
+            self
+        }
+
+        fn on(mut self, signal: Signal, next: Option<ProcInfo>) -> Self {
+            self.after.push((signal, next));
+            self
+        }
+
+        fn refusing(mut self, errno: i32) -> Self {
+            self.refuse = Some(errno);
             self
         }
     }
 
     impl Processes for Fake {
         fn info(&self, pid: u32) -> Option<ProcInfo> {
-            self.infos.get(&pid).copied()
+            self.infos.borrow().get(&pid).copied()
         }
 
         fn is_conductor(&self, pid: u32) -> bool {
             self.conductors.contains(&pid)
+        }
+
+        fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
+            if let Some(errno) = self.refuse {
+                return Err(io::Error::from_raw_os_error(errno));
+            }
+            self.sent.borrow_mut().push(signal);
+            if let Some((_, next)) = self.after.iter().find(|(s, _)| *s == signal) {
+                match next {
+                    Some(info) => self.infos.borrow_mut().insert(pid, *info),
+                    None => self.infos.borrow_mut().remove(&pid),
+                };
+            }
+            Ok(())
         }
     }
 
@@ -707,5 +884,273 @@ mod tests {
         let proc_stat = "cpu  1 2 3\nintr 0\nbtime 1792000000\nprocesses 10\n";
 
         assert_eq!(parse_btime(proc_stat), Some(1792000000));
+    }
+
+    fn spawn_real(command: &mut std::process::Command) -> (std::process::Child, SystemTime) {
+        let child = command.spawn().unwrap();
+        let started = SystemProcesses
+            .info(child.id())
+            .expect("動いている子が引けない")
+            .started;
+        (child, started)
+    }
+
+    fn sleeper() -> (std::process::Child, SystemTime) {
+        spawn_real(std::process::Command::new("sleep").arg("30"))
+    }
+
+    fn real_record(pid: u32, started: SystemTime) -> String {
+        let proc_start = chrono::DateTime::<Utc>::from(started)
+            .format("%a %b %e %H:%M:%S %Y")
+            .to_string();
+        record(pid, "a", "busy", None).replace(PROC_START, &proc_start)
+    }
+
+    fn signal_of(mut child: std::process::Child) -> Option<i32> {
+        use std::os::unix::process::ExitStatusExt;
+        child.wait().unwrap().signal()
+    }
+
+    fn assert_untouched(mut child: std::process::Child) {
+        let running = child.try_wait().unwrap().is_none();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(running, "信号を送ってはいけない子が終わっている");
+    }
+
+    const GRACE: Duration = Duration::from_secs(3);
+
+    #[test]
+    fn 本物の子はsigtermで止まる() {
+        let dir = tempfile::tempdir().unwrap();
+        let (child, started) = sleeper();
+        let pid = child.id();
+        write(
+            dir.path(),
+            &format!("{pid}.json"),
+            &real_record(pid, started),
+        );
+
+        let stopped = stop(dir.path(), pid, started, &SystemProcesses, GRACE);
+
+        assert_eq!(stopped, Stopped::Terminated);
+        assert_eq!(signal_of(child), Some(libc::SIGTERM));
+    }
+
+    #[test]
+    fn sigtermを無視する子は猶予の後sigkillで止まる() {
+        let dir = tempfile::tempdir().unwrap();
+        let ready = dir.path().join("ready");
+        let (child, started) = spawn_real(
+            std::process::Command::new("sh")
+                .args(["-c", r#"trap "" TERM; echo > "$0"; exec sleep 30"#])
+                .arg(&ready),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "子が TERM を無視する前に時間切れ"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let pid = child.id();
+        write(
+            dir.path(),
+            &format!("{pid}.json"),
+            &real_record(pid, started),
+        );
+
+        let stopped = stop(
+            dir.path(),
+            pid,
+            started,
+            &SystemProcesses,
+            Duration::from_millis(100),
+        );
+
+        assert_eq!(stopped, Stopped::Killed);
+        assert_eq!(signal_of(child), Some(libc::SIGKILL));
+    }
+
+    #[test]
+    fn 写しが無ければ送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (child, started) = sleeper();
+
+        let stopped = stop(dir.path(), child.id(), started, &SystemProcesses, GRACE);
+
+        assert_eq!(stopped, Stopped::AlreadyGone);
+        assert_untouched(child);
+    }
+
+    #[test]
+    fn 起動時刻の無い写しでは送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (child, started) = sleeper();
+        let pid = child.id();
+        let mut body: serde_json::Value = serde_json::from_str(&real_record(pid, started)).unwrap();
+        body.as_object_mut().unwrap().remove("procStart");
+        write(dir.path(), &format!("{pid}.json"), &body.to_string());
+
+        let stopped = stop(dir.path(), pid, started, &SystemProcesses, GRACE);
+
+        assert_eq!(stopped, Stopped::AlreadyGone);
+        assert_untouched(child);
+    }
+
+    #[test]
+    fn 起動時刻の合わない写しでは送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (child, started) = sleeper();
+        let pid = child.id();
+        let stale = real_record(pid, started - Duration::from_secs(3600));
+        write(dir.path(), &format!("{pid}.json"), &stale);
+
+        let stopped = stop(dir.path(), pid, started, &SystemProcesses, GRACE);
+
+        assert_eq!(stopped, Stopped::AlreadyGone);
+        assert_untouched(child);
+    }
+
+    #[test]
+    fn 一覧に載せたときと別のプロセスなら送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (child, started) = sleeper();
+        let pid = child.id();
+        write(
+            dir.path(),
+            &format!("{pid}.json"),
+            &real_record(pid, started),
+        );
+
+        let listed = started - Duration::from_secs(1);
+        let stopped = stop(dir.path(), pid, listed, &SystemProcesses, GRACE);
+
+        assert_eq!(stopped, Stopped::AlreadyGone);
+        assert_untouched(child);
+    }
+
+    fn fake_session(dir: &Path) -> Fake {
+        write(dir, "10.json", &record(10, "a", "busy", None));
+        Fake::new().with(10, alive(started_utc()))
+    }
+
+    const SHORT: Duration = Duration::from_millis(20);
+
+    #[test]
+    fn 写しの中のpidがファイル名と違えば送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(11, "a", "busy", None));
+        // Linux の起動時刻は 10ms 刻みなので、同じ時刻に起きた別のプロセスはありうる
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()));
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::AlreadyGone
+        );
+        assert!(procs.sent.borrow().is_empty());
+    }
+
+    #[test]
+    fn linux_の_claude_が書く_tick_数の起動時刻では送らない() {
+        // 実物: Linux の Claude Code 2.1.310 が書く "procStart":"37242291"
+        let dir = tempfile::tempdir().unwrap();
+        let body = record(10, "a", "busy", None).replace(PROC_START, "37242291");
+        write(dir.path(), "10.json", &body);
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::AlreadyGone
+        );
+        assert!(procs.sent.borrow().is_empty());
+    }
+
+    #[test]
+    fn 送る直前に終わっていれば終わっていた扱い() {
+        let dir = tempfile::tempdir().unwrap();
+        let procs = fake_session(dir.path()).refusing(libc::ESRCH);
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::AlreadyGone
+        );
+    }
+
+    #[test]
+    fn 送れなければ止められなかった扱い() {
+        let dir = tempfile::tempdir().unwrap();
+        let procs = fake_session(dir.path()).refusing(libc::EPERM);
+
+        let stopped = stop(dir.path(), 10, started_utc(), &procs, SHORT);
+
+        assert!(matches!(stopped, Stopped::Failed(_)), "{stopped:?}");
+    }
+
+    #[test]
+    fn sigtermの後にゾンビになれば止まった扱い() {
+        let dir = tempfile::tempdir().unwrap();
+        let zombie = ProcInfo {
+            zombie: true,
+            ..alive(started_utc())
+        };
+        let procs = fake_session(dir.path()).on(Signal::Term, Some(zombie));
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::Terminated
+        );
+        assert_eq!(*procs.sent.borrow(), vec![Signal::Term]);
+    }
+
+    #[test]
+    fn 猶予中にpidが別のプロセスへ渡ったらsigkillを送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let stranger = alive(started_utc() + Duration::from_secs(3600));
+        let procs = fake_session(dir.path()).on(Signal::Term, Some(stranger));
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::Terminated
+        );
+        assert_eq!(*procs.sent.borrow(), vec![Signal::Term]);
+    }
+
+    #[test]
+    fn 続けて2度止めると2度目はもう終わっていた扱いで送らない() {
+        let dir = tempfile::tempdir().unwrap();
+        let procs = fake_session(dir.path()).on(Signal::Term, None);
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::Terminated
+        );
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::AlreadyGone
+        );
+        assert_eq!(*procs.sent.borrow(), vec![Signal::Term]);
+    }
+
+    #[test]
+    fn sigkillの後も残れば止められなかった扱い() {
+        let dir = tempfile::tempdir().unwrap();
+        let procs = fake_session(dir.path());
+
+        let stopped = stop(dir.path(), 10, started_utc(), &procs, SHORT);
+
+        assert!(matches!(stopped, Stopped::Failed(_)), "{stopped:?}");
+        assert_eq!(*procs.sent.borrow(), vec![Signal::Term, Signal::Kill]);
+    }
+
+    #[test]
+    fn プロセスグループとinitと自分自身には送らない() {
+        for pid in [0, 1, std::process::id(), u32::MAX] {
+            assert_eq!(signal_target(pid), None, "pid {pid}");
+        }
+        assert_eq!(signal_target(4242), Some(4242));
     }
 }

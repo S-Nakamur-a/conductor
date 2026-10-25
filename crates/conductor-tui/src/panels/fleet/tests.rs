@@ -20,6 +20,7 @@ fn live(pid: u32, cwd: &str, session: &str, status: Status, owner: Owner) -> Liv
         status,
         status_since: Some(at(100)),
         owner,
+        started: at(u64::from(pid)),
     }
 }
 
@@ -373,6 +374,432 @@ fn 一覧で選んだまま止まった行は待機になる() {
     fleet.apply(one(Status::Working, 100), Vec::new(), None, true, at(150));
     fleet.apply(one(Status::Idle, 300), Vec::new(), None, true, at(301));
     assert_eq!(fleet.selected_row().unwrap().state, State::Idle);
+}
+
+fn ask_stop(fleet: &mut FleetPanel) -> crate::modal::Confirm {
+    let ws = Workspace::for_test();
+    let mut effects = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+    match effects.pop() {
+        Some(Effect::PushModal(crate::modal::Modal::Confirm(confirm))) if effects.is_empty() => {
+            confirm
+        }
+        other => panic!("{other:?} {effects:?}"),
+    }
+}
+
+#[test]
+fn この窓の行で止めるキーを押すとそのパネルを止める確認が出る() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        FleetStatus {
+            live: vec![live(7, "/r/a", "s1", Status::Working, Owner::Conductor)],
+            summaries: vec![(
+                "s1".into(),
+                at(10),
+                Summary {
+                    title: Title::Ai("捨てレポジトリを片付ける".into()),
+                    context_tokens: None,
+                },
+            )],
+        },
+        vec![own("CC:1", "/r/a", Some("s1"))],
+        None,
+        false,
+        at(200),
+    );
+    let confirm = ask_stop(&mut fleet);
+    assert_eq!(confirm.title, "Stop session");
+    assert_eq!(confirm.question, "「捨てレポジトリを片付ける」を止める?");
+    assert!(
+        matches!(
+            confirm.on_yes.as_slice(),
+            [Effect::StopFleetSession(StopTarget::Panel(id))] if id == "CC:1"
+        ),
+        "{:?}",
+        confirm.on_yes
+    );
+}
+
+#[test]
+fn この窓の外の行は一覧に載せたときの起動時刻ごと止める相手にする() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    let confirm = ask_stop(&mut fleet);
+    assert_eq!(confirm.question, "「(まだ何も頼んでいない)」を止める?");
+    assert!(
+        matches!(
+            confirm.on_yes.as_slice(),
+            [Effect::StopFleetSession(StopTarget::Process { pid: 9, started })] if *started == at(9)
+        ),
+        "{:?}",
+        confirm.on_yes
+    );
+}
+
+#[test]
+fn 確認を出した後に並びが変わっても止める相手は押した時の行() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![
+            live(7, "/r/a", "s1", Status::Working, Owner::Conductor),
+            live(8, "/r/b", "s2", Status::Working, Owner::Conductor),
+        ]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(7));
+    let confirm = ask_stop(&mut fleet);
+    fleet.apply(
+        status(vec![live(
+            8,
+            "/r/b",
+            "s2",
+            Status::Waiting(Waiting::Question),
+            Owner::Conductor,
+        )]),
+        Vec::new(),
+        None,
+        false,
+        at(201),
+    );
+    assert!(matches!(
+        confirm.on_yes.as_slice(),
+        [Effect::StopFleetSession(StopTarget::Process { pid: 7, .. })]
+    ));
+}
+
+#[test]
+fn 入力待ちの欄の行でも止める相手は同じセッション() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![live(
+            7,
+            "/r/a",
+            "s1",
+            Status::Waiting(Waiting::Question),
+            Owner::Conductor,
+        )]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    assert!(fleet.selected_row().unwrap().pinned);
+    let confirm = ask_stop(&mut fleet);
+    assert!(matches!(
+        confirm.on_yes.as_slice(),
+        [Effect::StopFleetSession(StopTarget::Process { pid: 7, started })] if *started == at(7)
+    ));
+}
+
+#[test]
+fn 行が無ければ止める確認は出ない() {
+    let mut fleet = FleetPanel::default();
+    let ws = Workspace::for_test();
+    assert!(
+        fleet
+            .update(Action::StopSession, &ws.ctx())
+            .is_some_and(|effects| effects.is_empty())
+    );
+}
+
+#[test]
+fn 止める確認には場所とディレクトリの末尾と状態を出し_作業中なら途中で止まると書く() {
+    const DEEP: &str = "/home/u/ghq/acme/app-worktrees/fix-login";
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![
+            live(7, DEEP, "s1", Status::Working, Owner::Conductor),
+            live(8, "/r/b", "s2", Status::Idle, Owner::Conductor),
+            live(9, "/c", "s3", Status::Idle, Owner::Elsewhere),
+        ]),
+        vec![own("CC:1", DEEP, Some("s1"))],
+        None,
+        true,
+        at(200),
+    );
+    let detail = |key: RowKey| {
+        let row = fleet
+            .visual_rows()
+            .into_iter()
+            .find(|r| r.key == key)
+            .unwrap();
+        render::stop_detail(&row)
+    };
+    assert_eq!(
+        detail(RowKey::Panel("CC:1".into())),
+        [
+            "場所: この窓",
+            "…/app-worktrees/fix-login",
+            "状態: 作業中。作業の途中で止まります"
+        ]
+    );
+    assert_eq!(
+        detail(RowKey::Pid(8)),
+        [
+            "場所: conductor の中 (pid 8)",
+            "…/r/b",
+            "状態: 完了・未確認"
+        ]
+    );
+    assert_eq!(
+        detail(RowKey::Pid(9)),
+        ["場所: この窓の外 (pid 9)", "/c", "状態: 完了・未確認"]
+    );
+}
+
+#[test]
+fn 止めたこの窓の行は組んでいた写しごとすぐ消え_選択は残りへ移る() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![
+            live(7, "/r/a", "s1", Status::Working, Owner::Conductor),
+            live(8, "/r/a", "s2", Status::Idle, Owner::Conductor),
+        ]),
+        vec![
+            own("CC:1", "/r/a", Some("s1")),
+            own("CC:2", "/r/a", Some("s2")),
+        ],
+        None,
+        false,
+        at(200),
+    );
+    assert_eq!(
+        fleet.selected_row().unwrap().key,
+        RowKey::Panel("CC:1".into())
+    );
+    fleet.forget_stopped("CC:1", vec![own("CC:2", "/r/a", Some("s2"))]);
+    assert_eq!(keys(&fleet), [(RowKey::Panel("CC:2".into()), false)]);
+    assert_eq!(
+        fleet.selected_row().unwrap().key,
+        RowKey::Panel("CC:2".into())
+    );
+}
+
+#[test]
+fn clear_の後に止めたこの窓の行も_cwd_で組んだ写しごと消える() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![live(
+            7,
+            "/r/a",
+            "new",
+            Status::Working,
+            Owner::Conductor,
+        )]),
+        vec![own("CC:1", "/r/a", Some("old"))],
+        None,
+        false,
+        at(200),
+    );
+    fleet.forget_stopped("CC:1", Vec::new());
+    assert!(fleet.visual_rows().is_empty(), "{:?}", fleet.visual_rows());
+}
+
+#[test]
+fn 外のプロセスを止めた結果はそれぞれの文で帯に出る() {
+    use crate::workspace::StatusLevel;
+    use conductor_core::claude_sessions::registry::Stopped;
+    let mut ws = Workspace::for_test();
+    let mut status_of = |stopped| match ws
+        .accept(crate::task::TaskResult::SessionStopped(stopped))
+        .as_slice()
+    {
+        [Effect::Status(level, text)] => (*level, text.clone()),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        status_of(Stopped::Terminated),
+        (StatusLevel::Success, "Stopped the session.".into())
+    );
+    assert_eq!(
+        status_of(Stopped::Killed),
+        (
+            StatusLevel::Success,
+            "Stopped the session (it ignored SIGTERM, so it was killed).".into()
+        )
+    );
+    assert_eq!(
+        status_of(Stopped::AlreadyGone),
+        (StatusLevel::Info, "That session had already ended.".into())
+    );
+    assert_eq!(
+        status_of(Stopped::Failed("pid 9 survived SIGKILL".into())),
+        (
+            StatusLevel::Error,
+            "Could not stop the session: pid 9 survived SIGKILL".into()
+        )
+    );
+}
+
+mod hint {
+    use conductor_core::keymap::KeyMap;
+    use conductor_svc::Services;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use unicode_width::UnicodeWidthStr;
+
+    use super::*;
+    use crate::effect::apply;
+
+    fn listing(live: Vec<LiveSession>, own: Vec<OwnSession>) -> Workspace {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::<crate::task::TaskResult>::new();
+        ws.focus = Focus::Viewer;
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        ws.apply_fleet(status(live), own);
+        ws
+    }
+
+    fn rebind(ws: &mut Workspace, fleet_layer: &str) {
+        let user: toml::Table = toml::from_str(&format!("[layers.fleet]\n{fleet_layer}")).unwrap();
+        ws.keymap = KeyMap::with_warnings(&user).0;
+    }
+
+    fn drawn(ws: &Workspace, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render::list(frame, frame.area(), ws))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                let mut line = String::new();
+                let mut x = 0;
+                while x < width {
+                    let symbol = buffer[(x, y)].symbol();
+                    line.push_str(symbol);
+                    x += u16::try_from(symbol.width().max(1)).unwrap();
+                }
+                line
+            })
+            .collect()
+    }
+
+    #[test]
+    fn この窓の行では開く_返事_止める_閉じるを出す() {
+        let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
+        assert_eq!(
+            render::hint(&ws),
+            "enter 開く · tab 返事 · D 止める · esc 閉じる"
+        );
+    }
+
+    #[test]
+    fn この窓の外の行では止めると閉じるだけ() {
+        let ws = listing(
+            vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
+            Vec::new(),
+        );
+        assert_eq!(render::hint(&ws), "D 止める · esc 閉じる");
+    }
+
+    #[test]
+    fn 行が無ければ閉じるだけ() {
+        let ws = listing(Vec::new(), Vec::new());
+        assert_eq!(render::hint(&ws), "esc 閉じる");
+    }
+
+    #[test]
+    fn 右に入っている間は戻るキーと左右が_claude_に届くことを出す() {
+        let mut ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
+        ws.focus = Focus::FleetSession;
+        assert_eq!(
+            render::hint(&ws),
+            "ctrl+esc 一覧へ戻る · ← などは Claude に届く"
+        );
+    }
+
+    #[test]
+    fn 止めるキーを外せば案内から消え_押しても何も起きない() {
+        let mut ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
+        rebind(&mut ws, "\"D\" = false\n");
+        assert_eq!(render::hint(&ws), "enter 開く · tab 返事 · esc 閉じる");
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('D'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        assert_eq!(
+            crate::route::route(&mut ws, key),
+            crate::route::Routed::Ignored
+        );
+    }
+
+    #[test]
+    fn 止めるキーを付け替えれば案内もそのキーになる() {
+        let mut ws = listing(
+            vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
+            Vec::new(),
+        );
+        rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
+        assert_eq!(render::hint(&ws), "x 止める · esc 閉じる");
+    }
+
+    #[test]
+    fn 案内は一覧の最下行に出し_幅が足りなければ折り返さずに切る() {
+        let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
+        let lines = drawn(&ws, 24, 8);
+        let footer = lines[6].trim_end();
+        assert!(footer.starts_with(" enter 開く"), "{lines:#?}");
+        assert!(footer.ends_with('…'), "{lines:#?}");
+        assert!(!lines[5].contains("閉じる"), "{lines:#?}");
+    }
+
+    #[test]
+    fn 一覧が低くても落ちず_1_行なら案内だけ() {
+        let ws = listing(
+            vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
+            Vec::new(),
+        );
+        for height in 0..=4 {
+            drawn(&ws, 60, height);
+        }
+        let lines = drawn(&ws, 60, 3);
+        assert_eq!(lines[1].trim(), "D 止める · esc 閉じる");
+    }
+
+    #[test]
+    fn 下の方の行を選んでも案内に隠れない() {
+        let mut ws = listing(Vec::new(), Vec::new());
+        ws.apply_fleet(
+            FleetStatus {
+                live: (1..=20)
+                    .map(|pid| {
+                        let session = format!("s{pid}");
+                        live(pid, "/r/a", &session, Status::Idle, Owner::Elsewhere)
+                    })
+                    .collect(),
+                summaries: (1..=20)
+                    .map(|pid| {
+                        let title = Title::Ai(format!("row-{pid}"));
+                        let summary = Summary {
+                            title,
+                            context_tokens: None,
+                        };
+                        (format!("s{pid}"), at(0), summary)
+                    })
+                    .collect(),
+            },
+            Vec::new(),
+        );
+        let other = Workspace::for_test();
+        ws.panels.fleet.update(Action::GoToBottom, &other.ctx());
+        assert_eq!(ws.panels.fleet.selected_row().unwrap().key, RowKey::Pid(20));
+        let lines = drawn(&ws, 60, 12);
+        assert!(lines[10].contains("止める"), "{lines:#?}");
+        assert!(
+            lines[1..10].iter().any(|l| l.contains("row-20")),
+            "{lines:#?}"
+        );
+    }
 }
 
 mod screen {
@@ -951,5 +1378,299 @@ mod pane {
         grid_after_layout(&mut ws, Rect::new(0, 0, 160, 40), Region::FleetSession);
         let wider = grid_after_layout(&mut ws, Rect::new(0, 0, 220, 60), Region::FleetSession);
         assert_eq!(size_of(&ws, &listed), wider);
+    }
+}
+
+mod stop {
+    use std::path::Path;
+
+    use conductor_svc::Services;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+    use crate::effect::apply;
+    use crate::route::{Routed, route};
+    use crate::run::{on_key, on_paste};
+    use crate::workspace::StatusLevel;
+
+    type Svc = Services<crate::task::TaskResult>;
+
+    fn opened() -> (Workspace, Svc) {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        ws.focus = Focus::Viewer;
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        (ws, svc)
+    }
+
+    fn spawn(ws: &mut Workspace, dir: &Path) -> String {
+        ws.panels.terminal.show_shell_as_claude_for_test(dir);
+        ws.panels.terminal.visible_claude().unwrap().to_string()
+    }
+
+    fn list(ws: &mut Workspace, dir: &Path, ids: &[&String]) {
+        let cwd = dir.to_string_lossy();
+        let own = ids.iter().map(|id| own(id, &cwd, None)).collect();
+        ws.apply_fleet(FleetStatus::default(), own);
+    }
+
+    fn type_text(ws: &mut Workspace, svc: &mut Svc, text: &str) {
+        for c in text.chars() {
+            let modifiers = if c.is_ascii_uppercase() {
+                KeyModifiers::SHIFT
+            } else {
+                KeyModifiers::NONE
+            };
+            on_key(ws, svc, KeyEvent::new(KeyCode::Char(c), modifiers));
+        }
+    }
+
+    fn present(ws: &Workspace, id: &str) -> bool {
+        ws.panels.terminal.session_dir(id).is_some()
+    }
+
+    fn status_of(ws: &Workspace) -> Option<(StatusLevel, String)> {
+        ws.chrome.status.as_ref().map(|s| (s.level, s.text.clone()))
+    }
+
+    fn asking(ws: &Workspace) -> bool {
+        matches!(ws.modals.last(), Some(crate::modal::Modal::Confirm(_)))
+    }
+
+    #[test]
+    fn 一覧で小文字の_d_を打っても何も起きない() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let id = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&id]);
+        type_text(&mut ws, &mut svc, "d");
+        assert!(ws.modals.is_empty());
+        assert!(present(&ws, &id));
+    }
+
+    #[test]
+    fn 一覧に居ると気づかずに打った文では止まらない() {
+        for text in ["ready", "already", "Deploy it", "Do you"] {
+            let (mut ws, mut svc) = opened();
+            let dir = tempfile::tempdir().unwrap();
+            let id = spawn(&mut ws, dir.path());
+            list(&mut ws, dir.path(), &[&id]);
+            type_text(&mut ws, &mut svc, text);
+            assert!(ws.modals.is_empty(), "{text}");
+            assert!(present(&ws, &id), "{text}");
+        }
+    }
+
+    #[test]
+    fn 大文字の_d_に_y_が続く語を含む文は止める確認に答えてしまう() {
+        for text in ["ready Dynamic", "READY"] {
+            let (mut ws, mut svc) = opened();
+            let dir = tempfile::tempdir().unwrap();
+            let id = spawn(&mut ws, dir.path());
+            list(&mut ws, dir.path(), &[&id]);
+            type_text(&mut ws, &mut svc, text);
+            assert!(!present(&ws, &id), "{text}");
+        }
+    }
+
+    #[test]
+    fn 文中の_j_k_で選択が動いた後に_d_y_が来ると動いた先の行が止まる() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let a = spawn(&mut ws, dir.path());
+        let b = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&a, &b]);
+        let order: Vec<RowKey> = ws
+            .panels
+            .fleet
+            .visual_rows()
+            .into_iter()
+            .map(|r| r.key)
+            .collect();
+        let [RowKey::Panel(first), RowKey::Panel(last)] = order.as_slice() else {
+            panic!("{order:?}");
+        };
+        type_text(&mut ws, &mut svc, "G");
+        assert_eq!(
+            ws.panels.fleet.selected_row().unwrap().key,
+            RowKey::Panel(last.clone())
+        );
+        type_text(&mut ws, &mut svc, "I think Dynamo");
+        assert!(!present(&ws, first));
+        assert!(present(&ws, last));
+    }
+
+    #[test]
+    fn 止める確認は_y_以外のキーでやめる() {
+        for key in [
+            KeyCode::Right,
+            KeyCode::Left,
+            KeyCode::Char('l'),
+            KeyCode::Char('h'),
+            KeyCode::Tab,
+            KeyCode::Enter,
+            KeyCode::Char('x'),
+            KeyCode::Char('n'),
+            KeyCode::Esc,
+        ] {
+            let (mut ws, mut svc) = opened();
+            let dir = tempfile::tempdir().unwrap();
+            let id = spawn(&mut ws, dir.path());
+            list(&mut ws, dir.path(), &[&id]);
+            type_text(&mut ws, &mut svc, "D");
+            assert!(asking(&ws), "{key:?}");
+            on_key(&mut ws, &mut svc, KeyEvent::new(key, KeyModifiers::NONE));
+            assert!(ws.modals.is_empty(), "{key:?}");
+            assert!(present(&ws, &id), "{key:?}");
+            assert_eq!(ws.focus, Focus::Fleet, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn 確認で_y_を押すとこの窓のセッションを止め_一覧からも_claude_区画からもすぐ外す() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let other = spawn(&mut ws, dir.path());
+        let shown = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&other, &shown]);
+        while ws.panels.fleet.selected_row().unwrap().key != RowKey::Panel(shown.clone()) {
+            type_text(&mut ws, &mut svc, "j");
+        }
+        type_text(&mut ws, &mut svc, "Dy");
+        assert!(!present(&ws, &shown));
+        assert!(present(&ws, &other));
+        assert!(
+            ws.panels
+                .fleet
+                .visual_rows()
+                .iter()
+                .all(|r| r.key != RowKey::Panel(shown.clone()))
+        );
+        assert_ne!(ws.panels.terminal.visible_claude(), Some(shown.as_str()));
+        assert_eq!(
+            status_of(&ws),
+            Some((StatusLevel::Success, "Stopped the session.".into()))
+        );
+    }
+
+    #[test]
+    fn 別の_worktree_のセッションも止められる() {
+        let (mut ws, mut svc) = opened();
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let away = spawn(&mut ws, first.path());
+        let here = spawn(&mut ws, second.path());
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopFleetSession(StopTarget::Panel(away.clone()))],
+        );
+        assert!(!present(&ws, &away));
+        assert!(present(&ws, &here));
+        assert_eq!(ws.panels.terminal.visible_claude(), Some(here.as_str()));
+    }
+
+    #[test]
+    fn もう無いセッションを止めるともう終わっていたと出す() {
+        let (mut ws, mut svc) = opened();
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopFleetSession(StopTarget::Panel("gone".into()))],
+        );
+        assert_eq!(
+            status_of(&ws),
+            Some((StatusLevel::Info, "That session had already ended.".into()))
+        );
+    }
+
+    #[test]
+    fn 終わったのにタブが残っているセッションはタブを閉じてもう終わっていたと出す() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let id = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&id]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        on_paste(&mut ws, &mut svc, "exit\n".into());
+        crate::testing::wait_for(|| ws.panels.terminal.session_count() == 0);
+        assert!(present(&ws, &id));
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopFleetSession(StopTarget::Panel(id.clone()))],
+        );
+        assert!(!present(&ws, &id));
+        assert_eq!(
+            status_of(&ws),
+            Some((StatusLevel::Info, "That session had already ended.".into()))
+        );
+    }
+
+    #[test]
+    fn 右の区画では_d_も左キーも_claude_に届く() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let id = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&id]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        for key in [
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+        ] {
+            assert_eq!(route(&mut ws, key), Routed::ForwardToPty(key));
+        }
+    }
+
+    #[test]
+    fn 外の行で_tab_を押した後に打った文でも止める確認は残らない() {
+        let (mut ws, mut svc) = opened();
+        let outside = live(9, "/r/a", "s9", Status::Working, Owner::Elsewhere);
+        ws.apply_fleet(status(vec![outside]), Vec::new());
+        on_key(
+            &mut ws,
+            &mut svc,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        );
+        assert_eq!(ws.focus, Focus::Fleet);
+        type_text(&mut ws, &mut svc, "Deploy");
+        assert!(ws.modals.is_empty());
+    }
+
+    #[test]
+    fn 打っていたセッションが消えて一覧に戻った後の文でも止まらない() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let a = spawn(&mut ws, dir.path());
+        let b = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&a, &b]);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        let typing = ws.fleet_session().unwrap();
+        let rest = if typing == a { b } else { a };
+        list(&mut ws, dir.path(), &[&rest]);
+        assert_eq!(ws.focus, Focus::Fleet);
+        type_text(&mut ws, &mut svc, "Do you");
+        assert!(ws.modals.is_empty());
+        assert!(present(&ws, &rest));
+    }
+
+    #[test]
+    fn 止めた直後の読み直しが止める前の写しを持ち帰ると_pid_の行で一度出る() {
+        let (mut ws, mut svc) = opened();
+        let dir = tempfile::tempdir().unwrap();
+        let id = spawn(&mut ws, dir.path());
+        let cwd = dir.path().to_string_lossy().to_string();
+        let before = || live(7, &cwd, "s1", Status::Working, Owner::Conductor);
+        ws.apply_fleet(status(vec![before()]), vec![own(&id, &cwd, Some("s1"))]);
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::StopFleetSession(StopTarget::Panel(id.clone()))],
+        );
+        assert!(ws.panels.fleet.visual_rows().is_empty());
+        ws.apply_fleet(status(vec![before()]), Vec::new());
+        let rows = ws.panels.fleet.visual_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, RowKey::Pid(7));
+        assert_eq!(rows[0].place, Place::OtherConductor);
     }
 }
