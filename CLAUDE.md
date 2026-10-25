@@ -141,6 +141,12 @@ with no window open, and the window opened later showed it mid-tool.
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`
   when it has none; the frame protocol carries its own number for that reason.
+- **Not on Linux yet:** Claude Code (seen on 2.1.310) writes `procStart` there as
+  `/proc/<pid>/stat` starttime ticks (`"37242291"`), not the ctime string macOS gets,
+  and `registry` reads only the latter. So on Linux the list's **D** never signals a
+  Claude outside this window (it reports "already ended"), and, as far as
+  `live_session` reads, the list's pid-reuse check is skipped too. This window's own
+  sessions are unaffected. `registry::tests` pins the first half.
 - `--second-window`, tests, and a window whose host would not start run an
   in-process host over a socketpair, so there is one code path and those sessions
   end with the window.

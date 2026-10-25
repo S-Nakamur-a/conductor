@@ -104,7 +104,9 @@ are dropped, so a sentence typed into the list by mistake stops nothing unless a
 capital D is followed by a y somewhere in it ("Dynamic", "READY"); it then stops
 whichever line is selected at that moment, which any j, k, g or G earlier in the
 sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still there
-3s later, and only while it is still the process the list showed.
+3s later, and only while it is still the process the list showed. On Linux, Claude Code
+records its start time in a form conductor does not read yet, so **D** cannot stop a
+session elsewhere there: it reports the session as already ended and leaves it running.
 
 ### Keybindings
 
