@@ -62,7 +62,7 @@ pub fn title() -> String {
 fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
     match page {
         Focus::Worktree => &[("Worktree panel", KeyContext::Worktree)],
-        Focus::Fleet => &[("Sessions", KeyContext::Fleet)],
+        Focus::Fleet | Focus::FleetSession => &[("Sessions", KeyContext::Fleet)],
         Focus::Explorer => &[
             ("Explorer \u{2014} file tree", KeyContext::Explorer),
             (

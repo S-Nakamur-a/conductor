@@ -448,7 +448,13 @@ remembered as where Esc returns (`Workspace::screen_focus`, which `reviewing()` 
 the focus cycle read), so a background result never moves the keyboard to a region
 nobody can see, and window tools (`remote.rs`) do nothing but say so. Focus moves
 made by hand — commands from keys, the palette or the menu, and the focus cycle —
-go through `command::by_hand`, which turns them into `LeaveFleet`. Host notifications (Claude's
+go through `command::by_hand`, which turns them into `LeaveFleet`. The right side shows
+one of this window's sessions live (`Focus::FleetSession`). Which one is derived from
+the list's selection every time (`Workspace::fleet_session`), never stored, and
+when the row being typed into disappears the keyboard goes back to the list rather
+than to whatever got selected instead. That right side gives a PTY a second shape,
+so `sync_sizes` compares each session's own grid with its region, not the region's
+remembered size. Host notifications (Claude's
 state, session ids) are sent with `send_watch_unscoped` so a repository switch does
 not drop them; every other watch event keeps its generation.
 

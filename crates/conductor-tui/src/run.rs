@@ -456,7 +456,9 @@ pub fn on_key(ws: &mut Workspace, svc: &mut Services<TaskResult>, key: KeyEvent)
             .dispatch(action)
             .unwrap_or_else(|| global_effects(ws, action)),
         Routed::ForwardToPty(key) => {
-            ws.panels.terminal.forward_key(key, ws.focus);
+            if let Some(session) = ws.pty_session() {
+                ws.panels.terminal.forward_key(key, &session);
+            }
             Vec::new()
         }
         Routed::Ignored => Vec::new(),
@@ -474,26 +476,26 @@ pub fn on_paste(ws: &mut Workspace, svc: &mut Services<TaskResult>, data: String
         modal.paste(&data);
         return;
     }
-    if ws.chrome.fleet_open && dropped_file(&data).is_some() {
-        apply(
-            ws,
-            svc,
-            vec![Effect::Status(
-                StatusLevel::Warning,
-                "Leave the session list to drop a file into Claude.".into(),
-            )],
-        );
-        return;
+    let typing_into_fleet = ws.focus == Focus::FleetSession;
+    if dropped_file(&data).is_some() && !typing_into_fleet {
+        if ws.chrome.fleet_open {
+            apply(
+                ws,
+                svc,
+                vec![Effect::Status(
+                    StatusLevel::Warning,
+                    "Leave the session list to drop a file into Claude.".into(),
+                )],
+            );
+            return;
+        }
+        if ws.panels.terminal.paste_to_claude(&data) {
+            apply(ws, svc, vec![Effect::Focus(Focus::TerminalClaude)]);
+            return;
+        }
     }
-    if dropped_file(&data).is_some() && ws.panels.terminal.paste(&data, Focus::TerminalClaude) {
-        apply(ws, svc, vec![Effect::Focus(Focus::TerminalClaude)]);
-        return;
-    }
-    if matches!(
-        ws.focus,
-        Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor
-    ) {
-        ws.panels.terminal.paste(&data, ws.focus);
+    if let Some(session) = ws.pty_session() {
+        ws.panels.terminal.paste(&data, &session);
     }
 }
 
@@ -806,7 +808,8 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::RevidereOrder | Region::RevidereDiff => Some(Focus::Revidere),
-        Region::FleetList | Region::FleetSession => Some(Focus::Fleet),
+        Region::FleetList => Some(Focus::Fleet),
+        Region::FleetSession => Some(Focus::FleetSession),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
 }
@@ -1082,6 +1085,32 @@ mod tests {
             gutter.contains('\u{2502}'),
             "ガターから押せば今までどおり: {gutter}"
         );
+    }
+
+    #[test]
+    fn 一覧の右を押すと映しているセッションへ入る() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let dir = tempfile::tempdir().unwrap();
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let id = ws.panels.terminal.visible_claude().unwrap().to_string();
+        let own = crate::panels::fleet::OwnSession {
+            panel_id: id,
+            working_dir: dir.path().to_path_buf(),
+            claude_session_id: None,
+        };
+        ws.apply_fleet(Default::default(), vec![own]);
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let right = l.rect(Region::FleetSession).unwrap();
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: right.x + 5,
+            row: right.y + 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, click);
+        assert_eq!(ws.focus, Focus::FleetSession);
     }
 
     #[test]

@@ -175,7 +175,9 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         ));
     } else if ws.chrome.maximized {
         match ws.focus {
-            Focus::Worktree | Focus::Explorer | Focus::Fleet => push_explorer(&mut regions, main),
+            Focus::Worktree | Focus::Explorer | Focus::Fleet | Focus::FleetSession => {
+                push_explorer(&mut regions, main)
+            }
             Focus::Editor => regions.push((Region::Editor, main)),
             // Revidere は上で返しているのでここには来ない。
             Focus::Viewer | Focus::Revidere => regions.push((Region::Viewer, main)),

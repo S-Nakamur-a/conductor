@@ -186,7 +186,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             } => queue.extend(smart_session(ws, &worktree, name.as_deref(), prompt)),
             Effect::SendToShell(command) => queue.extend(send_to_shell(ws, &command)),
             Effect::PasteToClaude(text) => {
-                queue.push_back(if ws.panels.terminal.paste(&text, Focus::TerminalClaude) {
+                queue.push_back(if ws.panels.terminal.paste_to_claude(&text) {
                     Effect::Focus(Focus::TerminalClaude)
                 } else {
                     Effect::Status(
@@ -213,6 +213,13 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 }
             }
             Effect::Focus(Focus::Fleet) => ws.focus = Focus::Fleet,
+            // 映すものが無い右へは入らない。打った先が見えない。
+            Effect::Focus(Focus::FleetSession) => {
+                ws.focus = match ws.fleet_session() {
+                    Some(_) => Focus::FleetSession,
+                    None => Focus::Fleet,
+                };
+            }
             Effect::Focus(focus) => {
                 ws.chrome.review_open =
                     focus == Focus::Revidere || (ws.reviewing() && focus == Focus::TerminalClaude);

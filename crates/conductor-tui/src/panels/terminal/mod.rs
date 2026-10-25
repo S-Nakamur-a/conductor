@@ -881,6 +881,12 @@ impl TerminalPanel {
         self.claude.show(Some(id));
     }
 
+    #[cfg(test)]
+    pub(crate) fn screen_for_test(&self, id: &str) -> vt100::Screen {
+        let screen = self.pty.screen(self.index_of(Some(id)).unwrap()).unwrap();
+        render::lock(&screen).screen().clone()
+    }
+
     /// 起動時の復帰。追従中の worktree もフォーカスも動かさない — 画面に出すのは
     /// いま映している worktree で、その区画がまだ空のときだけ。
     pub fn resume(
@@ -1005,15 +1011,22 @@ impl TerminalPanel {
         Ok(())
     }
 
-    /// フォーカス中の区画の PTY へキーを流す。
-    pub fn forward_key(&self, key: KeyEvent, focus: Focus) {
-        let session = match focus {
-            Focus::TerminalClaude => self.claude.session.as_deref(),
-            Focus::TerminalShell => self.shell.session.as_deref(),
-            Focus::Editor => self.editor.as_ref().map(|e| e.session.as_str()),
-            _ => return,
-        };
-        let Some(index) = self.index_of(session) else {
+    pub fn has_session(&self, id: &str) -> bool {
+        self.index_of(Some(id)).is_some()
+    }
+
+    /// focus の区画が映しているセッション。
+    pub fn session_in(&self, focus: Focus) -> Option<String> {
+        match focus {
+            Focus::TerminalClaude => self.claude.session.clone(),
+            Focus::TerminalShell => self.shell.session.clone(),
+            Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn forward_key(&self, key: KeyEvent, session: &str) {
+        let Some(index) = self.index_of(Some(session)) else {
             return;
         };
         let Some(bytes) = ansi::key_to_bytes(&key, self.pty.application_cursor(index)) else {
@@ -1024,31 +1037,34 @@ impl TerminalPanel {
         }
     }
 
-    /// focus の区画の PTY へ貼り付けを流す。映すセッションが無ければ false。
-    /// スクロールを最新へ戻すのは、遡って読んでいる間だと入れた文字が見えないから。
-    pub fn paste(&mut self, text: &str, focus: Focus) -> bool {
-        let session = match focus {
-            Focus::TerminalClaude => self.claude.session.clone(),
-            Focus::TerminalShell => self.shell.session.clone(),
-            Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
-            _ => return false,
-        };
-        let Some(index) = self.index_of(session.as_deref()) else {
+    /// 流せなければ false。スクロールを最新へ戻すのは、遡って読んでいる間だと
+    /// 入れた文字が見えないから。
+    pub fn paste(&mut self, text: &str, session: &str) -> bool {
+        let Some(index) = self.index_of(Some(session)) else {
             return false;
         };
         if let Err(e) = self.pty.write_paste_to_session(index, text) {
             log::warn!("could not paste into the PTY session: {e:#}");
             return false;
         }
-        if let Some(pane) = self.pane_mut(focus) {
-            pane.scroll = 0;
+        for pane in [&mut self.claude, &mut self.shell] {
+            if pane.session.as_deref() == Some(session) {
+                pane.scroll = 0;
+            }
         }
         true
     }
 
-    /// 区画の大きさが変わっていたら PTY へ伝える。同じ worktree の同じ種類は
+    pub fn paste_to_claude(&mut self, text: &str) -> bool {
+        self.claude
+            .session
+            .clone()
+            .is_some_and(|id| self.paste(text, &id))
+    }
+
+    /// 区画とセッションの大きさが違えば PTY へ伝える。同じ worktree の同じ種類は
     /// まとめて合わせる — タブを切り替えた先が別の幅のままだと絵が崩れる。
-    pub fn sync_sizes(&mut self, layout: &Layout) {
+    pub fn sync_sizes(&mut self, layout: &Layout, fleet_session: Option<&str>) {
         if let (Some(rect), Some(editor)) = (layout.rect(Region::Editor), self.editor.as_mut()) {
             let content = render::editor_area(rect);
             let size = (content.height.max(1), content.width.max(1));
@@ -1060,6 +1076,13 @@ impl TerminalPanel {
                 }
             }
         }
+        if let (Some(rect), Some(index)) = (
+            layout.rect(Region::FleetSession),
+            self.index_of(fleet_session),
+        ) {
+            let content = render::editor_area(rect);
+            self.fit(index, (content.height.max(1), content.width.max(1)));
+        }
         for region in [Region::TerminalClaude, Region::TerminalShell] {
             let Some(rect) = layout.rect(region) else {
                 continue;
@@ -1070,15 +1093,23 @@ impl TerminalPanel {
                 Region::TerminalShell => &mut self.shell,
                 _ => &mut self.claude,
             };
-            if pane.size == size {
-                continue;
-            }
             pane.size = size;
             let kind = pane.kind;
             let indices: Vec<usize> = self.sessions(kind).iter().map(|(i, _, _)| *i).collect();
             for index in indices {
-                self.pty.resize_session(index, size.0, size.1);
+                self.fit(index, size);
             }
+        }
+    }
+
+    /// 区画の大きさの記憶とは比べない。一覧の右が同じセッションを別の大きさにしている。
+    fn fit(&mut self, index: usize, size: (u16, u16)) {
+        let now = self
+            .pty
+            .screen(index)
+            .map(|screen| render::lock(&screen).screen().size());
+        if now != Some(size) {
+            self.pty.resize_session(index, size.0, size.1);
         }
     }
 

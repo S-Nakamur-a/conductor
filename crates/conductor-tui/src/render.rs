@@ -233,6 +233,7 @@ fn focused_region(ws: &Workspace) -> Region {
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
         Focus::Fleet => Region::FleetList,
+        Focus::FleetSession => Region::FleetSession,
     }
 }
 
@@ -286,9 +287,11 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Fleet => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("type", &[Action::ExpandOrRight]),
             ("open", &[Action::Select]),
             ("back", &[Action::ExitSubPanel]),
         ],
+        Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
         Focus::Worktree => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),
