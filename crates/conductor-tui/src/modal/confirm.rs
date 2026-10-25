@@ -29,7 +29,8 @@ enum Keys {
     Buttons,
     /// y / n / Esc だけ。ほかは無視する。
     Letters,
-    /// y が Yes (大文字・Ctrl・Alt 付きも) で、ほかのキーはどれも No。
+    /// y が Yes (大文字・Ctrl・Alt 付きも)、← で Yes・→ で No を選び Enter で選択中を答える。ほかのキーはどれも No。
+    /// h / l を選択に使わないのは、打ちかけの文の l で Yes に倒れ、続く Enter で答えてしまうため。
     YesOnly,
 }
 
@@ -61,6 +62,15 @@ impl Choice {
     pub fn key(&mut self, key: KeyEvent) -> Option<Answer> {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Some(Answer::Yes),
+            KeyCode::Left if self.keys == Keys::YesOnly => {
+                self.selected = Answer::Yes;
+                None
+            }
+            KeyCode::Right if self.keys == Keys::YesOnly => {
+                self.selected = Answer::No;
+                None
+            }
+            KeyCode::Enter if self.keys == Keys::YesOnly => Some(self.selected),
             _ if self.keys == Keys::YesOnly => Some(Answer::No),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(Answer::No),
             _ if self.keys == Keys::Letters => None,
@@ -93,7 +103,7 @@ impl Choice {
         let keys = match self.keys {
             Keys::Buttons => "   y / n · tab",
             Keys::Letters => "   y / n",
-            Keys::YesOnly => "   y / any other key: no",
+            Keys::YesOnly => "   y / ←→ enter / else: no",
         };
         Line::from(vec![
             button(self.yes, Answer::Yes),
@@ -263,14 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn yで答える確認は大文字や修飾付きのyでも答え_ほかのどのキーでも何も起こさずに閉じる() {
+    fn yで答える確認は大文字や修飾付きのyでも答え_左右とenter以外のキーは何も起こさずに閉じる() {
         for code in [
             KeyCode::Char('e'),
             KeyCode::Char('n'),
             KeyCode::Char('l'),
+            KeyCode::Char('h'),
             KeyCode::Tab,
-            KeyCode::Right,
-            KeyCode::Enter,
             KeyCode::Esc,
         ] {
             let mut confirm = Confirm::yes_only("stop?", vec![Effect::Quit]);
@@ -287,6 +296,29 @@ mod tests {
         ] {
             let mut confirm = Confirm::yes_only("stop?", vec![Effect::Quit]);
             assert!(answered(&confirm.update(yes)), "{yes:?}");
+        }
+    }
+
+    #[test]
+    fn yで答える確認は左でyes右でnoを選びenterで選択中を答える() {
+        use KeyCode::{Left, Right};
+        let cases: [(&[KeyCode], bool); 7] = [
+            (&[Left], true),
+            (&[Right], false),
+            (&[Left, Right], false),
+            (&[Right, Left], true),
+            (&[Left, Left], true),
+            (&[Right, Right], false),
+            (&[], false),
+        ];
+        for (arrows, yes) in cases {
+            let mut confirm = Confirm::yes_only("stop?", vec![Effect::Quit]);
+            for arrow in arrows {
+                assert!(confirm.update(key(*arrow)).is_empty(), "{arrows:?}");
+            }
+            let effects = confirm.update(key(KeyCode::Enter));
+            assert_eq!(answered(&effects), yes, "{arrows:?}");
+            assert!(matches!(effects.first(), Some(Effect::PopModal)));
         }
     }
 

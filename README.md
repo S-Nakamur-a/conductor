@@ -98,10 +98,12 @@ Claude Code writes under `~/.claude/sessions/`.
 
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
-with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too — and
-any other key cancels. Keys the list does not use
+with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too. ← highlights
+Yes and → highlights No, and Enter answers the one highlighted, which starts on No; any
+other key cancels, `h` and `l` included. Keys the list does not use
 are dropped, so a sentence typed into the list by mistake stops nothing unless a
-capital D is followed by a y somewhere in it ("Dynamic", "READY"); it then stops
+capital D is followed by a y somewhere in it ("Dynamic", "READY"), or by arrow keys
+ending in ← and then Enter; it then stops
 whichever line is selected at that moment, which any j, k, g or G earlier in the
 sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still there
 3s later, and only while it is still the process the list showed. On Linux, Claude Code
