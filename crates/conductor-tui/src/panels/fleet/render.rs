@@ -131,8 +131,14 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
     }
     slots.resize(lines.len(), Slot::Other);
     for group in &groups {
-        lines.push(header(&group.name, theme.fg, inner.width));
-        slots.push(Slot::Repo(group.root.clone()));
+        let smart = group.root.clone().filter(|root| fleet.is_tree_root(root));
+        lines.push(repo_header(
+            &group.name,
+            theme,
+            inner.width,
+            smart.is_some(),
+        ));
+        slots.push(Slot::Repo(smart));
         for node in &group.nodes {
             let indent = match &node.worktree {
                 Some(worktree) => {
@@ -215,13 +221,18 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::Select, "開く"),
             (Action::ExpandOrRight, "返事"),
             (Action::StopSession, "止める"),
+            (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
             (Action::StopSession, "止める"),
+            (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
         ],
-        None => &[(Action::ExitSubPanel, "閉じる")],
+        None => &[
+            (Action::NewSessionMenu, "新しいセッション"),
+            (Action::ExitSubPanel, "閉じる"),
+        ],
     };
     items
         .iter()
@@ -272,7 +283,12 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = inner(rect);
     let theme = &ws.theme;
     if let Some(worktree) = ws.panels.fleet.selected_worktree() {
-        let lines = vec![
+        let new = crate::render::representative_chord(
+            &ws.keymap,
+            ws.key_context(),
+            Action::NewSessionMenu,
+        );
+        let mut lines = vec![
             Line::styled(
                 worktree.label,
                 Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
@@ -282,6 +298,13 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                 Style::default().fg(theme.dir_fg),
             ),
         ];
+        if let Some(key) = new {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                format!("{key} でこの worktree に新しいセッション"),
+                Style::default().fg(theme.fg),
+            ));
+        }
         frame.render_widget(Paragraph::new(lines), inner);
         return;
     }
@@ -342,6 +365,40 @@ fn inner(rect: Rect) -> Rect {
     )
 }
 
+/// 本文の右端 3 桁のボタン。当たり判定は [button_hit] が同じ桁を読む。
+pub const NEW_BUTTON: &str = "[+]";
+pub const SMART_BUTTON: &str = "[✧]";
+const BUTTON_WIDTH: u16 = 3;
+
+pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
+    let body = composed.body;
+    if !(body.y..body.bottom()).contains(&y) || x + BUTTON_WIDTH < body.right() || x >= body.right()
+    {
+        return None;
+    }
+    let slot = composed
+        .slots
+        .get(composed.offset + usize::from(y - body.y))?;
+    match slot {
+        Slot::Repo(Some(_)) | Slot::Worktree(_) => Some(slot),
+        Slot::Repo(None) | Slot::Other => None,
+    }
+}
+
+fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {
+    if !smart {
+        return header(name, theme.fg, width);
+    }
+    let name = clip(name, usize::from(width.saturating_sub(BUTTON_WIDTH + 2)));
+    let mut line = header(&name, theme.fg, width.saturating_sub(BUTTON_WIDTH + 1));
+    line.spans.push(Span::raw(" "));
+    line.spans.push(Span::styled(
+        SMART_BUTTON,
+        Style::default().fg(theme.accent),
+    ));
+    line
+}
+
 fn header(text: &str, color: Color, width: u16) -> Line<'static> {
     let rule = (width as usize).saturating_sub(text.width() + 1);
     Line::from(vec![
@@ -391,12 +448,15 @@ fn worktree_line(
     selected: bool,
     focused: bool,
 ) -> Line<'static> {
-    let label = clip(&worktree.label, (width as usize).saturating_sub(2));
+    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
+    let label = clip(&worktree.label, room);
+    let pad = room.saturating_sub(label.width());
     crate::list::row_line(
-        vec![Span::styled(
-            format!("  {label}"),
-            Style::default().fg(theme.fg),
-        )],
+        vec![
+            Span::styled(format!("  {label}"), Style::default().fg(theme.fg)),
+            Span::raw(" ".repeat(pad + 1)),
+            Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
+        ],
         theme,
         selected,
         focused,

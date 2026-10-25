@@ -941,6 +941,21 @@ impl TerminalPanel {
         Ok(())
     }
 
+    /// 一覧から起こす Claude。Claude 区画が追う worktree は動かさない。
+    /// repo_root にも dir を渡す (conductor_dir が main worktree を解決する)。
+    pub fn launch_claude_in(
+        &mut self,
+        dir: &Path,
+        config: &Config,
+        chrome: bool,
+    ) -> Result<String> {
+        let claude = ClaudeArgs {
+            chrome,
+            ..ClaudeArgs::default()
+        };
+        self.launch(SessionKind::ClaudeCode, claude, dir, dir, config)
+    }
+
     /// 起動待ちのプロンプトを、受け取れる状態になったものから流し込む。
     ///
     /// 普段は is_waiting_for_input で足りるが、起動直後はまだアイドルに達しないので、

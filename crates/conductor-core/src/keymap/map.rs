@@ -55,10 +55,13 @@ impl KeyMap {
         if !fires_in(action, context) {
             return Vec::new();
         }
+        let chain = self.chain(context);
         sorted_keys(
-            self.chain(context)
-                .into_iter()
-                .flat_map(|layer| keymap_suite::keys_for_action(layer, &action)),
+            chain
+                .iter()
+                .flat_map(|layer| keymap_suite::keys_for_action(layer, &action))
+                // 層が同じキーを別の action に束ねていれば、押してもこの action にならない。
+                .filter(|input| resolve_layered(chain.clone(), input) == Some(&action)),
         )
     }
 

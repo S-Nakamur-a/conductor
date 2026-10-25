@@ -77,10 +77,11 @@ pub enum Task {
         branch: String,
     },
     /// 自由記述のタスクから worktree を組み立てる。ブランチ名とセッション名は
-    /// AI が決め、Claude へは説明文をそのまま流す。
+    /// AI が決め、Claude へは説明文をそのまま流す。`repo` は作る先の repo。
     SmartWorktree {
         description: String,
         api: ApiConfig,
+        repo: PathBuf,
     },
     DeleteWorktree {
         path: PathBuf,
@@ -515,9 +516,13 @@ impl Task {
                     TaskResult::WorktreeCreated,
                 );
             }
-            Task::SmartWorktree { description, api } => {
-                svc.spawn(
-                    move || smart_worktree(&env, &description, &api),
+            Task::SmartWorktree {
+                description,
+                api,
+                repo,
+            } => {
+                svc.spawn_unscoped(
+                    move || smart_worktree(&env, &repo, &description, &api),
                     TaskResult::SmartWorktreeCreated,
                 );
             }
@@ -1582,14 +1587,15 @@ fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
 
 fn smart_worktree(
     env: &TaskEnv,
+    repo: &Path,
     description: &str,
     api: &ApiConfig,
 ) -> Result<SmartWorktree, String> {
-    let plan = smart_worktree::generate(description, api, &env.root)?;
-    let git = GitEngine::open(&env.root).map_err(|e| e.to_string())?;
+    let plan = smart_worktree::generate(description, api, repo)?;
+    let git = GitEngine::open(repo).map_err(|e| e.to_string())?;
     // リモートを持たないリポジトリで origin/main を掴んで作成ごと失敗しないよう、
     // 実在する ref へ解決してから渡す。
-    let base = git.resolve_base_ref(&env.main_branch);
+    let base = git.resolve_base_ref(&git.default_branch());
     let path = git
         .create_worktree_from_base(&plan.branch, &base, env.worktree_dir.as_deref())
         .map_err(|e| e.to_string())?;
@@ -1761,5 +1767,36 @@ mod tests {
         assert_eq!(trees.len(), 1);
         assert_eq!(trees[0].root, repo.root());
         assert!(placement.is_empty(), "{placement:?}");
+    }
+
+    #[test]
+    fn smart_worktree_の結果は投げた後に_repo_を切り替えても届く() {
+        let ws = crate::workspace::Workspace::for_test();
+        let mut svc = conductor_svc::Services::<TaskResult>::new();
+        // 存在しないプログラムを指すので AI は呼ばれず、結果は Err で返る。
+        let api = ApiConfig {
+            provider: "command".into(),
+            command: vec!["/nonexistent/conductor-test-ai".into()],
+            ..ApiConfig::default()
+        };
+        Task::SmartWorktree {
+            description: "x".into(),
+            api,
+            repo: PathBuf::from("/nonexistent/repo"),
+        }
+        .spawn(&mut svc, &ws.task_env());
+        svc.bump_generation();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let event = loop {
+            if let Some(event) = svc.try_recv() {
+                break event;
+            }
+            assert!(std::time::Instant::now() < deadline, "結果が届かない");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(matches!(
+            event.kind,
+            conductor_svc::EventKind::Task(TaskResult::SmartWorktreeCreated(Err(_)))
+        ));
     }
 }

@@ -100,6 +100,17 @@ a plain terminal runs, or that a window of an older version still holds, are lis
 their state, but cannot be opened or typed into from here. The states come from the files
 Claude Code writes under `~/.claude/sessions/`.
 
+**Ctrl+n** starts a new session in the selected worktree — or, on a session's line, in the
+worktree that session runs in. It asks first, and answers only to a digit: **1** Claude
+Code, **2** Claude Code with Chrome, **3** Smart Worktree (in a git repository: it asks
+for the task, creates a worktree and a branch for it, and starts Claude there). Any
+other key closes the question. Ctrl+n is never part of typed text, so typing into the
+list does not open this menu. The new session is selected
+and the keyboard goes into it on the right. The `[+]` at the right end of a worktree's
+line does the same as 1 and 2, and the `[✧]` beside a repository's name starts Smart
+Worktree there. The result of a Smart Worktree started before switching to another
+repository still arrives.
+
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
 with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too. ← highlights
@@ -128,15 +139,16 @@ command by name.
 | **Alt+2…6** (or **⌘+2…6**) | focus a specific panel (**Ctrl+w** the worktree strip) |
 | **Ctrl+Alt+Z** / **Ctrl+Alt+Arrow** | maximize / resize the focused panel |
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |
-| **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell |
+| **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell (in the Sessions list, Ctrl+n opens its own menu) |
 | **j/k** · **h/l** · **g/G** | up/down · collapse/expand · top/bottom |
 | **/** · **Ctrl+g** | search · full-text (grep) search |
 | **Esc** · **Ctrl+q** | back / close overlay · quit |
 
 To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code
-Session (Chrome)* (or "New Claude Code (Chrome)" in the palette), or pick
-"Claude Code + Chrome" from the `[+]` on the Claude Code tab row. It launches
-`claude --chrome`. Every other start runs without it: Ctrl+n, a double click on
+Session (Chrome)* (or "New Claude Code (Chrome)" in the palette), pick
+"Claude Code + Chrome" from the `[+]` on the Claude Code tab row, or choose 2 in the
+Sessions list's new-session menu (Ctrl+n, or the `[+]` on a worktree). It launches
+`claude --chrome`. Every other start runs without it: Ctrl+n outside the Sessions list, a double click on
 an empty pane, a smart session, the startup auto-resume and the resume after
 grabbing a branch. To add Chrome to a session that ran without it, close its tab
 and reopen it from *Resume Claude Session*, choosing "Resume + Chrome".

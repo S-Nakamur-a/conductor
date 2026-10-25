@@ -15,6 +15,7 @@ use conductor_core::git_engine::WorktreeHead;
 use conductor_core::keymap::Action;
 
 use crate::effect::Effect;
+use crate::modal::popup::{Choices, Popup};
 use crate::modal::{Confirm, Modal};
 use crate::workspace::{Ctx, Focus};
 
@@ -149,6 +150,8 @@ pub struct FleetPanel {
     placement: HashMap<PathBuf, PathBuf>,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
+    /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
+    smart_target: Option<PathBuf>,
     polling: bool,
     came_from: Option<Focus>,
 }
@@ -209,6 +212,63 @@ impl FleetPanel {
         }
         self.set_own(own);
         self.reselect_if_gone();
+    }
+
+    /// 一覧から起こしたセッションを選ぶ。行は次の読み直しを待たずに own から出る。
+    pub fn note_launched(&mut self, panel_id: String, own: Vec<OwnSession>) {
+        self.set_own(own);
+        self.selected = Some(Selected::Session(RowKey::Panel(panel_id), false));
+    }
+
+    pub fn set_smart_target(&mut self, repo: PathBuf) {
+        self.smart_target = Some(repo);
+    }
+
+    pub fn take_smart_target(&mut self) -> Option<PathBuf> {
+        self.smart_target.take()
+    }
+
+    /// 起動する dir と、その dir が属する git の repo の root。選んだ worktree、選んだセッションの
+    /// worktree (外の端末はその cwd)、何も無ければ fallback の順。
+    pub fn launch_target(&self, fallback: &Path) -> (PathBuf, Option<PathBuf>) {
+        let dir = match &self.selected {
+            Some(Selected::Worktree(path)) => path.clone(),
+            Some(Selected::Session(..)) => match self.selected_row() {
+                Some(row) => self
+                    .placement
+                    .get(&row.working_dir)
+                    .cloned()
+                    .unwrap_or(row.working_dir),
+                None => fallback.to_path_buf(),
+            },
+            None => fallback.to_path_buf(),
+        };
+        let root = self.tree_root_of(&dir);
+        (dir, root)
+    }
+
+    fn tree_root_of(&self, dir: &Path) -> Option<PathBuf> {
+        self.trees
+            .iter()
+            .find(|t| t.root == dir || t.worktrees.iter().any(|w| w.path == dir))
+            .map(|t| t.root.clone())
+    }
+
+    pub fn is_tree_root(&self, root: &Path) -> bool {
+        self.trees.iter().any(|t| t.root == root)
+    }
+
+    /// 一覧の [+] / [✧] を押した。行き先は押した行から取り、選択は動かさない。
+    pub fn click_button(&mut self, slot: &render::Slot, at: (u16, u16)) -> Vec<Effect> {
+        match slot {
+            render::Slot::Worktree(w) => vec![Effect::PushModal(Modal::Popup(Popup::numbered(
+                "New session",
+                launch_choices(&w.path, None),
+                Some(at),
+            )))],
+            render::Slot::Repo(Some(root)) => vec![Effect::FleetSmartPrompt(root.clone())],
+            render::Slot::Repo(None) | render::Slot::Other => Vec::new(),
+        }
     }
 
     pub fn defer_focus(&mut self, focus: Focus) {
@@ -586,6 +646,14 @@ impl FleetPanel {
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
             Action::StopSession => return Some(self.ask_stop().into_iter().collect()),
+            Action::NewSessionMenu => {
+                let (dir, root) = self.launch_target(&ctx.repo.root);
+                return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
+                    "New session",
+                    launch_choices(&dir, root),
+                    None,
+                )))]);
+            }
             _ => return None,
         };
         if let Some(item) = items.get(target) {
@@ -614,6 +682,28 @@ impl FleetPanel {
         );
         Some(Effect::PushModal(Modal::Confirm(confirm)))
     }
+}
+
+/// Smart Worktree は repo の root が分かるときだけ並べる。
+pub fn launch_choices(dir: &Path, smart: Option<PathBuf>) -> Choices {
+    let mut choices: Choices = vec![
+        (
+            "Claude Code",
+            Effect::NewClaudeIn {
+                dir: dir.to_path_buf(),
+                chrome: false,
+            },
+        ),
+        (
+            "Claude Code + Chrome",
+            Effect::NewClaudeIn {
+                dir: dir.to_path_buf(),
+                chrome: true,
+            },
+        ),
+    ];
+    choices.extend(smart.map(|root| ("Smart Worktree…", Effect::FleetSmartPrompt(root))));
+    choices
 }
 
 fn key_order(a: &RowKey, b: &RowKey) -> std::cmp::Ordering {

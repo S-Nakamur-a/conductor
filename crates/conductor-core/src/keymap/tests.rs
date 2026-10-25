@@ -109,6 +109,7 @@ fn 既定のキーが解決する() {
             Action::ExitSubPanel,
         ),
         (Fleet, shift('D'), Action::StopSession),
+        (Fleet, ctrl('n'), Action::NewSessionMenu),
         (Worktree, ch('j'), Action::NavigateDown),
         (
             Worktree,
@@ -272,6 +273,8 @@ fn ptyを持つ文脈が奪うのは発火するアクションだけ() {
     let cases = [
         (Terminal, ctrl('q'), None),
         (Terminal, ctrl('r'), None),
+        (Terminal, ctrl('n'), None),
+        (Fleet, ch('n'), None),
         (Terminal, ctrl('p'), Some(Action::CommandPalette)),
         (Terminal, alt(']'), Some(Action::NextWorktree)),
         (Terminal, ctrl_esc, Some(Action::LeaveTerminal)),
@@ -458,4 +461,25 @@ fn 一覧の層は_worktree_の操作を拾わない() {
     for c in ['x', 'w', 'm', 'R', 'b'] {
         assert_eq!(km.resolve(&ch(c), Fleet), None, "{c}");
     }
+}
+
+#[test]
+fn 層が同じキーを別の操作に束ねていれば_その文脈の案内に出さない() {
+    let km = KeyMap::default();
+    assert!(
+        km.keys_for_action(Global, Action::NewClaudeCode)
+            .contains(&"ctrl+n".to_string())
+    );
+    assert!(
+        !km.keys_for_action(Fleet, Action::NewClaudeCode)
+            .contains(&"ctrl+n".to_string())
+    );
+    assert!(
+        !km.keys_for_action(Viewer, Action::OpenRepo)
+            .contains(&"ctrl+o".to_string())
+    );
+    assert!(
+        km.keys_for_action(Fleet, Action::CommandPalette)
+            .contains(&"ctrl+p".to_string())
+    );
 }

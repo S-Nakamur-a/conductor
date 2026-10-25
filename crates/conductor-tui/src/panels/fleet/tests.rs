@@ -689,7 +689,7 @@ mod hint {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · esc 閉じる"
+            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる"
         );
     }
 
@@ -699,13 +699,16 @@ mod hint {
             vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
             Vec::new(),
         );
-        assert_eq!(render::hint(&ws), "D 止める · esc 閉じる");
+        assert_eq!(
+            render::hint(&ws),
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる"
+        );
     }
 
     #[test]
-    fn 行が無ければ閉じるだけ() {
+    fn 行が無ければ新しいセッションと閉じるを出す() {
         let ws = listing(Vec::new(), Vec::new());
-        assert_eq!(render::hint(&ws), "esc 閉じる");
+        assert_eq!(render::hint(&ws), "ctrl+n 新しいセッション · esc 閉じる");
     }
 
     #[test]
@@ -722,7 +725,10 @@ mod hint {
     fn 止めるキーを外せば案内から消え_押しても何も起きない() {
         let mut ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         rebind(&mut ws, "\"D\" = false\n");
-        assert_eq!(render::hint(&ws), "enter 開く · tab 返事 · esc 閉じる");
+        assert_eq!(
+            render::hint(&ws),
+            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる"
+        );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
             crossterm::event::KeyModifiers::SHIFT,
@@ -740,7 +746,10 @@ mod hint {
             Vec::new(),
         );
         rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
-        assert_eq!(render::hint(&ws), "x 止める · esc 閉じる");
+        assert_eq!(
+            render::hint(&ws),
+            "x 止める · ctrl+n 新しいセッション · esc 閉じる"
+        );
     }
 
     #[test]
@@ -763,7 +772,10 @@ mod hint {
             drawn(&ws, 60, height);
         }
         let lines = drawn(&ws, 60, 3);
-        assert_eq!(lines[1].trim(), "D 止める · esc 閉じる");
+        assert_eq!(
+            lines[1].trim(),
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる"
+        );
     }
 
     #[test]
@@ -1502,6 +1514,40 @@ mod stop {
     }
 
     #[test]
+    fn 一覧に打った文では起動のメニューが開かず右にも入らない() {
+        for text in ["json2csv", "python3 to run it", "now"] {
+            let (mut ws, mut svc) = opened();
+            // 壊れて起動まで進んでも、AI は呼ばれずに失敗する。
+            ws.config.api = conductor_core::config::ApiConfig {
+                provider: "command".into(),
+                command: vec!["/nonexistent/conductor-test-ai".into()],
+                ..Default::default()
+            };
+            // python3 の 3 が Smart Worktree を選べるよう、git の repo の木に置く。
+            let repo = crate::testing::TestRepo::new();
+            let id = spawn(&mut ws, &repo.root());
+            let worktrees = conductor_core::git_engine::GitEngine::open(&repo.root())
+                .unwrap()
+                .worktree_heads()
+                .unwrap();
+            ws.apply_fleet(
+                FleetStatus {
+                    trees: vec![RepoTree {
+                        root: repo.root(),
+                        name: "repo".into(),
+                        worktrees,
+                    }],
+                    ..Default::default()
+                },
+                vec![own(&id, &repo.root().to_string_lossy(), None)],
+            );
+            type_text(&mut ws, &mut svc, text);
+            assert!(ws.modals.is_empty(), "{text}");
+            assert_eq!(ws.focus, Focus::Fleet, "{text}");
+        }
+    }
+
+    #[test]
     fn 止める確認は_y_を押さない限り_左右以外のどのキーでも止めずに閉じる() {
         for key in [
             KeyCode::Char('l'),
@@ -2002,5 +2048,303 @@ mod tree {
             Some(theme.fg),
             "1 本以上の待機は 0 本と違う色"
         );
+    }
+}
+
+mod launch {
+    use conductor_core::git_engine::{Head, WorktreeHead};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+
+    fn tree_with_sessions(live: Vec<LiveSession>, placement: &[(&str, &str)]) -> FleetPanel {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live,
+                trees: vec![RepoTree {
+                    root: PathBuf::from("/r/app"),
+                    name: "app".into(),
+                    worktrees: vec![
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app"),
+                            head: Head::Branch("main".into()),
+                        },
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app-b"),
+                            head: Head::Branch("feature/b".into()),
+                        },
+                    ],
+                }],
+                placement: placement
+                    .iter()
+                    .map(|(d, w)| (PathBuf::from(d), PathBuf::from(w)))
+                    .collect(),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet
+    }
+
+    /// 起動メニューの各番号が送る Effect。番号ごとに開き直す — 選ぶと Popup は閉じる。
+    fn menu(fleet: &mut FleetPanel) -> Vec<Effect> {
+        let ws = Workspace::for_test();
+        (b'1'..=b'9')
+            .filter_map(|digit| {
+                let mut effects = fleet.update(Action::NewSessionMenu, &ws.ctx())?;
+                let Some(Effect::PushModal(Modal::Popup(mut popup))) = effects.pop() else {
+                    panic!("n は Popup を開く");
+                };
+                let key = KeyEvent::new(KeyCode::Char(digit as char), KeyModifiers::NONE);
+                let mut chosen = popup.update(key, &ws.ctx());
+                (chosen.len() == 2).then(|| chosen.remove(1))
+            })
+            .collect()
+    }
+
+    fn dirs(effects: &[Effect]) -> Vec<(PathBuf, bool)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::NewClaudeIn { dir, chrome } => Some((dir.clone(), *chrome)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn smart(effects: &[Effect]) -> Vec<PathBuf> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::FleetSmartPrompt(root) => Some(root.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn worktree_の行で起動メニューを開くとその_worktree_で起動する_3_択が出る() {
+        let mut fleet = tree_with_sessions(Vec::new(), &[]);
+        let ws = Workspace::for_test();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(fleet.selected_worktree().unwrap().label, "feature/b");
+        let effects = menu(&mut fleet);
+        let b = PathBuf::from("/r/app-b");
+        assert_eq!(dirs(&effects), [(b.clone(), false), (b, true)]);
+        assert_eq!(smart(&effects), [PathBuf::from("/r/app")]);
+    }
+
+    #[test]
+    fn セッションの行で起動メニューを開くとそのセッションのサブディレクトリでなく_worktree_で起動する()
+     {
+        let mut fleet = tree_with_sessions(
+            vec![live(
+                7,
+                "/r/app-b/src",
+                "s7",
+                Status::Working,
+                Owner::Conductor,
+            )],
+            &[("/r/app-b/src", "/r/app-b")],
+        );
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(7));
+        let effects = menu(&mut fleet);
+        assert_eq!(dirs(&effects)[0].0, PathBuf::from("/r/app-b"));
+    }
+
+    #[test]
+    fn 外の端末の行ではその_cwd_で起動する() {
+        let mut fleet = tree_with_sessions(
+            vec![live(
+                9,
+                "/tmp/elsewhere",
+                "s9",
+                Status::Idle,
+                Owner::Elsewhere,
+            )],
+            &[],
+        );
+        let ws = Workspace::for_test();
+        fleet.update(Action::GoToBottom, &ws.ctx());
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(9));
+        let effects = menu(&mut fleet);
+        assert_eq!(dirs(&effects)[0].0, PathBuf::from("/tmp/elsewhere"));
+        assert!(
+            smart(&effects).is_empty(),
+            "git の repo と分からない所では出さない"
+        );
+    }
+
+    #[test]
+    fn 一覧が空なら窓の_repo_で起動する() {
+        let mut fleet = FleetPanel::default();
+        let ws = Workspace::for_test();
+        let effects = menu(&mut fleet);
+        assert_eq!(dirs(&effects)[0].0, ws.repo.root);
+    }
+
+    #[test]
+    fn git_の外の_dir_では_smart_worktree_を並べない() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            status(vec![live(
+                7,
+                "/tmp/plain",
+                "s7",
+                Status::Working,
+                Owner::Conductor,
+            )]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let effects = menu(&mut fleet);
+        assert_eq!(dirs(&effects).len(), 2);
+        assert!(smart(&effects).is_empty());
+    }
+
+    #[test]
+    fn worktree_の_plus_は押した行の_worktree_で_2_択_repo_の印はその_repo_の_smart_worktree() {
+        let mut fleet = tree_with_sessions(Vec::new(), &[]);
+        let worktree = render::Slot::Worktree(Worktree {
+            path: PathBuf::from("/r/app-b"),
+            label: "feature/b".into(),
+        });
+        let [Effect::PushModal(Modal::Popup(mut popup))] =
+            <[Effect; 1]>::try_from(fleet.click_button(&worktree, (10, 3))).unwrap()
+        else {
+            panic!()
+        };
+        let ws = Workspace::for_test();
+        let two = popup.update(
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+            &ws.ctx(),
+        );
+        assert_eq!(dirs(&two), [(PathBuf::from("/r/app-b"), true)]);
+
+        let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
+        assert_eq!(
+            smart(&fleet.click_button(&repo, (10, 2))),
+            [PathBuf::from("/r/app")]
+        );
+        assert!(
+            fleet
+                .click_button(&render::Slot::Repo(None), (10, 2))
+                .is_empty()
+        );
+    }
+
+    fn many_worktrees(count: usize) -> Workspace {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let worktrees = (0..count)
+            .map(|i| WorktreeHead {
+                path: PathBuf::from(format!("/r/app-{i:02}")),
+                head: Head::Branch(format!("b{i:02}")),
+            })
+            .collect();
+        ws.apply_fleet(
+            FleetStatus {
+                trees: vec![RepoTree {
+                    root: PathBuf::from("/r/app-00"),
+                    name: "app".into(),
+                    worktrees,
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        ws
+    }
+
+    #[test]
+    fn ボタンは本文の右端_3_桁にあり_スクロールしていても描いた行に当たる() {
+        let rect = ratatui::layout::Rect::new(0, 0, 60, 12);
+        let ws = many_worktrees(3);
+        let composed = render::compose(&ws, rect).unwrap();
+        let right = composed.body.right();
+        let y = |slot_index: usize| composed.body.y + u16::try_from(slot_index).unwrap();
+        assert_eq!(
+            render::button_hit(&composed, right - 1, y(0)),
+            Some(&render::Slot::Repo(Some(PathBuf::from("/r/app-00"))))
+        );
+        let Some(render::Slot::Worktree(w)) = render::button_hit(&composed, right - 3, y(2)) else {
+            panic!("worktree の [+]");
+        };
+        assert_eq!(w.label, "b01");
+        assert_eq!(render::button_hit(&composed, right - 4, y(2)), None);
+        assert_eq!(render::button_hit(&composed, right, y(2)), None);
+
+        let mut ws = many_worktrees(30);
+        ws.panels
+            .fleet
+            .update(Action::GoToBottom, &Workspace::for_test().ctx());
+        let composed = render::compose(&ws, rect).unwrap();
+        assert!(composed.offset > 0);
+        let last_row =
+            composed.body.y + u16::try_from(composed.lines.len() - 1 - composed.offset).unwrap();
+        assert!(last_row < composed.body.bottom());
+        let hit = render::button_hit(&composed, composed.body.right() - 1, last_row);
+        let Some(render::Slot::Worktree(w)) = hit else {
+            panic!("{hit:?}");
+        };
+        let drawn = &composed.lines[composed.offset + usize::from(last_row - composed.body.y)];
+        let text: String = drawn.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains(&w.label), "{text}");
+    }
+
+    #[test]
+    fn ボタンは当たり判定と同じ右端_3_桁に描き_狭くて名前が長くても右端に残る() {
+        use unicode_width::UnicodeWidthStr;
+        for width in [60, 20] {
+            let mut ws = Workspace::for_test();
+            let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
+            crate::effect::apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+            ws.apply_fleet(
+                FleetStatus {
+                    trees: vec![RepoTree {
+                        root: PathBuf::from("/r/a-very-long-repository-name"),
+                        name: "a-very-long-repository-name".into(),
+                        worktrees: vec![WorktreeHead {
+                            path: PathBuf::from("/r/a-very-long-repository-name"),
+                            head: Head::Branch("feature/a-very-long-branch-name".into()),
+                        }],
+                    }],
+                    ..Default::default()
+                },
+                Vec::new(),
+            );
+            let composed =
+                render::compose(&ws, ratatui::layout::Rect::new(0, 0, width, 12)).unwrap();
+            for (index, slot) in composed.slots.iter().enumerate() {
+                let button = match slot {
+                    render::Slot::Repo(Some(_)) => render::SMART_BUTTON,
+                    render::Slot::Worktree(_) => render::NEW_BUTTON,
+                    _ => continue,
+                };
+                let text: String = composed.lines[index]
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect();
+                assert_eq!(
+                    text.width(),
+                    usize::from(composed.body.width),
+                    "{width}: {text}"
+                );
+                assert!(text.ends_with(button), "{width}: {text}");
+                let y = composed.body.y + u16::try_from(index - composed.offset).unwrap();
+                assert_eq!(
+                    render::button_hit(&composed, composed.body.right() - 3, y),
+                    Some(slot)
+                );
+            }
+        }
     }
 }

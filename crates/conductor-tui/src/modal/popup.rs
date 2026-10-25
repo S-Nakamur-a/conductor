@@ -22,6 +22,8 @@ pub struct Popup {
     /// 枠の左上。None は画面の中央。
     at: Option<(u16, u16)>,
     selected: usize,
+    /// 数字でだけ答え、ほかのキーでは何もせずに閉じる。
+    numbered: bool,
 }
 
 impl Popup {
@@ -38,10 +40,24 @@ impl Popup {
             choices,
             at,
             selected,
+            numbered: false,
+        }
+    }
+
+    pub fn numbered(title: &'static str, choices: Choices, at: Option<(u16, u16)>) -> Self {
+        Self {
+            numbered: true,
+            ..Self::new(title, choices, at, 0)
         }
     }
 
     pub fn update(&mut self, key: KeyEvent, _ctx: &Ctx) -> Vec<Effect> {
+        if self.numbered {
+            return match key.code {
+                KeyCode::Char(c @ '1'..='9') => self.choose(usize::from(c as u8 - b'1')),
+                _ => vec![Effect::PopModal],
+            };
+        }
         let last = self.choices.len() - 1;
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
@@ -90,10 +106,15 @@ pub fn lines(popup: &Popup, theme: &Theme) -> Vec<Line<'static>> {
         .iter()
         .enumerate()
         .map(|(i, (label, _))| {
-            let chosen = i == popup.selected;
+            let chosen = i == popup.selected && !popup.numbered;
             let style = Style::default().fg(if chosen { theme.accent } else { theme.fg });
+            let mark = match (popup.numbered, chosen) {
+                (true, _) => format!(" {} ", i + 1),
+                (false, true) => " \u{203a} ".to_string(),
+                (false, false) => "   ".to_string(),
+            };
             Line::from(vec![
-                Span::styled(if chosen { " \u{203a} " } else { "   " }, style),
+                Span::styled(mark, style),
                 Span::styled(
                     (*label).to_string(),
                     match chosen {
@@ -179,5 +200,46 @@ mod tests {
             matches!(popup.click(0, 0, SCREEN).as_slice(), [Effect::PopModal]),
             "枠の外"
         );
+    }
+
+    #[test]
+    fn 数字の_popup_は数字でだけ選び_ほかのキーでは何もせずに閉じる() {
+        use crossterm::event::KeyModifiers;
+        let ws = crate::workspace::Workspace::for_test();
+        let numbered = || {
+            Popup::numbered(
+                "New",
+                vec![
+                    ("Changes", Effect::Command(CommandId::ShowDiffList)),
+                    ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
+                ],
+                None,
+            )
+        };
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(matches!(
+            numbered()
+                .update(key(KeyCode::Char('2')), &ws.ctx())
+                .as_slice(),
+            [Effect::PopModal, Effect::Command(CommandId::ShowCommitLog)]
+        ));
+        for code in [
+            KeyCode::Enter,
+            KeyCode::Char('n'),
+            KeyCode::Char('o'),
+            KeyCode::Char('j'),
+            KeyCode::Down,
+            KeyCode::Esc,
+            KeyCode::Char('3'),
+            KeyCode::Char('0'),
+        ] {
+            assert!(
+                matches!(
+                    numbered().update(key(code), &ws.ctx()).as_slice(),
+                    [Effect::PopModal]
+                ),
+                "{code:?}"
+            );
+        }
     }
 }
