@@ -1055,6 +1055,21 @@ mod tests {
     }
 
     #[test]
+    fn linux_の_claude_が書く_tick_数の起動時刻では送らない() {
+        // 実物: Linux の Claude Code 2.1.310 が書く "procStart":"37242291"
+        let dir = tempfile::tempdir().unwrap();
+        let body = record(10, "a", "busy", None).replace(PROC_START, "37242291");
+        write(dir.path(), "10.json", &body);
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        assert_eq!(
+            stop(dir.path(), 10, started_utc(), &procs, SHORT),
+            Stopped::AlreadyGone
+        );
+        assert!(procs.sent.borrow().is_empty());
+    }
+
+    #[test]
     fn 送る直前に終わっていれば終わっていた扱い() {
         let dir = tempfile::tempdir().unwrap();
         let procs = fake_session(dir.path()).refusing(libc::ESRCH);
