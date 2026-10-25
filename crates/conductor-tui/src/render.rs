@@ -47,6 +47,8 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                         crate::panels::revidere::render::order(frame, rect, ws)
                     }
                     Region::RevidereDiff => crate::panels::revidere::render::diff(frame, rect, ws),
+                    Region::FleetList => crate::panels::fleet::render::list(frame, rect, ws),
+                    Region::FleetSession => crate::panels::fleet::render::detail(frame, rect, ws),
                     _ => {}
                 }
             }
@@ -197,6 +199,8 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::TerminalShell => " Shell ".to_string(),
         Region::RevidereOrder => crate::panels::revidere::render::order_title(ws),
         Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
+        Region::FleetList => crate::panels::fleet::render::list_title(&ws.panels.fleet),
+        Region::FleetSession => String::new(),
         _ => String::new(),
     };
     Block::default()
@@ -228,6 +232,7 @@ fn focused_region(ws: &Workspace) -> Region {
         Focus::Viewer => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
+        Focus::Fleet => Region::FleetList,
     }
 }
 
@@ -279,6 +284,11 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
 /// 未割り当てのアクションだけのエントリは落ちるので、発火しないキーを案内しない。
 fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
     let entries: &[(&str, &[Action])] = match focus {
+        Focus::Fleet => &[
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("open", &[Action::Select]),
+            ("back", &[Action::ExitSubPanel]),
+        ],
         Focus::Worktree => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),

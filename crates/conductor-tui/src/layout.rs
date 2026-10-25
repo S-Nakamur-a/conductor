@@ -19,6 +19,9 @@ pub enum Region {
     TerminalShell,
     RevidereOrder,
     RevidereDiff,
+    FleetList,
+    /// 一覧で選んだセッション。
+    FleetSession,
     StatusBar,
 }
 
@@ -89,6 +92,10 @@ pub enum Divider {
 const REVIDERE_ORDER_PCT: u16 = 24;
 const REVIDERE_CLAUDE_PCT: u16 = 38;
 
+/// 一覧の列。1 本 1 行に題まで入る幅で頭打ちにし、残りは右の区画に回す。
+const FLEET_LIST_PCT: u16 = 45;
+const FLEET_LIST_MAX: u16 = 100;
+
 /// 幅の配分。フォーカスされた列が広がるアコーディオン。
 pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     let mut regions = Vec::new();
@@ -101,7 +108,8 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     };
     push_row(Region::TitleBar, 1, &mut y);
     push_row(Region::MenuBar, 1, &mut y);
-    if !ws.chrome.maximized {
+    // 一覧は全 repo のものなので、今の repo の worktree の帯は出さない。
+    if !ws.chrome.maximized && !ws.chrome.fleet_open {
         push_row(Region::WorktreeStrip, 1, &mut y);
     }
     let status_y = area.y + area.height.saturating_sub(1);
@@ -129,7 +137,17 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
 
     // レビューはアコーディオンと重ならない。最大化とも無関係に main を割る。
     // 読みながら Claude に訊くのが主な使い方なので、右端は常に Claude。
-    if ws.reviewing() {
+    if ws.chrome.fleet_open {
+        let list_w = (main.width * FLEET_LIST_PCT / 100).min(FLEET_LIST_MAX);
+        regions.push((
+            Region::FleetList,
+            Rect::new(main.x, main.y, list_w, main.height),
+        ));
+        regions.push((
+            Region::FleetSession,
+            Rect::new(main.x + list_w, main.y, main.width - list_w, main.height),
+        ));
+    } else if ws.reviewing() {
         let claude_w = main.width * REVIDERE_CLAUDE_PCT / 100;
         let reading = Rect::new(main.x, main.y, main.width - claude_w, main.height);
         // 概要は項目を持たないので、読む側は 1 列。
@@ -157,7 +175,7 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         ));
     } else if ws.chrome.maximized {
         match ws.focus {
-            Focus::Worktree | Focus::Explorer => push_explorer(&mut regions, main),
+            Focus::Worktree | Focus::Explorer | Focus::Fleet => push_explorer(&mut regions, main),
             Focus::Editor => regions.push((Region::Editor, main)),
             // Revidere は上で返しているのでここには来ない。
             Focus::Viewer | Focus::Revidere => regions.push((Region::Viewer, main)),

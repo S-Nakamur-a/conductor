@@ -46,6 +46,12 @@ pub enum Effect {
     ToggleViewed(String),
     StepChangedFile(isize),
     SelectWorktree(usize),
+    /// 一覧を開く。どのフォーカスからでも。
+    OpenFleet,
+    /// 一覧を開いていれば閉じて、そのフォーカスへ。人が押したフォーカスのキーの行き先。
+    LeaveFleet(Focus),
+    /// そのセッションの worktree を開いた今の画面に入る。
+    EnterSession(crate::panels::fleet::RowKey),
     NewSession(SessionKind),
     NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す。Prompt の on_submit は関数
@@ -206,11 +212,24 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     )));
                 }
             }
+            Effect::Focus(Focus::Fleet) => ws.focus = Focus::Fleet,
             Effect::Focus(focus) => {
                 ws.chrome.review_open =
                     focus == Focus::Revidere || (ws.reviewing() && focus == Focus::TerminalClaude);
-                ws.focus = focus;
+                ws.set_screen_focus(focus);
             }
+            Effect::OpenFleet => {
+                ws.panels
+                    .fleet
+                    .open(ws.focus, ws.panels.terminal.own_claude_sessions());
+                ws.chrome.fleet_open = true;
+                ws.focus = Focus::Fleet;
+            }
+            Effect::LeaveFleet(focus) => {
+                close_fleet(ws);
+                queue.push_front(Effect::Focus(focus));
+            }
+            Effect::EnterSession(key) => queue.extend(enter_session(ws, svc, key)),
             Effect::Status(level, text) => {
                 ws.chrome.status = Some(StatusMessage {
                     level,
@@ -224,6 +243,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 ws.modals.pop();
             }
             Effect::Spawn(task) => {
+                ws.panels.fleet.note_spawned(&task);
                 ws.panels.worktree.note_spawned(&task);
                 ws.panels.revidere.note_spawned(&task);
                 task.spawn(svc, &ws.task_env());
@@ -232,6 +252,70 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::Quit => ws.should_quit = true,
         }
     }
+}
+
+/// 一覧を出る前の行き先へ戻してから閉じる。続くフォーカスの移動が、一覧の無いときと
+/// 同じ画面から始まるように。
+fn close_fleet(ws: &mut Workspace) {
+    if ws.chrome.fleet_open {
+        ws.focus = ws.panels.fleet.came_from();
+        ws.chrome.fleet_open = false;
+    }
+}
+
+/// 一覧から今の画面に入る。別の repo なら開き直し、worktree はその一覧が届いてから選ぶ。
+fn enter_session(
+    ws: &mut Workspace,
+    svc: &mut Services<TaskResult>,
+    key: crate::panels::fleet::RowKey,
+) -> Vec<Effect> {
+    let warn = |text: String| vec![Effect::Status(StatusLevel::Warning, text)];
+    let crate::panels::fleet::RowKey::Panel(id) = key else {
+        return warn("This Claude runs outside this window; it cannot be opened from here.".into());
+    };
+    let Some(dir) = ws.panels.terminal.session_dir(&id) else {
+        return warn("That session has ended.".into());
+    };
+    if conductor_core::git_engine::GitEngine::open(&dir).is_err() {
+        return warn(format!("{} is no longer a git worktree.", dir.display()));
+    }
+    if let Some(editor) = ws.panels.terminal.editor_name()
+        && ws.worktree_path() != dir
+    {
+        return warn(format!("Close {editor} first."));
+    }
+    let listed = ws.panels.worktree.list().iter().position(|w| w.path == dir);
+    // 一覧を閉じてから worktree の一覧を待つと、届くまでの打鍵が今の worktree の Claude に入る。
+    if listed.is_none() && same_repo(&ws.repo.root, &dir) {
+        return warn("The worktree list is still loading; try again in a moment.".into());
+    }
+    close_fleet(ws);
+    let mut effects = match listed {
+        Some(index) => select_worktree(ws, index),
+        None => {
+            // 別の repo へはレビュー画面を持ち込まない。
+            ws.chrome.review_open = false;
+            ws.focus = Focus::TerminalClaude;
+            let effects = switch_repo(ws, svc, &dir);
+            // switch_repo が worktree のパネルを作り直すので、待ちはその後に立てる。
+            ws.panels.worktree.select_when_listed(dir);
+            effects
+        }
+    };
+    ws.panels.terminal.show_claude_when_selected(&id);
+    effects.push(Effect::Focus(Focus::TerminalClaude));
+    effects
+}
+
+/// 今の repo が git でなければ別の repo とみなす。
+fn same_repo(root: &std::path::Path, dir: &std::path::Path) -> bool {
+    let main = |path: &std::path::Path| {
+        conductor_core::git_engine::GitEngine::open(path)
+            .and_then(|git| git.main_worktree_path())
+            .ok()
+            .and_then(|main| std::fs::canonicalize(main).ok())
+    };
+    main(root).is_some_and(|ours| main(dir) == Some(ours))
 }
 
 /// ファイルを開くのは Viewer だけの仕事だが、フォーカスの移動は跨ぐのでここが持つ。
@@ -284,7 +368,7 @@ fn swap_review(ws: &mut Workspace, leaving: PathBuf, entering: &std::path::Path)
         return Vec::new();
     }
     if ws.reviewing() {
-        ws.chrome.review_open_in.insert(leaving, ws.focus);
+        ws.chrome.review_open_in.insert(leaving, ws.screen_focus());
     }
     match ws.chrome.review_open_in.remove(entering) {
         // Claude へのフォーカスがレビュー画面の一部になるのは、画面が開いている間だけ。
@@ -367,12 +451,10 @@ fn new_session(
             .terminal
             .spawn(kind, resume, &worktree, &ws.repo.root, &ws.config, chrome);
     match result {
-        Ok(()) => {
-            ws.focus = match kind {
-                SessionKind::Shell => Focus::TerminalShell,
-                _ => Focus::TerminalClaude,
-            }
-        }
+        Ok(()) => ws.set_screen_focus(match kind {
+            SessionKind::Shell => Focus::TerminalShell,
+            _ => Focus::TerminalClaude,
+        }),
         Err(e) => {
             ws.chrome.status = Some(StatusMessage {
                 level: StatusLevel::Error,
@@ -424,6 +506,7 @@ fn switch_repo(
         ws.index.semantic.abort_regeneration(&repo);
     }
     let stopped = ws.panels.revidere.abort();
+    ws.panels.fleet.forget_in_flight();
     let known = std::mem::take(&mut ws.repo.known);
     let name = opened.name.clone();
     ws.repo = RepoState { known, ..opened };

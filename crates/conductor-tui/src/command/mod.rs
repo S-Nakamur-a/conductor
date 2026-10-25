@@ -5,7 +5,7 @@ mod exec;
 mod tests;
 
 pub use exec::{
-    Enabled, analyze_worktree, confirm_requested_analyze, drag_divider, enabled, execute,
+    Enabled, analyze_worktree, by_hand, confirm_requested_analyze, drag_divider, enabled, execute,
     persist_layout,
 };
 
@@ -13,6 +13,7 @@ use conductor_core::keymap::{Action, KeyContext, KeyMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandId {
+    FocusSessions,
     FocusWorktree,
     FocusExplorer,
     FocusViewer,
@@ -154,6 +155,7 @@ macro_rules! commands {
 
 // 折りたたみの 2 打鍵目は再割り当てできる Action を持たないので、キーはラベルに書く。
 commands! {
+    FocusSessions, "Focus: Sessions", Navigation, Some(Action::FocusSessions), "sessions claude list all repositories fleet waiting";
     FocusWorktree, "Focus: Worktree Panel", Navigation, Some(Action::FocusWorktree), "panel switch";
     FocusExplorer, "Focus: Explorer Panel", Navigation, Some(Action::FocusExplorer), "panel files";
     FocusViewer, "Focus: Viewer Panel", Navigation, Some(Action::FocusViewer), "panel file view";

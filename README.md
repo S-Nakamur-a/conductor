@@ -80,6 +80,19 @@ Click one to jump to it, or `[+]` to create one. The dirty count is filled in
 after the list appears — `~?` means it is still being counted, and deleting a
 worktree in that state asks as if there were uncommitted changes.
 
+### Sessions
+
+conductor opens on **Sessions**: every Claude Code session running on the machine,
+in any repository and in any window or terminal, one line each, grouped by
+repository, with the ones waiting for you (a question or a permission) repeated at
+the top. A line shows the state (waiting / working / finished and not yet looked at
+/ idle), how long it has been in it, the session's title and how much context it
+holds. `Enter` opens that session's worktree in the main screen with the session in
+the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
+another conductor window or a plain terminal runs are listed with their state, but
+cannot be opened or typed into from here. The states come from the files Claude
+Code writes under `~/.claude/sessions/`.
+
 ### Keybindings
 
 Press **?** in the app for the full list; **Ctrl+p** (or **:** outside a
@@ -90,7 +103,8 @@ command by name.
 |---|---|
 | **Tab / Shift+Tab** | cycle panel focus (non-terminal panels) |
 | **Alt+h / Alt+l** | cycle panel focus from anywhere, terminals included |
-| **Alt+1…6** (or **⌘+1…6**) | focus a specific panel |
+| **Alt+1** (or **⌘+1**) | Sessions — every Claude on the machine |
+| **Alt+2…6** (or **⌘+2…6**) | focus a specific panel (**Ctrl+w** the worktree strip) |
 | **Ctrl+Alt+Z** / **Ctrl+Alt+Arrow** | maximize / resize the focused panel |
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |
 | **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell |

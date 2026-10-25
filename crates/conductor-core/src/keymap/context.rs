@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyContext {
     Global,
+    Fleet,
     Worktree,
     Explorer,
     ExplorerDiffList,
@@ -19,7 +20,8 @@ pub enum KeyContext {
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 12] = [
+    pub const PANELS: [KeyContext; 13] = [
+        KeyContext::Fleet,
         KeyContext::Worktree,
         KeyContext::Explorer,
         KeyContext::ExplorerDiffList,
@@ -37,6 +39,7 @@ impl KeyContext {
     pub(crate) fn layer_name(self) -> &'static str {
         match self {
             KeyContext::Global => keymap_suite::GLOBAL_LAYER,
+            KeyContext::Fleet => "fleet",
             KeyContext::Worktree => "worktree",
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
