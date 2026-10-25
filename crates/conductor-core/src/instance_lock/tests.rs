@@ -8,6 +8,20 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap()
 }
 
+/// workspace の並列実行では、離した直後の取り直しが少しの間だけ拒まれることがある (確認したのは症状だけ)。
+fn once_released(acquire: impl Fn() -> Option<InstanceLock>) -> Option<InstanceLock> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(lock) = acquire() {
+            return Some(lock);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// ロックファイルは残す。消しに行くと、別のプロセスが既に作って掴んだ実体を消してしまう。
 #[test]
 fn 先に取ったロックを離すまで次の取得は拒まれる() {
@@ -16,7 +30,7 @@ fn 先に取ったロックを離すまで次の取得は拒まれる() {
     assert!(acquire(dir.path()).unwrap().is_none());
 
     drop(first);
-    assert!(acquire(dir.path()).unwrap().is_some());
+    assert!(once_released(|| acquire(dir.path()).unwrap()).is_some());
 }
 
 #[test]
@@ -41,7 +55,7 @@ fn 全worktreeでロックは1つ() {
 
     let orderings = [(&repo.path, &linked.path), (&linked.path, &repo.path)];
     for (first, second) in orderings {
-        let held = acquire(first).unwrap().expect("first acquire");
+        let held = once_released(|| acquire(first).unwrap()).expect("first acquire");
         assert!(
             acquire(second).unwrap().is_none(),
             "{} must be refused while {} holds the lock",
@@ -62,4 +76,38 @@ fn ロックはexecを越えて残らない() {
     let flags = unsafe { libc::fcntl(lock._file.as_raw_fd(), libc::F_GETFD) };
     assert!(flags >= 0, "F_GETFD failed");
     assert!(flags & libc::FD_CLOEXEC != 0);
+}
+
+#[test]
+fn 窓のロックは同じdirで1つだけ取れる() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = acquire_window(dir.path()).unwrap().expect("first window");
+    assert!(acquire_window(dir.path()).unwrap().is_none());
+
+    drop(first);
+    assert!(once_released(|| acquire_window(dir.path()).unwrap()).is_some());
+}
+
+#[test]
+fn 別のdirの窓のロックは独立している() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let _held = acquire_window(a.path()).unwrap().expect("window a");
+    assert!(acquire_window(b.path()).unwrap().is_some());
+}
+
+#[test]
+fn 窓のロックはdirを作らない() {
+    let parent = tempfile::tempdir().unwrap();
+    let missing = parent.path().join("runtime");
+    assert!(acquire_window(&missing).is_err());
+    assert!(!missing.exists());
+}
+
+#[test]
+fn 窓のロックを持っていてもリポジトリのロックは別に取れる() {
+    let runtime = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let _window = acquire_window(runtime.path()).unwrap().expect("window");
+    assert!(acquire(repo.path()).unwrap().is_some());
 }

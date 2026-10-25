@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 mod settings;
 
 pub use settings::{
-    ensure_runtime_dir, install_settings, pty_host_socket_path, socket_path, socket_pointer_path,
+    ensure_runtime_dir, install_settings, pty_host_socket_path, pty_host_sockets, socket_path,
+    socket_pointer_path,
 };
 
 pub const PANEL_ID_ENV: &str = "CONDUCTOR_PANEL_ID";

@@ -59,6 +59,25 @@ pub fn pty_host_socket_path(repo_root: &Path) -> PathBuf {
     runtime_dir().join(format!("{}.pty.sock", repo_key(repo_root)))
 }
 
+/// dir で待ち受けている PTY ホストのソケット。同じ dir の cc-notify ソケットは 1 行のテキストしか
+/// 読まないので混ぜない。
+pub fn pty_host_sockets(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut sockets: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".pty.sock"))
+        })
+        .collect();
+    sockets.sort();
+    sockets
+}
+
 /// ソケットの居場所を書き残す先。環境変数を受け取れないクライアント (プラグインの
 /// シェルスクリプト) はここを読んで宛先を知る。
 pub fn socket_pointer_path(repo_root: &Path) -> PathBuf {
@@ -203,6 +222,28 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("valid json");
         assert!(v["hooks"]["SessionStart"][0]["hooks"][0]["command"].is_string());
+    }
+
+    #[test]
+    fn ホストのソケットだけを並べてcc_notifyのソケットは拾わない() {
+        let dir = tempfile::tempdir().expect("tmp runtime dir");
+        let _listeners: Vec<_> = [
+            "0afbdde8a6d22e5b.pty.sock",
+            "0afbdde8a6d22e5b.sock",
+            "e3b76496f6edb93a.pty.sock",
+        ]
+        .iter()
+        .map(|name| std::os::unix::net::UnixListener::bind(dir.path().join(name)).expect("bind"))
+        .collect();
+        std::fs::write(dir.path().join("window.lock"), b"").expect("lock file");
+
+        assert_eq!(
+            pty_host_sockets(dir.path()),
+            vec![
+                dir.path().join("0afbdde8a6d22e5b.pty.sock"),
+                dir.path().join("e3b76496f6edb93a.pty.sock"),
+            ]
+        );
     }
 
     #[test]

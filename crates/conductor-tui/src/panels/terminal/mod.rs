@@ -155,6 +155,11 @@ impl TerminalPanel {
         self.pty.attach(repo_root, version, on_notify)
     }
 
+    /// ほかのリポジトリのホストにもつなぐ。返すのはつなげなかった数。
+    pub fn attach_other_hosts(&mut self, sockets: &[PathBuf]) -> usize {
+        self.pty.attach_others(sockets)
+    }
+
     /// どの worktree のものかを問わず、この窓で動いている Claude。一覧が読む。
     pub fn own_claude_sessions(&self) -> Vec<crate::panels::fleet::OwnSession> {
         (0..self.pty.sessions().len())
