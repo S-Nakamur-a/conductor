@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use conductor_core::cc_hook::statusline::Usage;
 use conductor_core::claude_log::summary::{Summary, Title};
 use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
 use conductor_core::git_engine::WorktreeHead;
@@ -65,6 +66,8 @@ pub struct Row {
     pub state: State,
     pub since: Option<SystemTime>,
     pub context_tokens: Option<u64>,
+    /// statusLine の写しがあるセッションだけ。
+    pub context_percent: Option<u8>,
     pub place: Place,
     pub working_dir: PathBuf,
     /// 入力待ちの欄に重ねた方の行。
@@ -135,6 +138,7 @@ pub struct FleetStatus {
     pub trees: Vec<RepoTree>,
     /// セッションの working_dir → それを含む worktree のパス。
     pub placement: HashMap<PathBuf, PathBuf>,
+    pub usage: Usage,
 }
 
 const OUTSIDE_GROUP: &str = "外の端末";
@@ -148,6 +152,7 @@ pub struct FleetPanel {
     seen: HashMap<RowKey, SystemTime>,
     trees: Vec<RepoTree>,
     placement: HashMap<PathBuf, PathBuf>,
+    usage: Usage,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
     /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
@@ -192,6 +197,10 @@ impl FleetPanel {
     /// セッションが無くても木を引き続ける repo。
     pub fn kept_roots(&self) -> Vec<PathBuf> {
         self.kept_roots.iter().cloned().collect()
+    }
+
+    pub fn usage(&self) -> &Usage {
+        &self.usage
     }
 
     pub fn came_from(&self) -> Focus {
@@ -293,6 +302,7 @@ impl FleetPanel {
             .extend(status.trees.iter().map(|t| t.root.clone()));
         self.trees = status.trees;
         self.placement = status.placement;
+        self.usage = status.usage;
         self.set_own(own);
         if listing {
             self.mark_selected(now);
@@ -616,6 +626,9 @@ impl FleetPanel {
                 Title::None => None,
             }),
             context_tokens: summary.and_then(|s| s.context_tokens),
+            context_percent: session_id
+                .and_then(|id| self.usage.context.get(id))
+                .map(|pct| pct.round().clamp(0.0, 100.0) as u8),
             key,
             state,
             since,

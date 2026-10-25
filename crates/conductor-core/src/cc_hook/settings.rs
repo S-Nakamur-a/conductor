@@ -25,7 +25,9 @@ pub fn install_settings(repo_root: &Path) -> Result<PathBuf> {
     let hook = |sub: &str| serde_json::json!([{ "hooks": [{ "type": "command", "command": format!("{exe} {sub}") }] }]);
     // active/waiting をプラグインでなく本体から宣言するのは、あれが別途インストール
     // した人にしか無いため。PostToolUse は承認ダイアログの waiting から抜ける唯一の口。
+    // statusLine は 5h / 7d の使用量が来る唯一の口。
     let settings = serde_json::json!({
+        "statusLine": { "type": "command", "command": format!("{exe} cc-statusline") },
         "hooks": {
             "SessionStart": hook("cc-hook"),
             "UserPromptSubmit": hook("cc-signal active"),
@@ -123,7 +125,7 @@ fn ensure_private_dir(dir: &Path) -> Result<()> {
 
 // XDG_RUNTIME_DIR を先に見るのは、/tmp だと放置ファイルの掃除にライブのソケットを
 // 持っていかれるため。
-fn runtime_dir() -> PathBuf {
+pub(super) fn runtime_dir() -> PathBuf {
     let from_env = ["XDG_RUNTIME_DIR", "TMPDIR"]
         .into_iter()
         .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
@@ -186,6 +188,17 @@ mod tests {
                 .ends_with(" cc-hook"),
             "{hook:?}"
         );
+    }
+
+    #[test]
+    fn 設定に_statusline_の中継が宣言される() {
+        let repo = tempfile::tempdir().expect("tmp repo");
+        let path = install_settings(repo.path()).expect("write settings");
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("valid json");
+        assert_eq!(v["statusLine"]["type"], "command");
+        let command = v["statusLine"]["command"].as_str().expect("command");
+        assert!(command.ends_with(" cc-statusline"), "{command}");
     }
 
     #[test]

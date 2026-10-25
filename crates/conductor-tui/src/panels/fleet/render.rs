@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
+use conductor_core::cc_hook::statusline::{Limit, Usage};
 use conductor_core::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -18,8 +19,40 @@ const UNTITLED: &str = "(まだ何も頼んでいない)";
 
 pub const LIST_TITLE: &str = " Sessions ";
 
-/// 一覧の上に固定する 1 行。状態ごとの本数を、行頭の記号と同じ色で言葉にする。
-pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
+/// 一覧の上に固定する 1 行。右端に 5h / 7d を置き、幅が足りなければ残り時間、7d、0 本の状態項目、
+/// 使用量の順に落とす。全部 0 本なら状態項目は省かない — 省くと何の数か分からなくなる。
+pub fn summary_line(
+    fleet: &FleetPanel,
+    theme: &Theme,
+    now: SystemTime,
+    width: usize,
+) -> Line<'static> {
+    let all = state_spans(fleet, theme, false);
+    let nonzero = state_spans(fleet, theme, true);
+    let usage = usage_options(fleet.usage(), theme, now);
+    let mut candidates: Vec<(&[Span], &[Span])> = usage
+        .iter()
+        .map(|u| (all.as_slice(), u.as_slice()))
+        .collect();
+    if let Some(narrowest) = usage.last()
+        && !nonzero.is_empty()
+    {
+        candidates.push((nonzero.as_slice(), narrowest.as_slice()));
+    }
+    let spans_width = |spans: &[Span]| spans.iter().map(Span::width).sum::<usize>();
+    let (states, right) = candidates
+        .into_iter()
+        .find(|(states, right)| spans_width(states) + 1 + spans_width(right) <= width)
+        .unwrap_or((all.as_slice(), &[]));
+    let pad = width.saturating_sub(spans_width(states) + spans_width(right));
+    let mut spans = states.to_vec();
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.extend_from_slice(right);
+    Line::from(spans)
+}
+
+/// 状態ごとの本数を、行頭の記号と同じ色で言葉にする。
+fn state_spans(fleet: &FleetPanel, theme: &Theme, hide_zero: bool) -> Vec<Span<'static>> {
     let shown = [
         State::Waiting(Ask::Question),
         State::Working,
@@ -38,8 +71,11 @@ pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
         counts[slot] += 1;
     }
     let mut spans = Vec::new();
-    for (i, (state, count)) in shown.iter().zip(counts).enumerate() {
-        if i > 0 {
+    for (state, count) in shown.iter().zip(counts) {
+        if hide_zero && count == 0 {
+            continue;
+        }
+        if !spans.is_empty() {
             spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
         }
         // 待機の記号は hint 色なので、そのままだと 0 本と見分けがつかない。
@@ -59,7 +95,7 @@ pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
             Style::default().fg(color),
         ));
     }
-    Line::from(spans)
+    spans
 }
 
 /// 一覧の本文の 1 行が何か。描画とクリックの当たり判定が同じ並びを読む。
@@ -190,10 +226,13 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         return;
     };
     if let Some(summary_rect) = composed.summary {
-        frame.render_widget(
-            Paragraph::new(summary(&ws.panels.fleet, &ws.theme)),
-            summary_rect,
+        let line = summary_line(
+            &ws.panels.fleet,
+            &ws.theme,
+            SystemTime::now(),
+            usize::from(summary_rect.width),
         );
+        frame.render_widget(Paragraph::new(line), summary_rect);
     }
     frame.render_widget(
         Paragraph::new(Line::styled(
@@ -365,6 +404,66 @@ fn inner(rect: Rect) -> Rect {
     )
 }
 
+/// 5h / 7d の表し方を、広いものから順に。
+fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<'static>>> {
+    let limits: Vec<(&str, Limit)> = [("5h", usage.five_hour), ("7d", usage.seven_day)]
+        .into_iter()
+        .filter_map(|(label, limit)| Some((label, limit?)))
+        .collect();
+    let compose = |count: usize, countdown: bool| -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        for (i, (label, limit)) in limits.iter().take(count).enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
+            }
+            let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
+            spans.push(Span::styled(
+                format!("{label} "),
+                Style::default().fg(theme.hint),
+            ));
+            spans.push(Span::styled(
+                bar(pct, 8),
+                Style::default().fg(level(theme, pct)),
+            ));
+            let mut text = format!(" {pct}%");
+            if countdown {
+                text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
+            }
+            spans.push(Span::styled(text, Style::default().fg(theme.hint)));
+        }
+        spans
+    };
+    if limits.is_empty() {
+        return Vec::new();
+    }
+    [(2, true), (2, false), (1, false)]
+        .into_iter()
+        .map(|(count, countdown)| compose(count, countdown))
+        .collect()
+}
+
+fn bar(pct: u8, cells: usize) -> String {
+    let filled = usize::from(pct) * cells / 100;
+    format!("{}{}", "█".repeat(filled), "░".repeat(cells - filled))
+}
+
+/// statusline と同じしきい値。
+fn level(theme: &Theme, pct: u8) -> Color {
+    match pct {
+        90.. => theme.error,
+        70.. => theme.warning,
+        _ => theme.accent,
+    }
+}
+
+fn countdown_text(secs: i64) -> String {
+    match secs {
+        86_400.. => format!("{}d{}h", secs / 86_400, secs % 86_400 / 3600),
+        3600.. => format!("{}h{}m", secs / 3600, secs % 3600 / 60),
+        _ => format!("{}m", secs.max(0) / 60),
+    }
+}
+
 /// 本文の右端 3 桁のボタン。当たり判定は [button_hit] が同じ桁を読む。
 pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
@@ -484,7 +583,11 @@ fn row_line(
         " ".repeat(6usize.saturating_sub(age.width())),
         tag(row.place)
     );
-    let right = row.context_tokens.map(tokens_text).unwrap_or_default();
+    let (right, right_color) = match (row.context_percent, row.context_tokens) {
+        (Some(pct), _) => (format!("{} {pct}%", bar(pct, 4)), level(theme, pct)),
+        (None, Some(tokens)) => (tokens_text(tokens), theme.hint),
+        (None, None) => (String::new(), theme.hint),
+    };
     let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
     let room = (width as usize).saturating_sub(indent + 2 + left.width() + right.width() + 2);
     let title = clip(&title, room);
@@ -504,7 +607,7 @@ fn row_line(
             Span::styled(left, Style::default().fg(theme.hint)),
             Span::styled(title, Style::default().fg(title_fg)),
             Span::raw(" ".repeat(pad + 2)),
-            Span::styled(right, Style::default().fg(theme.hint)),
+            Span::styled(right, Style::default().fg(right_color)),
         ],
         theme,
         selected,

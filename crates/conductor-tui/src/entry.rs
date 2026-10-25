@@ -326,6 +326,11 @@ fn cli_fast_path(version: &str) -> Option<Result<()>> {
                 "cc-signal expects active or waiting, got {other:?}"
             )),
         }),
+        "cc-statusline" => Some(cc_hook::statusline::run().map(|code| {
+            if code != 0 {
+                std::process::exit(code);
+            }
+        })),
         "index" => Some(build_index()),
         "pty-host" => Some(run_pty_host(version)),
         _ => None,
@@ -370,6 +375,7 @@ Usage: conductor [REPO_PATH] [--second-window]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
        conductor cc-signal <active|waiting>
+       conductor cc-statusline
        conductor pty-host [REPO_PATH]
 
   REPO_PATH    Git repository to open (defaults to the current directory)
@@ -398,6 +404,12 @@ Commands:
                conductor whether the panel in this directory is working or
                waiting for you, which drives the worktree monitor strip. Wired
                up the same way as cc-hook; not usually run by hand.
+
+  cc-statusline
+               Claude Code statusLine. Keeps a copy of the status JSON (context
+               and 5h / 7d usage) for the session list, then runs your own
+               statusLine command with the same input and prints its output.
+               Wired up the same way as cc-hook; not usually run by hand.
 
   pty-host     Hold the repository's Claude Code and shell sessions so they
                keep running after the window closes. Started by conductor

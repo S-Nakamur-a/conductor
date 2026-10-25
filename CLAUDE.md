@@ -90,6 +90,19 @@ stays "waiting" while the panel is working. **There is no hook-less fallback** �
 the old log-shape inference is gone, so a panel whose hook stays quiet keeps its
 spawn-time session id.
 
+**The same settings file also declares `statusLine`**, as `conductor cc-statusline`
+(`cc_hook/statusline.rs`), because the 5h / 7d usage reaches nothing on disk — only a
+statusLine's stdin (measured on 2.1.310, grepped `~/.claude` for it). It writes the JSON
+to `<runtime dir>/statusline/<session id>.json` for the session list, then runs the
+user's own statusLine with the same stdin. A `--settings` statusLine replaces the
+user's (measured), so cc-statusline looks the user's up on every run
+(`.claude/settings.local.json`, `.claude/settings.json` in the stdin's
+`workspace.project_dir`, then `$CLAUDE_CONFIG_DIR` or `~/.claude`): fixing it at spawn
+would hide a later edit from conductor's panels only, while plain Claude picks it up.
+`padding` and `refreshInterval` are not carried over. `CONDUCTOR_IN_STATUSLINE` marks
+the relayed child, so a user command that calls conductor back is not relayed twice;
+`pty/spawn.rs` removes an inherited one.
+
 **The socket does not live in `.conductor/`.** A worktree path there overruns
 `sun_path` (104 bytes on macOS) and neither `bind` nor `connect` gets through, so
 it sits under `$XDG_RUNTIME_DIR` / `$TMPDIR` (falling back to `/tmp/conductor-<uid>`),
@@ -520,6 +533,7 @@ Nothing else may follow it out: the rest of git stays on `git2`.
 - **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
 - **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **PTY host log:** `<main worktree>/.conductor/pty-host.log` — the host's stderr; its socket sits beside the cc-notify one
+- **statusLine copies:** `<runtime dir>/statusline/<session id>.json` — the last statusLine input of each Claude conductor started; the session list reads context use and 5h / 7d from them. Never cleaned up (about 2KB each, under `$TMPDIR`)
 - **Unknown tools:** `<repo-root>/.conductor/unknown-tools.log` — one line per tool name `claude_log::classify` did not recognise, so a transcript that renders thin is traceable to the tool the table is missing (`mcp__*` names are excluded)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 

@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use conductor_core::ai_caller::{self, AiCaller};
+use conductor_core::cc_hook::statusline;
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
 use conductor_core::config::{self, ApiConfig, LayoutConfig, ReviewConfig};
@@ -1239,6 +1240,7 @@ fn fleet_status(
         summaries,
         trees,
         placement,
+        usage: statusline::read(&statusline::dir(), std::time::SystemTime::now()),
     }
 }
 

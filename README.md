@@ -89,9 +89,18 @@ question or a permission) repeated at the top. Every worktree of the repository 
 listed, those with no session too, and a repository stays listed until the window
 closes once a session has run in it, or once this window opened it. Sessions in a plain
 terminal are listed together last. The line above the list counts the sessions in each
-state. A line shows the state (waiting / working / finished and not yet looked at
+state, and at its right end shows the 5h and 7d usage limits with the time left until
+each resets. A line shows the state (waiting / working / finished and not yet looked at
 / idle), how long it has been in it, the session's title and how much context it
-holds. A session this window runs shows live on the right: **Tab** steps into it to
+holds — as a bar and a percentage for sessions conductor started, as a token count for
+the rest. Both come from Claude Code's statusLine: sessions conductor starts run
+`conductor cc-statusline` as theirs, which keeps a copy and then runs your own
+statusLine command with the same input. It is re-read from your settings every time
+Claude redraws the status line, so an edit shows from the next redraw; its `padding`
+and `refreshInterval` are not carried over. Usage appears once a session conductor
+started has drawn its status line.
+
+A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
 there resizes it, so the Claude panel loses what had scrolled off (the transcript view
 still has it). `Enter` opens that session's worktree in the main screen with the session in

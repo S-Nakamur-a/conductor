@@ -61,7 +61,14 @@ impl PtyStore {
         // 前に決める。フックはこの id を名乗って自分の session id を報告してくる。
         let panel_id = Uuid::new_v4().to_string();
         let kind = req.launch.kind();
-        let (cmd, claude_session_id) = build_command(&req.launch, &panel_id);
+        let (mut cmd, claude_session_id) = build_command(&req.launch, &panel_id);
+        if let Launch::ClaudeCode {
+            session_hooks: true,
+            ..
+        } = req.launch
+        {
+            relay_statusline(&mut cmd);
+        }
         let spawned_at = SystemTime::now();
         let info = SessionInfo {
             id: panel_id.clone(),
@@ -103,6 +110,13 @@ impl PtyStore {
         });
         Ok(self.sessions.len() - 1)
     }
+}
+
+/// 窓の環境から継いだ中継の印は消す。残ると cc-statusline がユーザの statusLine を走らせない。
+pub(super) fn relay_statusline(cmd: &mut CommandBuilder) {
+    use cc_hook::statusline;
+    cmd.env_remove(statusline::RELAYING_ENV);
+    cmd.env(statusline::DIR_ENV, statusline::dir());
 }
 
 /// コマンド行と、Claude なら書き込み先になる session id。
