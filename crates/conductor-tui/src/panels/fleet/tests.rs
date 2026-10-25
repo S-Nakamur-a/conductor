@@ -2019,9 +2019,9 @@ mod tree {
             at(200),
         );
         let theme = Theme::from_name("catppuccin-mocha");
-        let line = render::summary(&fleet, &theme);
+        let line = render::summary_line(&fleet, &theme, std::time::SystemTime::now(), 60);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "入力待ち 1 · 作業中 1 · 完了 0 · 待機 0");
+        assert_eq!(text.trim_end(), "入力待ち 1 · 作業中 1 · 完了 0 · 待機 0");
         let color_of = |word: &str| {
             line.spans
                 .iter()
@@ -2041,7 +2041,7 @@ mod tree {
             at(200),
         );
         fleet.update(Action::GoToBottom, &Workspace::for_test().ctx());
-        let line = render::summary(&fleet, &theme);
+        let line = render::summary_line(&fleet, &theme, std::time::SystemTime::now(), 60);
         let idle = line.spans.iter().find(|s| s.content.starts_with("待機"));
         assert_eq!(
             idle.and_then(|s| s.style.fg),
@@ -2346,5 +2346,156 @@ mod launch {
                 );
             }
         }
+    }
+}
+
+mod usage {
+    use conductor_core::cc_hook::statusline::{Limit, Usage};
+    use conductor_core::theme::Theme;
+    use ratatui::text::Line;
+    use unicode_width::UnicodeWidthStr;
+
+    use super::*;
+
+    const NOW: u64 = 1_792_942_000;
+
+    fn limits(five: f64, seven: f64) -> Usage {
+        Usage {
+            five_hour: Some(Limit {
+                used_percentage: five,
+                resets_at: (NOW + 2 * 3600 + 13 * 60) as i64,
+            }),
+            seven_day: Some(Limit {
+                used_percentage: seven,
+                resets_at: (NOW + 3 * 86_400 + 4 * 3600) as i64,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn now() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(NOW)
+    }
+
+    fn fleet_with(usage: Usage, live: Vec<LiveSession>) -> FleetPanel {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live,
+                usage,
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet
+    }
+
+    fn text(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn squeeze(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn 要約行は詰めるほど残り時間_7d_0_本の状態項目_使用量の順に消え_戻らない() {
+        let theme = Theme::from_name("catppuccin-mocha");
+        let fleet = fleet_with(
+            limits(42.0, 61.0),
+            vec![live(7, "/r/a", "s7", Status::Working, Owner::Conductor)],
+        );
+        let line = |width| squeeze(&text(&render::summary_line(&fleet, &theme, now(), width)));
+        let stages = [
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42% 2h13m · 7d ████░░░░ 61% 3d4h",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42% · 7d ████░░░░ 61%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42%",
+            "作業中 1 5h ███░░░░░ 42%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0",
+        ];
+        let mut seen = Vec::new();
+        for width in (1..=120).rev() {
+            let got = line(width);
+            if seen.last() != Some(&got) {
+                seen.push(got);
+            }
+        }
+        assert_eq!(seen, stages);
+        let full = render::summary_line(&fleet, &theme, now(), 120);
+        assert_eq!(text(&full).width(), 120, "右端まで埋める");
+    }
+
+    #[test]
+    fn 全部_0_本なら狭くても状態項目を省かず使用量を落とす() {
+        let theme = Theme::from_name("catppuccin-mocha");
+        let fleet = fleet_with(limits(42.0, 61.0), Vec::new());
+        let narrow = squeeze(&text(&render::summary_line(&fleet, &theme, now(), 45)));
+        assert_eq!(narrow, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
+    }
+
+    #[test]
+    fn 使用量が無ければ状態項目だけ() {
+        let theme = Theme::from_name("catppuccin-mocha");
+        let fleet = fleet_with(Usage::default(), Vec::new());
+        let line = squeeze(&text(&render::summary_line(&fleet, &theme, now(), 200)));
+        assert_eq!(line, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
+    }
+
+    #[test]
+    fn 使用量の色は_70_と_90_で切り替わる() {
+        let theme = Theme::from_name("catppuccin-mocha");
+        let bar_color = |pct: f64| {
+            let fleet = fleet_with(limits(pct, 0.0), Vec::new());
+            let line = render::summary_line(&fleet, &theme, now(), 200);
+            line.spans
+                .iter()
+                .find(|s| s.content.contains('░') || s.content.contains('█'))
+                .and_then(|s| s.style.fg)
+        };
+        assert_eq!(bar_color(69.0), Some(theme.accent));
+        assert_eq!(bar_color(70.0), Some(theme.warning));
+        assert_eq!(bar_color(89.0), Some(theme.warning));
+        assert_eq!(bar_color(90.0), Some(theme.error));
+    }
+
+    #[test]
+    fn 使用率が分かるセッションの行はバーと百分率_分からなければトークン数() {
+        let mut context = std::collections::HashMap::new();
+        context.insert("s7".to_string(), 42.4);
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = fleet_with(
+            Usage {
+                context,
+                ..Default::default()
+            },
+            vec![
+                live(7, "/r/a", "s7", Status::Working, Owner::Conductor),
+                live(8, "/r/a", "s8", Status::Working, Owner::Conductor),
+            ],
+        );
+        let rows = ws.panels.fleet.visual_rows();
+        assert_eq!(rows[0].context_percent, Some(42));
+        assert_eq!(rows[1].context_percent, None);
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let bar = composed
+            .lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content.contains('%'))
+            .expect("使用率の行");
+        assert_eq!(bar.content, "█░░░ 42%");
+        assert_eq!(bar.style.fg, Some(ws.theme.accent));
+        assert_eq!(
+            composed
+                .lines
+                .iter()
+                .filter(|l| l.spans.iter().any(|s| s.content.contains('%')))
+                .count(),
+            1,
+            "使用率の分からない行に % は出ない"
+        );
     }
 }

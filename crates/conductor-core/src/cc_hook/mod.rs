@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 mod settings;
+pub mod statusline;
 
 pub use settings::{
     ensure_runtime_dir, install_settings, pty_host_socket_path, pty_host_sockets, socket_path,

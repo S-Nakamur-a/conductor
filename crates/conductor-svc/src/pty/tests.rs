@@ -7,7 +7,7 @@ use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence}
 use super::locale::{utf8_chunks, utf8_locale_overrides};
 use super::reader::{note_shown_cursor, trim_raw_history};
 use super::screen::rebuild_parser;
-use super::spawn::{Launch, build_command};
+use super::spawn::{Launch, build_command, relay_statusline};
 
 #[test]
 fn 隠している間のカーソル位置は取り込まない() {
@@ -346,4 +346,17 @@ fn フックを降りてもpanel_idは渡しソケットは渡さない() {
         "継いだ宛先を消さないと 2 つ目のウィンドウのパネルが先客のソケットを持つ"
     );
     std::fs::write(sentinel, "").unwrap();
+}
+
+#[test]
+fn claude_には写しの置き場を渡し_窓から継いだ中継の印は消す() {
+    use conductor_core::cc_hook::statusline;
+    let mut cmd = portable_pty::CommandBuilder::new("claude");
+    cmd.env(statusline::RELAYING_ENV, "1");
+    relay_statusline(&mut cmd);
+    assert_eq!(cmd.get_env(statusline::RELAYING_ENV), None);
+    assert_eq!(
+        cmd.get_env(statusline::DIR_ENV),
+        Some(statusline::dir().as_os_str())
+    );
 }
