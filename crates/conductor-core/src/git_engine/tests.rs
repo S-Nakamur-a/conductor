@@ -1232,3 +1232,57 @@ fn 大小が衝突するエントリは削除扱いにしない() {
     assert_eq!(map.status("Instagram.png"), None);
     assert_eq!(map.status("instagram.png"), None);
 }
+
+#[test]
+fn worktree_heads_はmainを先頭にブランチ名と短いshaと生まれていないブランチ名を返す() {
+    let repo = TestRepo::with_base_commit();
+    let feature = repo.linked_worktree("feature");
+    let detached = repo.linked_worktree("detached");
+    let oid = detached.repo.head().unwrap().target().unwrap();
+    detached.repo.set_head_detached(oid).unwrap();
+
+    let heads = repo.engine().worktree_heads().unwrap();
+    let mut got: Vec<(PathBuf, Head)> = heads.into_iter().map(|h| (h.path, h.head)).collect();
+    got[1..].sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        got,
+        [
+            (
+                repo.path.canonicalize().unwrap(),
+                Head::Branch("main".into())
+            ),
+            (
+                detached.path.canonicalize().unwrap(),
+                Head::Detached(oid.to_string()[..7].into())
+            ),
+            (
+                feature.path.canonicalize().unwrap(),
+                Head::Branch("feature".into())
+            ),
+        ]
+    );
+
+    let fresh = TestRepo::new();
+    assert_eq!(
+        fresh.engine().worktree_heads().unwrap(),
+        [WorktreeHead {
+            path: fresh.path.canonicalize().unwrap(),
+            head: Head::Unborn("main".into()),
+        }]
+    );
+}
+
+#[test]
+fn worktree_heads_はdirの消えたworktreeを飛ばす() {
+    let repo = TestRepo::with_base_commit();
+    let gone = repo.linked_worktree("gone");
+    fs::remove_dir_all(&gone.path).unwrap();
+    let paths: Vec<PathBuf> = repo
+        .engine()
+        .worktree_heads()
+        .unwrap()
+        .into_iter()
+        .map(|h| h.path)
+        .collect();
+    assert_eq!(paths, [repo.path.canonicalize().unwrap()]);
+}

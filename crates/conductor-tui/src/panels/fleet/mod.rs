@@ -5,12 +5,13 @@
 
 pub mod render;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use conductor_core::claude_log::summary::{Summary, Title};
 use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
+use conductor_core::git_engine::WorktreeHead;
 use conductor_core::keymap::Action;
 
 use crate::effect::Effect;
@@ -69,10 +70,52 @@ pub struct Row {
     pub pinned: bool,
 }
 
+/// repo の見出し 1 つ分。外の端末は root が無く、worktree の段も無い。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group {
     pub name: String,
+    pub root: Option<PathBuf>,
+    pub nodes: Vec<Node>,
+}
+
+impl Group {
+    pub fn rows(&self) -> Vec<&Row> {
+        self.nodes.iter().flat_map(|n| &n.rows).collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Node {
+    pub worktree: Option<Worktree>,
     pub rows: Vec<Row>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub label: String,
+}
+
+/// 一覧で j / k が止まるもの。並びは描画と同じ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Item {
+    Worktree(Worktree),
+    Session(Row),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Selected {
+    Worktree(PathBuf),
+    /// 同じ行が入力待ちの欄と repo の欄の両方にいるので、どちらかも持つ。
+    Session(RowKey, bool),
+}
+
+/// worker が引いた repo 1 つ分。worktree は main が先頭、残りはラベル順。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoTree {
+    pub root: PathBuf,
+    pub name: String,
+    pub worktrees: Vec<WorktreeHead>,
 }
 
 /// この窓の PtyStore にある Claude。
@@ -88,19 +131,24 @@ pub struct OwnSession {
 pub struct FleetStatus {
     pub live: Vec<LiveSession>,
     pub summaries: Vec<(String, SystemTime, Summary)>,
+    pub trees: Vec<RepoTree>,
+    /// セッションの working_dir → それを含む worktree のパス。
+    pub placement: HashMap<PathBuf, PathBuf>,
 }
 
 const OUTSIDE_GROUP: &str = "外の端末";
 
 #[derive(Debug, Default)]
 pub struct FleetPanel {
-    /// 同じ行が入力待ちの欄と repo の欄の両方にいるので、どちらかも持つ。
-    selected: Option<(RowKey, bool)>,
+    selected: Option<Selected>,
     own: Vec<OwnSession>,
     live: Vec<LiveSession>,
     summaries: HashMap<String, (SystemTime, Summary)>,
     seen: HashMap<RowKey, SystemTime>,
-    repos: HashMap<PathBuf, String>,
+    trees: Vec<RepoTree>,
+    placement: HashMap<PathBuf, PathBuf>,
+    /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
+    kept_roots: BTreeSet<PathBuf>,
     polling: bool,
     came_from: Option<Focus>,
 }
@@ -136,6 +184,11 @@ impl FleetPanel {
         self.set_own(own);
         self.reselect_if_gone();
         self.mark_selected(SystemTime::now());
+    }
+
+    /// セッションが無くても木を引き続ける repo。
+    pub fn kept_roots(&self) -> Vec<PathBuf> {
+        self.kept_roots.iter().cloned().collect()
     }
 
     pub fn came_from(&self) -> Focus {
@@ -176,6 +229,10 @@ impl FleetPanel {
         for (id, mtime, summary) in status.summaries {
             self.summaries.insert(id, (mtime, summary));
         }
+        self.kept_roots
+            .extend(status.trees.iter().map(|t| t.root.clone()));
+        self.trees = status.trees;
+        self.placement = status.placement;
         self.set_own(own);
         if listing {
             self.mark_selected(now);
@@ -186,40 +243,45 @@ impl FleetPanel {
     }
 
     fn set_own(&mut self, own: Vec<OwnSession>) {
-        for dir in own
-            .iter()
-            .map(|s| s.working_dir.clone())
-            .chain(self.live.iter().map(|s| s.cwd.clone()))
-        {
-            self.repos
-                .entry(dir.clone())
-                .or_insert_with(|| repo_name(&dir));
-        }
         self.own = own;
     }
 
-    /// 選び直しは人が選んだものではないので、見たことにはしない。
+    /// 選び直しは人が選んだものではないので、見たことにはしない。同じセッションが入力待ちの欄と
+    /// repo の欄を行き来しただけなら同じセッションに留まる — 右で返事をしている最中に動かさない。
     fn reselect_if_gone(&mut self) {
-        let rows = self.visual_rows();
-        if rows.iter().any(|r| self.is_selected(r)) {
+        let items = self.items();
+        if items.iter().any(|item| self.is_selected_item(item)) {
             return;
         }
-        let same_session = self
-            .selected
-            .as_ref()
-            .and_then(|(key, _)| rows.iter().find(|r| r.key == *key));
-        self.selected = same_session
-            .or(rows.first())
-            .map(|r| (r.key.clone(), r.pinned));
+        let sessions = || {
+            items.iter().filter_map(|item| match item {
+                Item::Session(row) => Some(row),
+                Item::Worktree(_) => None,
+            })
+        };
+        let same_session = match &self.selected {
+            Some(Selected::Session(key, _)) => sessions().find(|r| r.key == *key),
+            _ => None,
+        };
+        self.selected = match same_session.or_else(|| sessions().next()) {
+            Some(row) => Some(Selected::Session(row.key.clone(), row.pinned)),
+            None => items.iter().find_map(|item| match item {
+                Item::Worktree(w) => Some(Selected::Worktree(w.path.clone())),
+                Item::Session(_) => None,
+            }),
+        };
     }
 
-    fn select(&mut self, row: &Row, now: SystemTime) {
-        self.selected = Some((row.key.clone(), row.pinned));
+    fn select(&mut self, item: &Item, now: SystemTime) {
+        self.selected = Some(match item {
+            Item::Worktree(w) => Selected::Worktree(w.path.clone()),
+            Item::Session(row) => Selected::Session(row.key.clone(), row.pinned),
+        });
         self.mark_selected(now);
     }
 
     fn mark_selected(&mut self, now: SystemTime) {
-        if let Some((key, _)) = &self.selected {
+        if let Some(Selected::Session(key, _)) = &self.selected {
             self.seen.insert(key.clone(), now);
         }
     }
@@ -227,14 +289,37 @@ impl FleetPanel {
     pub fn is_selected(&self, row: &Row) -> bool {
         self.selected
             .as_ref()
-            .is_some_and(|(key, pinned)| *key == row.key && *pinned == row.pinned)
+            .is_some_and(|s| *s == Selected::Session(row.key.clone(), row.pinned))
+    }
+
+    pub fn is_selected_worktree(&self, worktree: &Worktree) -> bool {
+        self.selected
+            .as_ref()
+            .is_some_and(|s| *s == Selected::Worktree(worktree.path.clone()))
+    }
+
+    fn is_selected_item(&self, item: &Item) -> bool {
+        match item {
+            Item::Worktree(w) => self.is_selected_worktree(w),
+            Item::Session(row) => self.is_selected(row),
+        }
+    }
+
+    pub fn selected_worktree(&self) -> Option<Worktree> {
+        self.items().into_iter().find_map(|item| match item {
+            Item::Worktree(w) if self.is_selected_worktree(&w) => Some(w),
+            _ => None,
+        })
     }
 
     pub fn selected_row(&self) -> Option<Row> {
         self.visual_rows().into_iter().find(|r| self.is_selected(r))
     }
 
-    /// 入力待ちを一番上に重ね、残りは repo ごと。外の端末は最後。
+    /// 入力待ちを一番上に重ね、残りは repo → worktree の木。外の端末は最後。
+    ///
+    /// worker がまだ置き場を返していない dir (起動した直後など) と git の外の dir は、その dir
+    /// 自身を repo とも worktree ともみなす。
     pub fn groups(&self) -> (Vec<Row>, Vec<Group>) {
         let rows = self.rows();
         let pinned: Vec<Row> = rows
@@ -245,40 +330,101 @@ impl FleetPanel {
                 ..r.clone()
             })
             .collect();
-        let mut groups: Vec<Group> = Vec::new();
+        let mut groups: Vec<Group> = self
+            .trees
+            .iter()
+            .map(|tree| Group {
+                name: tree.name.clone(),
+                root: Some(tree.root.clone()),
+                nodes: tree
+                    .worktrees
+                    .iter()
+                    .map(|w| Node {
+                        worktree: Some(Worktree {
+                            path: w.path.clone(),
+                            label: w.head.label(),
+                        }),
+                        rows: Vec::new(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        let mut outside = Vec::new();
         for row in rows {
-            let name = self.group_of(&row);
-            match groups.iter_mut().find(|g| g.name == name) {
-                Some(group) => group.rows.push(row),
-                None => groups.push(Group {
-                    name,
-                    rows: vec![row],
-                }),
+            if row.place == Place::Outside {
+                outside.push(row);
+                continue;
+            }
+            let placed = self.placement.get(&row.working_dir).and_then(|path| {
+                groups
+                    .iter_mut()
+                    .flat_map(|g| &mut g.nodes)
+                    .find(|n| n.worktree.as_ref().is_some_and(|w| w.path == *path))
+            });
+            if let Some(node) = placed {
+                node.rows.push(row);
+                continue;
+            }
+            match groups
+                .iter_mut()
+                .find(|g| g.root.as_deref() == Some(row.working_dir.as_path()))
+            {
+                Some(group) => group.nodes[0].rows.push(row),
+                None => {
+                    let name = dir_name(&row.working_dir);
+                    groups.push(Group {
+                        root: Some(row.working_dir.clone()),
+                        nodes: vec![Node {
+                            worktree: Some(Worktree {
+                                path: row.working_dir.clone(),
+                                label: name.clone(),
+                            }),
+                            rows: vec![row],
+                        }],
+                        name,
+                    });
+                }
             }
         }
-        groups.sort_by(|a, b| {
-            (a.name == OUTSIDE_GROUP)
-                .cmp(&(b.name == OUTSIDE_GROUP))
-                .then_with(|| a.name.cmp(&b.name))
-        });
+        groups.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.root.cmp(&b.root)));
+        if !outside.is_empty() {
+            groups.push(Group {
+                name: OUTSIDE_GROUP.to_string(),
+                root: None,
+                nodes: vec![Node {
+                    worktree: None,
+                    rows: outside,
+                }],
+            });
+        }
         (pinned, groups)
     }
 
-    fn group_of(&self, row: &Row) -> String {
-        if row.place == Place::Outside {
-            return OUTSIDE_GROUP.to_string();
+    pub fn group_of(&self, row: &Row) -> String {
+        let (_, groups) = self.groups();
+        groups
+            .iter()
+            .find(|g| g.rows().iter().any(|r| r.key == row.key))
+            .map_or_else(|| dir_name(&row.working_dir), |g| g.name.clone())
+    }
+
+    pub fn items(&self) -> Vec<Item> {
+        let (pinned, groups) = self.groups();
+        let mut items: Vec<Item> = pinned.into_iter().map(Item::Session).collect();
+        for node in groups.into_iter().flat_map(|g| g.nodes) {
+            items.extend(node.worktree.map(Item::Worktree));
+            items.extend(node.rows.into_iter().map(Item::Session));
         }
-        self.repos
-            .get(&row.working_dir)
-            .cloned()
-            .unwrap_or_else(|| dir_name(&row.working_dir))
+        items
     }
 
     pub fn visual_rows(&self) -> Vec<Row> {
-        let (pinned, groups) = self.groups();
-        pinned
+        self.items()
             .into_iter()
-            .chain(groups.into_iter().flat_map(|g| g.rows))
+            .filter_map(|item| match item {
+                Item::Session(row) => Some(row),
+                Item::Worktree(_) => None,
+            })
             .collect()
     }
 
@@ -423,29 +569,27 @@ impl FleetPanel {
         if ctx.focus == Focus::FleetSession {
             return (action == Action::LeaveTerminal).then(|| vec![Effect::Focus(Focus::Fleet)]);
         }
-        let rows = self.visual_rows();
-        let at = rows.iter().position(|r| self.is_selected(r));
-        let last = rows.len().saturating_sub(1);
+        let items = self.items();
+        let at = items.iter().position(|item| self.is_selected_item(item));
+        let last = items.len().saturating_sub(1);
         let target = match action {
             Action::NavigateDown => at.map_or(0, |i| (i + 1).min(last)),
             Action::NavigateUp => at.map_or(0, |i| i.saturating_sub(1)),
             Action::GoToTop => 0,
             Action::GoToBottom => last,
             Action::Select => {
-                return Some(
-                    self.selected
-                        .as_ref()
-                        .map(|(key, _)| vec![Effect::EnterSession(key.clone())])
-                        .unwrap_or_default(),
-                );
+                return Some(match &self.selected {
+                    Some(Selected::Session(key, _)) => vec![Effect::EnterSession(key.clone())],
+                    _ => Vec::new(),
+                });
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
             Action::StopSession => return Some(self.ask_stop().into_iter().collect()),
             _ => return None,
         };
-        if let Some(row) = rows.get(target) {
-            self.select(row, SystemTime::now());
+        if let Some(item) = items.get(target) {
+            self.select(item, SystemTime::now());
         }
         Some(Vec::new())
     }
@@ -486,13 +630,6 @@ fn dir_name(dir: &Path) -> String {
         || dir.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     )
-}
-
-/// linked worktree でも main worktree の名前。git で引けなければディレクトリの名前。
-fn repo_name(dir: &Path) -> String {
-    conductor_core::git_engine::GitEngine::open(dir)
-        .and_then(|git| git.main_worktree_path())
-        .map_or_else(|_| dir_name(dir), |main| dir_name(&main))
 }
 
 #[cfg(test)]

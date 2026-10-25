@@ -10,24 +10,55 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::Action;
 
-use super::{Ask, FleetPanel, Place, Row, RowKey, State};
+use super::{Ask, FleetPanel, Place, Row, RowKey, State, Worktree};
 use crate::workspace::{Focus, Workspace};
 
 const UNTITLED: &str = "(まだ何も頼んでいない)";
 
-pub fn list_title(fleet: &FleetPanel) -> String {
-    let rows = fleet.groups().1.into_iter().flat_map(|g| g.rows);
-    let (mut waiting, mut working, mut finished, mut idle) = (0, 0, 0, 0);
-    for row in rows {
-        match row.state {
-            State::Waiting(_) => waiting += 1,
-            State::Working => working += 1,
-            State::Finished => finished += 1,
-            State::Idle => idle += 1,
-            State::Other(_) | State::Unknown => {}
-        }
+pub const LIST_TITLE: &str = " Sessions ";
+
+/// 一覧の上に固定する 1 行。状態ごとの本数を、行頭の記号と同じ色で言葉にする。
+pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
+    let shown = [
+        State::Waiting(Ask::Question),
+        State::Working,
+        State::Finished,
+        State::Idle,
+    ];
+    let mut counts = [0usize; 4];
+    for row in fleet.visual_rows().iter().filter(|r| !r.pinned) {
+        let slot = match row.state {
+            State::Waiting(_) => 0,
+            State::Working => 1,
+            State::Finished => 2,
+            State::Idle => 3,
+            State::Other(_) | State::Unknown => continue,
+        };
+        counts[slot] += 1;
     }
-    format!(" Sessions  ! {waiting} · › {working} · ✓ {finished} · z {idle} ")
+    let mut spans = Vec::new();
+    for (i, (state, count)) in shown.iter().zip(counts).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
+        }
+        // 待機の記号は hint 色なので、そのままだと 0 本と見分けがつかない。
+        let color = match (count, state) {
+            (0, _) => theme.hint,
+            (_, State::Idle) => theme.fg,
+            _ => look(theme, state).1,
+        };
+        let word = match state {
+            State::Waiting(_) => "入力待ち",
+            State::Working => "作業中",
+            State::Finished => "完了",
+            _ => "待機",
+        };
+        spans.push(Span::styled(
+            format!("{word} {count}"),
+            Style::default().fg(color),
+        ));
+    }
+    Line::from(spans)
 }
 
 pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
@@ -35,12 +66,21 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     if inner.height == 0 {
         return;
     }
+    let fleet = &ws.panels.fleet;
+    let theme = &ws.theme;
+    if inner.height >= 2 {
+        frame.render_widget(
+            Paragraph::new(summary(fleet, theme)),
+            Rect { height: 1, ..inner },
+        );
+    }
     let body = Rect {
-        height: inner.height - 1,
+        y: inner.y + 1,
+        height: inner.height.saturating_sub(2),
         ..inner
     };
     let footer = Rect {
-        y: body.y + body.height,
+        y: inner.y + inner.height - 1,
         height: 1,
         ..inner
     };
@@ -51,8 +91,6 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         )),
         footer,
     );
-    let fleet = &ws.panels.fleet;
-    let theme = &ws.theme;
     let now = SystemTime::now();
     let focused = ws.focus == Focus::Fleet;
     let (pinned, groups) = fleet.groups();
@@ -85,23 +123,39 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         }
     }
     for group in &groups {
-        lines.push(header(
-            &format!("{} {}", group.name, group.rows.len()),
-            theme.fg,
-            inner.width,
-        ));
-        for row in &group.rows {
-            if fleet.is_selected(row) {
-                selected_line = lines.len();
+        lines.push(header(&group.name, theme.fg, inner.width));
+        for node in &group.nodes {
+            let indent = match &node.worktree {
+                Some(worktree) => {
+                    let selected = fleet.is_selected_worktree(worktree);
+                    if selected {
+                        selected_line = lines.len();
+                    }
+                    lines.push(worktree_line(
+                        theme,
+                        worktree,
+                        inner.width,
+                        selected,
+                        focused,
+                    ));
+                    4
+                }
+                None => 0,
+            };
+            for row in &node.rows {
+                if fleet.is_selected(row) {
+                    selected_line = lines.len();
+                }
+                lines.push(row_line(
+                    theme,
+                    row,
+                    inner.width,
+                    indent,
+                    fleet.is_selected(row),
+                    focused,
+                    now,
+                ));
             }
-            lines.push(row_line(
-                theme,
-                row,
-                inner.width,
-                fleet.is_selected(row),
-                focused,
-                now,
-            ));
         }
     }
     let offset = selected_line.saturating_sub(usize::from(body.height).saturating_sub(2));
@@ -177,6 +231,20 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     }
     let inner = inner(rect);
     let theme = &ws.theme;
+    if let Some(worktree) = ws.panels.fleet.selected_worktree() {
+        let lines = vec![
+            Line::styled(
+                worktree.label,
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(
+                worktree.path.display().to_string(),
+                Style::default().fg(theme.dir_fg),
+            ),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
     let Some(row) = ws.panels.fleet.selected_row() else {
         return;
     };
@@ -276,10 +344,30 @@ fn tag(place: Place) -> &'static str {
     }
 }
 
+fn worktree_line(
+    theme: &Theme,
+    worktree: &Worktree,
+    width: u16,
+    selected: bool,
+    focused: bool,
+) -> Line<'static> {
+    let label = clip(&worktree.label, (width as usize).saturating_sub(2));
+    crate::list::row_line(
+        vec![Span::styled(
+            format!("  {label}"),
+            Style::default().fg(theme.fg),
+        )],
+        theme,
+        selected,
+        focused,
+    )
+}
+
 fn row_line(
     theme: &Theme,
     row: &Row,
     width: u16,
+    indent: usize,
     selected: bool,
     focused: bool,
     now: SystemTime,
@@ -298,7 +386,7 @@ fn row_line(
     );
     let right = row.context_tokens.map(tokens_text).unwrap_or_default();
     let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
-    let room = (width as usize).saturating_sub(2 + left.width() + right.width() + 2);
+    let room = (width as usize).saturating_sub(indent + 2 + left.width() + right.width() + 2);
     let title = clip(&title, room);
     let pad = room.saturating_sub(title.width());
     let title_fg = if row.title.is_some() {
@@ -308,6 +396,7 @@ fn row_line(
     };
     crate::list::row_line(
         vec![
+            Span::raw(" ".repeat(indent)),
             Span::styled(
                 format!("{edge}{glyph}"),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),

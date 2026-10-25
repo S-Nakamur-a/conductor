@@ -35,7 +35,7 @@ fn own(panel: &str, cwd: &str, session: Option<&str>) -> OwnSession {
 fn status(live: Vec<LiveSession>) -> FleetStatus {
     FleetStatus {
         live,
-        summaries: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -101,9 +101,9 @@ fn この窓の外のセッションは_pid_で持ち_外の端末は最後の�
     let (_, groups) = fleet.groups();
     let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, ["b", "外の端末"]);
-    assert_eq!(groups[0].rows[0].key, RowKey::Pid(8));
-    assert_eq!(groups[0].rows[0].place, Place::OtherConductor);
-    assert_eq!(groups[1].rows[0].place, Place::Outside);
+    assert_eq!(groups[0].rows()[0].key, RowKey::Pid(8));
+    assert_eq!(groups[0].rows()[0].place, Place::OtherConductor);
+    assert_eq!(groups[1].rows()[0].place, Place::Outside);
 }
 
 #[test]
@@ -201,8 +201,6 @@ fn clear_で会話の_id_が変わっても行と選択は変わらない() {
         false,
         at(200),
     );
-    let ws = Workspace::for_test();
-    fleet.update(Action::GoToTop, &ws.ctx());
     assert_eq!(
         fleet.selected_row().unwrap().key,
         RowKey::Panel("CC:1".into())
@@ -262,6 +260,7 @@ fn 題は会話の_id_で引き_無ければ空() {
                     context_tokens: Some(312_000),
                 },
             )],
+            ..Default::default()
         },
         Vec::new(),
         None,
@@ -401,6 +400,7 @@ fn この窓の行で止めるキーを押すとそのパネルを止める確�
                     context_tokens: None,
                 },
             )],
+            ..Default::default()
         },
         vec![own("CC:1", "/r/a", Some("s1"))],
         None,
@@ -787,6 +787,7 @@ mod hint {
                         (format!("s{pid}"), at(0), summary)
                     })
                     .collect(),
+                ..Default::default()
             },
             Vec::new(),
         );
@@ -1702,5 +1703,304 @@ mod stop {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].key, RowKey::Pid(7));
         assert_eq!(rows[0].place, Place::OtherConductor);
+    }
+}
+
+mod tree {
+    use conductor_core::git_engine::{Head, WorktreeHead};
+    use conductor_core::theme::Theme;
+
+    use super::*;
+
+    fn worktree(path: &str, head: Head) -> WorktreeHead {
+        WorktreeHead {
+            path: PathBuf::from(path),
+            head,
+        }
+    }
+
+    fn repo(root: &str, worktrees: Vec<WorktreeHead>) -> RepoTree {
+        RepoTree {
+            root: PathBuf::from(root),
+            name: dir_name(Path::new(root)),
+            worktrees,
+        }
+    }
+
+    fn placed(pairs: &[(&str, &str)]) -> HashMap<PathBuf, PathBuf> {
+        pairs
+            .iter()
+            .map(|(dir, wt)| (PathBuf::from(dir), PathBuf::from(wt)))
+            .collect()
+    }
+
+    fn app() -> FleetPanel {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![
+                    live(7, "/r/app", "s7", Status::Working, Owner::Conductor),
+                    live(8, "/r/app-b/src", "s8", Status::Idle, Owner::Conductor),
+                ],
+                trees: vec![repo(
+                    "/r/app",
+                    vec![
+                        worktree("/r/app", Head::Branch("main".into())),
+                        worktree("/r/app-a", Head::Branch("feature/a".into())),
+                        worktree("/r/app-b", Head::Branch("feature/b".into())),
+                    ],
+                )],
+                placement: placed(&[("/r/app", "/r/app"), ("/r/app-b/src", "/r/app-b")]),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet
+    }
+
+    fn shape(fleet: &FleetPanel) -> Vec<String> {
+        fleet
+            .items()
+            .into_iter()
+            .map(|item| match item {
+                Item::Worktree(w) => w.label,
+                Item::Session(row) => format!("  {:?}", row.key),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn セッションはそれを含む_worktree_の下に並び_セッションの無い_worktree_も出る() {
+        let fleet = app();
+        assert_eq!(
+            shape(&fleet),
+            ["main", "  Pid(7)", "feature/a", "feature/b", "  Pid(8)"]
+        );
+        let (_, groups) = fleet.groups();
+        assert_eq!(groups[0].name, "app");
+    }
+
+    #[test]
+    fn 置き場の無い_dir_はその_dir_自身を見出しと_worktree_にする() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            status(vec![live(
+                7,
+                "/tmp/plain",
+                "s7",
+                Status::Working,
+                Owner::Conductor,
+            )]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let (_, groups) = fleet.groups();
+        assert_eq!(groups[0].name, "plain");
+        assert_eq!(shape(&fleet), ["plain", "  Pid(7)"]);
+    }
+
+    #[test]
+    fn 同じ名前の別の_repo_は見出しを分ける() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                trees: vec![
+                    repo(
+                        "/x/app",
+                        vec![worktree("/x/app", Head::Branch("main".into()))],
+                    ),
+                    repo(
+                        "/y/app",
+                        vec![worktree("/y/app", Head::Branch("dev".into()))],
+                    ),
+                ],
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let (_, groups) = fleet.groups();
+        let roots: Vec<_> = groups.iter().map(|g| g.root.clone().unwrap()).collect();
+        assert_eq!(roots, [PathBuf::from("/x/app"), PathBuf::from("/y/app")]);
+    }
+
+    #[test]
+    fn 切り離した_head_は短い_sha_を括弧で出す() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                trees: vec![repo(
+                    "/r/app",
+                    vec![worktree("/r/app", Head::Detached("abc1234".into()))],
+                )],
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        assert_eq!(shape(&fleet), ["(abc1234)"]);
+    }
+
+    #[test]
+    fn 開いた直後は先頭のセッションを選び_j_k_は_worktree_の行も通る() {
+        let mut fleet = app();
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(7));
+        let ws = Workspace::for_test();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(fleet.selected_worktree().unwrap().label, "feature/a");
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(8));
+    }
+
+    #[test]
+    fn worktree_の行では_enter_も_tab_も止めるキーも何もしない() {
+        let mut fleet = app();
+        let ws = Workspace::for_test();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert!(fleet.selected_worktree().is_some());
+        for action in [Action::Select, Action::StopSession] {
+            assert_eq!(
+                fleet.update(action, &ws.ctx()),
+                Some(Vec::new()),
+                "{action:?}"
+            );
+        }
+        assert!(fleet.selected_row().is_none());
+    }
+
+    #[test]
+    fn セッションが無ければ先頭の_worktree_を選び_選んだ_worktree_が消えたら先頭のセッションへ() {
+        let mut fleet = FleetPanel::default();
+        let only_trees = || FleetStatus {
+            trees: vec![repo(
+                "/r/app",
+                vec![
+                    worktree("/r/app", Head::Branch("main".into())),
+                    worktree("/r/app-a", Head::Branch("feature/a".into())),
+                ],
+            )],
+            ..Default::default()
+        };
+        fleet.apply(only_trees(), Vec::new(), None, false, at(200));
+        assert_eq!(fleet.selected_worktree().unwrap().label, "main");
+
+        let ws = Workspace::for_test();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(fleet.selected_worktree().unwrap().label, "feature/a");
+        let mut gone = app().trees.clone();
+        gone[0]
+            .worktrees
+            .retain(|w| w.path != Path::new("/r/app-a"));
+        fleet.apply(
+            FleetStatus {
+                live: vec![live(7, "/r/app", "s7", Status::Working, Owner::Conductor)],
+                trees: gone,
+                placement: placed(&[("/r/app", "/r/app")]),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(201),
+        );
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(7));
+    }
+
+    #[test]
+    fn 入力待ちの欄で選んだセッションが作業中になれば_repo_の欄の同じセッションに留まる() {
+        let waiting = |status| FleetStatus {
+            live: vec![
+                live(6, "/r/app", "s6", Status::Idle, Owner::Conductor),
+                live(7, "/r/app", "s7", status, Owner::Conductor),
+            ],
+            trees: app().trees.clone(),
+            placement: placed(&[("/r/app", "/r/app")]),
+            ..Default::default()
+        };
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            waiting(Status::Waiting(Waiting::Question)),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        assert_eq!(
+            fleet.selected_row().map(|r| (r.key, r.pinned)),
+            Some((RowKey::Pid(7), true))
+        );
+        fleet.apply(waiting(Status::Working), Vec::new(), None, false, at(201));
+        assert_eq!(
+            fleet.selected_row().map(|r| (r.key, r.pinned)),
+            Some((RowKey::Pid(7), false))
+        );
+    }
+
+    #[test]
+    fn 一度木に出た_repo_はセッションが無くなっても引き続ける() {
+        let mut fleet = app();
+        fleet.apply(FleetStatus::default(), Vec::new(), None, false, at(300));
+        assert_eq!(fleet.kept_roots(), [PathBuf::from("/r/app")]);
+    }
+
+    #[test]
+    fn 要約行は状態ごとの本数を言葉で出し_入力待ちを二重に数えず_0_本は控えめな色() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            status(vec![
+                live(
+                    6,
+                    "/r/a",
+                    "s6",
+                    Status::Waiting(Waiting::Question),
+                    Owner::Conductor,
+                ),
+                live(7, "/r/a", "s7", Status::Working, Owner::Conductor),
+            ]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let theme = Theme::from_name("catppuccin-mocha");
+        let line = render::summary(&fleet, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "入力待ち 1 · 作業中 1 · 完了 0 · 待機 0");
+        let color_of = |word: &str| {
+            line.spans
+                .iter()
+                .find(|s| s.content.starts_with(word))
+                .and_then(|s| s.style.fg)
+        };
+        assert_eq!(color_of("入力待ち"), Some(theme.waiting_primary));
+        assert_eq!(color_of("作業中"), Some(theme.accent));
+        assert_eq!(color_of("完了"), Some(theme.hint));
+        assert_eq!(color_of("待機"), Some(theme.hint));
+
+        fleet.apply(
+            status(vec![live(8, "/r/a", "s8", Status::Idle, Owner::Conductor)]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet.update(Action::GoToBottom, &Workspace::for_test().ctx());
+        let line = render::summary(&fleet, &theme);
+        let idle = line.spans.iter().find(|s| s.content.starts_with("待機"));
+        assert_eq!(
+            idle.and_then(|s| s.style.fg),
+            Some(theme.fg),
+            "1 本以上の待機は 0 本と違う色"
+        );
     }
 }

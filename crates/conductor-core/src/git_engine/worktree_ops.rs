@@ -5,7 +5,25 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow};
 use git2::Repository;
 
-use super::{ChangeCounts, GitEngine, GitStatusMap, ReviewState, WorktreeInfo};
+use super::{ChangeCounts, GitEngine, GitStatusMap, Head, ReviewState, WorktreeHead, WorktreeInfo};
+
+fn head_of(repo: &Repository) -> Head {
+    match repo.head() {
+        Ok(head) if head.is_branch() => Head::Branch(head.shorthand().unwrap_or_default().into()),
+        Ok(head) => Head::Detached(
+            head.target()
+                .map(|oid| oid.to_string()[..7].to_string())
+                .unwrap_or_default(),
+        ),
+        Err(_) => Head::Unborn(
+            repo.find_reference("HEAD")
+                .ok()
+                .and_then(|r| r.symbolic_target().map(str::to_string))
+                .map(|target| target.trim_start_matches("refs/heads/").to_string())
+                .unwrap_or_default(),
+        ),
+    }
+}
 
 impl GitEngine {
     /// main と linked のすべての worktree を、ブランチつきで返す (件数は数えない)。
@@ -46,6 +64,33 @@ impl GitEngine {
             Some(e) if infos.is_empty() => Err(e),
             _ => Ok(infos),
         }
+    }
+
+    /// main を先頭に、すべての worktree のパスと HEAD。dir の消えた worktree は飛ばす。
+    pub fn worktree_heads(&self) -> Result<Vec<WorktreeHead>> {
+        let main = self.main_worktree_path()?;
+        let mut heads = vec![WorktreeHead {
+            head: head_of(&Repository::open(&main)?),
+            path: main,
+        }];
+        if let Ok(names) = self.repo.worktrees() {
+            for name in names.iter().flatten() {
+                let Ok(path) = self
+                    .repo
+                    .find_worktree(name)
+                    .map(|wt| wt.path().to_path_buf())
+                else {
+                    continue;
+                };
+                if let Ok(repo) = Repository::open(&path) {
+                    heads.push(WorktreeHead {
+                        head: head_of(&repo),
+                        path,
+                    });
+                }
+            }
+        }
+        Ok(heads)
     }
 
     /// ローカルブランチ名をソート済みで返す。

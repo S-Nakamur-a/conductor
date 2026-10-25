@@ -83,9 +83,13 @@ worktree in that state asks as if there were uncommitted changes.
 ### Sessions
 
 conductor opens on **Sessions**: every Claude Code session running on the machine,
-in any repository and in any window or terminal, one line each, grouped by
-repository, with the ones waiting for you (a question or a permission) repeated at
-the top. A line shows the state (waiting / working / finished and not yet looked at
+in any repository and in any window or terminal, one line each, under the worktree
+(shown by its branch) of the repository it runs in, with the ones waiting for you (a
+question or a permission) repeated at the top. Every worktree of the repository is
+listed, those with no session too, and a repository stays listed until the window
+closes once a session has run in it, or once this window opened it. Sessions in a plain
+terminal are listed together last. The line above the list counts the sessions in each
+state. A line shows the state (waiting / working / finished and not yet looked at
 / idle), how long it has been in it, the session's title and how much context it
 holds. A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
