@@ -199,7 +199,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::TerminalShell => " Shell ".to_string(),
         Region::RevidereOrder => crate::panels::revidere::render::order_title(ws),
         Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
-        Region::FleetList => crate::panels::fleet::render::list_title(&ws.panels.fleet),
+        Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
         Region::FleetSession => String::new(),
         _ => String::new(),
     };

@@ -81,6 +81,31 @@ pub struct WorktreeInfo {
     pub review: ReviewState,
 }
 
+/// worktree のパスと HEAD だけ。[GitEngine::worktree_heads] が返す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeHead {
+    pub path: PathBuf,
+    pub head: Head,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Head {
+    Branch(String),
+    /// 短い SHA。
+    Detached(String),
+    /// まだ commit の無いブランチの名前。
+    Unborn(String),
+}
+
+impl Head {
+    pub fn label(&self) -> String {
+        match self {
+            Head::Branch(name) | Head::Unborn(name) => name.clone(),
+            Head::Detached(sha) => format!("({sha})"),
+        }
+    }
+}
+
 /// この worktree に AI レビューがあるか。
 ///
 /// 解析は数分かかるうえ、終わりは合図が消えれば分からなくなる。一覧に出しておけば

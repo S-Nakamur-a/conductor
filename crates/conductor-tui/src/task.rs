@@ -57,9 +57,12 @@ pub enum Task {
     ListWorktrees,
     /// マシン上の Claude の状態と、会話ログの題。`known` は前に読んだ会話ログの mtime で、
     /// 変わっていないものは読み直さない。`own` は状態ファイルが無くても題を読みたいこの窓の分。
+    /// `dirs` はこの窓のセッションの dir、`roots` はセッションが無くても木を引く repo。
     FleetStatus {
         known: std::collections::HashMap<String, std::time::SystemTime>,
         own: Vec<(PathBuf, String)>,
+        dirs: Vec<PathBuf>,
+        roots: Vec<PathBuf>,
     },
     /// この窓の外の Claude を止める。`started` は一覧に載せたときの起動時刻。
     StopSession {
@@ -467,9 +470,14 @@ impl Task {
             Task::ListWorktrees => {
                 svc.spawn(move || list_worktrees(&env), TaskResult::Worktrees);
             }
-            Task::FleetStatus { known, own } => {
+            Task::FleetStatus {
+                known,
+                own,
+                dirs,
+                roots,
+            } => {
                 svc.spawn(
-                    move || Box::new(fleet_status(&known, own)),
+                    move || Box::new(fleet_status(&known, own, dirs, &roots)),
                     TaskResult::FleetStatus,
                 );
             }
@@ -1186,6 +1194,8 @@ fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
 fn fleet_status(
     known: &std::collections::HashMap<String, std::time::SystemTime>,
     own: Vec<(PathBuf, String)>,
+    mut dirs: Vec<PathBuf>,
+    roots: &[PathBuf],
 ) -> crate::panels::fleet::FleetStatus {
     use conductor_core::claude_log::summary;
     use conductor_core::claude_sessions::registry;
@@ -1213,7 +1223,73 @@ fn fleet_status(
             Some((id, mtime, summary))
         })
         .collect();
-    crate::panels::fleet::FleetStatus { live, summaries }
+    dirs.extend(
+        live.iter()
+            .filter(|l| l.owner != registry::Owner::Elsewhere)
+            .map(|l| l.cwd.clone()),
+    );
+    let (trees, placement) = fleet_trees(&dirs, roots);
+    crate::panels::fleet::FleetStatus {
+        live,
+        summaries,
+        trees,
+        placement,
+    }
+}
+
+/// dirs と roots が属する repo の worktree の木と、dirs それぞれを含む worktree。
+/// パスは canonicalize してから比べる。git の記録する綴りと cwd の綴り (/var と /private/var) が違うため。
+fn fleet_trees(
+    dirs: &[PathBuf],
+    roots: &[PathBuf],
+) -> (
+    Vec<crate::panels::fleet::RepoTree>,
+    std::collections::HashMap<PathBuf, PathBuf>,
+) {
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let mut engines = std::collections::BTreeMap::new();
+    for dir in dirs.iter().chain(roots) {
+        let Ok(git) = GitEngine::open(dir) else {
+            continue;
+        };
+        if let Ok(main) = git.main_worktree_path() {
+            engines.entry(canonical(&main)).or_insert(git);
+        }
+    }
+    let trees: Vec<crate::panels::fleet::RepoTree> = engines
+        .into_iter()
+        .filter_map(|(root, git)| {
+            let mut worktrees = git
+                .worktree_heads()
+                .inspect_err(|e| log::debug!("could not list worktrees of {}: {e}", root.display()))
+                .ok()?;
+            for w in &mut worktrees {
+                w.path = canonical(&w.path);
+            }
+            worktrees[1..].sort_by_key(|w| w.head.label());
+            Some(crate::panels::fleet::RepoTree {
+                name: root.file_name().map_or_else(
+                    || root.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                ),
+                root,
+                worktrees,
+            })
+        })
+        .collect();
+    let placement = dirs
+        .iter()
+        .filter_map(|dir| {
+            let dir_canonical = canonical(dir);
+            let worktree = trees
+                .iter()
+                .flat_map(|t| &t.worktrees)
+                .filter(|w| dir_canonical.starts_with(&w.path))
+                .max_by_key(|w| w.path.components().count())?;
+            Some((dir.clone(), worktree.path.clone()))
+        })
+        .collect();
+    (trees, placement)
 }
 
 fn review_requests(env: &TaskEnv, review: &ReviewConfig) -> Result<Vec<PrHead>, String> {
@@ -1616,5 +1692,72 @@ mod tests {
         ] {
             assert_eq!(tail_chars(text, n), want, "{text} {n}");
         }
+    }
+
+    #[test]
+    fn 一覧の木はmainを先頭に_残りをブランチ名順に並べ_セッションをそのdirを含む一番深いworktreeに置く()
+     {
+        let repo = crate::testing::TestRepo::new();
+        let zeta = repo.worktree("zeta");
+        let alpha = repo.worktree("alpha");
+        let detached = repo.worktree("detached");
+        let checkout = std::process::Command::new("git")
+            .args(["checkout", "-q", "--detach"])
+            .current_dir(&detached)
+            .status()
+            .unwrap();
+        assert!(checkout.success());
+        let sub = zeta.join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        let (trees, placement) = fleet_trees(&[sub.clone(), repo.root()], &[]);
+        assert_eq!(trees.len(), 1);
+        let paths: Vec<&Path> = trees[0]
+            .worktrees
+            .iter()
+            .map(|w| w.path.as_path())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                repo.root().as_path(),
+                detached.as_path(),
+                alpha.as_path(),
+                zeta.as_path()
+            ],
+            "切り離した HEAD は表示どおり (sha) の綴りで並ぶ"
+        );
+        assert_eq!(placement.get(&sub), Some(&zeta));
+        assert_eq!(placement.get(&repo.root()), Some(&repo.root()));
+    }
+
+    #[test]
+    fn 一覧の木は名前が前方一致するだけの隣のdirをそのworktreeに置かない() {
+        let repo = crate::testing::TestRepo::new();
+        let foo = repo.worktree("foo");
+        let neighbour = foo.with_file_name("foo-bar");
+        std::fs::create_dir_all(&neighbour).unwrap();
+        let (_, placement) = fleet_trees(&[neighbour.clone()], &[repo.root()]);
+        assert_eq!(placement.get(&neighbour), None);
+    }
+
+    #[test]
+    fn 一覧の木は綴りの違うパスでも同じworktreeに置く() {
+        let repo = crate::testing::TestRepo::new();
+        let link_dir = tempfile::tempdir().unwrap();
+        let link = link_dir.path().join("link");
+        std::os::unix::fs::symlink(repo.root(), &link).unwrap();
+        let (trees, placement) = fleet_trees(&[link.clone()], &[repo.root()]);
+        assert_eq!(trees.len(), 1, "同じ repo が 2 つの見出しにならない");
+        assert_eq!(placement.get(&link), Some(&repo.root()));
+    }
+
+    #[test]
+    fn 一覧の木はセッションの無いrootも引き_gitでないdirは置かない() {
+        let repo = crate::testing::TestRepo::new();
+        let plain = tempfile::tempdir().unwrap();
+        let (trees, placement) = fleet_trees(&[plain.path().to_path_buf()], &[repo.root()]);
+        assert_eq!(trees.len(), 1);
+        assert_eq!(trees[0].root, repo.root());
+        assert!(placement.is_empty(), "{placement:?}");
     }
 }

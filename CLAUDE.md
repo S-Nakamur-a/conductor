@@ -462,7 +462,14 @@ PtyStore by conversation id. The hooks' waiting/active cannot be the source: the
 stay "waiting" after a permission is approved until the tool finishes, and after an
 Esc refusal until the next prompt (measured on 2.1.309). A row of this window is
 keyed by its panel id, not the conversation id, because `/clear` changes the
-latter. **Whether the list is open is not derived from `Focus`**
+latter. Rows hang under repository → worktree. The same worker lists the worktrees
+(`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under
+the deepest worktree containing it, comparing canonicalised paths component-wise. A
+repository once listed stays (`kept_roots`) so it can still be launched into after its
+last session ends. When a selected row moves between the waiting box and its worktree,
+the selection follows the session: re-selecting anything else would make
+`apply_fleet` pull the keyboard out of the session being typed into.
+**Whether the list is open is not derived from `Focus`**
 (`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
 remembered as where Esc returns (`Workspace::screen_focus`, which `reviewing()` and
 the focus cycle read), so a background result never moves the keyboard to a region

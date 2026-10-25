@@ -394,19 +394,26 @@ fn poll_fleet(ws: &mut Workspace, svc: &mut Services<TaskResult>, timer: &mut Ti
     if !timer.due(now) || ws.panels.fleet.is_polling() {
         return;
     }
-    let own = ws
-        .panels
-        .terminal
-        .own_claude_sessions()
+    let task = fleet_status_task(ws);
+    apply(ws, svc, vec![Effect::Spawn(task)]);
+}
+
+/// この窓で開いた repo は、セッションが無くても木を引く。
+fn fleet_status_task(ws: &Workspace) -> Task {
+    let sessions = ws.panels.terminal.own_claude_sessions();
+    let dirs = sessions.iter().map(|s| s.working_dir.clone()).collect();
+    let own = sessions
         .into_iter()
         .filter_map(|s| Some((s.working_dir, s.claude_session_id?)))
         .collect();
-    let known = ws.panels.fleet.known_transcripts();
-    apply(
-        ws,
-        svc,
-        vec![Effect::Spawn(Task::FleetStatus { known, own })],
-    );
+    let mut roots = ws.panels.fleet.kept_roots();
+    roots.extend(ws.repo.known.iter().cloned());
+    Task::FleetStatus {
+        known: ws.panels.fleet.known_transcripts(),
+        own,
+        dirs,
+        roots,
+    }
 }
 
 fn tick_rate(liveness: Liveness) -> Duration {
@@ -831,6 +838,16 @@ fn expire_status(ws: &mut Workspace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 一覧の木はこの窓で開いた_repo_もセッションが無くても引く() {
+        let mut ws = Workspace::for_test();
+        ws.repo.known.push(PathBuf::from("/r/opened"));
+        let Task::FleetStatus { roots, .. } = fleet_status_task(&ws) else {
+            panic!("not a fleet status task");
+        };
+        assert!(roots.contains(&PathBuf::from("/r/opened")), "{roots:?}");
+    }
     use crate::modal::Modal;
     use conductor_svc::pty::SessionKind;
     use crossterm::event::KeyCode;
