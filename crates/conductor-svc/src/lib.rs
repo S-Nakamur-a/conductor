@@ -86,9 +86,26 @@ impl<P: Send + 'static> Services<P> {
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
+        let generation = self.generation();
+        self.spawn_at(generation, work, into)
+    }
+
+    /// 世代をまたいで届ける。結果が取り消せない仕事の続きを持ち、repo を切り替えても受け取る要があるもの。
+    pub fn spawn_unscoped<T, F>(&mut self, work: F, into: fn(T) -> P) -> RequestId
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        self.spawn_at(Generation::UNSCOPED, work, into)
+    }
+
+    fn spawn_at<T, F>(&mut self, generation: Generation, work: F, into: fn(T) -> P) -> RequestId
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
         let req = RequestId(self.next_req);
         self.next_req += 1;
-        let generation = self.generation();
         let tx = self.tx.clone();
         let in_flight = Arc::clone(&self.in_flight);
         in_flight.fetch_add(1, Ordering::SeqCst);
@@ -193,6 +210,33 @@ mod tests {
         assert_eq!(event.req, Some(req));
         assert_eq!(event.generation, svc.generation());
         assert!(matches!(event.kind, EventKind::Task(42)));
+    }
+
+    #[test]
+    fn 世代をまたぐ仕事は投げた後に世代が進んでも届き_ふつうの仕事は捨てられる() {
+        let mut svc = Services::<u32>::new();
+        let (release, gate) = mpsc::channel::<()>();
+        let (release_scoped, gate_scoped) = mpsc::channel::<()>();
+        svc.spawn(
+            move || {
+                gate_scoped.recv().unwrap();
+                1u32
+            },
+            |n| n,
+        );
+        svc.spawn_unscoped(
+            move || {
+                gate.recv().unwrap();
+                2u32
+            },
+            |n| n,
+        );
+        svc.bump_generation();
+        release_scoped.send(()).unwrap();
+        release.send(()).unwrap();
+        let event = recv_blocking(&svc).unwrap();
+        assert!(matches!(event.kind, EventKind::Task(2)));
+        assert!(recv_blocking(&svc).is_none());
     }
 
     /// 先に減らすと、0 を見て安心した側が結果を取りこぼす。

@@ -608,6 +608,21 @@ fn on_mouse(
                 apply(ws, svc, effects);
                 return;
             }
+            if region == Region::FleetList
+                && ws.modals.is_empty()
+                && let Some(rect) = layout.rect(region)
+                && let Some(composed) = crate::panels::fleet::render::compose(ws, rect)
+                && let Some(slot) =
+                    crate::panels::fleet::render::button_hit(&composed, mouse.column, mouse.row)
+            {
+                let slot = slot.clone();
+                let effects = ws
+                    .panels
+                    .fleet
+                    .click_button(&slot, (mouse.column, mouse.row));
+                apply(ws, svc, effects);
+                return;
+            }
             let Some(focus) = focus_for(region) else {
                 return;
             };
@@ -2309,5 +2324,101 @@ needle here
             panic!("not a fleet status task");
         };
         assert!(roots.contains(&PathBuf::from("/r/opened")), "{roots:?}");
+    }
+
+    fn fleet_with_tree() -> (Workspace, Services<TaskResult>, Layout) {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let worktree = |path: &str, branch: &str| WorktreeHead {
+            path: PathBuf::from(path),
+            head: Head::Branch(branch.into()),
+        };
+        ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: PathBuf::from("/r/app"),
+                    name: "app".into(),
+                    worktrees: vec![
+                        worktree("/r/app", "main"),
+                        worktree("/r/app-b", "feature/b"),
+                    ],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        (ws, svc, l)
+    }
+
+    fn click_button(
+        ws: &mut Workspace,
+        svc: &mut Services<TaskResult>,
+        l: &Layout,
+        want: impl Fn(&crate::panels::fleet::render::Slot) -> bool,
+    ) {
+        let rect = l.rect(Region::FleetList).unwrap();
+        let composed = crate::panels::fleet::render::compose(ws, rect).unwrap();
+        let index = composed.slots.iter().position(want).unwrap() - composed.offset;
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: composed.body.right() - 1,
+            row: composed.body.y + u16::try_from(index).unwrap(),
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(ws, svc, l, click);
+    }
+
+    #[test]
+    fn worktree_の_plus_を押すと押した行の起動メニューが開き_選択は動かない() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
+        click_button(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Worktree(w) if w.label == "feature/b"),
+        );
+        let Some(Modal::Popup(mut popup)) = ws.modals.pop() else {
+            panic!("起動メニューが開く");
+        };
+        let one = popup.update(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            &ws.ctx(),
+        );
+        assert!(matches!(
+            one.last(),
+            Some(Effect::NewClaudeIn { dir, chrome: false }) if dir == &PathBuf::from("/r/app-b")
+        ));
+        assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
+    }
+
+    #[test]
+    fn repo_の印を押すと_smart_worktree_の説明を聞く() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        click_button(&mut ws, &mut svc, &l, |slot| {
+            matches!(slot, Slot::Repo(Some(_)))
+        });
+        assert!(matches!(ws.modals.last(), Some(Modal::Prompt(_))));
+        assert_eq!(
+            ws.panels.fleet.take_smart_target(),
+            Some(PathBuf::from("/r/app"))
+        );
+    }
+
+    #[test]
+    fn 確認が開いている間はボタンを押しても何も積まない() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.modals
+            .push(Modal::Confirm(crate::modal::Confirm::ask("x", Vec::new())));
+        click_button(&mut ws, &mut svc, &l, |slot| {
+            matches!(slot, Slot::Worktree(_))
+        });
+        assert_eq!(ws.modals.len(), 1);
     }
 }

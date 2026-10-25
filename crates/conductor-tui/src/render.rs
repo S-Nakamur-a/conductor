@@ -290,6 +290,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("type", &[Action::ExpandOrRight]),
             ("open", &[Action::Select]),
             ("stop", &[Action::StopSession]),
+            ("new", &[Action::NewSessionMenu]),
             ("back", &[Action::ExitSubPanel]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],

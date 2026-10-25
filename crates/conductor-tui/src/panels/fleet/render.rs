@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use conductor_core::theme::Theme;
@@ -61,19 +62,31 @@ pub fn summary(fleet: &FleetPanel, theme: &Theme) -> Line<'static> {
     Line::from(spans)
 }
 
-pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+/// 一覧の本文の 1 行が何か。描画とクリックの当たり判定が同じ並びを読む。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Slot {
+    Other,
+    Repo(Option<PathBuf>),
+    Worktree(Worktree),
+}
+
+/// 一覧の区画の中身。要約行・本文・最下行の矩形と、本文の行とスクロール量。
+pub struct Composed {
+    pub summary: Option<Rect>,
+    pub body: Rect,
+    pub footer: Rect,
+    pub lines: Vec<Line<'static>>,
+    pub slots: Vec<Slot>,
+    pub offset: usize,
+}
+
+pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
     let inner = inner(rect);
     if inner.height == 0 {
-        return;
+        return None;
     }
     let fleet = &ws.panels.fleet;
     let theme = &ws.theme;
-    if inner.height >= 2 {
-        frame.render_widget(
-            Paragraph::new(summary(fleet, theme)),
-            Rect { height: 1, ..inner },
-        );
-    }
     let body = Rect {
         y: inner.y + 1,
         height: inner.height.saturating_sub(2),
@@ -84,17 +97,11 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         height: 1,
         ..inner
     };
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            clip(&hint(ws), usize::from(inner.width)),
-            Style::default().fg(ws.theme.hint),
-        )),
-        footer,
-    );
     let now = SystemTime::now();
     let focused = ws.focus == Focus::Fleet;
     let (pinned, groups) = fleet.groups();
     let mut lines: Vec<Line> = Vec::new();
+    let mut slots: Vec<Slot> = Vec::new();
     let mut selected_line = 0;
     if pinned.is_empty() && groups.is_empty() {
         lines.push(Line::styled(
@@ -122,8 +129,16 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
             ));
         }
     }
+    slots.resize(lines.len(), Slot::Other);
     for group in &groups {
-        lines.push(header(&group.name, theme.fg, inner.width));
+        let smart = group.root.clone().filter(|root| fleet.is_tree_root(root));
+        lines.push(repo_header(
+            &group.name,
+            theme,
+            inner.width,
+            smart.is_some(),
+        ));
+        slots.push(Slot::Repo(smart));
         for node in &group.nodes {
             let indent = match &node.worktree {
                 Some(worktree) => {
@@ -138,6 +153,7 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                         selected,
                         focused,
                     ));
+                    slots.push(Slot::Worktree(worktree.clone()));
                     4
                 }
                 None => 0,
@@ -155,11 +171,41 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                     focused,
                     now,
                 ));
+                slots.push(Slot::Other);
             }
         }
     }
-    let offset = selected_line.saturating_sub(usize::from(body.height).saturating_sub(2));
-    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), body);
+    Some(Composed {
+        summary: (inner.height >= 2).then_some(Rect { height: 1, ..inner }),
+        body,
+        footer,
+        offset: selected_line.saturating_sub(usize::from(body.height).saturating_sub(2)),
+        lines,
+        slots,
+    })
+}
+
+pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let Some(composed) = compose(ws, rect) else {
+        return;
+    };
+    if let Some(summary_rect) = composed.summary {
+        frame.render_widget(
+            Paragraph::new(summary(&ws.panels.fleet, &ws.theme)),
+            summary_rect,
+        );
+    }
+    frame.render_widget(
+        Paragraph::new(Line::styled(
+            clip(&hint(ws), usize::from(composed.footer.width)),
+            Style::default().fg(ws.theme.hint),
+        )),
+        composed.footer,
+    );
+    frame.render_widget(
+        Paragraph::new(composed.lines).scroll((composed.offset as u16, 0)),
+        composed.body,
+    );
 }
 
 /// 一覧の最下行。今のフォーカスと選んだ行で効くキーを、keymap の割り当てどおりに出す。
@@ -175,13 +221,18 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::Select, "開く"),
             (Action::ExpandOrRight, "返事"),
             (Action::StopSession, "止める"),
+            (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
             (Action::StopSession, "止める"),
+            (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
         ],
-        None => &[(Action::ExitSubPanel, "閉じる")],
+        None => &[
+            (Action::NewSessionMenu, "新しいセッション"),
+            (Action::ExitSubPanel, "閉じる"),
+        ],
     };
     items
         .iter()
@@ -232,7 +283,12 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = inner(rect);
     let theme = &ws.theme;
     if let Some(worktree) = ws.panels.fleet.selected_worktree() {
-        let lines = vec![
+        let new = crate::render::representative_chord(
+            &ws.keymap,
+            ws.key_context(),
+            Action::NewSessionMenu,
+        );
+        let mut lines = vec![
             Line::styled(
                 worktree.label,
                 Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
@@ -242,6 +298,13 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                 Style::default().fg(theme.dir_fg),
             ),
         ];
+        if let Some(key) = new {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                format!("{key} でこの worktree に新しいセッション"),
+                Style::default().fg(theme.fg),
+            ));
+        }
         frame.render_widget(Paragraph::new(lines), inner);
         return;
     }
@@ -302,6 +365,40 @@ fn inner(rect: Rect) -> Rect {
     )
 }
 
+/// 本文の右端 3 桁のボタン。当たり判定は [button_hit] が同じ桁を読む。
+pub const NEW_BUTTON: &str = "[+]";
+pub const SMART_BUTTON: &str = "[✧]";
+const BUTTON_WIDTH: u16 = 3;
+
+pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
+    let body = composed.body;
+    if !(body.y..body.bottom()).contains(&y) || x + BUTTON_WIDTH < body.right() || x >= body.right()
+    {
+        return None;
+    }
+    let slot = composed
+        .slots
+        .get(composed.offset + usize::from(y - body.y))?;
+    match slot {
+        Slot::Repo(Some(_)) | Slot::Worktree(_) => Some(slot),
+        Slot::Repo(None) | Slot::Other => None,
+    }
+}
+
+fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {
+    if !smart {
+        return header(name, theme.fg, width);
+    }
+    let name = clip(name, usize::from(width.saturating_sub(BUTTON_WIDTH + 2)));
+    let mut line = header(&name, theme.fg, width.saturating_sub(BUTTON_WIDTH + 1));
+    line.spans.push(Span::raw(" "));
+    line.spans.push(Span::styled(
+        SMART_BUTTON,
+        Style::default().fg(theme.accent),
+    ));
+    line
+}
+
 fn header(text: &str, color: Color, width: u16) -> Line<'static> {
     let rule = (width as usize).saturating_sub(text.width() + 1);
     Line::from(vec![
@@ -351,12 +448,15 @@ fn worktree_line(
     selected: bool,
     focused: bool,
 ) -> Line<'static> {
-    let label = clip(&worktree.label, (width as usize).saturating_sub(2));
+    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
+    let label = clip(&worktree.label, room);
+    let pad = room.saturating_sub(label.width());
     crate::list::row_line(
-        vec![Span::styled(
-            format!("  {label}"),
-            Style::default().fg(theme.fg),
-        )],
+        vec![
+            Span::styled(format!("  {label}"), Style::default().fg(theme.fg)),
+            Span::raw(" ".repeat(pad + 1)),
+            Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
+        ],
         theme,
         selected,
         focused,

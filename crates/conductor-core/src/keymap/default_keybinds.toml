@@ -138,6 +138,8 @@
 ":" = "command_palette"
 # 小文字の d は、一覧に居ると気づかずに打った文 (ready など) から届いてしまう。
 "D" = "stop_session"
+# 素の文字にしないのは、一覧に届いた打ちかけの文 (json2csv、python3) が n と数字で起動してしまうため。
+"ctrl+n" = "new_session_menu"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]

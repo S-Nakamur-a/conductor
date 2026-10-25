@@ -56,9 +56,18 @@ pub enum Effect {
     StopFleetSession(crate::panels::fleet::StopTarget),
     NewSession(SessionKind),
     NewClaudeWithChrome,
-    /// 自由記述のタスクを Smart Worktree に渡す。Prompt の on_submit は関数
+    /// 自由記述のタスクを Smart Worktree に渡す (窓の repo に作る)。Prompt の on_submit は関数
     /// ポインタで設定もリポジトリも掴めないので、Task を組むのは apply の側。
     SmartWorktree(String),
+    /// 一覧で選んだ dir で Claude を起こし、一覧でそのセッションを選んで右に入る。
+    NewClaudeIn {
+        dir: PathBuf,
+        chrome: bool,
+    },
+    /// その repo で Smart Worktree の説明を聞く。
+    FleetSmartPrompt(PathBuf),
+    /// [Effect::FleetSmartPrompt] で聞いた説明。repo は一覧が覚えている。
+    FleetSmartWorktree(String),
     /// 作ったばかりの worktree で Claude を起こし、入力を受けられるようになったら
     /// prompt を流し込む。今映しているものは動かさない。
     SmartSession {
@@ -172,15 +181,30 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 new_session(ws, SessionKind::ClaudeCode, None, None, true)
             }
             Effect::SmartWorktree(description) => {
-                queue.push_back(Effect::Spawn(Task::SmartWorktree {
-                    description,
-                    api: ws.config.api.clone(),
-                }));
-                queue.push_back(Effect::Status(
-                    StatusLevel::Info,
-                    "Smart worktree: generating\u{2026}".into(),
-                ));
+                let repo = ws.repo.root.clone();
+                queue.extend(smart_worktree(ws, repo, description));
             }
+            Effect::FleetSmartPrompt(repo) => {
+                ws.panels.fleet.set_smart_target(repo);
+                ws.modals.push(Modal::Prompt(crate::modal::Prompt::single(
+                    "Smart Worktree: describe the task",
+                    |description| match description.trim() {
+                        "" => vec![Effect::Status(
+                            StatusLevel::Warning,
+                            "no task description".into(),
+                        )],
+                        description => vec![Effect::FleetSmartWorktree(description.to_string())],
+                    },
+                )));
+            }
+            Effect::FleetSmartWorktree(description) => match ws.panels.fleet.take_smart_target() {
+                Some(repo) => queue.extend(smart_worktree(ws, repo, description)),
+                None => queue.push_back(Effect::Status(
+                    StatusLevel::Warning,
+                    "Smart worktree: no repository to create it in".into(),
+                )),
+            },
+            Effect::NewClaudeIn { dir, chrome } => queue.extend(new_claude_in(ws, &dir, chrome)),
             Effect::SmartSession {
                 worktree,
                 name,
@@ -442,17 +466,51 @@ fn open_in_editor(ws: &mut Workspace, path: &std::path::Path) -> Vec<Effect> {
     }
 }
 
+fn smart_worktree(ws: &Workspace, repo: PathBuf, description: String) -> Vec<Effect> {
+    vec![
+        Effect::Spawn(Task::SmartWorktree {
+            description,
+            api: ws.config.api.clone(),
+            repo,
+        }),
+        Effect::Status(
+            StatusLevel::Info,
+            "Smart worktree: generating\u{2026}".into(),
+        ),
+    ]
+}
+
+fn new_claude_in(ws: &mut Workspace, dir: &std::path::Path, chrome: bool) -> Vec<Effect> {
+    let launched = ws.panels.terminal.launch_claude_in(dir, &ws.config, chrome);
+    let own = ws.panels.terminal.own_claude_sessions();
+    after_launch(ws, launched, own)
+}
+
+fn after_launch(
+    ws: &mut Workspace,
+    launched: anyhow::Result<String>,
+    own: Vec<crate::panels::fleet::OwnSession>,
+) -> Vec<Effect> {
+    match launched {
+        Ok(id) => {
+            ws.panels.fleet.note_launched(id, own);
+            vec![Effect::Focus(Focus::FleetSession)]
+        }
+        Err(e) => vec![Effect::Status(StatusLevel::Error, format!("{e:#}"))],
+    }
+}
+
+/// repo_root に作った worktree をそのまま渡す。窓の repo 以外で作ったものもある。
 fn smart_session(
     ws: &mut Workspace,
     worktree: &std::path::Path,
     name: Option<&str>,
     prompt: String,
 ) -> Vec<Effect> {
-    let repo_root = ws.repo.root.clone();
     match ws
         .panels
         .terminal
-        .launch_claude_at(worktree, &repo_root, &ws.config, name, prompt)
+        .launch_claude_at(worktree, worktree, &ws.config, name, prompt)
     {
         Ok(()) => Vec::new(),
         Err(e) => vec![Effect::Status(
@@ -563,6 +621,68 @@ mod tests {
 
     use super::*;
     use crate::panels::fleet::StopTarget;
+
+    #[test]
+    fn 起動できたら一覧でそのセッションを選んで右に入り_できなければ選択もフォーカスも動かさない() {
+        use crate::panels::fleet::{OwnSession, RowKey};
+        let mut ws = Workspace::for_test();
+        let own = vec![OwnSession {
+            panel_id: "p1".into(),
+            working_dir: PathBuf::from("/r/a"),
+            claude_session_id: None,
+        }];
+        let effects = after_launch(&mut ws, Ok("p1".into()), own.clone());
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Focus(Focus::FleetSession)]
+        ));
+        let selected = || ws.panels.fleet.selected_row().map(|r| r.key);
+        assert_eq!(selected(), Some(RowKey::Panel("p1".into())));
+
+        let effects = after_launch(&mut ws, Err(anyhow::anyhow!("no claude")), own);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Status(StatusLevel::Error, _)]
+        ));
+        assert_eq!(
+            ws.panels.fleet.selected_row().map(|r| r.key),
+            Some(RowKey::Panel("p1".into()))
+        );
+    }
+
+    #[test]
+    fn 一覧からの_smart_worktree_は聞いた_repo_を一度だけ使い_覚えていなければ警告だけ() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::<TaskResult>::new();
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::FleetSmartWorktree("x".into())],
+        );
+        assert!(matches!(
+            ws.chrome.status.as_ref().map(|s| s.level),
+            Some(StatusLevel::Warning)
+        ));
+        assert_eq!(svc.in_flight(), 0);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::FleetSmartPrompt(PathBuf::from("/r/other"))],
+        );
+        assert!(matches!(ws.modals.last(), Some(Modal::Prompt(_))));
+        assert_eq!(
+            ws.panels.fleet.take_smart_target(),
+            Some(PathBuf::from("/r/other"))
+        );
+        assert_eq!(ws.panels.fleet.take_smart_target(), None);
+
+        let effects = smart_worktree(&ws, PathBuf::from("/r/other"), "x".into());
+        assert!(matches!(
+            effects.first(),
+            Some(Effect::Spawn(Task::SmartWorktree { repo, .. })) if repo == std::path::Path::new("/r/other")
+        ));
+    }
 
     #[test]
     fn 外のプロセスを止める指示は一覧に載せたときの起動時刻のまま裏の仕事になる() {
