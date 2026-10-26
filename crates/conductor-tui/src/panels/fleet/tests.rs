@@ -2410,10 +2410,10 @@ mod usage {
         );
         let line = |width| squeeze(&text(&render::summary_line(&fleet, &theme, now(), width)));
         let stages = [
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42% 2h13m · 7d ████░░░░ 61% 3d4h",
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42% · 7d ████░░░░ 61%",
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███░░░░░ 42%",
-            "作業中 1 5h ███░░░░░ 42%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42% 2h13m · 7d ████▉░░░ 61% 3d4h",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42% · 7d ████▉░░░ 61%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42%",
+            "作業中 1 5h ███▎░░░░ 42%",
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0",
         ];
         let mut seen = Vec::new();
@@ -2480,14 +2480,23 @@ mod usage {
         assert_eq!(rows[0].context_percent, Some(42));
         assert_eq!(rows[1].context_percent, None);
         let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
-        let bar = composed
+        let line = composed
             .lines
             .iter()
-            .flat_map(|l| &l.spans)
-            .find(|s| s.content.contains('%'))
+            .find(|l| l.spans.iter().any(|s| s.content.contains('%')))
             .expect("使用率の行");
-        assert_eq!(bar.content, "█░░░ 42%");
-        assert_eq!(bar.style.fg, Some(ws.theme.accent));
+        let tail: Vec<_> = line.spans[line.spans.len() - 3..]
+            .iter()
+            .map(|s| (s.content.to_string(), s.style.fg))
+            .collect();
+        assert_eq!(
+            tail,
+            [
+                ("█▋".to_string(), Some(ws.theme.accent)),
+                ("░░".to_string(), Some(ws.theme.hint)),
+                (" 42%".to_string(), Some(ws.theme.accent)),
+            ]
+        );
         assert_eq!(
             composed
                 .lines
@@ -2497,5 +2506,32 @@ mod usage {
             1,
             "使用率の分からない行に % は出ない"
         );
+    }
+
+    #[test]
+    fn 行の_4_マスのバーは_8_分の_1_刻みで塗り_12_パーセントでも塗った分が見える() {
+        let mut context = std::collections::HashMap::new();
+        context.insert("s7".to_string(), 12.0);
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = fleet_with(
+            Usage {
+                context,
+                ..Default::default()
+            },
+            vec![live(7, "/r/a", "s7", Status::Working, Owner::Conductor)],
+        );
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let text: String = composed
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .find(|t| t.contains('%'))
+            .expect("使用率の行");
+        assert!(text.ends_with("▍░░░ 12%"), "{text}");
     }
 }
