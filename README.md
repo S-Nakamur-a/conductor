@@ -144,7 +144,8 @@ question counts what is lost: uncommitted changes (ignored files such as `.env` 
 not counted, and are deleted with the worktree), commits not on `origin/<default
 branch>` (a squash-merged pull request shows here too), and the sessions that will
 stop — every Claude whose working directory is inside the worktree, in this window or
-not, and the shells this window opened there. On yes it closes this window's tabs,
+not (outside this window, only those Claude Code has written a state file for), and
+the shells this window opened there. On yes it closes this window's tabs,
 stops the other Claudes the same way **D** stops one, and deletes only after each
 Claude with a state file has ended (a Claude with no state file yet has its tab closed
 but is not waited for) and a second count finds no new commit, no more uncommitted
