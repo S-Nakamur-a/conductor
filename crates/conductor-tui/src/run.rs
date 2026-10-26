@@ -2584,7 +2584,7 @@ needle here
                 Item::Session(row) => Some(row),
                 Item::Worktree(_) => None,
             })
-            .last()
+            .next_back()
             .unwrap();
         let bottom_key = bottom.key.clone();
         ws.panels.fleet.click_list(
