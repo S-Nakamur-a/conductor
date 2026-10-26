@@ -486,10 +486,10 @@ pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
 
 fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {
     if !smart {
-        return header(name, theme.fg, width);
+        return header(name, theme.info, width);
     }
     let name = clip(name, usize::from(width.saturating_sub(BUTTON_WIDTH + 2)));
-    let mut line = header(&name, theme.fg, width.saturating_sub(BUTTON_WIDTH + 1));
+    let mut line = header(&name, theme.info, width.saturating_sub(BUTTON_WIDTH + 1));
     line.spans.push(Span::raw(" "));
     line.spans.push(Span::styled(
         SMART_BUTTON,
