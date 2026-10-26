@@ -11,6 +11,9 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 `cargo build` · `cargo run [-- <repo-path>]` · `cargo test --workspace` ·
 `cargo clippy --workspace` · `cargo check --workspace` · `make fmt`.
 Set `RUST_LOG=debug` for logging.
+The revidere skill's script has its own tests, which CI does not run:
+`python3 -m unittest discover -s plugins/conductor/skills/revidere/scripts`
+(also under `/usr/bin/python3`, which is 3.9 on macOS).
 
 **Always pass `--workspace`** — bare `cargo test` / `cargo clippy` only cover the
 root `conductor` package, which is a five-line `main.rs`; everything else is in
