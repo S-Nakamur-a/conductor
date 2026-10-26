@@ -4,14 +4,12 @@ members = [
     "crates/conductor-mcp",
     "crates/conductor-svc",
     "crates/conductor-tui",
-    "crates/revidere",
-    "crates/revidere-fixtures",
     "crates/sheaf-core",
 ]
 
 [package]
 name = "conductor"
-version = "6.4.0"
+version = "7.0.0"
 edition = "2024"
 
 [dependencies]

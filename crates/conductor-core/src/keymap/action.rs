@@ -126,22 +126,11 @@ keymap_suite::actions! {
         OpenThemePicker => "open_theme_picker",
 
         // PR レビュー
-        ShowRevidere => "show_revidere",
-        RevidereNextSection => "revidere_next_section",
-        ReviderePrevSection => "revidere_prev_section",
-        /// 総括と節+diff は 1 キーで交互に切り替えず、行き先ごとにキーを分ける。
-        /// 押した結果がいまどちらを出しているかに依存しないようにするため。
-        RevidereShowOverview => "revidere_show_overview",
-        RevidereShowSections => "revidere_show_sections",
-        RevidereToggleScope => "revidere_toggle_scope",
-        RevidereAskClaude => "revidere_ask_claude",
         ToggleViewed => "toggle_viewed",
         /// 'z' の 2 打鍵目 (za/zc/zo/zm/zr/zR/zM) はハンドラ側が直接読む。
         /// gd/gi/gr と同じ扱いで、折りたたみだけが再割り当て可能な語彙を持つ理由がない。
         FoldPrefix => "fold_prefix",
         ReviewPullRequest => "review_pull_request",
-        AnalyzeRevidere => "analyze_revidere",
-        ForceAnalyzeRevidere => "force_analyze_revidere",
         /// パレット限定。取り消せない外部アクションなので、常に確認を先に通す。
         PublishReview => "publish_review",
     }
@@ -195,17 +184,6 @@ impl Action {
             Action::PullWorktree => "Pull worktree",
             Action::SessionHistory => "Saved terminal output",
             Action::OpenPullRequest => "Open pull request",
-            Action::ShowRevidere => "Show the review (sections + diff)",
-            Action::RevidereNextSection => "Jump to next section",
-            Action::ReviderePrevSection => "Jump to previous section",
-            Action::RevidereShowOverview => "Show the overview (1 column)",
-            Action::RevidereShowSections => "Show the sections + diff (2 columns)",
-            Action::RevidereToggleScope => {
-                "Switch between the whole branch and what changed since the last review"
-            }
-            Action::RevidereAskClaude => "Paste the selected section into Claude Code's input",
-            Action::AnalyzeRevidere => "Review this branch (asks first)",
-            Action::ForceAnalyzeRevidere => "Re-analyse without asking, ignoring the cached reply",
             Action::FoldPrefix => "Fold block (za/zc/zo/zm/zr/zR/zM)",
             Action::ToggleViewed => "Toggle file viewed",
             Action::ReviewPullRequest => "Review a pull request by number or URL",

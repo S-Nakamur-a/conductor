@@ -27,7 +27,7 @@ replaces the earlier one. `cargo test` runs whatever is at that path and exits 0
 measured here, the same filename answered 586 tests at one moment and 581 — another
 branch's suite — the next. The false *errors* this also produces (`unresolved
 import` in a crate you never touched) are the same cause, and `touch` only wins the
-race back. `make wt-stamp` appends `-wt.<worktree dir name>` to the seven
+race back. `make wt-stamp` appends `-wt.<worktree dir name>` to the
 `crates/*/Cargo.toml` versions; `make wt-reset` strips it before the pull request.
 Commit the stamp — `git rebase` refuses to start with any unstaged change. Leave the
 root version alone: a dependency's version already propagates downstream, so `-V`
@@ -46,24 +46,19 @@ itself over stdio — no separate build step, no Node. `cargo install --path .` 
 MCP tools together, which is the point: they used to be two artifacts on two
 release channels and drifted apart. `plugins/conductor/.mcp.json` starts it for
 the Claude Code sessions inside the TUI, resolving the DB from
-`$CONDUCTOR_DB_PATH` (injected by `conductor-svc`'s `pty/spawn.rs`). The AI review
-itself is still made by `revidere`, not by MCP: `analyze_review` only asks the window
-to start it, and `get_review` reads the artifact it wrote.
+`$CONDUCTOR_DB_PATH` (injected by `conductor-svc`'s `pty/spawn.rs`).
 
 - **Tool contract:** the `#[tool]` handlers in `crates/conductor-mcp/src/tools.rs`.
   Their doc comments become the JSON Schema descriptions the model reads, so
   changing one changes the tool's public contract — treat them as API, not
   commentary.
-- **The window tools** (`open_file` / `close_file` / `analyze_review`) ride the
+- **The window tools** (`open_file` / `close_file`) ride the
   cc-notify socket as one `ui <json>` line (`cc_hook::UiRequest`), relayed by the
   PTY host like `cc-signal`. They can only answer *sent*: a host with no window
-  drops the line, and it is deliberately not replayed on attach. An open_file /
-  analyze_review request from another worktree switches the window there first —
+  drops the line, and it is deliberately not replayed on attach. An open_file
+  request from another worktree switches the window there first —
   unless an editor is open, which the switch would kill; close_file does not, and
-  only acts on the worktree being shown. The analyse confirmation it raises answers
-  only to `y` / `n` / Esc, since it pops up while someone may be typing elsewhere —
-  Enter and the selection keys are ignored, but a typed `y` still approves it. `get_review` reads
-  `review.json` directly and needs no window.
+  only acts on the worktree being shown.
   Adding a window tool runs an action at a moment nobody chose. Open one level of
   the callees of the action it reuses and check each side effect against someone
   who is typing, has an editor open, or is on another worktree: #403's three bugs
@@ -182,36 +177,14 @@ with no window open, and the window opened later showed it mid-tool.
   in-process host over a socketpair, so there is one code path and those sessions
   end with the window.
 
-### Review analyser (`crates/revidere`)
+### Review analyser (`plugins/conductor/skills/revidere/`)
 
-revidere turns a git diff into `<worktree>/.conductor/review.json`: every changed
-line sorted into sections by importance, plus a coverage check that no changed
-line is left unexplained. `crates/revidere-fixtures` is shared test scaffolding.
-
-- **One entry point:** `revidere::analyze(&Options, &dyn Ai)`. No binary, no CLI —
-  conductor-tui is the only caller (`task.rs`, on a worker thread).
-- **The AI is injected.** revidere never spawns anything; conductor-tui implements
-  `revidere::Ai` over `conductor_core::ai_caller`, so the review runs on the same
-  `[api]` config as every other AI feature. `provider = "gemini"` will *not* work:
-  the prompt hands over the ledger only and the model must read the repository
-  itself, so it needs an agentic CLI under `provider = "command"`.
-- **The voice is part of the prompt, and it goes last.** `[review] style` (inline)
-  or `style_path` (a Claude Code output-style file) is appended by
-  `prompt::system`. Whatever voice the AI tool already carries loses to this
-  prompt's own demand for verified fact, so naming it here is the only way it
-  survives — and it only survives from the *end*: measured, the same text placed
-  before the rules is overridden by them. The JSON shape and the standard of
-  evidence are explicitly held constant in that block.
-- **The base is guessed remote-first** (`git::guess_base`): `origin/HEAD`, then
-  `origin/main` / `origin/master`, and only then the local branches. `git fetch`
-  never advances a local `main`, so preferring it silently widened the review to
-  include everything that landed upstream meanwhile.
-- **Cache identity** includes `Ai::identity()` *and the composed prompt*, so
-  changing the voice re-asks. If identity goes constant, changing models silently
-  returns the old model's answer.
-- **Failing coverage is not a failure.** `analyze` returns the artifact either
-  way; `review.coverage.is_complete()` distinguishes them.
-- revidere writes nothing to stdout/stderr (the host owns a TUI) — use `log`.
+revidere is a Claude Code skill, not part of the binary: the session that calls it
+writes the review, `scripts/revidere.py` builds the ledger, checks that no changed
+line is left unexplained and renders the page, and the page goes out as an
+Artifact. It used to be a crate driven by the window; it left because the review
+needs an agentic model reading the repository, which a session already is. The
+procedure and the review rules live in its `SKILL.md`.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 
@@ -384,11 +357,11 @@ crates/
   conductor-svc/    the side-effect runner: threads + one mpsc, PtyStore, watchers.
   conductor-mcp/    conductor mcp-serve — the review DB over stdio.
   conductor-tui/    the screen: panels, modals, route / layout / Effect / render.
-  sheaf-core/ revidere/   the SCIP index with confidence attached · the review analyser.
+  sheaf-core/       the SCIP index with confidence attached.
 src/main.rs         five lines: hands this package's version to conductor_tui::entry::run.
 ```
 
-Dependency direction: `tui → svc → core ← {sheaf-core, revidere}`. core knows
+Dependency direction: `tui → svc → core ← sheaf-core`. core knows
 neither tui nor svc, and cargo enforces it. The version string comes from the
 root `Cargo.toml` and is passed in, so `conductor -V`, the status line and the
 self-update comparison all read one number.
@@ -402,8 +375,8 @@ the panels, a `Vec<Modal>` and the chrome (status, menu state, layout ratios).
   `fn update(&mut self, action, ctx: &Ctx) -> Vec<Effect>`, so an effect on any
   other panel can only be expressed in the return value. That is what keeps the
   old `impl App` scattered across 32 files structurally impossible.
-- **Panels are not a trait.** The five are shaped too differently (revidere sits
-  outside the accordion, terminal owns PTYs); a trait would return `Any` through `dyn`.
+- **Panels are not a trait.** The five are shaped too differently (Sessions takes
+  the main area whole, terminal owns PTYs); a trait would return `Any` through `dyn`.
 - **Modals are a stack, and only the top receives input.** Popups that do *not*
   take all input (hover, references, inline threads) belong to
   the panel's own state instead.
@@ -474,11 +447,9 @@ The middle row is a three-column accordion with focus-driven widths: Explorer
 over shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
 persist), `Focus::Editor` merges Explorer+Viewer into one PTY region. Menu rows
 carry a `CommandId` and run through the same `command::exec` as the palette and
-every keybinding. The revidere reading view (`Focus::Revidere`, `w`) is *not* in
-the accordion — it takes the main area whole as three columns (reading order | diff
-| Claude), at fixed 24/38/38 that the accordion's ratios do not move.
+every keybinding.
 
-**Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) takes the main area too, and is
+**Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is
 the screen conductor opens on: every Claude on the machine, built from the state
 files Claude Code writes itself (`~/.claude/sessions/<pid>.json`, read by
 `claude_sessions::registry` once a second on a worker) joined with this window's
@@ -495,8 +466,8 @@ the selection follows the session: re-selecting anything else would make
 `apply_fleet` pull the keyboard out of the session being typed into.
 **Whether the list is open is not derived from `Focus`**
 (`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
-remembered as where Esc returns (`Workspace::screen_focus`, which `reviewing()` and
-the focus cycle read), so a background result never moves the keyboard to a region
+remembered as where Esc returns (`Workspace::screen_focus`, which
+the focus cycle reads), so a background result never moves the keyboard to a region
 nobody can see, and window tools (`remote.rs`) do nothing but say so. Focus moves
 made by hand — commands from keys, the palette or the menu, and the focus cycle —
 go through `command::by_hand`, which turns them into `LeaveFleet`. The right side shows
@@ -553,7 +524,6 @@ Nothing else may follow it out: the rest of git stays on `git2`.
 
 - **Config:** `~/.config/conductor/config.toml`
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
-- **Review artifact:** `<worktree>/.conductor/review.json`, with the stored AI answers alongside it in `review-cache/` (gitignored)
 - **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **PTY host log:** `<main worktree>/.conductor/pty-host.log` — the host's stderr; its socket sits beside the cc-notify one
 - **statusLine copies:** `<runtime dir>/statusline/<session id>.json` — the last statusLine input of each Claude conductor started; the session list reads context use and 5h / 7d from them. Never cleaned up (about 2KB each, under `$TMPDIR`)

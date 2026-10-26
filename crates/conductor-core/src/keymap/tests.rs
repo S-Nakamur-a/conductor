@@ -67,6 +67,16 @@ fn 下区画の一覧はどの層からでも切り替えられる() {
 }
 
 #[test]
+fn レビューのキーだった_w_は_explorer_で何にも当たらない() {
+    let km = KeyMap::default();
+    for key in [ch('w'), shift('W'), alt('w')] {
+        for layer in [Explorer, ExplorerDiffList, ExplorerCommentList] {
+            assert_eq!(km.resolve(&key, layer), None, "{layer:?} {key:?}");
+        }
+    }
+}
+
+#[test]
 fn 既定のキーが解決する() {
     let km = KeyMap::default();
     let cases = [
@@ -137,9 +147,6 @@ fn 既定のキーが解決する() {
         (Worktree, ch('b'), Action::GrabBranch),
         (Worktree, shift('B'), Action::UngrabBranch),
         (Explorer, ch('c'), Action::ShowCommentList),
-        (Explorer, ch('w'), Action::ShowRevidere),
-        (Explorer, shift('W'), Action::AnalyzeRevidere),
-        (Explorer, alt('w'), Action::ForceAnalyzeRevidere),
         (
             Explorer,
             key(KeyCode::Tab, KeyModifiers::CONTROL),
@@ -190,17 +197,6 @@ fn 既定のキーが解決する() {
             key(KeyCode::F(10), KeyModifiers::NONE),
             Action::FocusMenuBar,
         ),
-        (Revidere, ch('j'), Action::NavigateDown),
-        (Revidere, ch('n'), Action::RevidereNextSection),
-        (Revidere, shift('N'), Action::ReviderePrevSection),
-        (
-            Revidere,
-            key(KeyCode::Enter, KeyModifiers::NONE),
-            Action::Select,
-        ),
-        (Revidere, ch('q'), Action::ExitSubPanel),
-        (Revidere, ch('o'), Action::RevidereShowOverview),
-        (Revidere, ch('d'), Action::RevidereShowSections),
     ];
     for (context, event, action) in cases {
         assert_eq!(
@@ -369,9 +365,35 @@ fn 語彙から外したアクション名は解釈されない() {
         "update_and_restart",
         "check_for_update",
         "toggle_panel_overlay",
+        "show_revidere",
+        "analyze_revidere",
+        "force_analyze_revidere",
+        "revidere_next_section",
     ] {
         assert_eq!(Action::from_name(name), None, "{name}");
     }
+}
+
+#[test]
+fn revidereの設定が残っていても警告で済み_ほかのキーは効く() {
+    let leftover = user(
+        "[layers.explorer]\n\"w\" = \"show_revidere\"\n\"W\" = \"analyze_revidere\"\n\"x\" = \"navigate_down\"\n\
+         [layers.revidere]\n\"j\" = \"navigate_down\"",
+    );
+    let (km, warnings) = KeyMap::with_warnings(&leftover);
+    let unknown_actions = warnings
+        .iter()
+        .filter(|w| matches!(w, KeybindWarning::UnknownAction { action, .. } if action.contains("revidere")))
+        .count();
+    assert_eq!(unknown_actions, 2, "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| matches!(w, KeybindWarning::UnknownLayer { layer } if layer == "revidere")),
+        "{warnings:?}"
+    );
+    assert_eq!(km.resolve(&ch('x'), Explorer), Some(Action::NavigateDown));
+    assert_eq!(km.resolve(&ch('j'), Explorer), Some(Action::NavigateDown));
 }
 
 #[test]

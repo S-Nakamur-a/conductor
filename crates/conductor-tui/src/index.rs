@@ -287,35 +287,6 @@ mod tests {
         crate::testing::pump(&mut ws, &mut svc);
     }
 
-    #[test]
-    fn リポジトリを選び直したら走っている解析を残さない() {
-        let repo = crate::testing::TestRepo::new();
-        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        let cancel: std::sync::Arc<std::sync::atomic::AtomicBool> = Default::default();
-        ws.panels.revidere.note_spawned(&Task::Analyze {
-            worktree: repo.root(),
-            branch: "feature/x".into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: cancel.clone(),
-        });
-        assert!(ws.panels.revidere.is_running("feature/x"));
-
-        crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(repo.root())]);
-
-        assert!(
-            !ws.panels.revidere.is_running("feature/x"),
-            "受け取り手が消えたのに解析中を名乗り続けている"
-        );
-        assert!(
-            cancel.load(std::sync::atomic::Ordering::Relaxed),
-            "旗を降ろしただけで AI コマンドを止めていない"
-        );
-        crate::testing::pump(&mut ws, &mut svc);
-    }
-
     /// 飛んでいる間にもう 1 本頼むと、フレームごとにワーカーが積み上がる。
     #[test]
     fn 調査は同時に1本しか頼まない() {

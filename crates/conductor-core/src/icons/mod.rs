@@ -260,7 +260,7 @@ pub const PANEL_COMMENTS: Glyph = Glyph::nerd_only("\u{eac7}");
 /// PTY のパネル。
 pub const PANEL_TERMINAL: Glyph = Glyph::nerd_only("\u{ea85}");
 
-/// revidere のレビュービュー。
+/// Tour の見出し。
 pub const PANEL_REVIEW: Glyph = Glyph::nerd_only("\u{eab3}");
 
 /// 別プロセスに grab されていて操作できないパネル。

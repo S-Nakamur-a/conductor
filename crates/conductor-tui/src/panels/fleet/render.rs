@@ -16,7 +16,6 @@ use super::{Ask, FleetPanel, Inspection, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
 use crate::modal::Confirm;
 use crate::panels::explorer::git_changes;
-use crate::panels::revidere::Badge;
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
@@ -193,7 +192,6 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     lines.push(worktree_line(
                         theme,
                         worktree,
-                        ws.panels.revidere.badge(&worktree.path),
                         inner.width,
                         selected,
                         focused,
@@ -289,21 +287,18 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
-            (Action::AnalyzeRevidere, "レビュー"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
-            (Action::AnalyzeRevidere, "レビュー"),
         ],
         None if fleet.selected_worktree().is_some() => &[
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::StopSession, "worktree を消す"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
-            (Action::AnalyzeRevidere, "レビュー"),
         ],
         None => &[
             (Action::NewSessionMenu, "新しいセッション"),
@@ -678,18 +673,11 @@ fn tag(place: Place) -> &'static str {
 fn worktree_line(
     theme: &Theme,
     worktree: &Worktree,
-    badge: Option<Badge>,
     width: u16,
     selected: bool,
     focused: bool,
 ) -> Line<'static> {
-    let badge = badge.map(|badge| match badge {
-        Badge::Running => ("review…", theme.accent),
-        Badge::Ready => ("review ✓", theme.success),
-        Badge::Failed => ("review ✗", theme.error),
-    });
-    let badge_width = badge.map_or(0, |(text, _)| text.width() + 1);
-    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3)).saturating_sub(badge_width);
+    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
     let mut spans = vec![
@@ -697,9 +685,6 @@ fn worktree_line(
         Span::styled(format!("  {label}"), Style::default().fg(theme.info)),
         Span::raw(" ".repeat(pad + 1)),
     ];
-    if let Some((text, color)) = badge {
-        spans.push(Span::styled(format!("{text} "), Style::default().fg(color)));
-    }
     spans.push(Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)));
     crate::list::row_line(spans, theme, selected, focused)
 }

@@ -13,7 +13,6 @@ use crate::effect::Effect;
 use crate::index::Index;
 use crate::modal::Modal;
 use crate::panels::explorer::{BottomView, ExplorerPanel};
-use crate::panels::revidere::RevidereState;
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
 use crate::panels::worktree::WorktreePanel;
@@ -28,7 +27,6 @@ pub enum Focus {
     TerminalClaude,
     TerminalShell,
     Editor,
-    Revidere,
     /// マシン上の全 Claude の一覧。
     Fleet,
     /// 一覧の右に映した、この窓のセッション。
@@ -43,16 +41,14 @@ impl Focus {
         )
     }
 
-    /// Tab の輪。Revidere は輪に入らず Explorer へ抜ける。Editor は開いている間だけ通る。
+    /// Tab の輪。Editor は開いている間だけ通る。
     pub fn next(self) -> Self {
         match self {
             Self::Worktree => Self::Explorer,
             Self::Explorer => Self::Viewer,
             Self::Viewer | Self::Editor => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
-            Self::TerminalShell | Self::Revidere | Self::Fleet | Self::FleetSession => {
-                Self::Explorer
-            }
+            Self::TerminalShell | Self::Fleet | Self::FleetSession => Self::Explorer,
         }
     }
 
@@ -62,7 +58,7 @@ impl Focus {
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
-            Self::Revidere | Self::Fleet | Self::FleetSession => Self::Explorer,
+            Self::Fleet | Self::FleetSession => Self::Explorer,
         }
     }
 
@@ -75,7 +71,6 @@ impl Focus {
             Self::TerminalClaude => "Claude Code",
             Self::TerminalShell => "Shell",
             Self::Editor => "Editor",
-            Self::Revidere => "Review",
             Self::Fleet => "Sessions",
             Self::FleetSession => "Session",
         }
@@ -89,7 +84,6 @@ impl Focus {
             Self::Viewer => KeyContext::Viewer,
             Self::TerminalClaude | Self::TerminalShell | Self::FleetSession => KeyContext::Terminal,
             Self::Editor => KeyContext::Editor,
-            Self::Revidere => KeyContext::Revidere,
         }
     }
 }
@@ -115,11 +109,6 @@ pub struct Chrome {
     pub status: Option<StatusMessage>,
     pub menu: crate::menu::MenuBar,
     pub maximized: bool,
-    /// レビュー画面が main を占めている。右端の Claude へフォーカスを移しても
-    /// 開いたままにするために、フォーカスとは別に持つ。
-    pub review_open: bool,
-    /// レビュー画面を開いたまま離れた worktree と、そのときのフォーカス。
-    pub review_open_in: std::collections::HashMap<std::path::PathBuf, Focus>,
     /// つかんでいる境界。離すまで持つ。
     pub drag: Option<crate::layout::Divider>,
     /// マウスで選んでいる区画内の範囲。次のクリック・スクロール・キーで消える。
@@ -203,7 +192,6 @@ pub struct Panels {
     pub explorer: ExplorerPanel,
     pub viewer: ViewerPanel,
     pub terminal: TerminalPanel,
-    pub revidere: RevidereState,
 }
 
 /// 読み取り専用の環境。パネルの update と render の両方に渡す。
@@ -220,8 +208,6 @@ pub struct Ctx<'a> {
     pub root: &'a Path,
     /// 1 つのパネルが 2 つの区画を持つことがあるので、どちらが受けたかを添える。
     pub focus: Focus,
-    /// レビュー画面の中にいる。
-    pub reviewing: bool,
     /// フォーカス中の区画とモードで決まる層。キーの案内とスコープが読む。
     pub key_context: KeyContext,
     /// 一覧の右に映っているセッション ([Workspace::fleet_session])。
@@ -264,7 +250,6 @@ impl Workspace {
             explorer: ExplorerPanel::default(),
             viewer: ViewerPanel::new(&config),
             terminal: TerminalPanel::new(&config),
-            revidere: RevidereState::default(),
         };
         let mut fx = crate::fx::Fx::default();
         if config.ui.startup_animation {
@@ -304,7 +289,6 @@ impl Workspace {
             index: &self.index,
             root: self.panels.viewer.root(),
             focus: self.focus,
-            reviewing: self.reviewing(),
             key_context: self.key_context(),
             fleet_session: self.fleet_session(),
         }
@@ -354,7 +338,6 @@ impl Workspace {
         root: &'a Path,
     ) -> (&'a mut Panels, &'a mut Vec<Modal>, Ctx<'a>) {
         let key_context = self.key_context();
-        let reviewing = self.reviewing();
         let fleet_session = self.fleet_session();
         let Self {
             panels,
@@ -379,7 +362,6 @@ impl Workspace {
             index,
             root,
             focus: *focus,
-            reviewing,
             key_context,
             fleet_session,
         };
@@ -401,7 +383,6 @@ impl Workspace {
             Focus::Explorer => panels.explorer.update(action, &ctx),
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
-            Focus::Revidere => panels.revidere.update(action, &ctx),
             Focus::Fleet | Focus::FleetSession => panels
                 .terminal
                 .update(action, &ctx)
@@ -497,19 +478,8 @@ impl Workspace {
             }
             TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
-            TaskResult::RequestedPrIntake { number, outcome } => {
-                self.accept_requested_pr(number, outcome)
-            }
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
-            TaskResult::RevidereLoaded(outcome) => self.panels.revidere.install(*outcome),
-            TaskResult::Analyzed { branch, outcome } => {
-                let worktree = self.worktree_path();
-                let selected = self.branch().to_string();
-                self.panels
-                    .revidere
-                    .finished(&branch, outcome, worktree, &selected)
-            }
             TaskResult::Review(loaded) => {
                 self.review.install(loaded.map(|s| *s));
                 match self.review.error.clone() {
@@ -652,8 +622,8 @@ impl Workspace {
                 let IntakenPr {
                     pr_number,
                     worktree_path,
-                    meta,
                     pulled,
+                    ..
                 } = *pr;
                 self.panels
                     .worktree
@@ -664,17 +634,10 @@ impl Workspace {
                     effects.push(Effect::PopModal);
                 }
                 effects.push(Effect::Focus(Focus::Explorer));
-                effects.extend(crate::command::analyze_worktree(
-                    self,
-                    worktree_path,
-                    meta.branch,
-                    false,
-                ));
-                // 解析の文言で上書きされると、古いまま解析していることが伝わらない。
                 if let Some(pulled) = pulled {
                     effects.push(Effect::Status(
                         StatusLevel::Info,
-                        format!("PR #{pr_number}: {pulled} \u{2014} revidere is analysing it."),
+                        format!("PR #{pr_number}: {pulled}"),
                     ));
                 }
                 effects
@@ -687,48 +650,6 @@ impl Workspace {
                 _ => vec![Effect::Status(StatusLevel::Error, e)],
             },
         }
-    }
-
-    /// 解析は 1 分より長くかかるので、残っているうちに次を始めると周回ごとに並ぶ。
-    pub fn may_ask_review_requests(&self) -> bool {
-        !self.config.review.auto_review_repos.is_empty()
-            && !self.panels.worktree.is_handling_review_request()
-            && self.panels.revidere.is_idle()
-    }
-
-    /// 頼まれて取り込んだ PR では、見ている worktree から引き剥がさないよう選択もフォーカスも動かさない。
-    fn accept_requested_pr(
-        &mut self,
-        number: u64,
-        outcome: Result<Box<IntakenPr>, String>,
-    ) -> Vec<Effect> {
-        self.panels.worktree.finish_review_request();
-        let IntakenPr {
-            worktree_path,
-            meta,
-            ..
-        } = match outcome {
-            Ok(pr) => *pr,
-            Err(e) => {
-                return vec![Effect::Status(
-                    StatusLevel::Warning,
-                    format!("review requested on PR #{number}: {e}"),
-                )];
-            }
-        };
-        let text = format!(
-            "Your review was requested on PR #{number} \u{2014} revidere is analysing '{}'.",
-            meta.branch
-        );
-        let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
-        effects.extend(crate::command::analyze_worktree(
-            self,
-            worktree_path,
-            meta.branch,
-            false,
-        ));
-        effects.push(Effect::Status(StatusLevel::Info, text));
-        effects
     }
 
     fn accept_publishable(
@@ -756,12 +677,6 @@ impl Workspace {
         vec![Effect::PushModal(Modal::Publish(
             crate::modal::publish::Publish::new(request),
         ))]
-    }
-
-    /// 今の画面がレビュー画面か。一覧に隠れていても。
-    pub fn reviewing(&self) -> bool {
-        let focus = self.screen_focus();
-        focus == Focus::Revidere || (self.chrome.review_open && focus == Focus::TerminalClaude)
     }
 
     /// 一覧に隠れている間も、その下の今の画面のフォーカス。
@@ -823,27 +738,12 @@ impl Workspace {
                 self.panels.terminal.session_in(self.focus)
             }
             Focus::FleetSession => self.fleet_session(),
-            Focus::Worktree | Focus::Explorer | Focus::Viewer | Focus::Revidere | Focus::Fleet => {
-                None
-            }
+            Focus::Worktree | Focus::Explorer | Focus::Viewer | Focus::Fleet => None,
         }
     }
 
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
-        self.sync_review_fx();
-        if self.reviewing() {
-            let Self {
-                panels,
-                theme,
-                config,
-                ..
-            } = self;
-            let Panels {
-                viewer, revidere, ..
-            } = panels;
-            revidere.prepare(theme, config, viewer.highlighter(config));
-        }
         let effects = self.panels.viewer.prepare(&self.config, &self.theme);
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
         if !self.panels.terminal.has_transcript() {
@@ -869,21 +769,6 @@ impl Workspace {
         effects
     }
 
-    /// 解析中の周回は見ているブランチのもの。走り始めや終わりの合図と違って、
-    /// worktree を切り替えるたびに出し入れが要るので、毎フレーム状態から引く。
-    fn sync_review_fx(&mut self) {
-        use crate::fx::{Kind, Target};
-        let running = self.panels.revidere.is_running(self.branch());
-        if running == self.fx.is_playing(&Kind::Orbit, Target::Review) {
-            return;
-        }
-        if running {
-            self.fx.play(Kind::Orbit, Target::Review);
-        } else {
-            self.fx.stop(&Kind::Orbit, Target::Review);
-        }
-    }
-
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
@@ -892,7 +777,6 @@ impl Workspace {
         self.panels
             .terminal
             .sync_sizes(layout, fleet_session.as_deref());
-        self.panels.revidere.sync_layout(layout);
         if let Some(rect) = layout.rect(crate::layout::Region::FleetChanges) {
             self.panels
                 .fleet
@@ -1025,31 +909,6 @@ fn stopped_status(stopped: conductor_core::claude_sessions::registry::Stopped) -
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn 取り込みか解析が残っているうちは次のレビュー依頼を問い合わせない() {
-        let mut ws = Workspace::for_test();
-        assert!(!ws.may_ask_review_requests(), "設定が空");
-        ws.config.review.auto_review_repos = vec!["/r".into()];
-        assert!(ws.may_ask_review_requests());
-
-        ws.panels
-            .worktree
-            .note_spawned(&Task::IntakeRequestedPr { number: 1 });
-        assert!(!ws.may_ask_review_requests(), "取り込み中");
-        ws.panels.worktree.finish_review_request();
-
-        ws.panels.revidere.note_spawned(&Task::Analyze {
-            worktree: "/r".into(),
-            branch: "feature/a".into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: Default::default(),
-        });
-        assert!(!ws.may_ask_review_requests(), "解析中");
-    }
 
     #[test]
     fn 設定に差が無ければ何も起きない() {

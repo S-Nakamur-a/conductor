@@ -1369,12 +1369,9 @@ pub(super) fn focus_of(region: Region) -> Focus {
     }
 }
 
-/// 端末を抜けた先。レビュー画面では左隣が Explorer ではなく読む順になる。
 fn left_of_terminal(ctx: &Ctx) -> Focus {
     if ctx.focus == Focus::FleetSession {
         Focus::Fleet
-    } else if ctx.reviewing {
-        Focus::Revidere
     } else {
         Focus::Explorer
     }

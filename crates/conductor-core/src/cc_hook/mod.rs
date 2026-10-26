@@ -64,7 +64,6 @@ pub enum UiRequest {
     CloseFile {
         path: String,
     },
-    AnalyzeReview,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -256,13 +255,6 @@ mod tests {
                     },
                 },
             ),
-            (
-                r#"ui {"cwd":"/tmp/wt","request":{"op":"analyze_review"}}"#,
-                Notification::Ui {
-                    cwd: PathBuf::from("/tmp/wt"),
-                    request: UiRequest::AnalyzeReview,
-                },
-            ),
         ];
         for (line, want) in cases {
             assert_eq!(Notification::parse(line).as_ref(), Some(&want), "{line}");
@@ -279,6 +271,7 @@ mod tests {
             "bogus /tmp/wt",
             "ui not-json",
             r#"ui {"cwd":"/tmp/wt","request":{"op":"format_disk"}}"#,
+            r#"ui {"cwd":"/x","request":{"op":"analyze_review"}}"#,
         ] {
             assert!(Notification::parse(line).is_none(), "{line}");
         }

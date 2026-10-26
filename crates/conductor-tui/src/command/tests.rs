@@ -239,8 +239,6 @@ fn git系コマンドは状態で灰色になる() {
             ahead: None,
             behind: None,
             head_oid: None,
-            head_time: None,
-            review: Default::default(),
         }
     }
 

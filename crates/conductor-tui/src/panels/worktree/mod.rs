@@ -3,12 +3,10 @@
 pub mod render;
 pub mod strip;
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use conductor_core::git_engine::{GrabState, WorktreeInfo};
 use conductor_core::keymap::Action;
-use conductor_core::pr_intake::PrHead;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
@@ -33,10 +31,6 @@ pub struct WorktreePanel {
     grabbed: Option<GrabState>,
     /// ストリップの空白へのクリック。
     blank_clicks: ClickTracker,
-    /// レビュー依頼の問い合わせか、そこから始めた取り込みの最中。
-    handling_review_request: bool,
-    /// このウィンドウで自動の取り込みを始めた PR。消した worktree を次の周回で作り直さない。
-    auto_reviewed: HashSet<u64>,
 }
 
 impl WorktreePanel {
@@ -63,14 +57,6 @@ impl WorktreePanel {
     /// 取得中に周期の取り直しを重ねると、175k ファイルのリポジトリ(1 回 25 秒)で 8 本並走して互いを遅くする。
     pub fn is_listing(&self) -> bool {
         self.listing
-    }
-
-    pub fn is_handling_review_request(&self) -> bool {
-        self.handling_review_request
-    }
-
-    pub fn finish_review_request(&mut self) {
-        self.handling_review_request = false;
     }
 
     pub fn grabbed(&self) -> Option<&GrabState> {
@@ -212,16 +198,6 @@ impl WorktreePanel {
                 Vec::new()
             }
             TaskResult::GitDone(outcome) => self.git_done(outcome),
-            TaskResult::ReviewRequests(requested) => {
-                self.finish_review_request();
-                match requested {
-                    Ok(requested) => self.start_next_review(requested),
-                    Err(e) => vec![Effect::Status(
-                        StatusLevel::Warning,
-                        format!("review requests: {e}"),
-                    )],
-                }
-            }
             TaskResult::GrabState(state) => {
                 self.grabbed = state.unwrap_or_else(|e| {
                     log::warn!("could not read the grab state: {e}");
@@ -394,30 +370,6 @@ impl WorktreePanel {
         if matches!(task, Task::ListWorktrees) {
             self.listing = true;
         }
-        if matches!(
-            task,
-            Task::ListReviewRequests { .. } | Task::IntakeRequestedPr { .. }
-        ) {
-            self.handling_review_request = true;
-        }
-    }
-
-    /// 手元にまだ無い PR を 1 件だけ取り込む。まとめて始めると AI の解析が件数分並ぶ。
-    fn start_next_review(&mut self, requested: Vec<PrHead>) -> Vec<Effect> {
-        // 一覧が届く前は、既にある worktree を見分けられない。
-        if self.list.is_empty() {
-            return Vec::new();
-        }
-        let fresh = requested.into_iter().find(|pr| {
-            let branch = pr.local_branch();
-            !self.auto_reviewed.contains(&pr.number)
-                && !self.list.iter().any(|w| w.branch == branch)
-        });
-        let Some(pr) = fresh else {
-            return Vec::new();
-        };
-        self.auto_reviewed.insert(pr.number);
-        vec![Effect::Spawn(Task::IntakeRequestedPr { number: pr.number })]
     }
 }
 
@@ -475,8 +427,6 @@ mod tests {
             ahead: None,
             behind: None,
             head_oid: None,
-            head_time: None,
-            review: Default::default(),
         }
     }
 
@@ -505,33 +455,6 @@ mod tests {
             crate::effect::apply(&mut ws, &mut svc, effects);
         }
         ws
-    }
-
-    #[test]
-    fn レビュー依頼はまだworktreeの無いprを1件ずつ取り込む() {
-        let mut ws = drive(&[]);
-        let requested = || {
-            serde_json::from_str(
-                r#"[{"headRefName":"feature/a","isCrossRepository":false,"number":1,"state":"OPEN"},
-                    {"headRefName":"feature/c","isCrossRepository":false,"number":2,"state":"OPEN"},
-                    {"headRefName":"feature/d","isCrossRepository":false,"number":3,"state":"OPEN"}]"#,
-            )
-            .unwrap()
-        };
-        for want in [2, 3] {
-            let effects = ws.accept(TaskResult::ReviewRequests(Ok(requested())));
-            assert!(
-                matches!(
-                    effects.as_slice(),
-                    [Effect::Spawn(Task::IntakeRequestedPr { number })] if *number == want
-                ),
-                "{effects:?}"
-            );
-        }
-        assert!(
-            ws.accept(TaskResult::ReviewRequests(Ok(requested())))
-                .is_empty()
-        );
     }
 
     #[test]

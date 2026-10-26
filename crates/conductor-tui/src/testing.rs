@@ -61,8 +61,6 @@ pub fn select_only_worktree(ws: &mut Workspace, svc: &mut Services<TaskResult>, 
         ahead: None,
         behind: None,
         head_oid: None,
-        head_time: None,
-        review: Default::default(),
     };
     let effects = ws.accept(TaskResult::Worktrees(Ok(vec![info])));
     apply(ws, svc, effects);

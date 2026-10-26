@@ -1,5 +1,5 @@
-//! stdio 越しに公開する 13 のツール — レビュー DB 7 つ、コード索引を読む
-//! `search_symbols` / `read_symbol`、Conductor の画面を動かす 3 つと review.json を読む 1 つ。
+//! stdio 越しに公開する 11 のツール — レビュー DB 7 つ、コード索引を読む
+//! `search_symbols` / `read_symbol`、Conductor の画面を動かす 2 つ。
 //!
 //! ワイヤ上の契約 — ツール名、引数名、description、返信文の一字一句 — はあえて
 //! 変えない。既に世に出ているセッションとスラッシュコマンドがそれに依存する。
@@ -457,33 +457,6 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Ask the Conductor window to create its AI review (revidere) of this worktree's diff against the base branch. The window asks the user to confirm first, and the analysis takes minutes. Read the result with get_review."
-    )]
-    async fn analyze_review(&self) -> Result<CallToolResult, ErrorData> {
-        let Some(root) = self.workdir() else {
-            return err_text("This directory is not inside a git worktree.");
-        };
-        self.ask_window(root, UiRequest::AnalyzeReview)
-    }
-
-    #[tool(
-        description = "Read the AI review (revidere) of this worktree as JSON: every changed line sorted into sections by importance, with explanations. Its head field names the commit it was made for; it may be older than the working tree."
-    )]
-    async fn get_review(&self) -> Result<CallToolResult, ErrorData> {
-        let Some(root) = self.workdir() else {
-            return err_text("This directory is not inside a git worktree.");
-        };
-        let path = revidere::review::artifact_path(&root, revidere::review::Scope::Base);
-        match std::fs::read_to_string(&path) {
-            Ok(json) => ok_text(json),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                ok_text("No review for this worktree yet. Call analyze_review to create one.")
-            }
-            Err(e) => err_text(format!("Cannot read {}: {e}", path.display())),
-        }
-    }
-
-    #[tool(
         description = "Return the source text of one definition — doc comment, attributes and body — by name, without reading the whole file. `name` is the symbol name (`Type::name` for members); `path` (substring) and `kind` narrow it when several definitions share the name; when still ambiguous, the candidates are listed instead. If the file changed since the index was built, no lines are returned (they would be wrong) — Read the file instead."
     )]
     async fn read_symbol(
@@ -543,7 +516,7 @@ impl ServerHandler for McpServer {
         info.instructions = Some(
             "Conductor's review database: inline comments and change summaries \
              for the branch checked out in this working directory. Also drives the \
-             Conductor window: open and close files, create and read its AI review."
+             Conductor window: open and close files."
                 .into(),
         );
         info

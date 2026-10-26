@@ -27,8 +27,6 @@ impl Answer {
 enum Keys {
     /// y / n / Esc と、Enter・選択の移動。
     Buttons,
-    /// y / n / Esc だけ。ほかは無視する。
-    Letters,
     /// y が Yes (大文字・Ctrl・Alt 付きも)、← で Yes・→ で No を選び Enter で選択中を答える。ほかのキーはどれも No。
     /// h / l を選択に使わないのは、打ちかけの文の l で Yes に倒れ、続く Enter で答えてしまうため。
     YesOnly,
@@ -73,7 +71,6 @@ impl Choice {
             KeyCode::Enter if self.keys == Keys::YesOnly => Some(self.selected),
             _ if self.keys == Keys::YesOnly => Some(Answer::No),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => Some(Answer::No),
-            _ if self.keys == Keys::Letters => None,
             KeyCode::Enter => Some(self.selected),
             KeyCode::Tab
             | KeyCode::BackTab
@@ -102,7 +99,6 @@ impl Choice {
         };
         let keys = match self.keys {
             Keys::Buttons => "   y / n · tab",
-            Keys::Letters => "   y / n",
             Keys::YesOnly => "   y / ←→ enter / else: no",
         };
         Line::from(vec![
@@ -133,14 +129,6 @@ impl Confirm {
     /// 失うものがある確認。Enter を反射で押しても何も起きない。
     pub fn destructive(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
         Self::with_default(Answer::No, question.into(), on_yes)
-    }
-
-    /// 外から出る確認。別の区画で打っていた Enter や h / l が答えにならないよう、
-    /// y / n でしか答えられない。
-    pub fn letters_only(question: impl Into<String>, on_yes: Vec<Effect>) -> Self {
-        let mut confirm = Self::destructive(question, on_yes);
-        confirm.choice.keys = Keys::Letters;
-        confirm
     }
 
     /// 別の区画に打つつもりの文が届きうる場所で出す確認。文の中の y 以外の字で閉じるので、
@@ -256,20 +244,6 @@ mod tests {
         }
         let mut confirm = Confirm::ask("go?", vec![Effect::Quit]);
         assert!(confirm.update(key(KeyCode::Char('j'))).is_empty());
-    }
-
-    #[test]
-    fn 文字だけの確認は選択の移動とenterに答えない() {
-        let mut confirm = Confirm::letters_only("analyse?", vec![Effect::Quit]);
-        for code in [
-            KeyCode::Char('l'),
-            KeyCode::Tab,
-            KeyCode::Right,
-            KeyCode::Enter,
-        ] {
-            assert!(confirm.update(key(code)).is_empty(), "{code:?}");
-        }
-        assert!(answered(&confirm.update(key(KeyCode::Char('y')))));
     }
 
     #[test]

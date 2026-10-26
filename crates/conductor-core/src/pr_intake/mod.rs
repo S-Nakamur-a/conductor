@@ -205,25 +205,6 @@ fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeErr
     )
 }
 
-/// 自分に直接レビューが依頼されている open な PR。チーム宛ての依頼は含めない。
-/// 含めると、チームに来た PR を全部取り込んで解析することになる。
-pub fn review_requests(repo_path: &Path) -> Result<Vec<PrHead>, PrIntakeError> {
-    gh(
-        repo_path,
-        &[
-            "pr",
-            "list",
-            "--search",
-            "user-review-requested:@me",
-            "--state",
-            "open",
-            "--json",
-            "number,headRefName,isCrossRepository,state",
-        ],
-        |stderr| other(stderr.trim()),
-    )
-}
-
 /// gh から取った PR のメタデータ。
 #[derive(Debug)]
 pub struct FetchedPr {

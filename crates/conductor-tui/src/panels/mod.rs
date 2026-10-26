@@ -6,7 +6,6 @@
 
 pub mod explorer;
 pub mod fleet;
-pub mod revidere;
 pub mod terminal;
 pub mod viewer;
 pub mod worktree;

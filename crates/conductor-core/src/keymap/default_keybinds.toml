@@ -147,8 +147,6 @@
 "D" = "stop_session"
 # 素の文字にしないのは、一覧に届いた打ちかけの文 (json2csv、python3) が n と数字で起動してしまうため。
 "ctrl+n" = "new_session_menu"
-# 選んだ行の worktree を revidere にかける。打ちかけの文から届いても確認で止まる。
-"W" = "analyze_revidere"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]
@@ -170,14 +168,6 @@
 "c" = "show_comment_list"
 "C" = "open_comment_list"
 "t" = "show_tour_stops"
-"w" = "show_revidere"
-# Shift+W runs the analysis — the "heavier" sibling of w=show, mirroring the
-# do/undo shift-pairing used elsewhere. Dispatched as a global action, so it
-# fires even though this Explorer layer owns the chord. revidere caches its
-# reply keyed on the diff itself, so pressing W twice on an unchanged diff
-# returns instantly without starting the AI; alt+w skips the cache.
-"W" = "analyze_revidere"
-"alt+w" = "force_analyze_revidere"
 "/" = "search_filename"
 ":" = "command_palette"
 
@@ -270,47 +260,6 @@
 "enter" = "select"
 "d" = "show_diff_list"
 "c" = "show_comment_list"
-"esc" = "exit_sub_panel"
-"ctrl+esc" = "exit_sub_panel"
-":" = "command_palette"
-
-# ── Revidere: the two-column review view ────────────────────────────────────────
-# Occupies the whole screen, so this layer owns every key: there is no other
-# panel underneath to fall through to.
-[layers.revidere]
-"j" = "navigate_down"
-"down" = "navigate_down"
-"k" = "navigate_up"
-"up" = "navigate_up"
-"g" = "go_to_top"
-"G" = "go_to_bottom"
-# 2 列を 1 つのフォーカスで歩く。列を分けないと j/k が「次の項目」と「次の diff 行」の
-# 両方を意味することになる。
-"l" = "expand_or_right"
-"right" = "expand_or_right"
-"h" = "collapse_or_left"
-"left" = "collapse_or_left"
-"enter" = "select"
-# Move between sections rather than lines, with the diff following along —
-# the same n/N pairing the comment list uses.
-"n" = "revidere_next_section"
-"N" = "revidere_prev_section"
-# GitHub が PR description と Files changed を分けているのと同じ切り分け。総括は
-# 読むのは最初の一度で、そのあとずっと画面を取り続けるものではない。行き先ごとに
-# キーを分けてあるので、いまどちらを出していても押した結果は同じ。
-"o" = "revidere_show_overview"
-"d" = "revidere_show_sections"
-# p は列 (o/d) とは別の軸で、見ている区間を入れ替える。W をこのレイヤーにも置くのは、
-# 切り替えた先が未解析のときに、いったん抜けないと作れないのでは行き止まりになるため。
-"p" = "revidere_toggle_scope"
-"a" = "revidere_ask_claude"
-# 開いた w で閉じる。
-"w" = "show_revidere"
-"W" = "analyze_revidere"
-"alt+w" = "force_analyze_revidere"
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
-"q" = "exit_sub_panel"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"

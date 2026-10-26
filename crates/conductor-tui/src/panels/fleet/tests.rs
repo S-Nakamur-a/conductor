@@ -855,7 +855,7 @@ mod hint {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
+            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -867,7 +867,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -890,7 +890,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く · W レビュー"
+            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く"
         );
     }
 
@@ -916,7 +916,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n");
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
+            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
@@ -937,7 +937,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
         assert_eq!(
             render::hint(&ws),
-            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
+            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -963,7 +963,7 @@ mod hint {
         let lines = drawn(&ws, 80, 3);
         assert_eq!(
             lines[1].trim(),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -1076,7 +1076,12 @@ mod screen {
         apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
         let shown = ws.worktree_path();
         assert_ne!(shown, feat);
-        let effects = crate::remote::effects(&mut ws, &feat, UiRequest::AnalyzeReview);
+        let open = UiRequest::OpenFile {
+            path: feat.join("a.txt").to_string_lossy().into_owned(),
+            line: None,
+            diff: true,
+        };
+        let effects = crate::remote::effects(&mut ws, &feat, open);
         assert!(
             matches!(
                 effects.as_slice(),
@@ -1104,36 +1109,6 @@ mod screen {
             ws.chrome.status.as_ref().map(|s| s.level),
             Some(StatusLevel::Warning)
         ));
-    }
-
-    #[test]
-    fn レビューの_claude_列から一覧を開いて_esc_するとレビューに戻る() {
-        let mut ws = Workspace::for_test();
-        let mut svc = Services::new();
-        ws.focus = Focus::TerminalClaude;
-        ws.chrome.review_open = true;
-        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
-        let effects = ws.dispatch(Action::ExitSubPanel).unwrap();
-        apply(&mut ws, &mut svc, effects);
-        assert_eq!(ws.focus, Focus::TerminalClaude);
-        assert!(ws.reviewing());
-    }
-
-    #[test]
-    fn 下がレビュー画面の一覧でレビューのコマンドを押すとレビューを閉じて_explorer_へ() {
-        let mut ws = Workspace::for_test();
-        let mut svc = Services::new();
-        ws.focus = Focus::Revidere;
-        ws.chrome.review_open = true;
-        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
-        apply(
-            &mut ws,
-            &mut svc,
-            vec![Effect::Command(crate::command::CommandId::ShowRevidere)],
-        );
-        assert!(!ws.chrome.fleet_open);
-        assert_eq!(ws.focus, Focus::Explorer);
-        assert!(!ws.reviewing());
     }
 
     #[test]
@@ -1207,25 +1182,13 @@ mod screen {
     }
 
     #[test]
-    fn 一覧に載る前の同じ_repo_の_worktree_には入らず_repo_も解析もそのまま() {
+    fn 一覧に載る前の同じ_repo_の_worktree_には入らず_repo_もそのまま() {
         let repo = crate::testing::TestRepo::new();
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
         apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
         let feat = repo.worktree("feat");
         ws.panels.terminal.show_shell_as_claude_for_test(&feat);
         let id = ws.panels.terminal.visible_claude().unwrap().to_string();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        ws.panels
-            .revidere
-            .note_spawned(&crate::task::Task::Analyze {
-                worktree: repo.root(),
-                branch: "main".into(),
-                scope: Default::default(),
-                force: false,
-                api: Default::default(),
-                review: Default::default(),
-                cancel: cancel.clone(),
-            });
         let before = svc.generation();
         apply(
             &mut ws,
@@ -1233,7 +1196,6 @@ mod screen {
             vec![Effect::EnterSession(RowKey::Panel(id))],
         );
         assert_eq!(svc.generation(), before, "同じ repo を開き直した");
-        assert!(!cancel.load(std::sync::atomic::Ordering::Relaxed));
         assert!(ws.chrome.fleet_open);
         assert!(matches!(
             ws.chrome.status.as_ref().map(|s| s.level),
@@ -1241,7 +1203,7 @@ mod screen {
         ));
     }
 
-    fn enter_from_review(
+    fn enter_from_explorer(
         a: &crate::testing::TestRepo,
         dir: impl FnOnce(&mut Workspace) -> std::path::PathBuf,
     ) -> (
@@ -1254,8 +1216,6 @@ mod screen {
         let dir = dir(&mut ws);
         ws.panels.terminal.show_shell_as_claude_for_test(&dir);
         let id = ws.panels.terminal.visible_claude().unwrap().to_string();
-        ws.focus = Focus::Revidere;
-        ws.chrome.review_open = true;
         apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
         apply(
             &mut ws,
@@ -1271,59 +1231,38 @@ mod screen {
     }
 
     #[test]
-    fn レビュー画面から同じ_worktree_のセッションに入るとレビュー画面のまま() {
+    fn 同じ_worktree_のセッションに入ると一覧を閉じてその_claude_へ() {
         let a = crate::testing::TestRepo::new();
-        let (ws, _svc, _) = enter_from_review(&a, |ws| ws.worktree_path());
+        let (ws, _svc, _) = enter_from_explorer(&a, |ws| ws.worktree_path());
         assert!(!ws.chrome.fleet_open);
-        assert!(ws.reviewing());
         assert_eq!(ws.focus, Focus::TerminalClaude);
     }
 
     #[test]
-    fn レビュー画面から同じ_repo_の別の_worktree_に入るとworktree_の切り替えと同じくレビュー画面を閉じる()
-     {
+    fn 同じ_repo_の別の_worktree_に入るとその_worktree_へ切り替わる() {
         let a = crate::testing::TestRepo::new();
         let feat = a.worktree("feat");
-        let (ws, _svc, _) = enter_from_review(&a, |_| feat.clone());
+        let (ws, _svc, _) = enter_from_explorer(&a, |_| feat.clone());
         assert!(same_dir(&ws.worktree_path(), &feat));
-        assert!(!ws.reviewing());
         assert_eq!(ws.focus, Focus::TerminalClaude);
     }
 
     #[test]
-    fn レビュー画面から別の_repo_の_main_worktree_に入るとレビュー画面を閉じる() {
+    fn 別の_repo_の_main_worktree_に入るとその_repo_を開く() {
         let a = crate::testing::TestRepo::new();
         let b = crate::testing::TestRepo::new();
-        let (ws, _svc, _) = enter_from_review(&a, |_| b.root());
+        let (ws, _svc, _) = enter_from_explorer(&a, |_| b.root());
         assert!(same_dir(&ws.worktree_path(), &b.root()));
-        assert!(!ws.reviewing());
         assert_eq!(ws.focus, Focus::TerminalClaude);
     }
 
     #[test]
-    fn レビュー画面から別の_repo_の_linked_worktree_に入ると一覧が届いた後もそのセッションにいる() {
+    fn 別の_repo_の_linked_worktree_に入ると一覧が届いた後もそのセッションにいる() {
         let a = crate::testing::TestRepo::new();
         let b = crate::testing::TestRepo::new();
         let b_feat = b.worktree("feat");
-        let (ws, _svc, _) = enter_from_review(&a, |_| b_feat.clone());
+        let (ws, _svc, _) = enter_from_explorer(&a, |_| b_feat.clone());
         assert!(same_dir(&ws.worktree_path(), &b_feat));
-        assert!(!ws.reviewing());
-        assert_eq!(ws.focus, Focus::TerminalClaude);
-    }
-
-    #[test]
-    fn 別の_repo_から入った_linked_worktree_に預けたレビュー画面があれば一覧が届いた時に戻る() {
-        let a = crate::testing::TestRepo::new();
-        let b = crate::testing::TestRepo::new();
-        let b_feat = b.worktree("feat");
-        let (ws, _svc, _) = enter_from_review(&a, |ws| {
-            ws.chrome
-                .review_open_in
-                .insert(b_feat.clone(), Focus::TerminalClaude);
-            b_feat.clone()
-        });
-        assert!(same_dir(&ws.worktree_path(), &b_feat));
-        assert!(ws.reviewing());
         assert_eq!(ws.focus, Focus::TerminalClaude);
     }
 
@@ -3294,13 +3233,10 @@ mod branch_page_key {
     }
 }
 
-mod review_key {
+mod worktree_row {
     use conductor_core::git_engine::Head;
 
     use super::*;
-    use crate::modal::Modal;
-    use crate::panels::revidere::Badge;
-    use crate::task::{AnalyzeOutcome, Task};
 
     fn tree() -> FleetPanel {
         let mut fleet = FleetPanel::default();
@@ -3336,235 +3272,6 @@ mod review_key {
             at(200),
         );
         fleet
-    }
-
-    fn analyse(worktree: &str, branch: &str) -> Task {
-        Task::Analyze {
-            worktree: worktree.into(),
-            branch: branch.into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: Default::default(),
-        }
-    }
-
-    #[test]
-    fn 一覧の_w_の大文字は選んだ行の_worktree_を解析にかける() {
-        let ws = Workspace::for_test();
-        assert_eq!(
-            ws.keymap.resolve(
-                &crossterm::event::KeyEvent::new(
-                    crossterm::event::KeyCode::Char('W'),
-                    crossterm::event::KeyModifiers::SHIFT
-                ),
-                conductor_core::keymap::KeyContext::Fleet,
-            ),
-            Some(Action::AnalyzeRevidere)
-        );
-        let mut fleet = tree();
-        let session = fleet
-            .items()
-            .into_iter()
-            .find(|i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(8)))
-            .unwrap();
-        fleet.select(&session, at(300));
-        assert_eq!(
-            fleet.update(Action::AnalyzeRevidere, &ws.ctx()),
-            Some(vec![Effect::AnalyzeFleetWorktree(PathBuf::from(
-                "/r/app-b"
-            ))])
-        );
-        assert_eq!(
-            FleetPanel::default().update(Action::AnalyzeRevidere, &ws.ctx()),
-            Some(Vec::new()),
-            "行が無ければ窓の worktree の解析に落とさない"
-        );
-    }
-
-    /// main に 1 コミットある repo を dir/name に作り、canonicalize したパスを返す。
-    fn repo_at(dir: &Path, name: &str) -> PathBuf {
-        let path = dir.join(name);
-        let mut opts = git2::RepositoryInitOptions::new();
-        opts.initial_head("main");
-        let repo = git2::Repository::init_opts(&path, &opts).unwrap();
-        let tree = repo
-            .find_tree(repo.index().unwrap().write_tree().unwrap())
-            .unwrap();
-        let sig = git2::Signature::now("t", "t@example.com").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
-            .unwrap();
-        std::fs::create_dir_all(path.join("sub")).unwrap();
-        path.canonicalize().unwrap()
-    }
-
-    fn started(effects: &[Effect]) -> (PathBuf, String) {
-        let [Effect::PushModal(Modal::Confirm(confirm))] = effects else {
-            panic!("{effects:?}");
-        };
-        confirm
-            .on_yes
-            .iter()
-            .find_map(|e| match e {
-                Effect::Spawn(Task::Analyze {
-                    worktree, branch, ..
-                }) => Some((worktree.clone(), branch.clone())),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{:?}", confirm.on_yes))
-    }
-
-    #[test]
-    fn 窓の_repo_なら一覧がまだ空でも鍵は窓の側と同じブランチ名で_解析先は_worktree_の根() {
-        let dir = tempfile::tempdir().unwrap();
-        let app = repo_at(dir.path(), "app");
-        let mut ws = Workspace::for_test();
-        ws.repo.root = app.clone();
-        ws.repo.main_branch = "main".into();
-        assert!(ws.panels.worktree.list().is_empty());
-        let effects = crate::command::confirm_analyze_worktree(&ws, app.join("sub"));
-        assert_eq!(started(&effects), (app, ws.branch().to_string()));
-    }
-
-    #[test]
-    fn 別の_repo_の同名ブランチは窓の解析とぶつからず_終わってもステータス行だけ() {
-        let dir = tempfile::tempdir().unwrap();
-        let app = repo_at(dir.path(), "app");
-        let other = repo_at(dir.path(), "other");
-        let mut ws = Workspace::for_test();
-        ws.repo.root = app.clone();
-        ws.repo.main_branch = "main".into();
-        ws.panels
-            .revidere
-            .note_spawned(&analyse(app.to_str().unwrap(), "main"));
-        let effects = crate::command::confirm_analyze_worktree(&ws, other.clone());
-        assert_eq!(started(&effects), (other.clone(), "other:main".to_string()));
-
-        ws.panels
-            .revidere
-            .note_spawned(&analyse(other.to_str().unwrap(), "other:main"));
-        let done = AnalyzeOutcome::Done {
-            coverage_complete: true,
-        };
-        let finished = ws
-            .panels
-            .revidere
-            .finished("other:main", done, app.clone(), "main");
-        assert!(
-            matches!(finished.as_slice(), [Effect::Status(..)]),
-            "窓の Review を光らせも読み直しもしない: {finished:?}"
-        );
-        assert!(ws.panels.revidere.is_running("main"), "窓の解析は残る");
-    }
-
-    /// repo に branch を切り、parent/branch に linked worktree を作る。
-    fn linked(repo: &Path, branch: &str, parent: &Path) -> PathBuf {
-        let repo = git2::Repository::open(repo).unwrap();
-        let head = repo.head().unwrap().peel_to_commit().unwrap();
-        let reference = repo.branch(branch, &head, false).unwrap().into_reference();
-        std::fs::create_dir_all(parent).unwrap();
-        let path = parent.join(branch);
-        let mut opts = git2::WorktreeAddOptions::new();
-        opts.reference(Some(&reference));
-        repo.worktree(branch, &path, Some(&opts)).unwrap();
-        path.canonicalize().unwrap()
-    }
-
-    #[test]
-    fn 別の_repo_同士で_worktree_の名前とブランチが同じでも鍵は分かれる() {
-        let dir = tempfile::tempdir().unwrap();
-        let app = repo_at(dir.path(), "app");
-        let a = repo_at(dir.path(), "a");
-        let b = repo_at(dir.path(), "b");
-        let a_wt = linked(&a, "refactor", &dir.path().join("a-worktrees"));
-        let b_wt = linked(&b, "refactor", &dir.path().join("b-worktrees"));
-        let mut ws = Workspace::for_test();
-        ws.repo.root = app;
-        let key =
-            |dir: &Path| started(&crate::command::confirm_analyze_worktree(&ws, dir.into())).1;
-        assert_eq!(key(&a_wt), "a:refactor");
-        assert_eq!(key(&b_wt), "b:refactor");
-    }
-
-    #[test]
-    fn 外の端末の_cwd_が_worktree_の下でも解析先は根で_印と削除のガードがその根に効く() {
-        let dir = tempfile::tempdir().unwrap();
-        let other = repo_at(dir.path(), "other");
-        let mut ws = Workspace::for_test();
-        let effects = crate::command::confirm_analyze_worktree(&ws, other.join("sub"));
-        let (worktree, branch) = started(&effects);
-        assert_eq!(worktree, other);
-        ws.panels
-            .revidere
-            .note_spawned(&analyse(worktree.to_str().unwrap(), &branch));
-        assert_eq!(ws.panels.revidere.badge(&other), Some(Badge::Running));
-        assert!(ws.panels.revidere.is_running_in(&other));
-    }
-
-    #[test]
-    fn git_でない_dir_は断る() {
-        let plain = tempfile::tempdir().unwrap();
-        let ws = Workspace::for_test();
-        let refused =
-            crate::command::confirm_analyze_worktree(&ws, plain.path().canonicalize().unwrap());
-        assert!(
-            matches!(
-                refused.as_slice(),
-                [Effect::Status(StatusLevel::Warning, _)]
-            ),
-            "{refused:?}"
-        );
-    }
-
-    #[test]
-    fn worktree_の行に解析中_済み_失敗の印が出る() {
-        let mut ws = Workspace::for_test();
-        ws.panels.fleet = tree();
-        let line_of = |ws: &Workspace| {
-            let composed = render::compose(ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
-            composed
-                .lines
-                .iter()
-                .map(|l| {
-                    l.spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                })
-                .find(|t| t.contains("feature/b"))
-                .unwrap()
-        };
-        assert!(!line_of(&ws).contains("review"), "{}", line_of(&ws));
-
-        ws.panels
-            .revidere
-            .note_spawned(&analyse("/r/app-b", "feature/b"));
-        assert_eq!(
-            ws.panels.revidere.badge(Path::new("/r/app-b")),
-            Some(Badge::Running)
-        );
-        assert!(line_of(&ws).contains("review…"), "{}", line_of(&ws));
-
-        let done = AnalyzeOutcome::Done {
-            coverage_complete: true,
-        };
-        ws.panels
-            .revidere
-            .finished("feature/b", done, PathBuf::from("/r/app"), "main");
-        assert!(line_of(&ws).contains("review ✓"), "{}", line_of(&ws));
-
-        ws.panels
-            .revidere
-            .note_spawned(&analyse("/r/app-b", "feature/b"));
-        ws.panels.revidere.finished(
-            "feature/b",
-            AnalyzeOutcome::Failed("boom".into()),
-            PathBuf::from("/r/app"),
-            "main",
-        );
-        assert!(line_of(&ws).contains("review ✗"), "{}", line_of(&ws));
-        assert_eq!(ws.panels.revidere.badge(Path::new("/r/app")), None);
     }
 
     #[test]

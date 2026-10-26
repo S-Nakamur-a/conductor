@@ -57,17 +57,6 @@ pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
 /// [crate::command::execute] の 1 本に落ち、ここに残るのはコマンドを持たない語彙だけ。
 pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
     match action {
-        // レビュー中の輪は読む順と Claude の 2 つだけ。アコーディオンの続きへ進むと、
-        // 出ていない区画がフォーカスされて画面ごと入れ替わる。
-        Action::CycleFocusForward | Action::CycleFocusBackward if ws.reviewing() => {
-            crate::command::by_hand(
-                ws,
-                vec![Effect::Focus(match ws.screen_focus() {
-                    Focus::Revidere => Focus::TerminalClaude,
-                    _ => Focus::Revidere,
-                })],
-            )
-        }
         Action::CycleFocusForward => {
             crate::command::by_hand(ws, vec![Effect::Focus(ws.screen_focus().next())])
         }
@@ -147,23 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn レビュー中のタブは読む順と_claude_を往復する() {
-        // Effect の PartialEq は判別子しか見ないので、行き先は取り出して比べる。
-        let destination = |ws: &Workspace| match global_effects(ws, Action::CycleFocusForward)[..] {
-            [Effect::Focus(focus)] => focus,
-            ref other => panic!("フォーカスの移動にならなかった: {other:?}"),
-        };
-
-        let mut ws = Workspace::for_test();
-        ws.focus = Focus::Revidere;
-        assert_eq!(destination(&ws), Focus::TerminalClaude);
-
-        ws.chrome.review_open = true;
-        ws.focus = Focus::TerminalClaude;
-        assert_eq!(destination(&ws), Focus::Revidere);
-    }
-
-    #[test]
     fn フォーカスの輪() {
         let mut f = Focus::Worktree;
         let mut seen = vec![f];
@@ -182,7 +154,5 @@ mod tests {
                 Focus::Explorer
             ]
         );
-        assert_eq!(Focus::Revidere.next(), Focus::Explorer);
-        assert_eq!(Focus::Revidere.prev(), Focus::Explorer);
     }
 }

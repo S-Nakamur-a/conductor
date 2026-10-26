@@ -62,8 +62,6 @@ pub enum Effect {
     },
     /// 確認で y が押された。中のセッションを止め、点検のときから増えていなければ消す。
     DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
-    /// 一覧で選んだ worktree の AI レビューを、確認を挟んで始める。
-    AnalyzeFleetWorktree(PathBuf),
     NewSession(SessionKind),
     NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す (窓の repo に作る)。Prompt の on_submit は関数
@@ -256,11 +254,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     None => Focus::Fleet,
                 };
             }
-            Effect::Focus(focus) => {
-                ws.chrome.review_open =
-                    focus == Focus::Revidere || (ws.reviewing() && focus == Focus::TerminalClaude);
-                ws.set_screen_focus(focus);
-            }
+            Effect::Focus(focus) => ws.set_screen_focus(focus),
             Effect::OpenFleet => {
                 ws.panels
                     .fleet
@@ -283,9 +277,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     window_root: ws.repo.root.clone(),
                 }));
             }
-            Effect::AnalyzeFleetWorktree(path) => {
-                queue.extend(crate::command::confirm_analyze_worktree(ws, path));
-            }
             Effect::DeleteFleetWorktree(inspection) => {
                 queue.extend(delete_fleet_worktree(ws, *inspection));
             }
@@ -304,7 +295,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::Spawn(task) => {
                 ws.panels.fleet.note_spawned(&task);
                 ws.panels.worktree.note_spawned(&task);
-                ws.panels.revidere.note_spawned(&task);
                 task.spawn(svc, &ws.task_env());
             }
             Effect::StopSessions(worktree) => ws.panels.terminal.stop_sessions(worktree.as_deref()),
@@ -352,8 +342,6 @@ fn enter_session(
     let mut effects = match listed {
         Some(index) => select_worktree(ws, index),
         None => {
-            // 別の repo へはレビュー画面を持ち込まない。
-            ws.chrome.review_open = false;
             ws.focus = Focus::TerminalClaude;
             let effects = switch_repo(ws, svc, &dir);
             // switch_repo が worktree のパネルを作り直すので、待ちはその後に立てる。
@@ -390,13 +378,6 @@ fn delete_fleet_worktree(
     ws: &mut Workspace,
     inspection: crate::panels::fleet::Inspection,
 ) -> Vec<Effect> {
-    // 解析は止めても成果物を書きに戻るので、消した dir が作り直される。
-    if ws.panels.revidere.is_running_in(&inspection.path) {
-        return vec![Effect::Status(
-            StatusLevel::Warning,
-            "An AI review is running in that worktree; delete it after the review ends.".into(),
-        )];
-    }
     ws.panels.terminal.close_sessions(&inspection.panels);
     let own = ws.panels.terminal.own_claude_sessions();
     for id in &inspection.panels {
@@ -439,13 +420,10 @@ fn open_file(
 /// 根は Explorer と Viewer が別々に持つ。相対パスの解決先は Viewer なので、
 /// ツリーだけが新しい根に切り替わる瞬間を作らないよう同じ場所で書く。
 pub(crate) fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
-    let leaving = ws.worktree_path();
     ws.panels.worktree.select(index);
     let Some(worktree) = ws.panels.worktree.selected().map(|w| w.path.clone()) else {
         return Vec::new();
     };
-    let review = swap_review(ws, leaving.clone(), &worktree);
-    ws.panels.revidere.swap_scope(leaving, &worktree);
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
     effects.extend(
@@ -455,27 +433,7 @@ pub(crate) fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
     );
     // コメントはブランチで引くので、worktree が動いたら読み直す。
     effects.push(Effect::Spawn(Task::LoadReview));
-    // 確認ダイアログが「作り直しか、初めてか」を答えられるよう、成果物も先に読む。
-    // UI スレッドでファイルを読まないので、訊かれてから調べることはできない。
-    effects.push(ws.panels.revidere.reload(worktree));
-    effects.extend(review);
     effects
-}
-
-/// レビュー画面を開いているかは worktree ごとに持ち、引き継がない。
-fn swap_review(ws: &mut Workspace, leaving: PathBuf, entering: &std::path::Path) -> Vec<Effect> {
-    if leaving == entering {
-        return Vec::new();
-    }
-    if ws.reviewing() {
-        ws.chrome.review_open_in.insert(leaving, ws.screen_focus());
-    }
-    match ws.chrome.review_open_in.remove(entering) {
-        // Claude へのフォーカスがレビュー画面の一部になるのは、画面が開いている間だけ。
-        Some(focus) => vec![Effect::Focus(Focus::Revidere), Effect::Focus(focus)],
-        None if ws.reviewing() => vec![Effect::Focus(Focus::Explorer)],
-        None => Vec::new(),
-    }
 }
 
 /// 見えているシェルへ 1 行送る。走っていなければ起こしてから送る — 押した人は
@@ -639,7 +597,6 @@ fn switch_repo(
         let repo = ws.repo.root.clone();
         ws.index.semantic.abort_regeneration(&repo);
     }
-    let stopped = ws.panels.revidere.abort();
     ws.panels.fleet.forget_in_flight();
     let known = std::mem::take(&mut ws.repo.known);
     let name = opened.name.clone();
@@ -652,13 +609,10 @@ fn switch_repo(
     effects.extend(ws.panels.explorer.set_root(root, &ws.repo.main_branch));
     effects.push(Effect::Spawn(Task::ListWorktrees));
     effects.push(Effect::Spawn(Task::LoadGrabState));
-    // 止めた解析は畳んで伝える。ステータスは 1 枠しかないので、別に出しても後勝ちで消える。
-    let mut message = format!("switched to {name}");
-    if stopped > 0 {
-        let unit = if stopped == 1 { "review" } else { "reviews" };
-        message.push_str(&format!(" (cancelled {stopped} running {unit})"));
-    }
-    effects.push(Effect::Status(StatusLevel::Success, message));
+    effects.push(Effect::Status(
+        StatusLevel::Success,
+        format!("switched to {name}"),
+    ));
     effects
 }
 
@@ -746,8 +700,8 @@ mod tests {
     }
 
     #[test]
-    fn その_worktree_でこの窓の_ai_レビューが走っていれば消さない() {
-        let inspection = || crate::panels::fleet::Inspection {
+    fn worktree_の削除は確認のあとで裏の仕事になる() {
+        let inspection = crate::panels::fleet::Inspection {
             repo: "/r".into(),
             path: "/r-a".into(),
             label: "feature/a".into(),
@@ -767,71 +721,13 @@ mod tests {
             in_window_repo: true,
         };
         let mut ws = Workspace::for_test();
-        let idle = delete_fleet_worktree(&mut ws, inspection());
-        assert!(
-            matches!(
-                idle.as_slice(),
-                [Effect::Spawn(Task::DeleteFleetWorktree(_))]
-            ),
-            "{idle:?}"
-        );
-
-        ws.panels.revidere.note_spawned(&Task::Analyze {
-            worktree: "/r-a".into(),
-            branch: "feature/a".into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: Default::default(),
-        });
-        let analysing = delete_fleet_worktree(&mut ws, inspection());
-        assert!(
-            matches!(
-                analysing.as_slice(),
-                [Effect::Status(StatusLevel::Warning, _)]
-            ),
-            "{analysing:?}"
-        );
-
-        let mut ws = Workspace::for_test();
-        ws.panels.revidere.note_spawned(&Task::Analyze {
-            worktree: "/r-a".into(),
-            branch: "HEAD (detached)".into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: Default::default(),
-        });
-        let mut detached = inspection();
-        detached.check.branch = None;
-        let effects = delete_fleet_worktree(&mut ws, detached);
+        let effects = delete_fleet_worktree(&mut ws, inspection);
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::Status(StatusLevel::Warning, _)]
-            ),
-            "切り離した HEAD の worktree でも解析中なら消さない: {effects:?}"
-        );
-
-        let mut ws = Workspace::for_test();
-        ws.panels.revidere.note_spawned(&Task::Analyze {
-            worktree: "/r-b".into(),
-            branch: "feature/b".into(),
-            scope: Default::default(),
-            force: false,
-            api: Default::default(),
-            review: Default::default(),
-            cancel: Default::default(),
-        });
-        let elsewhere = delete_fleet_worktree(&mut ws, inspection());
-        assert!(
-            matches!(
-                elsewhere.as_slice(),
                 [Effect::Spawn(Task::DeleteFleetWorktree(_))]
             ),
-            "別の worktree の解析では断らない: {elsewhere:?}"
+            "{effects:?}"
         );
     }
 }

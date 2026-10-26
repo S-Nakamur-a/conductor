@@ -6,18 +6,17 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use conductor_core::ai_caller::{self, AiCaller};
 use conductor_core::cc_hook::statusline;
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
-use conductor_core::config::{self, ApiConfig, LayoutConfig, ReviewConfig};
+use conductor_core::config::{self, ApiConfig, LayoutConfig};
 use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::status_map::GitStatusMap;
 use conductor_core::git_engine::{
     ChangeCounts, CommitInfo, GitEngine, GrabState, WorktreeInfo, conductor_dir,
 };
 use conductor_core::grep_search::{self, GrepMatch};
-use conductor_core::pr_intake::{self, IntakenPr, PrHead};
+use conductor_core::pr_intake::{self, IntakenPr};
 use conductor_core::review_publish::{self, PublishComment, PublishOutcome, PublishRequest};
 use conductor_core::review_store::{
     Author, CommentKind, CommentStatus, NewReview, ReviewStore, SessionHistory,
@@ -28,15 +27,8 @@ use conductor_core::update_checker::{self, UpdateInfo};
 use conductor_svc::Services;
 
 use crate::panels::explorer::tree;
-use crate::panels::revidere::artifact;
 use crate::panels::viewer::{content, media};
 use crate::review::Snapshot;
-
-/// 解析 1 回の AI 呼び出しに与える実時間の上限 (秒)。
-///
-/// `[api] command_timeout_secs` の既定は数秒のブランチ命名を想定した値で、
-/// 差分を読んで語る呼び出しはそのままでは打ち切られる。
-const AI_TIMEOUT_SECS: u64 = 15 * 60;
 
 const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -226,14 +218,6 @@ pub enum Task {
     IntakePr {
         input: String,
     },
-    /// 自分に来たレビュー依頼。自動で取り込む設定のリポジトリでなければ gh を呼ばない。
-    ListReviewRequests {
-        review: ReviewConfig,
-    },
-    /// レビューを頼まれた PR を [Task::IntakePr] と同じく取り込む。結果の扱いだけが違う。
-    IntakeRequestedPr {
-        number: u64,
-    },
     /// 未公開コメントと投稿先。
     /// 差分の外のコメントを落とすので、いまの worktree の差分をここで取る。
     /// Explorer が見ている差分は出どころを替えられるので使えない。
@@ -262,34 +246,6 @@ pub enum Task {
         /// 鍵を失ったルート。名指ししないと調査に選ばれず、毎周調査を頼み続ける。
         wanted: Vec<IndexRoot>,
     },
-
-    /// レビューの成果物を読み、読む順まで組む。git diff を取り直すので UI では読まない。
-    LoadRevidere {
-        worktree: PathBuf,
-        scope: revidere::Scope,
-    },
-    /// AI にレビューを書かせる。数分かかる。`cancel` は子プロセスを殺し、成果物を書く前の
-    /// 中止判定にも使う旗で、起こした側と共有する。
-    Analyze {
-        worktree: PathBuf,
-        branch: String,
-        scope: revidere::Scope,
-        /// 貯めた応答を捨てるか。捨てないと、作り直しを選んだのに前と同じ答えが返る。
-        force: bool,
-        api: ApiConfig,
-        review: ReviewConfig,
-        cancel: Arc<AtomicBool>,
-    },
-}
-
-/// 解析が終わったときの結果。
-#[derive(Debug)]
-pub enum AnalyzeOutcome {
-    /// 成果物ができた。`coverage_complete` が false でも成果物は読める。
-    Done {
-        coverage_complete: bool,
-    },
-    Failed(String),
 }
 
 /// Smart Worktree が作ったものと、そこで起こす Claude に渡すもの。
@@ -478,11 +434,6 @@ pub enum TaskResult {
     StaleWorktrees(Result<Vec<String>, String>),
     Commits(Result<Vec<CommitInfo>, String>),
     PrIntake(Result<Box<IntakenPr>, String>),
-    ReviewRequests(Result<Vec<PrHead>, String>),
-    RequestedPrIntake {
-        number: u64,
-        outcome: Result<Box<IntakenPr>, String>,
-    },
     Publishable(Result<Box<Publishable>, String>),
     Published(PublishOutcome),
     UpdateCheck {
@@ -491,11 +442,6 @@ pub enum TaskResult {
     },
     UpdateProgress(UpdateStage),
     IndexLoaded(Box<crate::index::Load>),
-    RevidereLoaded(Box<artifact::Outcome>),
-    Analyzed {
-        branch: String,
-        outcome: AnalyzeOutcome,
-    },
 }
 
 impl Task {
@@ -861,21 +807,6 @@ impl Task {
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
             }
-            Task::ListReviewRequests { review } => {
-                svc.spawn(
-                    move || review_requests(&env, &review),
-                    TaskResult::ReviewRequests,
-                );
-            }
-            Task::IntakeRequestedPr { number } => {
-                svc.spawn(
-                    move || TaskResult::RequestedPrIntake {
-                        number,
-                        outcome: intake_pr(&env, &number.to_string()),
-                    },
-                    |result| result,
-                );
-            }
             Task::LoadPublishable { worktree } => {
                 svc.spawn(
                     move || publishable(&env, &worktree),
@@ -915,30 +846,6 @@ impl Task {
                     TaskResult::IndexLoaded,
                 );
             }
-            Task::LoadRevidere { worktree, scope } => {
-                svc.spawn(
-                    move || Box::new(artifact::load(&worktree, scope)),
-                    TaskResult::RevidereLoaded,
-                );
-            }
-            Task::Analyze {
-                worktree,
-                branch,
-                scope,
-                force,
-                api,
-                review,
-                cancel,
-            } => {
-                svc.spawn(
-                    move || {
-                        let outcome = analyze(&worktree, scope, force, &api, &review, &cancel);
-                        TaskResult::Analyzed { branch, outcome }
-                    },
-                    |result| result,
-                );
-            }
-
             // 段階ごとに報告するので spawn ではなく送信口を持って自前のスレッドで走る。
             Task::DownloadUpdate(info) => {
                 let sender = svc.sender();
@@ -948,118 +855,6 @@ impl Task {
                 });
             }
         }
-    }
-}
-
-/// revidere の AI の継ぎ目を [conductor_core::ai_caller] に繋ぐ。
-struct AiSeam {
-    caller: Box<dyn AiCaller>,
-    identity: String,
-    cancel: Arc<AtomicBool>,
-}
-
-impl revidere::Ai for AiSeam {
-    fn complete(&self, system: &str, user: &str) -> Result<String, String> {
-        self.caller.complete(system, user, &self.cancel)
-    }
-
-    fn identity(&self) -> String {
-        self.identity.clone()
-    }
-
-    fn cancelled(&self) -> bool {
-        self.cancel.load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-/// 答えを出しているものが変わったら別物として扱えればよいので、provider と
-/// その provider が実際に叩く先だけを並べる。
-fn ai_identity(api: &ApiConfig) -> String {
-    let provider = api.provider.trim().to_lowercase();
-    let target = if provider == "command" {
-        api.command.join(" ")
-    } else {
-        api.model.clone()
-    };
-    format!("{provider}:{target}")
-}
-
-/// panic を握るのは、結果を送らずにワーカーが死ぬとブランチの枠が解放されず、
-/// 次の要求が「すでに実行中」と言われ続けるため。
-fn analyze(
-    worktree: &Path,
-    scope: revidere::Scope,
-    force: bool,
-    api: &ApiConfig,
-    review: &ReviewConfig,
-    cancel: &Arc<AtomicBool>,
-) -> AnalyzeOutcome {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_analyze(worktree, scope, force, api, review, cancel)
-    }))
-    .unwrap_or_else(|_| AnalyzeOutcome::Failed("the analysis thread panicked".into()))
-}
-
-fn run_analyze(
-    worktree: &Path,
-    scope: revidere::Scope,
-    force: bool,
-    api: &ApiConfig,
-    review: &ReviewConfig,
-    cancel: &Arc<AtomicBool>,
-) -> AnalyzeOutcome {
-    // 起点はブランチ全体の成果物にしか書かれていない。無いのは 1 度目のレビューを
-    // 作った直後で、比べる前回がまだ存在しない。
-    let base = match scope {
-        revidere::Scope::Base => None,
-        revidere::Scope::SincePrevious => match artifact::previous_head(worktree) {
-            Some(base) => Some(base),
-            None => {
-                return AnalyzeOutcome::Failed(
-                    "no previous review to compare against yet \u{2014} analyse the branch (W), \
-                     commit, then analyse again"
-                        .into(),
-                );
-            }
-        },
-    };
-    let env = ai_caller::TaskEnv {
-        timeout_secs: Some(AI_TIMEOUT_SECS),
-        working_dir: Some(worktree.to_path_buf()),
-    };
-    let caller = match ai_caller::build_caller(api, &env) {
-        Ok(caller) => caller,
-        Err(e) => return AnalyzeOutcome::Failed(e),
-    };
-    let ai = AiSeam {
-        caller,
-        identity: ai_identity(api),
-        cancel: Arc::clone(cancel),
-    };
-    let options = revidere::Options {
-        repo: worktree.to_path_buf(),
-        base,
-        cache: !force,
-        scope,
-        style: conductor_core::output_style::resolve(
-            review.style.as_deref(),
-            review.style_path.as_deref(),
-        ),
-    };
-    match revidere::analyze(&options, &ai) {
-        Ok(review) => AnalyzeOutcome::Done {
-            coverage_complete: review.coverage.is_complete(),
-        },
-        Err(e) => AnalyzeOutcome::Failed(tail_chars(&e.to_string(), 300).to_string()),
-    }
-}
-
-/// s の末尾 n 文字 (文字境界を壊さず)。
-fn tail_chars(s: &str, n: usize) -> &str {
-    match n.checked_sub(1).and_then(|n| s.char_indices().nth_back(n)) {
-        Some((i, _)) => &s[i..],
-        None if n == 0 => "",
-        None => s,
     }
 }
 
@@ -1459,18 +1254,6 @@ fn fleet_trees(
         })
         .collect();
     (trees, placement)
-}
-
-fn review_requests(env: &TaskEnv, review: &ReviewConfig) -> Result<Vec<PrHead>, String> {
-    // git でないディレクトリも開けるので、開けないのは設定の対象外として黙る。
-    let Ok(git) = GitEngine::open(&env.root) else {
-        return Ok(Vec::new());
-    };
-    let main = git.main_worktree_path().map_err(|e| e.to_string())?;
-    if !review.auto_reviews(&main) {
-        return Ok(Vec::new());
-    }
-    pr_intake::review_requests(&env.root).map_err(|e| e.to_string())
 }
 
 fn save_pr_meta(env: &TaskEnv, pr_number: u64, meta: &pr_intake::FetchedPr) -> Result<(), String> {
@@ -2023,67 +1806,6 @@ mod tests {
             unborn.ends_with("origin has no web URL to open."),
             "{unborn}"
         );
-    }
-
-    #[test]
-    fn gitでないディレクトリではレビュー依頼を問い合わせずに黙る() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut ws = crate::workspace::Workspace::for_test();
-        ws.repo.root = dir.path().to_path_buf();
-        let review = ReviewConfig {
-            auto_review_repos: vec!["/elsewhere".into()],
-            ..Default::default()
-        };
-        assert_eq!(
-            review_requests(&ws.task_env(), &review).map(|v| v.len()),
-            Ok(0)
-        );
-    }
-
-    fn api(provider: &str, model: &str, command: &[&str]) -> ApiConfig {
-        ApiConfig {
-            provider: provider.into(),
-            model: model.into(),
-            command: command.iter().map(|s| (*s).to_string()).collect(),
-            ..Default::default()
-        }
-    }
-
-    /// 貯めた応答の鍵に混ざる。ここが定数だと、モデルを替えても前のモデルの答えが
-    /// 返り続ける。command では叩く先が argv にしかないので、argv まで含める。
-    #[test]
-    fn 呼び先の見分けは_provider_と叩く先を含む() {
-        let cases = [
-            (
-                api("gemini", "gemini-2.5-flash", &[]),
-                "gemini:gemini-2.5-flash",
-            ),
-            (api("gemini", "gemini-3", &[]), "gemini:gemini-3"),
-            (
-                api("command", "ignored", &["claude", "-p"]),
-                "command:claude -p",
-            ),
-            (
-                api("command", "ignored", &["codex", "exec"]),
-                "command:codex exec",
-            ),
-            (api("COMMAND", "ignored", &["claude"]), "command:claude"),
-        ];
-        for (api, want) in &cases {
-            assert_eq!(&ai_identity(api), want);
-        }
-    }
-
-    #[test]
-    fn 末尾のn文字は文字境界を壊さない() {
-        for (text, n, want) in [
-            ("abcdef", 3, "def"),
-            ("abc", 10, "abc"),
-            ("abc", 0, ""),
-            ("あいうえお", 2, "えお"),
-        ] {
-            assert_eq!(tail_chars(text, n), want, "{text} {n}");
-        }
     }
 
     #[test]

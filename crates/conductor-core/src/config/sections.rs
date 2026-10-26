@@ -1,6 +1,6 @@
 //! config.toml のセクションごとの構造体。
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -118,30 +118,6 @@ impl Default for ApiConfig {
             command: Vec::new(),
             command_timeout_secs: 60,
         }
-    }
-}
-
-/// [review] セクション。revidere が作るレビュー成果物。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ReviewConfig {
-    /// 本文の口調を指定する Claude Code の output style ファイル。
-    pub style_path: Option<PathBuf>,
-    /// 本文の口調を直接書いたもの。[Self::style_path] より優先する。
-    pub style: Option<String>,
-    /// 開いている間、自分にレビューが依頼された PR を取り込んで revidere を走らせる
-    /// リポジトリ。main worktree のパスで書く。
-    pub auto_review_repos: Vec<PathBuf>,
-}
-
-impl ReviewConfig {
-    /// 設定に書いたパスと git が返すパスは symlink で食い違うので、実体で比べる。
-    pub fn auto_reviews(&self, main_worktree: &Path) -> bool {
-        let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        let main = canonical(main_worktree);
-        self.auto_review_repos
-            .iter()
-            .any(|repo| canonical(repo) == main)
     }
 }
 
