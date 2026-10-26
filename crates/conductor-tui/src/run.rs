@@ -2790,7 +2790,7 @@ needle here
     fn 一度目で一覧が送られ二度目の下にボタンが来てもボタンは開かない() {
         use crate::panels::fleet::render::{Slot, compose, slot_at};
         let mut slid_under = 0;
-        for (height, y_off) in (16..40).flat_map(|h| (0..h).map(move |y| (h, y))) {
+        for (height, y_off) in (16..64).flat_map(|h| (0..h).map(move |y| (h, y))) {
             let (mut ws, mut svc, l) = fleet_with_sessions(height);
             let rect = l.rect(Region::FleetList).unwrap();
             let body = compose(&ws, rect).unwrap().body;
