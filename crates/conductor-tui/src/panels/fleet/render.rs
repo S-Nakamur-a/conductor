@@ -247,6 +247,22 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     );
 }
 
+/// 右の区画の枠の題。右に入っていればその旨と戻るキー、この窓のセッションを映していれば入るキー、ほかは空。
+pub fn session_title(ws: &Workspace) -> String {
+    let context = ws.key_context();
+    let chord = |action| crate::render::representative_chord(&ws.keymap, context, action);
+    if ws.focus == Focus::FleetSession {
+        return match chord(Action::LeaveTerminal) {
+            Some(key) => format!(" 入力中 · {key} で一覧へ "),
+            None => " 入力中 ".to_string(),
+        };
+    }
+    match (ws.fleet_session(), chord(Action::ExpandOrRight)) {
+        (Some(_), Some(key)) => format!(" {key} で入る "),
+        _ => String::new(),
+    }
+}
+
 /// 一覧の最下行。今のフォーカスと選んだ行で効くキーを、keymap の割り当てどおりに出す。
 pub fn hint(ws: &Workspace) -> String {
     let context = ws.key_context();
@@ -421,7 +437,7 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
                 format!("{label} "),
                 Style::default().fg(theme.hint),
             ));
-            spans.extend(bar(pct, 8, theme));
+            spans.extend(bar(pct, 8, theme, theme.hint));
             let mut text = format!(" {pct}%");
             if countdown {
                 text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
@@ -439,7 +455,7 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
         .collect()
 }
 
-fn bar(pct: u8, cells: usize, theme: &Theme) -> Vec<Span<'static>> {
+fn bar(pct: u8, cells: usize, theme: &Theme, empty_fg: Color) -> Vec<Span<'static>> {
     const PARTIAL: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
     let eighths = usize::from(pct.min(100)) * cells * 8 / 100;
     let (full, rest) = (eighths / 8, eighths % 8);
@@ -447,7 +463,7 @@ fn bar(pct: u8, cells: usize, theme: &Theme) -> Vec<Span<'static>> {
     let empty = cells - full - usize::from(rest > 0);
     vec![
         Span::styled(filled, Style::default().fg(level(theme, pct))),
-        Span::styled("░".repeat(empty), Style::default().fg(theme.hint)),
+        Span::styled("░".repeat(empty), Style::default().fg(empty_fg)),
     ]
 }
 
@@ -589,7 +605,9 @@ fn row_line(
     );
     let right: Vec<Span<'static>> = match (row.context_percent, row.context_tokens) {
         (Some(pct), _) => {
-            let mut spans = bar(pct, 4, theme);
+            // 選んだ行の地は hint と近く、空きが溶けて上限が見えない。
+            let empty_fg = if selected { theme.fg } else { theme.hint };
+            let mut spans = bar(pct, 4, theme, empty_fg);
             spans.push(Span::styled(
                 format!(" {pct}%"),
                 Style::default().fg(level(theme, pct)),
