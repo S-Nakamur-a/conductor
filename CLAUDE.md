@@ -513,7 +513,7 @@ state, session ids) are sent with `send_watch_unscoped` so a repository switch d
 not drop them; every other watch event keeps its generation.
 
 Under the list, `Region::FleetChanges` shows the Git Changes of the
-selected line's worktree (`FleetPanel::selected_dir`, derived the same way), read on a
+selected line's worktree (`FleetPanel::selected_dir`, derived from the selection every time, like the right side), read on a
 worker against *that* repository's default branch — another repository's base is not
 the window's `main_branch`. It holds no focus. A result is kept only if its dir is still
 the one selected, because two worktrees on the same base have equal `DiffSource`s, and
