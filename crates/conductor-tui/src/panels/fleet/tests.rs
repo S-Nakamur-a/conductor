@@ -12,6 +12,28 @@ fn at(secs: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_000_000 + secs)
 }
 
+fn inspection(path: &str) -> Inspection {
+    Inspection {
+        repo: PathBuf::from("/r/app"),
+        path: PathBuf::from(path),
+        label: "feature/a".into(),
+        check: conductor_core::git_engine::DeletionCheck {
+            recorded: PathBuf::from(path),
+            branch: Some("feature/a".into()),
+            keeps_branch: false,
+            head: Some("abc".into()),
+            base: Some("origin/main".into()),
+            unmerged: Some(0),
+            dirty: Some(0),
+        },
+        claudes: Vec::new(),
+        panels: Vec::new(),
+        own_claudes: 0,
+        shells: 0,
+        in_window_repo: false,
+    }
+}
+
 fn live(pid: u32, cwd: &str, session: &str, status: Status, owner: Owner) -> LiveSession {
     LiveSession {
         pid,
@@ -1287,6 +1309,23 @@ mod pane {
     }
 
     #[test]
+    fn worktree_を消すとその中で開いたこの窓のタブだけを閉じる() {
+        let (mut ws, mut svc, dir) = opened();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let inside = spawn(&mut ws, dir.path());
+        let outside = spawn(&mut ws, elsewhere.path());
+        let mut doomed = inspection("/nowhere");
+        doomed.panels = vec![inside.clone()];
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::DeleteFleetWorktree(Box::new(doomed))],
+        );
+        assert!(ws.panels.terminal.session_dir(&inside).is_none());
+        assert!(ws.panels.terminal.session_dir(&outside).is_some());
+    }
+
+    #[test]
     fn フォーカスのある側だけ枠が太線になり_右の題は入り方か入力中かを言う() {
         let (mut ws, mut svc, dir) = opened();
         let listed = spawn(&mut ws, dir.path());
@@ -2014,19 +2053,243 @@ mod tree {
     }
 
     #[test]
-    fn worktree_の行では_enter_も_tab_も止めるキーも何もしない() {
+    fn worktree_の行では_enter_は何もせず_d_は消す前の点検を頼む() {
         let mut fleet = app();
         let ws = Workspace::for_test();
         fleet.update(Action::NavigateDown, &ws.ctx());
-        assert!(fleet.selected_worktree().is_some());
-        for action in [Action::Select, Action::StopSession] {
-            assert_eq!(
-                fleet.update(action, &ws.ctx()),
-                Some(Vec::new()),
-                "{action:?}"
+        assert_eq!(fleet.selected_worktree().unwrap().label, "feature/a");
+        assert_eq!(fleet.update(Action::Select, &ws.ctx()), Some(Vec::new()));
+        let effects = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+        let [Effect::InspectFleetWorktree { repo, path, label }] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(
+            (repo.as_path(), path.as_path(), label.as_str()),
+            (Path::new("/r/app"), Path::new("/r/app-a"), "feature/a")
+        );
+        assert!(fleet.selected_row().is_none());
+    }
+
+    fn status_text(effects: &[Effect]) -> String {
+        match effects {
+            [Effect::Status(_, text)] => text.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn main_の行と木に無い_dir_の行と点検中の_d_は何も頼まない() {
+        let ws = Workspace::for_test();
+        let mut fleet = app();
+        fleet.update(Action::GoToTop, &ws.ctx());
+        fleet.update(Action::NavigateUp, &ws.ctx());
+        let main = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+        assert!(status_text(&main).contains("main worktree"), "{main:?}");
+
+        let mut plain = FleetPanel::default();
+        plain.apply(
+            status(vec![live(
+                7,
+                "/tmp/plain",
+                "s7",
+                Status::Working,
+                Owner::Conductor,
+            )]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        plain.update(Action::GoToTop, &ws.ctx());
+        assert_eq!(plain.selected_worktree().unwrap().label, "plain");
+        let stray = plain.update(Action::StopSession, &ws.ctx()).unwrap();
+        assert!(
+            status_text(&stray).contains("not a git worktree"),
+            "{stray:?}"
+        );
+
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(fleet.selected_worktree().unwrap().label, "feature/a");
+        fleet.update(Action::StopSession, &ws.ctx());
+        let again = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+        assert!(status_text(&again).contains("Still checking"), "{again:?}");
+    }
+
+    fn asking_for_a() -> FleetPanel {
+        let ws = Workspace::for_test();
+        let mut fleet = app();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        fleet.update(Action::StopSession, &ws.ctx());
+        fleet
+    }
+
+    #[test]
+    fn 点検の結果は押したときのまま同じ_worktree_を選んでいるときだけ確認になる() {
+        let ready = || Inspected::Ready(Box::new(inspection("/r/app-a")));
+        let mut fleet = asking_for_a();
+        let effects = fleet.inspected(Path::new("/r/app-a"), ready(), true);
+        assert!(
+            matches!(effects.as_slice(), [Effect::PushModal(Modal::Confirm(_))]),
+            "{effects:?}"
+        );
+
+        let mut fleet = asking_for_a();
+        let away = fleet.inspected(Path::new("/r/app-a"), ready(), false);
+        assert!(status_text(&away).contains("Press D again"), "{away:?}");
+
+        let mut fleet = asking_for_a();
+        let ws = Workspace::for_test();
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        let moved = fleet.inspected(Path::new("/r/app-a"), ready(), true);
+        assert!(status_text(&moved).contains("Press D again"), "{moved:?}");
+
+        let mut fleet = asking_for_a();
+        assert!(
+            fleet
+                .inspected(Path::new("/r/app-b"), ready(), true)
+                .is_empty()
+        );
+        let refused = fleet.inspected(
+            Path::new("/r/app-a"),
+            Inspected::Refused("locked".into()),
+            true,
+        );
+        assert_eq!(status_text(&refused), "locked");
+        let next = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+        assert!(
+            matches!(next.as_slice(), [Effect::InspectFleetWorktree { .. }]),
+            "点検が返れば次の D を受ける: {next:?}"
+        );
+
+        let mut fleet = asking_for_a();
+        fleet.forget_in_flight();
+        let after_switch = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
+        assert!(
+            matches!(
+                after_switch.as_slice(),
+                [Effect::InspectFleetWorktree { .. }]
+            ),
+            "repo を切り替えて結果が捨てられても D は効く: {after_switch:?}"
+        );
+    }
+
+    #[test]
+    fn 点検が返ったとき一覧にフォーカスが無いかモーダルが開いていれば確認を出さない() {
+        let path = Path::new("/r/app-a");
+        let result = || crate::task::TaskResult::FleetWorktreeInspected {
+            path: path.to_path_buf(),
+            outcome: Inspected::Ready(Box::new(inspection("/r/app-a"))),
+        };
+        let confirms = |effects: &[Effect]| {
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::PushModal(Modal::Confirm(_))))
+        };
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::Fleet;
+        assert!(confirms(&ws.accept(result())));
+
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::FleetSession;
+        assert!(!confirms(&ws.accept(result())), "右の区画で打っている");
+
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::Fleet;
+        ws.modals
+            .push(Modal::Confirm(Confirm::ask("other?", Vec::new())));
+        assert!(!confirms(&ws.accept(result())), "別のモーダルが開いている");
+    }
+
+    fn confirm_text(inspection: Inspection) -> (String, Vec<String>) {
+        let confirm = render::delete_confirm(inspection);
+        let theme = Theme::from_name("catppuccin-mocha");
+        let lines: Vec<String> = crate::modal::confirm::lines(&confirm, &theme)
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        (confirm.question.clone(), lines)
+    }
+
+    #[test]
+    fn 確認文は失うものを数え_数えられなかったものを_0_と名乗らない() {
+        let (question, lines) = confirm_text(inspection("/r/app-a"));
+        assert_eq!(question, "worktree 'feature/a' とブランチを消す?");
+        assert!(
+            lines.contains(&"止まるセッションは無い".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("未コミット") || l.contains("コミット"))
+        );
+
+        let mut lossy = inspection("/r/app-a");
+        lossy.check.dirty = Some(3);
+        lossy.check.unmerged = Some(2);
+        lossy.claudes = vec![
+            Doomed {
+                pid: 1,
+                started: at(0),
+                own: true,
+            },
+            Doomed {
+                pid: 2,
+                started: at(0),
+                own: false,
+            },
+        ];
+        lossy.own_claudes = 1;
+        lossy.shells = 1;
+        let (_, lines) = confirm_text(lossy);
+        for expected in [
+            "未コミットの変更 3 件は失われる",
+            "origin/main に入っていないコミット 2 個 (squash で merge した PR もここに出る)",
+            "止まる Claude 2 本 (うちこの窓の外 1 本)、シェル 1 本",
+        ] {
+            assert!(
+                lines.contains(&expected.to_string()),
+                "{expected}: {lines:?}"
             );
         }
-        assert!(fleet.selected_row().is_none());
+
+        let mut unrecorded = inspection("/r/app-a");
+        unrecorded.own_claudes = 1;
+        let (_, lines) = confirm_text(unrecorded);
+        assert!(
+            lines.contains(&"止まる Claude 1 本 (うちこの窓の外 0 本)".to_string()),
+            "状態ファイルをまだ書いていないこの窓の Claude も数える: {lines:?}"
+        );
+
+        let mut unknown = inspection("/r/app-a");
+        unknown.check.dirty = None;
+        unknown.check.unmerged = None;
+        unknown.check.base = None;
+        let (_, lines) = confirm_text(unknown);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("未コミットの変更を確かめられなかった"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("確かめられなかった") && l.contains("コミット"))
+        );
+
+        let mut keeps = inspection("/r/app-a");
+        keeps.check.keeps_branch = true;
+        assert_eq!(
+            confirm_text(keeps).0,
+            "worktree 'feature/a' を消す? (ブランチは残す)"
+        );
+        let mut detached = inspection("/r/app-a");
+        detached.check.branch = None;
+        assert_eq!(confirm_text(detached).0, "worktree 'feature/a' を消す?");
     }
 
     #[test]

@@ -355,7 +355,7 @@ pub fn stop(
 }
 
 /// ゾンビは親が回収するまで残るだけで、もう動いていない。起動時刻が変われば pid は別人に渡った。
-fn ended_within(pid: u32, started: SystemTime, procs: &dyn Processes, limit: Duration) -> bool {
+pub fn ended_within(pid: u32, started: SystemTime, procs: &dyn Processes, limit: Duration) -> bool {
     let deadline = Instant::now() + limit;
     loop {
         let same = procs

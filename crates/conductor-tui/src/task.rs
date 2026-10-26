@@ -88,6 +88,16 @@ pub enum Task {
         path: PathBuf,
         branch: String,
     },
+    /// 一覧から消す worktree を調べる。`own` はこの窓のセッション、`window_root` は窓の repo。
+    InspectFleetWorktree {
+        repo: PathBuf,
+        path: PathBuf,
+        label: String,
+        own: Vec<crate::panels::fleet::OwnPty>,
+        window_root: PathBuf,
+    },
+    /// 中の Claude が終わったのを確かめ、点検のときから増えていなければ消す。
+    DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
     LoadTree {
         root: PathBuf,
         expanded: Vec<String>,
@@ -379,6 +389,15 @@ pub enum TaskResult {
     WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
+    FleetWorktreeInspected {
+        path: PathBuf,
+        outcome: crate::panels::fleet::Inspected,
+    },
+    /// `in_window_repo` なら worktree パネルの一覧も読み直す。
+    FleetWorktreeDeleted {
+        in_window_repo: bool,
+        outcome: Result<String, String>,
+    },
     Tree(Box<tree::Snapshot>),
     /// `root` は照合用。走査中に worktree を切り替えていたら捨てる。
     FileIndex {
@@ -531,6 +550,47 @@ impl Task {
                 svc.spawn(
                     move || delete_worktree(&env, &path, &branch),
                     TaskResult::WorktreeDeleted,
+                );
+            }
+            Task::InspectFleetWorktree {
+                repo,
+                path,
+                label,
+                own,
+                window_root,
+            } => {
+                svc.spawn(
+                    move || {
+                        use conductor_core::claude_sessions::registry;
+                        let live = registry::read_live(
+                            &registry::sessions_dir(),
+                            &registry::SystemProcesses,
+                        );
+                        let outcome =
+                            fleet_delete::inspect(&repo, &path, label, &own, &window_root, &live);
+                        (path, outcome)
+                    },
+                    |(path, outcome)| TaskResult::FleetWorktreeInspected { path, outcome },
+                );
+            }
+            // repo を切り替えても、消したかどうかは知らせる。
+            Task::DeleteFleetWorktree(inspection) => {
+                svc.spawn_unscoped(
+                    move || {
+                        let in_window_repo = inspection.in_window_repo;
+                        use conductor_core::claude_sessions::registry;
+                        let outcome = fleet_delete::run(
+                            &inspection,
+                            &registry::sessions_dir(),
+                            &registry::SystemProcesses,
+                            STOP_GRACE,
+                        );
+                        (in_window_repo, outcome)
+                    },
+                    |(in_window_repo, outcome)| TaskResult::FleetWorktreeDeleted {
+                        in_window_repo,
+                        outcome,
+                    },
                 );
             }
             Task::LoadTree { root, expanded } => {
@@ -1619,6 +1679,173 @@ fn delete_worktree(env: &TaskEnv, path: &Path, branch: &str) -> Result<String, S
     Ok(branch.to_string())
 }
 
+/// 一覧から worktree を消す。止める前に消せるかを確かめ、止めた後に数え直してから消す。
+pub(crate) mod fleet_delete {
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use conductor_core::claude_sessions::registry::{self, LiveSession, Processes, Stopped};
+    use conductor_core::git_engine::{GitEngine, Refusal};
+    use conductor_svc::pty::SessionKind;
+
+    use crate::panels::fleet::{Doomed, Inspected, Inspection, OwnPty};
+
+    /// この窓のタブを閉じてから、その Claude が終わるのを待つ上限。
+    const OWN_WAIT: Duration = Duration::from_secs(5);
+
+    fn canonical(p: &Path) -> PathBuf {
+        p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+    }
+
+    /// path は canonicalize 済み。中のセッションは cwd がその下にあるもの (どの窓のものでも)。
+    pub fn inspect(
+        repo: &Path,
+        path: &Path,
+        label: String,
+        own: &[OwnPty],
+        window_root: &Path,
+        live: &[LiveSession],
+    ) -> Inspected {
+        if canonical(window_root).starts_with(path) {
+            return Inspected::Refused(format!(
+                "This window has {label} open; open another worktree before deleting it."
+            ));
+        }
+        let inside = |dir: &Path| canonical(dir).starts_with(path);
+        if own
+            .iter()
+            .any(|p| p.kind == SessionKind::Editor && inside(&p.working_dir))
+        {
+            return Inspected::Refused(format!("Close the editor in {label} first."));
+        }
+        let check = match GitEngine::open(repo).and_then(|git| git.deletion_check(path)) {
+            Ok(Ok(check)) => check,
+            Ok(Err(refusal)) => return Inspected::Refused(refusal_text(&refusal, &label)),
+            Err(e) => return Inspected::Failed(format!("Could not check {label}: {e:#}")),
+        };
+        let in_window_repo = GitEngine::open(window_root)
+            .and_then(|git| git.main_worktree_path())
+            .is_ok_and(|main| canonical(&main) == repo);
+        let claudes = live
+            .iter()
+            .filter(|l| inside(&l.cwd))
+            .map(|l| Doomed {
+                pid: l.pid,
+                started: l.started,
+                own: own.iter().any(|p| {
+                    p.kind == SessionKind::ClaudeCode
+                        && p.claude_session_id.as_deref() == Some(l.session_id.as_str())
+                }),
+            })
+            .collect();
+        let closing: Vec<&OwnPty> = own
+            .iter()
+            .filter(|p| p.kind != SessionKind::Editor && inside(&p.working_dir))
+            .collect();
+        Inspected::Ready(Box::new(Inspection {
+            repo: repo.to_path_buf(),
+            path: path.to_path_buf(),
+            label,
+            check,
+            claudes,
+            panels: closing.iter().map(|p| p.panel_id.clone()).collect(),
+            own_claudes: closing
+                .iter()
+                .filter(|p| p.kind == SessionKind::ClaudeCode)
+                .count(),
+            shells: closing
+                .iter()
+                .filter(|p| p.kind == SessionKind::Shell)
+                .count(),
+            in_window_repo,
+        }))
+    }
+
+    /// この窓のタブは呼ぶ前に閉じてある。
+    pub fn run(
+        inspection: &Inspection,
+        sessions: &Path,
+        procs: &dyn Processes,
+        grace: Duration,
+    ) -> Result<String, String> {
+        let label = &inspection.label;
+        for doomed in &inspection.claudes {
+            let ended = if doomed.own {
+                registry::ended_within(doomed.pid, doomed.started, procs, OWN_WAIT)
+            } else {
+                // 照合できないだけでも AlreadyGone が返るので、終わったかは別に見る。
+                if let Stopped::Failed(why) =
+                    registry::stop(sessions, doomed.pid, doomed.started, procs, grace)
+                {
+                    return Err(format!(
+                        "Could not stop pid {}: {why}. {label} was not deleted.",
+                        doomed.pid
+                    ));
+                }
+                registry::ended_within(doomed.pid, doomed.started, procs, Duration::ZERO)
+            };
+            if !ended {
+                return Err(format!(
+                    "pid {} is still running. {label} was not deleted.",
+                    doomed.pid
+                ));
+            }
+        }
+        let git = GitEngine::open(&inspection.repo).map_err(|e| format!("{e:#}"))?;
+        let now = match git.deletion_check(&inspection.path) {
+            Ok(Ok(check)) => check,
+            Ok(Err(refusal)) => return Err(refusal_text(&refusal, label)),
+            Err(e) => return Err(format!("Could not check {label} again: {e:#}")),
+        };
+        let before = &inspection.check;
+        if now.head != before.head || now.branch != before.branch {
+            return Err(format!(
+                "{label} moved to another commit after the check. Nothing was deleted."
+            ));
+        }
+        let grew = match (before.dirty, now.dirty) {
+            (None, _) => false,
+            (Some(_), None) => true,
+            (Some(then), Some(now)) => now > then,
+        };
+        if grew {
+            return Err(format!(
+                "{label} has more uncommitted changes than the check showed. Nothing was deleted."
+            ));
+        }
+        if registry::read_live(sessions, procs)
+            .iter()
+            .any(|l| canonical(&l.cwd).starts_with(&inspection.path))
+        {
+            return Err(format!(
+                "A Claude started in {label} after the check. Nothing was deleted."
+            ));
+        }
+        git.remove_worktree(&now.recorded)
+            .map_err(|e| format!("{e:#}"))?;
+        if let Some(branch) = now.branch.as_deref().filter(|_| !now.keeps_branch)
+            && let Err(e) = git.delete_branch(branch, true)
+        {
+            return Err(format!(
+                "Deleted {label}, but not its branch {branch}: {e:#}"
+            ));
+        }
+        Ok(format!("Deleted {label}."))
+    }
+
+    fn refusal_text(refusal: &Refusal, label: &str) -> String {
+        match refusal {
+            Refusal::Main => "The main worktree cannot be deleted.".into(),
+            Refusal::NotRegistered => format!("git does not list {label} as a worktree."),
+            Refusal::Locked => format!("{label} is locked; run git worktree unlock first."),
+            Refusal::Nested(inner) => format!(
+                "{label} has another worktree inside it ({}).",
+                inner.display()
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1800,5 +2027,329 @@ mod tests {
             event.kind,
             conductor_svc::EventKind::Task(TaskResult::SmartWorktreeCreated(Err(_)))
         ));
+    }
+}
+
+#[cfg(test)]
+mod fleet_delete_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::Mutex;
+    use std::time::{Duration, SystemTime};
+
+    use conductor_core::claude_sessions::registry::{
+        LiveSession, Owner, ProcInfo, Processes, Signal, Status,
+    };
+    use conductor_svc::pty::SessionKind;
+
+    use super::fleet_delete::{inspect, run};
+    use crate::panels::fleet::{Doomed, Inspected, Inspection, OwnPty};
+
+    /// procStart "Thu Oct 22 02:05:54 2026" (UTC) と同じ時刻。
+    fn started() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_634_754)
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// `<tmp>/main` に main、`<tmp>/wt` に wt ブランチの linked worktree。
+    fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&main, &["worktree", "add", "-q", "-b", "wt", "../wt"]);
+        let main = main.canonicalize().unwrap();
+        let wt = dir.path().join("wt").canonicalize().unwrap();
+        (dir, main, wt)
+    }
+
+    fn live(pid: u32, cwd: &Path, session: &str) -> LiveSession {
+        LiveSession {
+            pid,
+            started: started(),
+            cwd: cwd.to_path_buf(),
+            session_id: session.into(),
+            status: Status::Idle,
+            status_since: None,
+            owner: Owner::Conductor,
+        }
+    }
+
+    fn pty(id: &str, kind: SessionKind, dir: &Path, session: Option<&str>) -> OwnPty {
+        OwnPty {
+            panel_id: id.into(),
+            kind,
+            working_dir: dir.to_path_buf(),
+            claude_session_id: session.map(String::from),
+        }
+    }
+
+    fn ready(outcome: Inspected) -> Inspection {
+        match outcome {
+            Inspected::Ready(inspection) => *inspection,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// pid ごとに生きているかを持つ。SIGTERM で終わるかも pid ごとに決める。
+    struct Procs {
+        alive: Mutex<Vec<(u32, bool)>>,
+    }
+
+    impl Processes for Procs {
+        fn info(&self, pid: u32) -> Option<ProcInfo> {
+            let alive = self.alive.lock().unwrap();
+            alive.iter().any(|(p, _)| *p == pid).then_some(ProcInfo {
+                zombie: false,
+                parent: 1,
+                started: started(),
+            })
+        }
+        fn is_conductor(&self, _pid: u32) -> bool {
+            false
+        }
+        fn signal(&self, pid: u32, _signal: Signal) -> std::io::Result<()> {
+            self.alive
+                .lock()
+                .unwrap()
+                .retain(|(p, survives)| *p != pid || *survives);
+            Ok(())
+        }
+    }
+
+    fn procs(alive: &[(u32, bool)]) -> Procs {
+        Procs {
+            alive: Mutex::new(alive.to_vec()),
+        }
+    }
+
+    #[test]
+    fn 点検は_cwd_がその下にある_claude_をどの窓のものでも数え_この窓のタブを選ぶ() {
+        let (_dir, main, wt) = repo();
+        let sub = wt.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let live = [
+            live(7, &sub, "s7"),
+            live(8, &main, "s8"),
+            live(9, &wt, "s9"),
+        ];
+        let own = [
+            pty("p1", SessionKind::ClaudeCode, &wt, Some("s7")),
+            pty("p2", SessionKind::Shell, &sub, None),
+            pty("p3", SessionKind::ClaudeCode, &main, Some("s8")),
+        ];
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &own, &main, &live));
+        let pids: Vec<(u32, bool)> = inspection.claudes.iter().map(|c| (c.pid, c.own)).collect();
+        assert_eq!(pids, [(7, true), (9, false)]);
+        assert_eq!(inspection.panels, ["p1", "p2"]);
+        assert_eq!((inspection.own_claudes, inspection.shells), (1, 1));
+        assert!(inspection.in_window_repo);
+    }
+
+    #[test]
+    fn 窓が開いている_worktree_とエディタのある_worktree_は何も止めずに断る() {
+        let (_dir, main, wt) = repo();
+        let refused = |outcome: Inspected| matches!(outcome, Inspected::Refused(_));
+        assert!(refused(inspect(&main, &wt, "wt".into(), &[], &wt, &[])));
+        let editor = [pty("e", SessionKind::Editor, &wt, None)];
+        assert!(refused(inspect(
+            &main,
+            &wt,
+            "wt".into(),
+            &editor,
+            &main,
+            &[]
+        )));
+    }
+
+    #[test]
+    fn 中の_claude_が終わったと確かめられなければ消さない() {
+        let (dir, main, wt) = repo();
+        let mut inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        inspection.claudes = vec![Doomed {
+            pid: 9,
+            started: started(),
+            own: false,
+        }];
+        let sessions = dir.path().join("sessions");
+        let outcome = run(&inspection, &sessions, &procs(&[(9, true)]), Duration::ZERO);
+        assert!(
+            outcome.as_ref().is_err_and(|e| e.contains("still running")),
+            "{outcome:?}"
+        );
+        assert!(wt.exists());
+    }
+
+    #[test]
+    fn 終わったのを確かめたら_worktree_とブランチを消す() {
+        let (dir, main, wt) = repo();
+        let mut inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        inspection.claudes = vec![Doomed {
+            pid: 7,
+            started: started(),
+            own: true,
+        }];
+        let sessions = dir.path().join("sessions");
+        let outcome = run(&inspection, &sessions, &procs(&[]), Duration::ZERO);
+        assert_eq!(outcome, Ok("Deleted wt.".to_string()));
+        assert!(!wt.exists());
+        let branches = Command::new("git")
+            .args(["branch", "--list", "wt"])
+            .current_dir(&main)
+            .output()
+            .unwrap();
+        assert!(branches.stdout.is_empty());
+    }
+
+    #[test]
+    fn 点検の後にコミットか未コミットが増えていたら消さない() {
+        for change in ["commit", "dirty"] {
+            let (dir, main, wt) = repo();
+            let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+            match change {
+                "commit" => git(&wt, &["commit", "-q", "--allow-empty", "-m", "later"]),
+                _ => std::fs::write(wt.join("new.txt"), "x").unwrap(),
+            }
+            let outcome = run(
+                &inspection,
+                &dir.path().join("sessions"),
+                &procs(&[]),
+                Duration::ZERO,
+            );
+            assert!(outcome.is_err(), "{change}: {outcome:?}");
+            assert!(wt.exists(), "{change}");
+        }
+    }
+
+    #[test]
+    fn 既定ブランチを持つ_worktree_を消してもブランチは残す() {
+        let (dir, main, _wt) = repo();
+        git(&main, &["checkout", "-q", "-b", "dev"]);
+        git(&main, &["worktree", "add", "-q", "../on-main", "main"]);
+        let on_main = dir.path().join("on-main").canonicalize().unwrap();
+        let inspection = ready(inspect(&main, &on_main, "main".into(), &[], &main, &[]));
+        assert!(inspection.check.keeps_branch);
+        run(
+            &inspection,
+            &dir.path().join("sessions"),
+            &procs(&[]),
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(!on_main.exists());
+        git(&main, &["rev-parse", "--verify", "-q", "refs/heads/main"]);
+    }
+
+    #[test]
+    fn 点検の後にその中で_claude_が起動していたら消さない() {
+        let (dir, main, wt) = repo();
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let record = serde_json::json!({
+            "pid": 11,
+            "sessionId": "late",
+            "cwd": wt,
+            "startedAt": 1_792_634_755_219u64,
+            "procStart": "Thu Oct 22 02:05:54 2026",
+            "status": "busy",
+        });
+        std::fs::write(sessions.join("11.json"), record.to_string()).unwrap();
+        let outcome = run(
+            &inspection,
+            &sessions,
+            &procs(&[(11, true)]),
+            Duration::ZERO,
+        );
+        assert!(
+            outcome.as_ref().is_err_and(|e| e.contains("started")),
+            "{outcome:?}"
+        );
+        assert!(wt.exists());
+    }
+
+    #[test]
+    fn 外の_claude_は止めて終わったのを確かめてから消す() {
+        let (dir, main, wt) = repo();
+        let mut inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        inspection.claudes = vec![Doomed {
+            pid: 9,
+            started: started(),
+            own: false,
+        }];
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let record = serde_json::json!({
+            "pid": 9,
+            "sessionId": "outside",
+            "cwd": wt,
+            "startedAt": 1_792_634_755_219u64,
+            "procStart": "Thu Oct 22 02:05:54 2026",
+            "status": "busy",
+        });
+        std::fs::write(sessions.join("9.json"), record.to_string()).unwrap();
+        let procs = procs(&[(9, false)]);
+        let outcome = run(&inspection, &sessions, &procs, Duration::ZERO);
+        assert_eq!(outcome, Ok("Deleted wt.".to_string()));
+        assert!(procs.info(9).is_none(), "SIGTERM が届いている");
+        assert!(!wt.exists());
+    }
+
+    #[test]
+    fn 無視ファイルは未コミットに数えず_worktree_ごと消える() {
+        let (dir, main, wt) = repo();
+        std::fs::create_dir_all(main.join(".git/info")).unwrap();
+        std::fs::write(main.join(".git/info/exclude"), ".env\n").unwrap();
+        std::fs::write(wt.join(".env"), "SECRET=1").unwrap();
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        assert_eq!(inspection.check.dirty, Some(0));
+        let outcome = run(
+            &inspection,
+            &dir.path().join("sessions"),
+            &procs(&[]),
+            Duration::ZERO,
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(!wt.join(".env").exists());
+    }
+
+    #[test]
+    fn 状態ファイルの無いこの窓の_claude_はタブを閉じる側に入り_終わりは待たない() {
+        let (dir, main, wt) = repo();
+        let own = [pty("p1", SessionKind::ClaudeCode, &wt, Some("s1"))];
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &own, &main, &[]));
+        assert!(inspection.claudes.is_empty());
+        assert_eq!(inspection.own_claudes, 1);
+        assert_eq!(inspection.panels, ["p1"]);
+        let begun = std::time::Instant::now();
+        let outcome = run(
+            &inspection,
+            &dir.path().join("sessions"),
+            &procs(&[]),
+            Duration::ZERO,
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(begun.elapsed() < Duration::from_secs(5), "待っていない");
     }
 }

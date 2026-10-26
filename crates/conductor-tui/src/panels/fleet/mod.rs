@@ -18,7 +18,7 @@ use conductor_core::keymap::Action;
 use crate::effect::Effect;
 use crate::modal::popup::{Choices, Popup};
 use crate::modal::{Confirm, Modal};
-use crate::workspace::{Ctx, Focus};
+use crate::workspace::{Ctx, Focus, StatusLevel};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RowKey {
@@ -130,6 +130,46 @@ pub struct OwnSession {
     pub claude_session_id: Option<String>,
 }
 
+/// この窓の PtyStore にあるセッション。消す worktree の中のものを worker が選ぶ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnPty {
+    pub panel_id: String,
+    pub kind: conductor_svc::pty::SessionKind,
+    pub working_dir: PathBuf,
+    pub claude_session_id: Option<String>,
+}
+
+/// 消す worktree の中で動いている Claude。own はこの窓のパネルのもの (タブを閉じて終わりを待つ)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Doomed {
+    pub pid: u32,
+    pub started: SystemTime,
+    pub own: bool,
+}
+
+/// worktree を消す前の点検の結果。確認文はこれから作り、消す直前の数え直しもこれと比べる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Inspection {
+    pub repo: PathBuf,
+    pub path: PathBuf,
+    pub label: String,
+    pub check: conductor_core::git_engine::DeletionCheck,
+    pub claudes: Vec<Doomed>,
+    /// この窓で閉じるパネル (Claude とシェル)。
+    pub panels: Vec<String>,
+    /// panels のうち Claude。状態ファイルをまだ書いていない Claude も数える。
+    pub own_claudes: usize,
+    pub shells: usize,
+    pub in_window_repo: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inspected {
+    Ready(Box<Inspection>),
+    Refused(String),
+    Failed(String),
+}
+
 /// worker が 1 回で読んだもの。題は会話ログの mtime が変わったものだけ入る。
 #[derive(Debug, Default)]
 pub struct FleetStatus {
@@ -157,6 +197,8 @@ pub struct FleetPanel {
     kept_roots: BTreeSet<PathBuf>,
     /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
     smart_target: Option<PathBuf>,
+    /// 消す前の点検を待っている worktree。点検は 1 本だけ。
+    inspecting: Option<PathBuf>,
     polling: bool,
     came_from: Option<Focus>,
 }
@@ -175,6 +217,7 @@ impl FleetPanel {
     /// 結果は repo の切り替えで世代ごと捨てられるので、ガードもそこで下ろす。
     pub fn forget_in_flight(&mut self) {
         self.polling = false;
+        self.inspecting = None;
     }
 
     /// 会話ログを読み直さなくていいもの。会話の id → 前に読んだときの mtime。
@@ -695,7 +738,12 @@ impl FleetPanel {
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
-            Action::StopSession => return Some(self.ask_stop().into_iter().collect()),
+            Action::StopSession => {
+                return Some(match self.selected_worktree() {
+                    Some(worktree) => vec![self.ask_delete(worktree)],
+                    None => self.ask_stop().into_iter().collect(),
+                });
+            }
             Action::NewSessionMenu => {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
@@ -710,6 +758,47 @@ impl FleetPanel {
             self.select(item, SystemTime::now());
         }
         Some(Vec::new())
+    }
+
+    /// 消せるかと失うものは worker が調べる。結果は [Self::inspected] に届く。
+    fn ask_delete(&mut self, worktree: Worktree) -> Effect {
+        let warn = |text: &str| Effect::Status(StatusLevel::Warning, text.to_string());
+        if self.inspecting.is_some() {
+            return warn("Still checking the worktree to delete.");
+        }
+        let Some(repo) = self.tree_root_of(&worktree.path) else {
+            return warn("This line is not a git worktree.");
+        };
+        if repo == worktree.path {
+            return warn("The main worktree cannot be deleted.");
+        }
+        self.inspecting = Some(worktree.path.clone());
+        Effect::InspectFleetWorktree {
+            repo,
+            path: worktree.path,
+            label: worktree.label,
+        }
+    }
+
+    /// 押したときのまま一覧にいて同じ worktree を選んでいるときだけ確認を出す。点検の間に
+    /// 右の区画へ入って打ち始めた文の y が、後から出た確認に答えてしまわないように。
+    pub fn inspected(&mut self, path: &Path, outcome: Inspected, undisturbed: bool) -> Vec<Effect> {
+        if self.inspecting.as_deref() != Some(path) {
+            return Vec::new();
+        }
+        self.inspecting = None;
+        let still = undisturbed && self.selected == Some(Selected::Worktree(path.to_path_buf()));
+        vec![match outcome {
+            Inspected::Refused(why) => Effect::Status(StatusLevel::Warning, why),
+            Inspected::Failed(why) => Effect::Status(StatusLevel::Error, why),
+            Inspected::Ready(_) if !still => Effect::Status(
+                StatusLevel::Info,
+                "The selection moved, so nothing was deleted. Press D again.".into(),
+            ),
+            Inspected::Ready(inspection) => {
+                Effect::PushModal(Modal::Confirm(render::delete_confirm(*inspection)))
+            }
+        }]
     }
 
     /// 止める相手は押した時点の行で決める。確認の間に並びが変わっても相手は動かない。

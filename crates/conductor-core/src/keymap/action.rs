@@ -160,7 +160,7 @@ impl Action {
             Action::PrevWorktree => "Previous worktree",
             Action::FocusWorktree => "Open worktree switcher",
             Action::FocusSessions => "Open the session list",
-            Action::StopSession => "Stop the selected session",
+            Action::StopSession => "Stop the selected session, or delete the selected worktree",
             Action::NewSessionMenu => "Start a session in the selected worktree",
             Action::NextRepo => "Next repository",
             Action::PrevRepo => "Previous repository",

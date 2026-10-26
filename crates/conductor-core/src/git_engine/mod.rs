@@ -26,6 +26,7 @@ use git2::Repository;
 pub use grab::GrabState;
 pub use recently_modified::recently_modified_files;
 pub use status_map::{GitStatusMap, TreeGitState};
+pub use worktree_delete::{DeletionCheck, Refusal};
 
 /// このリポジトリの .conductor ディレクトリ。
 ///

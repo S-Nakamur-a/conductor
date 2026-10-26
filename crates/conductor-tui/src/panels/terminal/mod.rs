@@ -160,6 +160,32 @@ impl TerminalPanel {
         self.pty.attach_others(sockets)
     }
 
+    pub fn own_ptys(&self) -> Vec<crate::panels::fleet::OwnPty> {
+        (0..self.pty.sessions().len())
+            .map(|i| {
+                let session = &self.pty.sessions()[i];
+                crate::panels::fleet::OwnPty {
+                    panel_id: session.id.clone(),
+                    kind: session.kind,
+                    working_dir: session.working_dir.clone(),
+                    claude_session_id: self.pty.claude_session_ref(i).map(|(_, id, _)| id),
+                }
+            })
+            .collect()
+    }
+
+    /// タブを閉じるのと同じ道で閉じる。エディタは閉じない。
+    pub fn close_sessions(&mut self, ids: &[String]) {
+        for id in ids {
+            let focus = match self.index_of(Some(id)).map(|i| self.pty.sessions()[i].kind) {
+                Some(SessionKind::ClaudeCode) => Focus::TerminalClaude,
+                Some(SessionKind::Shell) => Focus::TerminalShell,
+                Some(SessionKind::Editor) | None => continue,
+            };
+            self.close_session(focus, id);
+        }
+    }
+
     /// どの worktree のものかを問わず、この窓で動いている Claude。一覧が読む。
     pub fn own_claude_sessions(&self) -> Vec<crate::panels::fleet::OwnSession> {
         (0..self.pty.sessions().len())

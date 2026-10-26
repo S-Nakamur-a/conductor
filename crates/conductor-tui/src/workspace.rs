@@ -424,6 +424,23 @@ impl Workspace {
                 Vec::new()
             }
             TaskResult::SessionStopped(stopped) => vec![stopped_status(stopped)],
+            TaskResult::FleetWorktreeInspected { path, outcome } => {
+                let undisturbed = self.focus == Focus::Fleet && self.modals.is_empty();
+                self.panels.fleet.inspected(&path, outcome, undisturbed)
+            }
+            TaskResult::FleetWorktreeDeleted {
+                in_window_repo,
+                outcome,
+            } => {
+                let mut effects = vec![match outcome {
+                    Ok(done) => Effect::Status(StatusLevel::Success, done),
+                    Err(why) => Effect::Status(StatusLevel::Error, why),
+                }];
+                if in_window_repo {
+                    effects.push(Effect::Spawn(Task::ListWorktrees));
+                }
+                effects
+            }
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
