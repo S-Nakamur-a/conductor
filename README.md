@@ -104,6 +104,12 @@ started has drawn its status line.
 next repository, or back to the top of the current one. Clicking a worktree's or a
 session's line selects it, and a double click on a session does what **Tab** does.
 
+Below the list, **Git Changes** shows the files the selected line's branch changed and
+by how much, the same way the main screen's Git Changes does: from where it left the
+repository's default branch to the working tree, uncommitted and untracked files
+included. It is for reading only, is re-read about every five seconds while the list is
+open, and is not shown when the window is too short.
+
 A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
 there resizes it, and a resize drops what had scrolled off, there and in the Claude

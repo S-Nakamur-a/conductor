@@ -49,6 +49,7 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     Region::RevidereDiff => crate::panels::revidere::render::diff(frame, rect, ws),
                     Region::FleetList => crate::panels::fleet::render::list(frame, rect, ws),
                     Region::FleetSession => crate::panels::fleet::render::detail(frame, rect, ws),
+                    Region::FleetChanges => crate::panels::fleet::render::changes(frame, rect, ws),
                     _ => {}
                 }
             }
@@ -208,6 +209,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
         Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
         Region::FleetSession => crate::panels::fleet::render::session_title(ws),
+        Region::FleetChanges => crate::panels::fleet::render::changes_title(ws),
         _ => String::new(),
     };
     // 一覧と右のセッションは見た目が似ているので、フォーカス側は色に加えて線の太さでも示す。

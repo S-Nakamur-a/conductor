@@ -3581,3 +3581,18 @@ mod review_key {
         assert_eq!(label.style.fg, Some(ws.theme.info));
     }
 }
+
+#[test]
+fn 変更を読んでいる間に_repo_を切り替えたら次を投げられる() {
+    let mut fleet = FleetPanel::default();
+    fleet.note_spawned(&crate::task::Task::FleetChanges {
+        dir: PathBuf::from("/r/a"),
+    });
+    let now = std::time::Instant::now();
+    assert_eq!(fleet.changes.wanted(Some(PathBuf::from("/r/a")), now), None);
+    fleet.forget_in_flight();
+    assert_eq!(
+        fleet.changes.wanted(Some(PathBuf::from("/r/a")), now),
+        Some(PathBuf::from("/r/a"))
+    );
+}

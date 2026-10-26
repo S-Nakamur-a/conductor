@@ -218,6 +218,10 @@ pub enum Task {
     OpenBranchPage {
         dir: PathBuf,
     },
+    /// 一覧で選んだ行のブランチの変更。base は窓の repo ではなく dir の repo の既定ブランチ。
+    FleetChanges {
+        dir: PathBuf,
+    },
     /// PR 番号か URL を worktree にする。取り込めたら PR のメタデータも書く。
     IntakePr {
         input: String,
@@ -386,6 +390,11 @@ pub enum TaskResult {
     FleetStatus(Box<crate::panels::fleet::FleetStatus>),
     SessionStopped(conductor_core::claude_sessions::registry::Stopped),
     BranchPageOpened(Result<String, String>),
+    FleetChanges {
+        dir: PathBuf,
+        diff: Box<DiffState>,
+        status: GitStatusMap,
+    },
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
         path: PathBuf,
@@ -839,6 +848,15 @@ impl Task {
             }
             Task::OpenBranchPage { dir } => {
                 svc.spawn(move || open_branch_page(&dir), TaskResult::BranchPageOpened);
+            }
+            Task::FleetChanges { dir } => {
+                svc.spawn(
+                    move || {
+                        let (diff, status) = branch_changes(&dir, env.tab_width);
+                        (dir, diff, status)
+                    },
+                    |(dir, diff, status)| TaskResult::FleetChanges { dir, diff, status },
+                );
             }
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
@@ -1317,6 +1335,28 @@ fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
         log::warn!("could not record the PR metadata: {e}");
     }
     Ok(Box::new(intaken))
+}
+
+/// dir がサブディレクトリでも、それを含む worktree の変更を読む。失敗は diff の error に入れて必ず返す
+/// — 返さないと投げ中が下りない。
+fn branch_changes(dir: &Path, tab_width: usize) -> (Box<DiffState>, GitStatusMap) {
+    let workdir = git2::Repository::discover(dir)
+        .ok()
+        .and_then(|repo| repo.workdir().map(Path::to_path_buf));
+    let Some(workdir) = workdir else {
+        let mut diff = DiffState::new(DiffSource::working_tree(""));
+        diff.error = Some(format!("{} is not in a git working tree", dir.display()));
+        return (Box::new(diff), GitStatusMap::default());
+    };
+    let base =
+        GitEngine::open(&workdir).map_or_else(|_| "main".to_string(), |git| git.default_branch());
+    let mut diff = DiffState::new(DiffSource::working_tree(&base));
+    diff.load(&workdir, false, tab_width);
+    let status = GitStatusMap::load(&workdir).unwrap_or_else(|e| {
+        log::warn!("git status failed in {}: {e:#}", workdir.display());
+        GitStatusMap::default()
+    });
+    (Box::new(diff), status)
 }
 
 fn fleet_status(
@@ -2468,5 +2508,100 @@ mod fleet_delete_tests {
         );
         assert!(outcome.is_ok(), "{outcome:?}");
         assert!(begun.elapsed() < Duration::from_secs(5), "待っていない");
+    }
+}
+
+#[cfg(test)]
+mod branch_changes_tests {
+    use std::path::Path;
+    use std::process::Command;
+
+    use conductor_core::diff_state::DiffSource;
+
+    use super::branch_changes;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// 既定ブランチが staging の repo で、feature にコミット 1 つと未コミット・未追跡を置く。
+    fn staging_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q", "-b", "staging"]);
+        std::fs::write(root.join("kept.txt"), "a\n").unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "a\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-qm", "init"]);
+        git(root, &["update-ref", "refs/remotes/origin/staging", "HEAD"]);
+        git(
+            root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/staging",
+            ],
+        );
+        git(root, &["checkout", "-qb", "feature"]);
+        std::fs::write(root.join("committed.txt"), "c\n").unwrap();
+        git(root, &["add", "committed.txt"]);
+        git(root, &["commit", "-qm", "feature"]);
+        std::fs::write(root.join("src/lib.rs"), "a\nb\n").unwrap();
+        std::fs::write(root.join("untracked.txt"), "u\n").unwrap();
+        dir
+    }
+
+    fn paths(dir: &Path) -> Vec<String> {
+        let (diff, _) = branch_changes(dir, 4);
+        assert_eq!(diff.error, None);
+        diff.files.iter().map(|f| f.path.clone()).collect()
+    }
+
+    #[test]
+    fn その_repo_の既定ブランチからのコミット済み_未コミット_未追跡を読む() {
+        let repo = staging_repo();
+        let (diff, _) = branch_changes(repo.path(), 4);
+        assert_eq!(diff.source, DiffSource::working_tree("staging"));
+        assert_eq!(
+            paths(repo.path()),
+            ["committed.txt", "src/lib.rs", "untracked.txt"]
+        );
+    }
+
+    #[test]
+    fn サブディレクトリで動く_claude_の行でもその_worktree_全体を読む() {
+        let repo = staging_repo();
+        assert_eq!(
+            paths(&repo.path().join("src")),
+            ["committed.txt", "src/lib.rs", "untracked.txt"]
+        );
+    }
+
+    #[test]
+    fn 未コミットのファイルは_git_status_の色の元を持つ() {
+        let repo = staging_repo();
+        let (_, status) = branch_changes(repo.path(), 4);
+        assert!(status.status("src/lib.rs").is_some());
+        assert!(status.status("committed.txt").is_none());
+    }
+
+    #[test]
+    fn git_の外では理由を返し落ちない() {
+        let dir = tempfile::tempdir().unwrap();
+        let (diff, _) = branch_changes(dir.path(), 4);
+        assert!(diff.files.is_empty());
+        assert!(diff.error.unwrap().contains("not in a git working tree"));
     }
 }

@@ -15,7 +15,9 @@ use conductor_core::keymap::Action;
 use super::{Ask, FleetPanel, Inspection, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
 use crate::modal::Confirm;
+use crate::panels::explorer::git_changes;
 use crate::panels::revidere::Badge;
+use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
 const UNTITLED: &str = "(まだ何も頼んでいない)";
@@ -468,6 +470,48 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         },
         Style::default().fg(theme.fg),
     ));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+pub fn changes_title(ws: &Workspace) -> String {
+    let fleet = &ws.panels.fleet;
+    match fleet.changes.for_target(fleet.selected_dir().as_deref()) {
+        Some((changes, _)) => git_changes::render::title(changes),
+        None => " Git Changes ".to_string(),
+    }
+}
+
+pub fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let inner = inner(rect);
+    let fleet = &ws.panels.fleet;
+    let target = fleet.selected_dir();
+    let lines = match (fleet.changes.for_target(target.as_deref()), &target) {
+        (Some((changes, status)), _) => git_changes::render::lines(
+            changes,
+            status,
+            // コメントと既読はこの窓の repo のものしか持っていない。
+            &ReviewState::default(),
+            &ws.theme,
+            &ws.config,
+            git_changes::render::Area {
+                width: usize::from(inner.width),
+                height: usize::from(inner.height),
+            },
+            false,
+        )
+        .into_iter()
+        // 操作しない区画なので、先頭行に付く選択の地は消す。
+        .map(|mut line| {
+            line.style.bg = None;
+            line
+        })
+        .collect(),
+        (None, Some(_)) => vec![Line::styled(
+            "  loading\u{2026}",
+            Style::default().fg(ws.theme.muted),
+        )],
+        (None, None) => Vec::new(),
+    };
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
