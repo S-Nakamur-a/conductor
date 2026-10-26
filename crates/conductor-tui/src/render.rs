@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
@@ -200,11 +200,18 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::RevidereOrder => crate::panels::revidere::render::order_title(ws),
         Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
         Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
-        Region::FleetSession => String::new(),
+        Region::FleetSession => crate::panels::fleet::render::session_title(ws),
         _ => String::new(),
     };
+    // 一覧と右のセッションは見た目が似ているので、フォーカス側は色に加えて線の太さでも示す。
+    let fleet = matches!(region, Region::FleetList | Region::FleetSession);
     Block::default()
         .borders(Borders::ALL)
+        .border_type(if fleet && focused {
+            BorderType::Thick
+        } else {
+            BorderType::Plain
+        })
         .border_style(border)
         .title(Span::styled(
             title,

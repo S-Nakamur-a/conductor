@@ -1287,6 +1287,48 @@ mod pane {
     }
 
     #[test]
+    fn フォーカスのある側だけ枠が太線になり_右の題は入り方か入力中かを言う() {
+        let (mut ws, mut svc, dir) = opened();
+        let listed = spawn(&mut ws, dir.path());
+        list(&mut ws, dir.path(), &[&listed]);
+        let frame_of = |ws: &Workspace| {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(200, 50)).unwrap();
+            let mut rects = (Rect::default(), Rect::default());
+            terminal
+                .draw(|frame| {
+                    let layout = crate::layout::layout(ws, frame.area());
+                    rects = (
+                        layout.rect(Region::FleetList).unwrap(),
+                        layout.rect(Region::FleetSession).unwrap(),
+                    );
+                    crate::render::render(frame, ws, &layout);
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            let corner = |r: Rect| buffer[(r.x, r.y)].symbol().to_string();
+            let top = |r: Rect| -> String {
+                (r.x..r.right())
+                    .map(|x| buffer[(x, r.y)].symbol())
+                    .collect()
+            };
+            (corner(rects.0), corner(rects.1), top(rects.1))
+        };
+
+        let (list_corner, right_corner, right_top) = frame_of(&ws);
+        assert_eq!((list_corner.as_str(), right_corner.as_str()), ("┏", "┌"));
+        assert!(
+            right_top.replace(' ', "").contains("tabで入る"),
+            "{right_top}"
+        );
+
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetSession)]);
+        let (list_corner, right_corner, right_top) = frame_of(&ws);
+        assert_eq!((list_corner.as_str(), right_corner.as_str()), ("┌", "┏"));
+        assert!(right_top.replace(' ', "").contains("入力中"), "{right_top}");
+    }
+
+    #[test]
     fn この窓の外の行では_tab_で右に入らない() {
         let (mut ws, mut svc, _dir) = opened();
         let outside = live(9, "/r/a", "s9", Status::Working, Owner::Elsewhere);
@@ -2556,10 +2598,22 @@ mod usage {
             tail,
             [
                 ("█▋".to_string(), Some(ws.theme.accent)),
-                ("░░".to_string(), Some(ws.theme.hint)),
+                ("░░".to_string(), Some(ws.theme.fg)),
                 (" 42%".to_string(), Some(ws.theme.accent)),
-            ]
+            ],
+            "選んだ行の空きは地に溶けないよう本文の色"
         );
+        let mut fleet = std::mem::take(&mut ws.panels.fleet);
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        ws.panels.fleet = fleet;
+        let unselected = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let empty = unselected
+            .lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content == "░░")
+            .expect("空きのマス");
+        assert_eq!(empty.style.fg, Some(ws.theme.hint));
         assert_eq!(
             composed
                 .lines
