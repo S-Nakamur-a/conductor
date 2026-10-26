@@ -101,7 +101,8 @@ and `refreshInterval` are not carried over. Usage appears once a session conduct
 started has drawn its status line.
 
 **j** / **k** move one line; **J** / **K** (or **Shift+↓** / **Shift+↑**) jump to the
-next repository, or back to the top of the current one.
+next repository, or back to the top of the current one. Clicking a worktree's or a
+session's line selects it, and a double click on a session does what **Tab** does.
 
 A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it

@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use conductor_core::cc_hook::statusline::{Limit, Usage};
 use conductor_core::theme::Theme;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -107,6 +107,7 @@ pub enum Slot {
     Other,
     Repo(Option<PathBuf>),
     Worktree(Worktree),
+    Session(Row),
 }
 
 /// 一覧の区画の中身。要約行・本文・最下行の矩形と、本文の行とスクロール量。
@@ -154,6 +155,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
             theme.waiting_primary,
             inner.width,
         ));
+        slots.push(Slot::Other);
         for row in &pinned {
             if fleet.is_selected(row) {
                 selected_line = lines.len() + 1;
@@ -166,6 +168,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                 focused,
                 now,
             ));
+            slots.resize(lines.len(), Slot::Session(row.clone()));
         }
     }
     slots.resize(lines.len(), Slot::Other);
@@ -211,7 +214,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     focused,
                     now,
                 ));
-                slots.push(Slot::Other);
+                slots.push(Slot::Session(row.clone()));
             }
         }
     }
@@ -547,19 +550,29 @@ pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
 const BUTTON_WIDTH: u16 = 3;
 
+pub fn in_button_columns(composed: &Composed, x: u16) -> bool {
+    x + BUTTON_WIDTH >= composed.body.right()
+}
+
 pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
-    let body = composed.body;
-    if !(body.y..body.bottom()).contains(&y) || x + BUTTON_WIDTH < body.right() || x >= body.right()
-    {
+    if !in_button_columns(composed, x) {
         return None;
     }
-    let slot = composed
-        .slots
-        .get(composed.offset + usize::from(y - body.y))?;
+    let slot = slot_at(composed, x, y)?;
     match slot {
         Slot::Repo(Some(_)) | Slot::Worktree(_) => Some(slot),
-        Slot::Repo(None) | Slot::Other => None,
+        Slot::Repo(None) | Slot::Session(_) | Slot::Other => None,
     }
+}
+
+pub fn slot_at(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
+    let body = composed.body;
+    if !body.contains(Position::new(x, y)) {
+        return None;
+    }
+    composed
+        .slots
+        .get(composed.offset + usize::from(y - body.y))
 }
 
 fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {

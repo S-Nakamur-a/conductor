@@ -4,22 +4,33 @@ use std::time::{Duration, Instant};
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
-#[derive(Debug, Default)]
-pub struct ClickTracker {
-    last: Option<(usize, Instant)>,
+#[derive(Debug)]
+pub struct ClickTracker<K = usize> {
+    last: Option<(K, Instant)>,
 }
 
-impl ClickTracker {
+impl<K> Default for ClickTracker<K> {
+    fn default() -> Self {
+        Self { last: None }
+    }
+}
+
+impl<K: PartialEq> ClickTracker<K> {
     /// この位置へのクリックを記録し、2 回目かどうかを返す。
     ///
     /// 同じ位置であることも条件にしている。時間だけで判定すると、素早く別の行を
     /// 続けて押したときに 2 回目と見なされる。
-    pub fn is_double(&mut self, index: usize) -> bool {
+    pub fn is_double(&mut self, key: K) -> bool {
         let double = self
             .last
-            .is_some_and(|(i, at)| i == index && at.elapsed() < DOUBLE_CLICK);
-        self.last = Some((index, Instant::now()));
+            .as_ref()
+            .is_some_and(|(i, at)| *i == key && at.elapsed() < DOUBLE_CLICK);
+        self.arm(key);
         double
+    }
+
+    pub fn arm(&mut self, key: K) {
+        self.last = Some((key, Instant::now()));
     }
 }
 
