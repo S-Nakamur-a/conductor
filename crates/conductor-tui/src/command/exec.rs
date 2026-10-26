@@ -380,18 +380,86 @@ fn confirm_analyze_with(
             "Re-analyse",
         ),
     };
+    vec![analyze_modal(
+        ws,
+        ask(situation, on_yes).title(title),
+        &ws.worktree_path(),
+        &branch,
+        verb,
+    )]
+}
+
+/// 一覧で選んだ worktree の解析。窓が開いている worktree とは限らず、成果物の新旧は
+/// 読んでいないので、作り直しかどうかは問わずに聞く (キャッシュは効く)。
+pub fn confirm_analyze_worktree(ws: &Workspace, dir: PathBuf) -> Vec<Effect> {
+    let Some((worktree, branch)) = analysis_key(ws, &dir) else {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            "This line is not a git worktree.".into(),
+        )];
+    };
+    if ws.panels.revidere.is_running(&branch) {
+        return analyze_worktree(ws, worktree, branch, false);
+    }
+    let on_yes = analyze_worktree(ws, worktree.clone(), branch.clone(), false);
+    vec![analyze_modal(
+        ws,
+        Confirm::yes_only("Review this worktree with revidere?", on_yes).title("Review"),
+        &worktree,
+        &branch,
+        "Analyse",
+    )]
+}
+
+/// dir を含む worktree の根と、走っている解析の鍵。鍵は窓の repo の中でしか一意でない
+/// ブランチ名なので、窓の repo なら窓の側 (worktree 一覧) と同じ綴りにし、別の repo なら
+/// worktree の名前を前に付けてぶつからないようにする (`:` は ref 名に使えない)。
+fn analysis_key(ws: &Workspace, dir: &std::path::Path) -> Option<(PathBuf, String)> {
+    use conductor_core::git_engine::{GitEngine, Head};
+    let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let workdir = git2::Repository::discover(dir)
+        .ok()?
+        .workdir()?
+        .to_path_buf();
+    let worktree = canonical(&workdir);
+    let git = GitEngine::open(&worktree).ok()?;
+    let main_of = |git: &GitEngine| git.main_worktree_path().ok().map(|p| canonical(&p));
+    let window_main = GitEngine::open(&ws.repo.root)
+        .ok()
+        .and_then(|g| main_of(&g));
+    let branch = match git.head() {
+        Head::Branch(name) => name,
+        Head::Detached(_) | Head::Unborn(_) => "HEAD (detached)".to_string(),
+    };
+    let main = main_of(&git);
+    if main.is_some() && main == window_main {
+        return Some((worktree, branch));
+    }
+    let name = worktree
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Some((worktree, format!("{name}:{branch}")))
+}
+
+fn analyze_modal(
+    ws: &Workspace,
+    confirm: Confirm,
+    worktree: &std::path::Path,
+    branch: &str,
+    verb: &'static str,
+) -> Effect {
     let scope = revidere_panel::scope_label(ws.panels.revidere.scope());
     // 起点の取り違えは、出てきたレビューを読んでも気付きにくい。押す前に名前で見せる。
-    let base = revidere::git::guess_base(&ws.worktree_path())
+    let base = revidere::git::guess_base(worktree)
         .unwrap_or_else(|_| "(cannot guess \u{2014} nothing to compare against)".into());
-    vec![Effect::PushModal(Modal::Confirm(
-        ask(situation, on_yes)
-            .title(title)
+    Effect::PushModal(Modal::Confirm(
+        confirm
             .detail(format!("{branch} [{scope}]"))
             .detail(format!("Against {base}"))
             .detail("It calls the AI and takes a few minutes.")
             .labels(verb, "Cancel"),
-    ))]
+    ))
 }
 
 fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {

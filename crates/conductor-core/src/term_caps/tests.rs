@@ -35,14 +35,14 @@ fn osc11の応答はどの綴りでも輝度を読める() {
         ("\x1b]11;rgb:ffff/ffff\x1b\\", None),
     ];
     for (response, want) in cases {
-        match (parse_osc11_luminance(response), want) {
+        match (parse_osc11(response).map(luminance), want) {
             (Some(got), Some(w)) => assert!((got - w).abs() < 0.01, "{response:?} -> {got}"),
             (got, w) => assert_eq!(got.is_none(), w.is_none(), "{response:?}"),
         }
     }
 
     // Catppuccin Mocha の base (#1e1e2e) は暗い背景として読めること。
-    let v = parse_osc11_luminance("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\").unwrap();
+    let v = luminance(parse_osc11("\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\").unwrap());
     assert!(v < 0.2, "expected dark bg, got {v}");
 }
 

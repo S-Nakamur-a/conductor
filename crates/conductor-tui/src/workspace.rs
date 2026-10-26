@@ -130,6 +130,8 @@ pub struct Chrome {
     /// 一覧が main を占めている。開いているかはフォーカスから導かない — 今の画面の
     /// どこかがフォーカスを動かしても、一覧から落ちないように。
     pub fleet_open: bool,
+    /// 端末が OSC 11 で答えた背景色。答えない端末 (tmux の中を含む) では None。
+    pub terminal_bg: Option<ratatui::style::Color>,
 }
 
 #[derive(Debug, Clone)]

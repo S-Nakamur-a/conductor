@@ -711,7 +711,7 @@ mod hint {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
         );
     }
 
@@ -723,7 +723,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
         );
     }
 
@@ -746,7 +746,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く"
+            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く · W レビュー"
         );
     }
 
@@ -772,7 +772,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n");
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
         );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
@@ -793,7 +793,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
         assert_eq!(
             render::hint(&ws),
-            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
         );
     }
 
@@ -816,10 +816,10 @@ mod hint {
         for height in 0..=4 {
             drawn(&ws, 60, height);
         }
-        let lines = drawn(&ws, 64, 3);
+        let lines = drawn(&ws, 80, 3);
         assert_eq!(
             lines[1].trim(),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く · W レビュー"
         );
     }
 
@@ -2887,7 +2887,7 @@ mod usage {
                 ("░░".to_string(), Some(ws.theme.fg)),
                 (" 42%".to_string(), Some(ws.theme.accent)),
             ],
-            "選んだ行の空きは地に溶けないよう本文の色"
+            "空きは地に溶けないよう本文の色"
         );
         let mut fleet = std::mem::take(&mut ws.panels.fleet);
         fleet.update(Action::NavigateDown, &ws.ctx());
@@ -2899,7 +2899,7 @@ mod usage {
             .flat_map(|l| &l.spans)
             .find(|s| s.content == "░░")
             .expect("空きのマス");
-        assert_eq!(empty.style.fg, Some(ws.theme.hint));
+        assert_eq!(empty.style.fg, Some(ws.theme.fg));
         assert_eq!(
             composed
                 .lines
@@ -3147,5 +3147,264 @@ mod branch_page_key {
             ),
             Err("No pull request for 'feature/b', and origin has no web URL to open.".into())
         );
+    }
+}
+
+mod review_key {
+    use conductor_core::git_engine::Head;
+
+    use super::*;
+    use crate::modal::Modal;
+    use crate::panels::revidere::Badge;
+    use crate::task::{AnalyzeOutcome, Task};
+
+    fn tree() -> FleetPanel {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![live(
+                    8,
+                    "/r/app-b/src",
+                    "s8",
+                    Status::Idle,
+                    Owner::Conductor,
+                )],
+                trees: vec![RepoTree {
+                    root: PathBuf::from("/r/app"),
+                    name: "app".into(),
+                    worktrees: vec![
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app"),
+                            head: Head::Branch("main".into()),
+                        },
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app-b"),
+                            head: Head::Branch("feature/b".into()),
+                        },
+                    ],
+                }],
+                placement: [(PathBuf::from("/r/app-b/src"), PathBuf::from("/r/app-b"))].into(),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet
+    }
+
+    fn analyse(worktree: &str, branch: &str) -> Task {
+        Task::Analyze {
+            worktree: worktree.into(),
+            branch: branch.into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        }
+    }
+
+    #[test]
+    fn 一覧の_w_の大文字は選んだ行の_worktree_を解析にかける() {
+        let ws = Workspace::for_test();
+        assert_eq!(
+            ws.keymap.resolve(
+                &crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Char('W'),
+                    crossterm::event::KeyModifiers::SHIFT
+                ),
+                conductor_core::keymap::KeyContext::Fleet,
+            ),
+            Some(Action::AnalyzeRevidere)
+        );
+        let mut fleet = tree();
+        let session = fleet
+            .items()
+            .into_iter()
+            .find(|i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(8)))
+            .unwrap();
+        fleet.select(&session, at(300));
+        assert_eq!(
+            fleet.update(Action::AnalyzeRevidere, &ws.ctx()),
+            Some(vec![Effect::AnalyzeFleetWorktree(PathBuf::from(
+                "/r/app-b"
+            ))])
+        );
+        assert_eq!(
+            FleetPanel::default().update(Action::AnalyzeRevidere, &ws.ctx()),
+            Some(Vec::new()),
+            "行が無ければ窓の worktree の解析に落とさない"
+        );
+    }
+
+    /// main に 1 コミットある repo を dir/name に作り、canonicalize したパスを返す。
+    fn repo_at(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        let mut opts = git2::RepositoryInitOptions::new();
+        opts.initial_head("main");
+        let repo = git2::Repository::init_opts(&path, &opts).unwrap();
+        let tree = repo
+            .find_tree(repo.index().unwrap().write_tree().unwrap())
+            .unwrap();
+        let sig = git2::Signature::now("t", "t@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
+        std::fs::create_dir_all(path.join("sub")).unwrap();
+        path.canonicalize().unwrap()
+    }
+
+    fn started(effects: &[Effect]) -> (PathBuf, String) {
+        let [Effect::PushModal(Modal::Confirm(confirm))] = effects else {
+            panic!("{effects:?}");
+        };
+        confirm
+            .on_yes
+            .iter()
+            .find_map(|e| match e {
+                Effect::Spawn(Task::Analyze {
+                    worktree, branch, ..
+                }) => Some((worktree.clone(), branch.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{:?}", confirm.on_yes))
+    }
+
+    #[test]
+    fn 窓の_repo_なら一覧がまだ空でも鍵は窓の側と同じブランチ名で_解析先は_worktree_の根() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = repo_at(dir.path(), "app");
+        let mut ws = Workspace::for_test();
+        ws.repo.root = app.clone();
+        ws.repo.main_branch = "main".into();
+        assert!(ws.panels.worktree.list().is_empty());
+        let effects = crate::command::confirm_analyze_worktree(&ws, app.join("sub"));
+        assert_eq!(started(&effects), (app, ws.branch().to_string()));
+    }
+
+    #[test]
+    fn 別の_repo_の同名ブランチは窓の解析とぶつからず_終わってもステータス行だけ() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = repo_at(dir.path(), "app");
+        let other = repo_at(dir.path(), "other");
+        let mut ws = Workspace::for_test();
+        ws.repo.root = app.clone();
+        ws.repo.main_branch = "main".into();
+        ws.panels
+            .revidere
+            .note_spawned(&analyse(app.to_str().unwrap(), "main"));
+        let effects = crate::command::confirm_analyze_worktree(&ws, other.clone());
+        assert_eq!(started(&effects), (other.clone(), "other:main".to_string()));
+
+        ws.panels
+            .revidere
+            .note_spawned(&analyse(other.to_str().unwrap(), "other:main"));
+        let done = AnalyzeOutcome::Done {
+            coverage_complete: true,
+        };
+        let finished = ws
+            .panels
+            .revidere
+            .finished("other:main", done, app.clone(), "main");
+        assert!(
+            matches!(finished.as_slice(), [Effect::Status(..)]),
+            "窓の Review を光らせも読み直しもしない: {finished:?}"
+        );
+        assert!(ws.panels.revidere.is_running("main"), "窓の解析は残る");
+    }
+
+    #[test]
+    fn 外の端末の_cwd_が_worktree_の下でも解析先は根で_印と削除のガードがその根に効く() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = repo_at(dir.path(), "other");
+        let mut ws = Workspace::for_test();
+        let effects = crate::command::confirm_analyze_worktree(&ws, other.join("sub"));
+        let (worktree, branch) = started(&effects);
+        assert_eq!(worktree, other);
+        ws.panels
+            .revidere
+            .note_spawned(&analyse(worktree.to_str().unwrap(), &branch));
+        assert_eq!(ws.panels.revidere.badge(&other), Some(Badge::Running));
+        assert!(ws.panels.revidere.is_running_in(&other));
+    }
+
+    #[test]
+    fn git_でない_dir_は断る() {
+        let plain = tempfile::tempdir().unwrap();
+        let ws = Workspace::for_test();
+        let refused =
+            crate::command::confirm_analyze_worktree(&ws, plain.path().canonicalize().unwrap());
+        assert!(
+            matches!(
+                refused.as_slice(),
+                [Effect::Status(StatusLevel::Warning, _)]
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn worktree_の行に解析中_済み_失敗の印が出る() {
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = tree();
+        let line_of = |ws: &Workspace| {
+            let composed = render::compose(ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+            composed
+                .lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                })
+                .find(|t| t.contains("feature/b"))
+                .unwrap()
+        };
+        assert!(!line_of(&ws).contains("review"), "{}", line_of(&ws));
+
+        ws.panels
+            .revidere
+            .note_spawned(&analyse("/r/app-b", "feature/b"));
+        assert_eq!(
+            ws.panels.revidere.badge(Path::new("/r/app-b")),
+            Some(Badge::Running)
+        );
+        assert!(line_of(&ws).contains("review…"), "{}", line_of(&ws));
+
+        let done = AnalyzeOutcome::Done {
+            coverage_complete: true,
+        };
+        ws.panels
+            .revidere
+            .finished("feature/b", done, PathBuf::from("/r/app"), "main");
+        assert!(line_of(&ws).contains("review ✓"), "{}", line_of(&ws));
+
+        ws.panels
+            .revidere
+            .note_spawned(&analyse("/r/app-b", "feature/b"));
+        ws.panels.revidere.finished(
+            "feature/b",
+            AnalyzeOutcome::Failed("boom".into()),
+            PathBuf::from("/r/app"),
+            "main",
+        );
+        assert!(line_of(&ws).contains("review ✗"), "{}", line_of(&ws));
+        assert_eq!(ws.panels.revidere.badge(Path::new("/r/app")), None);
+    }
+
+    #[test]
+    fn worktree_の名前は_repo_の見出しと同じ色でセッションの題と分ける() {
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = tree();
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let label = composed
+            .lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .find(|s| s.content.contains("feature/b"))
+            .unwrap();
+        assert_eq!(label.style.fg, Some(ws.theme.info));
     }
 }

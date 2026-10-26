@@ -11,8 +11,7 @@ use crate::icons::IconSet;
 #[cfg(test)]
 mod tests;
 
-/// OSC 11 で端末に背景色を問い合わせ、相対輝度を返す
-/// (0.0 = 黒、1.0 = 白、線形スケール)。
+/// OSC 11 で端末に背景色を問い合わせ、RGB を返す。
 ///
 /// raw mode に入ったあと、かつ crossterm のイベントループが stdin を読み始める前に
 /// 呼ばないと、問い合わせへの応答が入力イベントとして飲み込まれる。
@@ -20,7 +19,7 @@ mod tests;
 /// 応答の読み取りは libc::poll で 150ms の期限つきにしてある。OSC 11 に対応しない
 /// 端末を待ち続けないため。tmux の中ではパススルーが通常無効で応答が来ないので、
 /// 問い合わせ自体を送らずに None を返す。
-pub fn query_background_luminance() -> Option<f64> {
+pub fn query_background() -> Option<(u8, u8, u8)> {
     let term = std::env::var("TERM").unwrap_or_default();
     let term_program = std::env::var("TERM_PROGRAM").unwrap_or_default();
     if term.starts_with("tmux") || term_program.eq_ignore_ascii_case("tmux") {
@@ -37,7 +36,13 @@ pub fn query_background_luminance() -> Option<f64> {
         }
     }
 
-    read_osc11_response().and_then(|r| parse_osc11_luminance(&r))
+    read_osc11_response().and_then(|r| parse_osc11(&r))
+}
+
+/// 相対輝度 (0.0 = 黒、1.0 = 白、線形スケール)。
+pub fn luminance((r, g, b): (u8, u8, u8)) -> f64 {
+    let [r, g, b] = [r, g, b].map(|c| f64::from(c) / 255.0);
+    0.299 * r + 0.587 * g + 0.114 * b
 }
 
 const OSC11_TIMEOUT_MS: i32 = 150;
@@ -127,8 +132,8 @@ pub fn icon_set_for_term_program(term_program: &str) -> Option<IconSet> {
 }
 
 /// 各チャネルは 16 進 4 桁 (0000-FFFF) が基本だが、8bit (2 桁) で返す端末もある。
-/// どちらも上位バイトだけを輝度の計算に使う。
-fn parse_osc11_luminance(response: &str) -> Option<f64> {
+/// どちらも上位バイトだけを使う。
+fn parse_osc11(response: &str) -> Option<(u8, u8, u8)> {
     let inner = response
         .trim_start_matches('\x1b')
         .trim_start_matches(']')
@@ -140,8 +145,6 @@ fn parse_osc11_luminance(response: &str) -> Option<f64> {
     if parts.len() != 3 {
         return None;
     }
-    let r = u8::from_str_radix(parts[0].get(..2)?, 16).ok()? as f64 / 255.0;
-    let g = u8::from_str_radix(parts[1].get(..2)?, 16).ok()? as f64 / 255.0;
-    let b = u8::from_str_radix(parts[2].get(..2)?, 16).ok()? as f64 / 255.0;
-    Some(0.299 * r + 0.587 * g + 0.114 * b)
+    let channel = |part: &str| u8::from_str_radix(part.get(..2)?, 16).ok();
+    Some((channel(parts[0])?, channel(parts[1])?, channel(parts[2])?))
 }

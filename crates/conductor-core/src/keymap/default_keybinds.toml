@@ -147,6 +147,8 @@
 "D" = "stop_session"
 # 素の文字にしないのは、一覧に届いた打ちかけの文 (json2csv、python3) が n と数字で起動してしまうため。
 "ctrl+n" = "new_session_menu"
+# 選んだ行の worktree を revidere にかける。打ちかけの文から届いても確認で止まる。
+"W" = "analyze_revidere"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]

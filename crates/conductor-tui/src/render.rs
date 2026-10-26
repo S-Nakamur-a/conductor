@@ -61,6 +61,7 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     ) {
         crate::panels::explorer::render::render(frame, tree, changes, ws);
     }
+    tint_focused(frame, ws, layout);
 
     if let Some(selection) = ws.chrome.selection.as_ref().filter(|s| !s.is_empty())
         && let Some(area) = crate::select::area(layout, selection.region)
@@ -223,6 +224,26 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         ))
 }
 
+const FOCUS_TINT: f64 = 0.05;
+
+/// 端末の背景を少し本文の色へ寄せて、フォーカス中の区画に敷く。地を自分で塗ったセル
+/// (シェルや Claude が色を付けた所、選択行) は塗り替えない。
+fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
+    let (Some(bg), Some(rect)) = (ws.chrome.terminal_bg, layout.rect(focused_region(ws))) else {
+        return;
+    };
+    let tint = Theme::lerp(bg, ws.theme.fg, FOCUS_TINT);
+    let buf = frame.buffer_mut();
+    for y in rect.top()..rect.bottom() {
+        for x in rect.left()..rect.right() {
+            let cell = &mut buf[(x, y)];
+            if cell.bg == Color::Reset {
+                cell.set_bg(tint);
+            }
+        }
+    }
+}
+
 /// フォーカスが枠を光らせる区画。Editor は Viewer の場所を借りる。
 fn focused_region(ws: &Workspace) -> Region {
     match ws.focus {
@@ -301,6 +322,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("new", &[Action::NewSessionMenu]),
             ("back", &[Action::ExitSubPanel]),
             ("pr", &[Action::OpenBranchPage]),
+            ("review", &[Action::AnalyzeRevidere]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
         Focus::Worktree => &[
@@ -602,6 +624,33 @@ mod tests {
         (0..buffer.area.width)
             .map(|x| buffer[(x, row)].symbol())
             .collect()
+    }
+
+    #[test]
+    fn フォーカス中の区画だけ端末の背景を少し寄せた色で敷き_背景が分からなければ敷かない() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Viewer;
+        let area = Rect::new(0, 0, 120, 40);
+        let viewer = layout(&ws, area).rect(Region::Viewer).unwrap();
+        let tree = layout(&ws, area).rect(Region::ExplorerTree).unwrap();
+        let bg_at = |buffer: &ratatui::buffer::Buffer, rect: Rect| {
+            buffer[(rect.x + rect.width / 2, rect.bottom() - 2)].bg
+        };
+
+        let plain = draw(&ws);
+        assert_eq!(bg_at(&plain, viewer), Color::Reset);
+
+        let terminal_bg = Color::Rgb(30, 30, 46);
+        ws.chrome.terminal_bg = Some(terminal_bg);
+        let tinted = draw(&ws);
+        let tint = bg_at(&tinted, viewer);
+        assert_eq!(tint, Theme::lerp(terminal_bg, ws.theme.fg, FOCUS_TINT));
+        assert_ne!(tint, terminal_bg);
+        assert_eq!(
+            bg_at(&tinted, tree),
+            Color::Reset,
+            "フォーカスの外は端末の地のまま"
+        );
     }
 
     #[test]

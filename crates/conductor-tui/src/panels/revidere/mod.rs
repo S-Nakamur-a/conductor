@@ -65,6 +65,16 @@ pub struct RevidereState {
     /// 実行中の解析。ブランチごとに高々 1 本なので worktree 同士が待ち合わせにならない。
     /// worktree も持つのは、切り離した HEAD の worktree はどれも同じ名前で入るため。
     running: HashMap<String, (PathBuf, Arc<AtomicBool>)>,
+    /// この窓で終わった解析。worktree (canonicalize 済み) → 失敗しなかったか。
+    ended: HashMap<PathBuf, bool>,
+}
+
+/// 一覧の worktree の行に付ける、解析の印。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Badge {
+    Running,
+    Ready,
+    Failed,
 }
 
 impl RevidereState {
@@ -113,6 +123,16 @@ impl RevidereState {
         self.running
             .values()
             .any(|(dir, _)| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == worktree)
+    }
+
+    /// worktree は canonicalize 済みで渡す。
+    pub fn badge(&self, worktree: &Path) -> Option<Badge> {
+        if self.is_running_in(worktree) {
+            return Some(Badge::Running);
+        }
+        self.ended
+            .get(worktree)
+            .map(|&ok| if ok { Badge::Ready } else { Badge::Failed })
     }
 
     /// 確認ダイアログの文言と、貯めた応答を捨てるかどうかを決める 1 つの判定。
@@ -224,7 +244,10 @@ impl RevidereState {
         worktree: PathBuf,
         selected_branch: &str,
     ) -> Vec<Effect> {
-        self.running.remove(branch);
+        if let Some((dir, _)) = self.running.remove(branch) {
+            let ok = !matches!(outcome, AnalyzeOutcome::Failed(_));
+            self.ended.insert(dir.canonicalize().unwrap_or(dir), ok);
+        }
         let (message, level) = match &outcome {
             AnalyzeOutcome::Done {
                 coverage_complete: true,

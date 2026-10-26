@@ -133,6 +133,13 @@ that `origin` points to, and the status line says which and why. It works on any
 repository's line, not only the one this window opened. To reach the top of the list,
 press **K** until it stops moving.
 
+**W** (Shift+w) asks revidere to review the selected line's worktree (on a session's
+line, the worktree it runs in), after a `y` (or ← then Enter; any other key cancels). The
+worktree's line then shows `review…` while it runs and `review ✓` (or `review ✗` if it
+failed) once it ends. These marks last until the window closes or switches repository,
+which also stops a review still running; open the review itself from that worktree's
+screen.
+
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
 with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too. ← highlights

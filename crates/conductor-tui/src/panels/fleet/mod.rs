@@ -756,6 +756,14 @@ impl FleetPanel {
                 });
             }
             Action::OpenBranchPage => return Some(self.open_page().into_iter().collect()),
+            Action::AnalyzeRevidere => {
+                return Some(
+                    self.selected_dir()
+                        .map(Effect::AnalyzeFleetWorktree)
+                        .into_iter()
+                        .collect(),
+                );
+            }
             Action::NewSessionMenu => {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
