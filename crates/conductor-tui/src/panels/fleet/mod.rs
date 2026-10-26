@@ -479,13 +479,39 @@ impl FleetPanel {
     }
 
     pub fn items(&self) -> Vec<Item> {
+        self.sections().into_iter().flatten().collect()
+    }
+
+    fn sections(&self) -> Vec<Vec<Item>> {
         let (pinned, groups) = self.groups();
-        let mut items: Vec<Item> = pinned.into_iter().map(Item::Session).collect();
-        for node in groups.into_iter().flat_map(|g| g.nodes) {
-            items.extend(node.worktree.map(Item::Worktree));
-            items.extend(node.rows.into_iter().map(Item::Session));
-        }
-        items
+        let pinned: Vec<Item> = pinned.into_iter().map(Item::Session).collect();
+        let repos = groups.into_iter().map(|group| {
+            group
+                .nodes
+                .into_iter()
+                .flat_map(|node| {
+                    node.worktree
+                        .map(Item::Worktree)
+                        .into_iter()
+                        .chain(node.rows.into_iter().map(Item::Session))
+                })
+                .collect::<Vec<_>>()
+        });
+        std::iter::once(pinned)
+            .chain(repos)
+            .filter(|section| !section.is_empty())
+            .collect()
+    }
+
+    fn section_starts(&self) -> Vec<usize> {
+        self.sections()
+            .iter()
+            .scan(0, |start, section| {
+                let this = *start;
+                *start += section.len();
+                Some(this)
+            })
+            .collect()
     }
 
     pub fn visual_rows(&self) -> Vec<Row> {
@@ -650,6 +676,17 @@ impl FleetPanel {
             Action::NavigateUp => at.map_or(0, |i| i.saturating_sub(1)),
             Action::GoToTop => 0,
             Action::GoToBottom => last,
+            Action::NextRepo => {
+                let starts = self.section_starts();
+                at.and_then(|i| starts.into_iter().find(|&s| s > i))
+                    .or(at)
+                    .unwrap_or(0)
+            }
+            Action::PrevRepo => {
+                let starts = self.section_starts();
+                at.and_then(|i| starts.into_iter().rev().find(|&s| s < i))
+                    .unwrap_or(0)
+            }
             Action::Select => {
                 return Some(match &self.selected {
                     Some(Selected::Session(key, _)) => vec![Effect::EnterSession(key.clone())],

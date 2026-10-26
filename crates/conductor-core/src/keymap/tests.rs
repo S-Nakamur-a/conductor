@@ -110,6 +110,18 @@ fn 既定のキーが解決する() {
         ),
         (Fleet, shift('D'), Action::StopSession),
         (Fleet, ctrl('n'), Action::NewSessionMenu),
+        (Fleet, shift('J'), Action::NextRepo),
+        (
+            Fleet,
+            key(KeyCode::Down, KeyModifiers::SHIFT),
+            Action::NextRepo,
+        ),
+        (Fleet, shift('K'), Action::PrevRepo),
+        (
+            Fleet,
+            key(KeyCode::Up, KeyModifiers::SHIFT),
+            Action::PrevRepo,
+        ),
         (Worktree, ch('j'), Action::NavigateDown),
         (
             Worktree,
