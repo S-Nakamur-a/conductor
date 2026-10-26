@@ -1,6 +1,6 @@
 //! パネルの Claude が MCP 越しに頼んだ画面操作を Effect に直す。
 //!
-//! 開く・作る頼みは、頼んだ Claude の worktree を画面に出してから操作する。人が別の
+//! 開く頼みは、頼んだ Claude の worktree を画面に出してから操作する。人が別の
 //! worktree を見ていても、頼まれたものが見えないまま終わるよりは移るほうを選んだ。
 
 use std::path::Path;
@@ -59,15 +59,6 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
                     format!("Claude asked to close {path}, which is not open here."),
                 )]
             }),
-        // 移った後の worktree で確認の文言を組むので、移るのはここで済ませておく。
-        UiRequest::AnalyzeReview => {
-            let mut effects = match show(ws, index, &root, shown) {
-                Ok(effects) => effects,
-                Err(refusal) => return refusal,
-            };
-            effects.extend(crate::command::confirm_requested_analyze(ws));
-            effects
-        }
     }
 }
 
@@ -117,10 +108,8 @@ fn relative(root: &Path, path: &str) -> Option<String> {
 mod tests {
     use super::*;
     use conductor_core::diff_state::{DiffSource, DiffState};
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use crate::effect::apply;
-    use crate::modal::Modal;
     use crate::task::TaskResult;
     use crate::testing::{TestRepo, pump, workspace_for};
 
@@ -204,34 +193,11 @@ mod tests {
             .open_editor(&root.join("a.txt"), &root, &argv)
             .unwrap();
 
-        let asked = effects(&mut ws, &feat, UiRequest::AnalyzeReview);
+        let asked = effects(&mut ws, &feat, open_diff(&feat.join("a.txt")));
         apply(&mut ws, &mut svc, asked);
 
         assert!(ws.panels.terminal.editor_name().is_some());
         assert_eq!(ws.worktree_path(), root);
-    }
-
-    #[test]
-    fn 頼まれた解析の確認は打ちかけの文字とenterで承認されない() {
-        let repo = TestRepo::new();
-        let feat = repo.worktree("feat");
-        let (mut ws, mut svc) = workspace_for(&repo);
-
-        let asked = effects(&mut ws, &feat, UiRequest::AnalyzeReview);
-        apply(&mut ws, &mut svc, asked);
-        let Some(Modal::Confirm(confirm)) = ws.modals.last_mut() else {
-            panic!("確認が出ていない");
-        };
-        let typed = "cargo build".chars().map(KeyCode::Char);
-        let answered: Vec<Effect> = typed
-            .chain([KeyCode::Enter])
-            .flat_map(|code| confirm.update(KeyEvent::new(code, KeyModifiers::NONE)))
-            .collect();
-
-        assert!(
-            !answered.iter().any(|e| matches!(e, Effect::Spawn(_))),
-            "{answered:?}"
-        );
     }
 
     #[test]

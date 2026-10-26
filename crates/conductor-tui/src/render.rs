@@ -43,10 +43,6 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     }
                     Region::Editor => crate::panels::terminal::render::editor(frame, rect, ws),
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
-                    Region::RevidereOrder => {
-                        crate::panels::revidere::render::order(frame, rect, ws)
-                    }
-                    Region::RevidereDiff => crate::panels::revidere::render::diff(frame, rect, ws),
                     Region::FleetList => crate::panels::fleet::render::list(frame, rect, ws),
                     Region::FleetSession => crate::panels::fleet::render::detail(frame, rect, ws),
                     Region::FleetChanges => crate::panels::fleet::render::changes(frame, rect, ws),
@@ -101,23 +97,8 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
             Target::Panels => accordion_panels(layout),
             Target::Region(region) => layout.rect(region).into_iter().collect(),
             Target::Modal => modal.into_iter().collect(),
-            Target::Review => review_panels(layout),
         },
     );
-}
-
-fn review_panels(layout: &Layout) -> Vec<Rect> {
-    if layout.rect(Region::RevidereDiff).is_none() {
-        return layout.rect(Region::ExplorerChanges).into_iter().collect();
-    }
-    [
-        Region::RevidereOrder,
-        Region::RevidereDiff,
-        Region::TerminalClaude,
-    ]
-    .iter()
-    .filter_map(|region| layout.rect(*region))
-    .collect()
 }
 
 /// 演出が枠を組み上げる区画。左から順。
@@ -205,8 +186,6 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         },
         Region::TerminalClaude => " Claude Code ".to_string(),
         Region::TerminalShell => " Shell ".to_string(),
-        Region::RevidereOrder => crate::panels::revidere::render::order_title(ws),
-        Region::RevidereDiff => crate::panels::revidere::render::diff_title(ws),
         Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
         Region::FleetSession => crate::panels::fleet::render::session_title(ws),
         Region::FleetChanges => crate::panels::fleet::render::changes_title(ws),
@@ -261,10 +240,6 @@ fn focused_region(ws: &Workspace) -> Region {
             crate::panels::explorer::Pane::Bottom => Region::ExplorerChanges,
         },
         Focus::Editor => Region::Editor,
-        Focus::Revidere => match ws.panels.revidere.column() {
-            crate::panels::revidere::Column::Order => Region::RevidereOrder,
-            crate::panels::revidere::Column::Diff => Region::RevidereDiff,
-        },
         Focus::Viewer => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
@@ -330,7 +305,6 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("new", &[Action::NewSessionMenu]),
             ("back", &[Action::ExitSubPanel]),
             ("pr", &[Action::OpenBranchPage]),
-            ("review", &[Action::AnalyzeRevidere]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
         Focus::Worktree => &[
@@ -388,17 +362,6 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("leave", &[Action::LeaveTerminal]),
             ("zoom", &[Action::TogglePanelExpand]),
             ("panel", &[Action::CycleFocusForward]),
-        ],
-        Focus::Revidere => &[
-            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
-            ("column", &[Action::ExpandOrRight, Action::CollapseOrLeft]),
-            (
-                "section",
-                &[Action::RevidereNextSection, Action::ReviderePrevSection],
-            ),
-            ("overview", &[Action::RevidereShowOverview]),
-            ("ask", &[Action::RevidereAskClaude]),
-            ("close", &[Action::ExitSubPanel]),
         ],
     };
 

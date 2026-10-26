@@ -85,8 +85,8 @@ immediately on save; everything else needs a restart.
 # "w" = "create_worktree"
 
 [api]
-# Which AI answers Conductor's own prompts (smart worktree naming, the revidere
-# review). Conductor never runs a CLI of its own — you name the tool here. The
+# Which AI answers Conductor's own prompts (smart worktree naming). Conductor
+# never runs a CLI of its own — you name the tool here. The
 # two providers stand alone: a failure surfaces rather than falling back.
 #
 # provider = "gemini"                   # "gemini" (Gemini API) | "command" (any CLI)
@@ -125,4 +125,4 @@ bindings they are layered over are in `default_keybinds.toml` beside it.
 
 Accepted `[keybinds.layers.<context>]` names: `worktree`, `explorer`,
 `explorer_diff_list`, `explorer_comment_list`, `viewer`, `viewer_diff_mode`,
-`terminal`, `editor`, `revidere`, `overlay`.
+`terminal`, `editor`, `overlay`.

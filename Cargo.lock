@@ -437,7 +437,6 @@ dependencies = [
  "git2",
  "libc",
  "log",
- "revidere",
  "rmcp",
  "schemars",
  "serde",
@@ -483,8 +482,6 @@ dependencies = [
  "open",
  "protobuf",
  "ratatui",
- "revidere",
- "revidere-fixtures",
  "scip",
  "serde_json",
  "sheaf-core",
@@ -2357,23 +2354,6 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
-]
-
-[[package]]
-name = "revidere"
-version = "0.5.0-wt.remove-revidere"
-dependencies = [
- "log",
- "revidere-fixtures",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "revidere-fixtures"
-version = "0.2.0-wt.remove-revidere"
-dependencies = [
- "revidere",
 ]
 
 [[package]]

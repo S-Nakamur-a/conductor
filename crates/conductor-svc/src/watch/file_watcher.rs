@@ -28,7 +28,7 @@ impl FileWatcher {
                     return;
                 }
                 // .git/ .conductor/ 配下のその他の変更は無視する。objects/ の書き込みや
-                // revidere の解析結果書き込みで高コストなリフレッシュを誘発しないため。
+                // .conductor/ の成果物書き込みで高コストなリフレッシュを誘発しないため。
                 // 全パスを見るのは rename イベントが (from, to) を持ち、.git から作業
                 // ツリーへの移動では paths[0] が .git 側になり得るから。
                 let real_path = event.paths.iter().find(|path| {

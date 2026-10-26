@@ -27,8 +27,8 @@ use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
 use crate::timer::{
-    CONFIG_DEBOUNCE, Debounce, FLEET_POLL, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP,
-    REVIEW_REQUEST_POLL, Timer, WORKTREE_POLL,
+    CONFIG_DEBOUNCE, Debounce, FLEET_POLL, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, Timer,
+    WORKTREE_POLL,
 };
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -98,7 +98,6 @@ pub fn run(
 ) -> Result<()> {
     let mut last_input = Instant::now();
     let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
-    let mut review_request_poll = Timer::new(REVIEW_REQUEST_POLL, last_input);
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
     let mut fleet_poll = Timer::new(FLEET_POLL, last_input);
     let update_interval = Duration::from_secs(ws.config.updates.check_interval_secs);
@@ -209,7 +208,6 @@ pub fn run(
             ws,
             svc,
             &mut worktree_poll,
-            &mut review_request_poll,
             &mut file_watch,
             &mut pty_cleanup,
             update_poll.as_mut().map(|timer| (timer, update_interval)),
@@ -351,7 +349,6 @@ fn run_timers(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
     worktree_poll: &mut Timer,
-    review_request_poll: &mut Timer,
     file_watch: &mut FileWatch,
     pty_cleanup: &mut Timer,
     update_poll: Option<(&mut Timer, Duration)>,
@@ -364,14 +361,6 @@ fn run_timers(
         }
         // 一覧と同じ周期で見直す。作り直しに失敗しても次の周回で試し直せる。
         dirty |= file_watch.sync(ws, svc);
-    }
-    if review_request_poll.due(now) && ws.may_ask_review_requests() {
-        let review = ws.config.review.clone();
-        apply(
-            ws,
-            svc,
-            vec![Effect::Spawn(Task::ListReviewRequests { review })],
-        );
     }
     if pty_cleanup.due(now) {
         dirty |= ws.panels.terminal.cleanup_dead();
@@ -665,10 +654,6 @@ fn on_mouse(
                 return;
             }
             let effects = match focus {
-                Focus::Revidere => {
-                    ws.panels.revidere.click(region, mouse.row);
-                    Vec::new()
-                }
                 Focus::Explorer => ws
                     .panels
                     .explorer
@@ -852,7 +837,6 @@ fn scroll_region(
             );
             apply(ws, svc, effects);
         }
-        Region::RevidereOrder | Region::RevidereDiff => ws.panels.revidere.scroll(region, delta),
         _ => {}
     }
 }
@@ -865,7 +849,6 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::Editor => Some(Focus::Editor),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
-        Region::RevidereOrder | Region::RevidereDiff => Some(Focus::Revidere),
         Region::FleetList => Some(Focus::Fleet),
         Region::FleetSession => Some(Focus::FleetSession),
         Region::FleetChanges => None,
@@ -1645,42 +1628,11 @@ mod tests {
         assert_eq!(liveness(&ws, false), Liveness::Idle);
 
         // 数分続く周回も同じ理由で Active。
-        ws.fx
-            .play(crate::fx::Kind::Orbit, crate::fx::Target::Review);
+        let viewer = crate::fx::Target::Region(Region::Viewer);
+        ws.fx.play(crate::fx::Kind::Orbit, viewer);
         assert_eq!(liveness(&ws, false), Liveness::Active);
-        ws.fx
-            .stop(&crate::fx::Kind::Orbit, crate::fx::Target::Review);
+        ws.fx.stop(&crate::fx::Kind::Orbit, viewer);
         assert_eq!(liveness(&ws, false), Liveness::Idle);
-    }
-
-    #[test]
-    fn レビュー画面を開いているかはworktreeごとに覚える() {
-        let repo = crate::testing::TestRepo::new();
-        let feature = repo.worktree("feature/x");
-        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        let main = ws.worktree_path();
-        let index_of = |path: &std::path::Path| {
-            ws.panels
-                .worktree
-                .list()
-                .iter()
-                .position(|w| w.path == path)
-                .expect("worktree が一覧に無い")
-        };
-        let (main_at, feature_at) = (index_of(&main), index_of(&feature));
-
-        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::Revidere)]);
-        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(feature_at)]);
-        crate::testing::pump(&mut ws, &mut svc);
-        assert!(!ws.reviewing(), "開いていない worktree へ持ち越した");
-
-        apply(&mut ws, &mut svc, vec![Effect::SelectWorktree(main_at)]);
-        crate::testing::pump(&mut ws, &mut svc);
-        assert_eq!(
-            ws.focus,
-            Focus::Revidere,
-            "開いていた worktree へ戻ると開き直す"
-        );
     }
 
     /// 取り消せない git 操作は必ず確認を挟む。
@@ -1793,23 +1745,11 @@ mod tests {
         })
     }
 
-    fn analyses(effects: &[Effect], worktree: &std::path::Path, branch: &str) -> bool {
-        effects.iter().any(|e| {
-            matches!(
-                e,
-                Effect::Spawn(crate::task::Task::Analyze { worktree: w, branch: b, .. })
-                    if w == worktree && b == branch
-            )
-        })
-    }
-
     #[test]
-    fn pr取り込みが成功すると閉じてその_worktreeへ移りrevidereを走らせる() {
+    fn pr取り込みが成功すると閉じてその_worktreeへ移る() {
         let repo = crate::testing::TestRepo::new();
         let fetched = repo.worktree("feature/pr-head");
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        // 空の command は起動する前に断られるので、AI は呼ばれない。
-        ws.config.api.provider = "command".into();
         ws.modals.push(Modal::PrInput(Default::default()));
 
         let effects = ws.accept(TaskResult::PrIntake(Ok(intaken(
@@ -1817,7 +1757,14 @@ mod tests {
             "feature/pr-head",
         ))));
         assert!(
-            analyses(&effects, &fetched, "feature/pr-head"),
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::Spawn(crate::task::Task::ListWorktrees),
+                    Effect::PopModal,
+                    Effect::Focus(Focus::Explorer),
+                ]
+            ),
             "{effects:?}"
         );
         apply(&mut ws, &mut svc, effects);
@@ -1832,30 +1779,22 @@ mod tests {
     }
 
     #[test]
-    fn 頼まれたprの取り込みは選択を動かさずにrevidereを走らせる() {
+    fn 追いつかせた取り込みの帯は_git_の答えだけを言う() {
         let repo = crate::testing::TestRepo::new();
-        let fetched = repo.worktree("feature/requested");
-        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        ws.config.api.provider = "command".into();
-        let selected = ws.panels.worktree.selected().map(|w| w.path.clone());
-        let focus = ws.focus;
+        let fetched = repo.worktree("feature/pr-head");
+        let (mut ws, _svc) = crate::testing::workspace_for(&repo);
+        let mut pr = intaken(&fetched, "feature/pr-head");
+        pr.pulled = Some("fast-forwarded".into());
 
-        let effects = ws.accept(TaskResult::RequestedPrIntake {
-            number: 9,
-            outcome: Ok(intaken(&fetched, "feature/requested")),
-        });
-        assert!(
-            analyses(&effects, &fetched, "feature/requested"),
-            "{effects:?}"
-        );
-        apply(&mut ws, &mut svc, effects);
-        crate::testing::pump(&mut ws, &mut svc);
-
-        assert_eq!(
-            ws.panels.worktree.selected().map(|w| w.path.clone()),
-            selected
-        );
-        assert_eq!(ws.focus, focus);
+        let effects = ws.accept(TaskResult::PrIntake(Ok(pr)));
+        let band: Vec<&str> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Status(_, text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(band, ["PR #9: fast-forwarded"], "{effects:?}");
     }
 
     #[test]

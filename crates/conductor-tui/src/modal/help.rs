@@ -19,12 +19,11 @@ pub struct Help {
 }
 
 /// 数字キーとページの対応。ヘルプの見出しの並びでもある。
-const PAGES: [(char, &str, Focus); 5] = [
+const PAGES: [(char, &str, Focus); 4] = [
     ('1', "Worktree", Focus::Worktree),
     ('2', "Explorer", Focus::Explorer),
     ('3', "Viewer", Focus::Viewer),
     ('4', "Terminal", Focus::TerminalClaude),
-    ('5', "Review", Focus::Revidere),
 ];
 
 impl Help {
@@ -55,7 +54,7 @@ impl Help {
 }
 
 pub fn title() -> String {
-    "Keys  1-5 page  j/k scroll  esc close".into()
+    "Keys  1-4 page  j/k scroll  esc close".into()
 }
 
 /// パネルの層を先に、どこでも効くグローバルを最後に。
@@ -84,10 +83,6 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
         Focus::Editor => &[("Editor panel", KeyContext::Editor)],
-        Focus::Revidere => &[
-            ("Review \u{2014} sections + diff", KeyContext::Revidere),
-            ("Pickers and pop-ups", KeyContext::Overlay),
-        ],
     }
 }
 

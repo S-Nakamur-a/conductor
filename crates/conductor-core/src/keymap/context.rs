@@ -14,13 +14,12 @@ pub enum KeyContext {
     ViewerDiffMode,
     Terminal,
     Editor,
-    Revidere,
     Overlay,
 }
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 13] = [
+    pub const PANELS: [KeyContext; 12] = [
         KeyContext::Fleet,
         KeyContext::Worktree,
         KeyContext::Explorer,
@@ -32,7 +31,6 @@ impl KeyContext {
         KeyContext::ViewerDiffMode,
         KeyContext::Terminal,
         KeyContext::Editor,
-        KeyContext::Revidere,
         KeyContext::Overlay,
     ];
 
@@ -50,7 +48,6 @@ impl KeyContext {
             KeyContext::ViewerDiffMode => "viewer_diff_mode",
             KeyContext::Terminal => "terminal",
             KeyContext::Editor => "editor",
-            KeyContext::Revidere => "revidere",
             KeyContext::Overlay => "overlay",
         }
     }

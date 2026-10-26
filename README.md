@@ -22,9 +22,8 @@ cd conductor
 make install
 ```
 
-`make install` puts the `conductor` binary in `~/.cargo/bin/`. The MCP server and
-the revidere review analyser ship inside that same binary, so there is nothing
-else to install for them.
+`make install` puts the `conductor` binary in `~/.cargo/bin/`. The MCP server ships
+inside that same binary, so there is nothing else to install for it.
 
 Then, in a Claude Code session:
 
@@ -147,13 +146,6 @@ that `origin` points to, and the status line says which and why. It works on any
 repository's line, not only the one this window opened. To reach the top of the list,
 press **K** until it stops moving.
 
-**W** (Shift+w) asks revidere to review the selected line's worktree (on a session's
-line, the worktree it runs in), after a `y` (or ← then Enter; any other key cancels). The
-worktree's line then shows `review…` while it runs and `review ✓` (or `review ✗` if it
-failed) once it ends. These marks last until the window closes; switching repository
-stops a review still running (its `review…` mark goes, ✓ and ✗ stay). Open the review
-itself from that worktree's screen.
-
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
 with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too. ← highlights
@@ -183,8 +175,7 @@ but is not waited for) and a second count finds no new commit, no more uncommitt
 changes and no newly started Claude; otherwise nothing is deleted. It refuses up
 front, stopping nothing, for the main worktree, a directory git does not list as a
 worktree, a locked worktree, one with another worktree inside it, one with an editor
-open in it, the worktree this window has open as its repository, and while this
-window's AI review runs in it. A worktree on the default branch is deleted but the
+open in it, and the worktree this window has open as its repository. A worktree on the default branch is deleted but the
 branch is kept.
 
 ### Keybindings
@@ -229,17 +220,13 @@ no separate mode to enter or leave, so every navigation and terminal keybinding
 keeps working while you review.
 
 *Review ▸ Review Pull Request…* checks the PR's branch out of `origin` into a
-worktree (via `gh`; an existing one is pulled up to date), focuses the
-changed-files list and starts **revidere** on it, the AI reviewer that ships
-inside the binary: it sorts every changed line into sections by importance and
-checks that no changed line is left unexplained. `W` runs it again on whatever
-worktree you are in. `w` opens the result as a
-three-column reading-order view with Claude Code kept on the right, so a question
-about what you are reading needs no detour, and *Review: Publish Comments to
-GitHub* posts your inline comments back to the PR.
+worktree (via `gh`; an existing one is pulled up to date) and focuses the
+Explorer on its review comment list. *Review: Publish Comments to GitHub* posts your inline
+comments back to the PR. For an AI review of the branch, run the `/revidere` skill
+in a Claude Code session there: it publishes the review as an Artifact page.
 
-Full walkthrough, including the symbol-jump keys and revidere's `[api]`
-requirements: [docs/reviewing-a-pr.md](docs/reviewing-a-pr.md).
+Full walkthrough, including the symbol-jump keys:
+[docs/reviewing-a-pr.md](docs/reviewing-a-pr.md).
 ## MCP Server
 
 The MCP server that exposes the review database to the Claude Code sessions
@@ -273,11 +260,8 @@ Claude Code auto-resume), `[terminal]` (scrollback limits), `[viewer]` (syntax
 theme, tab width), `[diff]` (unified / side-by-side, word diff), `[ui]` (colour
 theme, contrast, icons, startup animation), `[layout]` (column and split
 proportions), `[updates]` (the GitHub release check), `[keybinds]` (per-chord
-overrides layered over the defaults, globally or per panel), `[api]` (the
-LLM provider shared by every AI feature), and `[review]` (the voice the AI
-review writes its prose in, either inline or as a path to a Claude Code
-output-style file, and the repositories where a PR that requests your review is
-taken in and reviewed on its own).
+overrides layered over the defaults, globally or per panel), and `[api]` (the
+LLM provider shared by every AI feature).
 
 ## Development
 
@@ -290,8 +274,8 @@ make fmt                  # cargo fmt --all
 
 The root package is a five-line `main.rs`; the code lives in `crates/` —
 `conductor-core` (domain), `conductor-svc` (threads, PTYs, watchers),
-`conductor-tui` (the screen), `conductor-mcp` (the MCP server), plus `revidere`
-(the review analyser) and `sheaf-core` (the code index).
+`conductor-tui` (the screen), `conductor-mcp` (the MCP server), plus `sheaf-core`
+(the code index).
 
 ### Working in several worktrees at once
 

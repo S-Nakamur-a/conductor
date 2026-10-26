@@ -4,8 +4,6 @@ members = [
     "crates/conductor-mcp",
     "crates/conductor-svc",
     "crates/conductor-tui",
-    "crates/revidere",
-    "crates/revidere-fixtures",
     "crates/sheaf-core",
 ]
 

@@ -12,7 +12,6 @@
 
 mod assemble;
 mod orbit;
-mod scan;
 mod stagger;
 
 use std::time::{Duration, Instant};
@@ -35,8 +34,6 @@ pub enum Kind {
     Assemble { stagger: Stagger },
     /// 枠を一度 accent へ沸かせて元の色へ落とす。完了や切替の合図。
     Flash,
-    /// 帯が内側を上から下へ 1 回通る。始まりの合図。
-    Scan,
     /// 光が枠の上を回り続ける。進捗の出せない仕事が生きている印で、止めるまで続く。
     Orbit,
 }
@@ -48,8 +45,6 @@ pub enum Target {
     Panels,
     Region(Region),
     Modal,
-    /// レビューを映す区画。解決先は render の review_panels。
-    Review,
 }
 
 impl Kind {
@@ -65,7 +60,6 @@ impl Kind {
         match self {
             Kind::Assemble { .. } => finite(elapsed, assemble::DURATION_MS),
             Kind::Flash => finite(elapsed, FLASH_MS),
-            Kind::Scan => finite(elapsed, scan::DURATION_MS),
             Kind::Orbit => Some(elapsed.as_millis() as f64),
         }
     }
@@ -84,7 +78,6 @@ impl Kind {
         match self {
             Kind::Assemble { stagger } => assemble::paint(buf, screen, rects, p, stagger, theme),
             Kind::Flash => rects.iter().for_each(|r| paint_flash(buf, *r, p, theme)),
-            Kind::Scan => rects.iter().for_each(|r| scan::paint(buf, *r, p, theme)),
             Kind::Orbit => rects.iter().for_each(|r| orbit::paint(buf, *r, p, theme)),
         }
     }

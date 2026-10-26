@@ -3,21 +3,17 @@
 //! メニュー・パレット・キーマップはどれもここを通る。行き先が 1 本なので、
 //! メニューに行を足してもコマンドの意味は増えない。
 
-use std::path::PathBuf;
-
 use conductor_core::keymap::Action;
 use conductor_svc::pty::SessionKind;
 use ratatui::layout::Rect;
 
 use super::CommandId;
 use crate::effect::Effect;
-use crate::fx::{Kind, Target};
 use crate::layout::Divider;
 use crate::modal::{
     Confirm, Modal, Prompt, branch, commits, grep, help, history, pr, repo, session, theme, update,
 };
 use crate::panels::explorer::BottomView;
-use crate::panels::revidere as revidere_panel;
 use crate::task::{Persist, Task};
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -64,9 +60,6 @@ pub fn enabled(ws: &Workspace, id: CommandId) -> Enabled {
         // 「PR のブランチか」は DB を引くので毎フレームは訊けない。それはコマンドが答える。
         CommandId::PublishReview if ws.review.unpublished_count() == 0 => {
             Enabled::No("no unpublished comments on this branch")
-        }
-        CommandId::CancelAnalyzeRevidere if !ws.panels.revidere.is_running(ws.branch()) => {
-            Enabled::No("no review is running for this branch")
         }
         CommandId::UpdateAndRestart if ws.chrome.update.is_none() => {
             Enabled::No("no newer release is known \u{2014} check for updates first")
@@ -299,217 +292,7 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
                 )]
             }
         }
-
-        CommandId::ShowRevidere => show_revidere(ws),
-        CommandId::AnalyzeRevidere => confirm_analyze(ws),
-        // 押した人はもう一度作ると決めている。ヘルプも "without asking" と名乗る。
-        CommandId::ForceAnalyzeRevidere => analyze(ws, true),
-        CommandId::CancelAnalyzeRevidere => {
-            let branch = ws.branch().to_string();
-            ws.panels.revidere.cancel(&branch);
-            vec![Effect::Status(
-                StatusLevel::Info,
-                format!("Cancelling the review for '{branch}'\u{2026}"),
-            )]
-        }
     }
-}
-
-/// 開いているなら閉じる。成果物が無ければ「無い」と言って終わるより、作る口を
-/// その場で出したほうが早い。
-fn show_revidere(ws: &mut Workspace) -> Vec<Effect> {
-    if ws.reviewing() {
-        return vec![Effect::Focus(Focus::Explorer)];
-    }
-    let panel = &ws.panels.revidere;
-    if let Some(why) = panel.error() {
-        return vec![Effect::Status(
-            StatusLevel::Error,
-            format!("Review artifact unreadable: {why}"),
-        )];
-    }
-    if panel.review().is_none() {
-        return confirm_analyze(ws);
-    }
-    // 成果物が同じでも作業ツリーが動いていれば読む順は変わっている。
-    let worktree = ws.worktree_path();
-    vec![
-        ws.panels.revidere.reload(worktree),
-        Effect::Focus(Focus::Revidere),
-    ]
-}
-
-/// 解析の前に確認を出す。AI の呼び出しは数分と費用がかかるので、W の押し間違いや
-/// メニューの隣の行を選んだだけで走り出さないようにする。worktree が無いときや
-/// 既に走っているときの断り方は解析側が持っているので、そこには確認を挟まずそのまま渡す。
-fn confirm_analyze(ws: &Workspace) -> Vec<Effect> {
-    confirm_analyze_with(ws, Confirm::ask)
-}
-
-pub fn confirm_requested_analyze(ws: &Workspace) -> Vec<Effect> {
-    confirm_analyze_with(ws, Confirm::letters_only)
-}
-
-fn confirm_analyze_with(
-    ws: &Workspace,
-    ask: impl FnOnce(&'static str, Vec<Effect>) -> Confirm,
-) -> Vec<Effect> {
-    let branch = ws.branch().to_string();
-    if branch.is_empty() || ws.panels.revidere.is_running(&branch) {
-        return analyze(ws, false);
-    }
-    let head = ws
-        .panels
-        .worktree
-        .selected()
-        .and_then(|w| w.head_oid.clone());
-    let artifact = ws.panels.revidere.artifact(head.as_deref());
-    // 同じコミットの成果物があるなら貯めた応答を捨てる。
-    let on_yes = analyze(ws, artifact == revidere_panel::Artifact::Current);
-    // 作り直しなのか初めてなのかで、押す前に知りたいことが変わる。
-    let (title, situation, verb) = match artifact {
-        revidere_panel::Artifact::None => ("Review", "No review for this worktree yet.", "Analyse"),
-        revidere_panel::Artifact::Stale => (
-            "Review",
-            "A review exists, but commits have landed since.",
-            "Analyse",
-        ),
-        revidere_panel::Artifact::Current => (
-            "Re-analyse",
-            "A review for this commit already exists.",
-            "Re-analyse",
-        ),
-    };
-    vec![analyze_modal(
-        ws,
-        ask(situation, on_yes).title(title),
-        &ws.worktree_path(),
-        &branch,
-        verb,
-    )]
-}
-
-/// 一覧で選んだ worktree の解析。窓が開いている worktree とは限らず、成果物の新旧は
-/// 読んでいないので、作り直しかどうかは問わずに聞く (キャッシュは効く)。
-pub fn confirm_analyze_worktree(ws: &Workspace, dir: PathBuf) -> Vec<Effect> {
-    let Some((worktree, branch)) = analysis_key(ws, &dir) else {
-        return vec![Effect::Status(
-            StatusLevel::Warning,
-            "This line is not a git worktree.".into(),
-        )];
-    };
-    if ws.panels.revidere.is_running(&branch) {
-        return analyze_worktree(ws, worktree, branch, false);
-    }
-    let on_yes = analyze_worktree(ws, worktree.clone(), branch.clone(), false);
-    vec![analyze_modal(
-        ws,
-        Confirm::yes_only("Review this worktree with revidere?", on_yes).title("Review"),
-        &worktree,
-        &branch,
-        "Analyse",
-    )]
-}
-
-/// dir を含む worktree の根と、走っている解析の鍵。鍵は窓の repo の中でしか一意でない
-/// ブランチ名なので、窓の repo なら窓の側 (worktree 一覧) と同じ綴りにし、別の repo なら
-/// repo の名前を前に付けてぶつからないようにする (`:` は ref 名に使えない)。worktree の
-/// ディレクトリ名はブランチ名から作られるので、前置きにすると別の repo の同名ブランチとぶつかる。
-fn analysis_key(ws: &Workspace, dir: &std::path::Path) -> Option<(PathBuf, String)> {
-    use conductor_core::git_engine::{GitEngine, Head};
-    let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let workdir = git2::Repository::discover(dir)
-        .ok()?
-        .workdir()?
-        .to_path_buf();
-    let worktree = canonical(&workdir);
-    let git = GitEngine::open(&worktree).ok()?;
-    let main_of = |git: &GitEngine| git.main_worktree_path().ok().map(|p| canonical(&p));
-    let window_main = GitEngine::open(&ws.repo.root)
-        .ok()
-        .and_then(|g| main_of(&g));
-    let branch = match git.head() {
-        Head::Branch(name) => name,
-        Head::Detached(_) | Head::Unborn(_) => "HEAD (detached)".to_string(),
-    };
-    let main = main_of(&git);
-    if main.is_some() && main == window_main {
-        return Some((worktree, branch));
-    }
-    let name = main
-        .as_deref()
-        .unwrap_or(&worktree)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    Some((worktree, format!("{name}:{branch}")))
-}
-
-fn analyze_modal(
-    ws: &Workspace,
-    confirm: Confirm,
-    worktree: &std::path::Path,
-    branch: &str,
-    verb: &'static str,
-) -> Effect {
-    let scope = revidere_panel::scope_label(ws.panels.revidere.scope());
-    // 起点の取り違えは、出てきたレビューを読んでも気付きにくい。押す前に名前で見せる。
-    let base = revidere::git::guess_base(worktree)
-        .unwrap_or_else(|_| "(cannot guess \u{2014} nothing to compare against)".into());
-    Effect::PushModal(Modal::Confirm(
-        confirm
-            .detail(format!("{branch} [{scope}]"))
-            .detail(format!("Against {base}"))
-            .detail("It calls the AI and takes a few minutes.")
-            .labels(verb, "Cancel"),
-    ))
-}
-
-fn analyze(ws: &Workspace, force: bool) -> Vec<Effect> {
-    analyze_worktree(ws, ws.worktree_path(), ws.branch().to_string(), force)
-}
-
-/// 既定でキャッシュは効くので、diff が動いていなければ AI は起動せず即座に返る。
-pub fn analyze_worktree(
-    ws: &Workspace,
-    worktree: PathBuf,
-    branch: String,
-    force: bool,
-) -> Vec<Effect> {
-    if branch.is_empty() {
-        return vec![Effect::Status(
-            StatusLevel::Warning,
-            "No worktree selected \u{2014} open one to analyse.".into(),
-        )];
-    }
-    if ws.panels.revidere.is_running(&branch) {
-        return vec![Effect::Status(
-            StatusLevel::Warning,
-            "revidere is already analysing this branch.".into(),
-        )];
-    }
-    let scope = ws.panels.revidere.scope();
-    vec![
-        Effect::Spawn(Task::Analyze {
-            worktree,
-            branch,
-            scope,
-            force,
-            api: ws.config.api.clone(),
-            review: ws.config.review.clone(),
-            cancel: Default::default(),
-        }),
-        Effect::Play(Kind::Scan, Target::Review),
-        // どちらの区間かを言う。区間はビューを閉じても残るので、外から W を押すと
-        // 数分待った先で思っていない方が出てくることがある。
-        Effect::Status(
-            StatusLevel::Info,
-            format!(
-                "Analysing [{}] with revidere \u{2014} this takes a few minutes.",
-                revidere_panel::scope_label(scope)
-            ),
-        ),
-    ]
 }
 
 /// 文言が作れないことが「対象が無い」の印。
@@ -606,10 +389,6 @@ fn resize(ws: &mut Workspace, dir: Resize) -> Vec<Effect> {
     } else {
         -STEP
     };
-    // レビューの列幅は固定。アコーディオンの比率を動かしても、見えている列は変わらない。
-    if ws.reviewing() {
-        return Vec::new();
-    }
     let divider = match (dir, ws.focus) {
         (Resize::Left | Resize::Right, Focus::Worktree) => return Vec::new(),
         // 最左の列が持つ境界は 1 本だけ。

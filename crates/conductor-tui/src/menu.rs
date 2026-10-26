@@ -62,10 +62,6 @@ pub const UNLISTED: &[(CommandId, &str)] = &[
     (CommandId::DeleteComment, "EditComment と同じ"),
     (CommandId::ToggleCommentResolve, "EditComment と同じ"),
     (CommandId::ViewCommentDetail, "EditComment と同じ"),
-    (
-        CommandId::ForceAnalyzeRevidere,
-        "作り直しは Review current branch の確認が兼ねる。こちらは確認を飛ばす近道",
-    ),
 ];
 
 pub const MENUS: &[Menu] = &[
@@ -108,16 +104,12 @@ pub const MENUS: &[Menu] = &[
             cmd(CommandId::OpenPullRequest, "Open Pull Request in Browser"),
         ],
     },
-    // レビューを作る → 読む → コメントを書く → 公開する、の順。
+    // 取り込む → 読む → 公開する、の順。
     Menu {
         title: "Review",
         icon: icons::MENU_REVIEW,
         items: &[
-            cmd(CommandId::AnalyzeRevidere, "Review current branch"),
-            cmd(CommandId::CancelAnalyzeRevidere, "Cancel Running Review"),
             cmd(CommandId::ReviewPullRequest, "Review Pull Request\u{2026}"),
-            SEP,
-            cmd(CommandId::ShowRevidere, "Show Review"),
             SEP,
             cmd(CommandId::ShowReviewComments, "Show Comments"),
             SEP,

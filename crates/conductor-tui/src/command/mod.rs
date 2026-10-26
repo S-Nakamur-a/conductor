@@ -4,10 +4,7 @@ mod exec;
 #[cfg(test)]
 mod tests;
 
-pub use exec::{
-    Enabled, analyze_worktree, by_hand, confirm_analyze_worktree, confirm_requested_analyze,
-    drag_divider, enabled, execute, persist_layout,
-};
+pub use exec::{Enabled, by_hand, drag_divider, enabled, execute, persist_layout};
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
 
@@ -61,15 +58,11 @@ pub enum CommandId {
     ShowCommitLog,
     ShowCommentList,
     ShowTourStops,
-    ShowRevidere,
     SwitchTheme,
     ToggleHighContrast,
 
     ShowReviewComments,
     ReviewPullRequest,
-    AnalyzeRevidere,
-    ForceAnalyzeRevidere,
-    CancelAnalyzeRevidere,
     PublishReview,
     AddReviewComment,
     ViewCommentDetail,
@@ -203,15 +196,11 @@ commands! {
     ShowCommitLog, "Explorer: Show Commit Log", View, Some(Action::ShowCommitLog), "git log commits history hash";
     ShowCommentList, "Explorer: Show Comment List", View, Some(Action::ShowCommentList), "comment review list";
     ShowTourStops, "Explorer: Show Tour Stops", View, Some(Action::ShowTourStops), "tour stops walkthrough guide plan narration flow order reading";
-    ShowRevidere, "Review: Show Review (sections + diff)", View, Some(Action::ShowRevidere), "revidere review sections importance diff two column reading order";
     SwitchTheme, "Switch Theme", View, Some(Action::OpenThemePicker), "theme color light dark appearance palette catppuccin solarized github";
     ToggleHighContrast, "UI: Toggle High Contrast", View, None, "high contrast accessibility a11y legibility bright bold theme readable vision";
 
     ShowReviewComments, "Review: Show Comments", Review, None, "comment list";
     ReviewPullRequest, "Review: Review Pull Request…", Review, Some(Action::ReviewPullRequest), "pr pull request github fetch worktree review number url";
-    AnalyzeRevidere, "Review: Review Current Branch…", Review, Some(Action::AnalyzeRevidere), "revidere analyse analyze generate ai review sections coverage branch";
-    ForceAnalyzeRevidere, "Review: Re-analyse Current Branch", Review, Some(Action::ForceAnalyzeRevidere), "revidere reanalyse regenerate force ignore cache rebuild ai review";
-    CancelAnalyzeRevidere, "Review: Cancel Running Review", Review, None, "revidere cancel stop abort kill running analyse analyze ai review";
     PublishReview, "Review: Publish Comments to GitHub", Review, Some(Action::PublishReview), "publish post github pr comments review upload";
     AddReviewComment, "Review: Add Comment", Review, Some(Action::AddComment), "new comment add write";
     ViewCommentDetail, "Review: View Comment Detail", Review, Some(Action::ViewCommentDetail), "detail preview";

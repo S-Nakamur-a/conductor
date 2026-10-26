@@ -56,7 +56,7 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 # [keybinds.keys] is the global layer (active everywhere). Each
 # [keybinds.layers.<context>] table is a per-panel layer. Context names:
 # worktree, explorer, explorer_diff_list, explorer_comment_list, viewer,
-# viewer_diff_mode, terminal, editor, revidere, overlay.
+# viewer_diff_mode, terminal, editor, overlay.
 #
 # Key grammar: modifiers ctrl/alt/shift/super joined with '+', then the key.
 # A single char is verbatim and case-sensitive (e.g. "G" is Shift+g). Back-tab
@@ -112,20 +112,6 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #                                       # writes the result here. Edit it freely; an explicit value always wins.
 # startup_animation = true              # panels assemble themselves on the first frames.
 #                                       # Turn it off over SSH or on slow-drawing terminals.
-
-[review]
-# Voice for the prose in the AI review (revidere). Without one, the review prompt's
-# own demand for verified fact outweighs whatever voice your AI tool already carries,
-# and the review comes back in flat prose. Either key leaves the JSON shape and the
-# standard of evidence untouched. Set both and the inline `style` is the one used.
-#
-# style = "Keep it short. Skip the polite register."   # written here, sent as-is
-# style_path = "~/.claude/output-styles/my-style.md"   # a Claude Code output-style file
-#
-# While one of these repositories is open, a pull request that requests your review
-# (directly, not through a team) is checked out into a worktree and revidere runs on
-# it, one PR at a time. Write the main worktree's path.
-# auto_review_repos = ["~/src/my-repo"]
 
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup
