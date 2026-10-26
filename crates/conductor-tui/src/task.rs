@@ -2260,6 +2260,7 @@ mod fleet_delete_tests {
         assert!(!on_main.exists());
         git(&main, &["rev-parse", "--verify", "-q", "refs/heads/main"]);
     }
+
     #[test]
     fn 点検の後にその中で_claude_が起動していたら消さない() {
         let (dir, main, wt) = repo();
@@ -2286,5 +2287,31 @@ mod fleet_delete_tests {
             "{outcome:?}"
         );
         assert!(wt.exists());
+    }
+    #[test]
+    fn 外の_claude_は止めて終わったのを確かめてから消す() {
+        let (dir, main, wt) = repo();
+        let mut inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        inspection.claudes = vec![Doomed {
+            pid: 9,
+            started: started(),
+            own: false,
+        }];
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let record = serde_json::json!({
+            "pid": 9,
+            "sessionId": "outside",
+            "cwd": wt,
+            "startedAt": 1_792_634_755_219u64,
+            "procStart": "Thu Oct 22 02:05:54 2026",
+            "status": "busy",
+        });
+        std::fs::write(sessions.join("9.json"), record.to_string()).unwrap();
+        let procs = procs(&[(9, false)]);
+        let outcome = run(&inspection, &sessions, &procs, Duration::ZERO);
+        assert_eq!(outcome, Ok("Deleted wt.".to_string()));
+        assert!(procs.info(9).is_none(), "SIGTERM が届いている");
+        assert!(!wt.exists());
     }
 }

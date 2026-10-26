@@ -141,7 +141,7 @@
 "tab" = "expand_or_right"
 ":" = "command_palette"
 # 小文字の d は、一覧に居ると気づかずに打った文 (ready など) から届いてしまう。
-# worktree の行では、中のセッションを止めて worktree を消す。
+# worktree の行では、同じキーが worktree ごと消す (action 名の stop_session は、キー設定を壊さないため残した)。
 "D" = "stop_session"
 # 素の文字にしないのは、一覧に届いた打ちかけの文 (json2csv、python3) が n と数字で起動してしまうため。
 "ctrl+n" = "new_session_menu"

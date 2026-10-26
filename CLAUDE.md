@@ -162,10 +162,9 @@ with no window open, and the window opened later showed it mid-tool.
   SIGKILL after 3s, and only while `<pid>.json` and the process start time still name
   the process the list read (`registry::stop`). **D on a worktree line** stops every
   Claude whose canonical cwd is inside it, whichever window holds it, and deletes only
-  after each has ended — `registry::stop` answers AlreadyGone when it merely cannot
-  match the record, so `task.rs`'s `fleet_delete` asks `ended_within` itself — and after
-  a second `deletion_check` finds nothing the confirmation did not show. Editors are the exception and die
-  with the window that opened them. The host exits
+  after each has ended and a second `deletion_check` finds nothing the confirmation did
+  not show (`task.rs`'s `fleet_delete`). Editors are the exception and die with the
+  window that opened them. The host exits
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`
   when it has none; the frame protocol carries its own number for that reason.
@@ -435,9 +434,10 @@ a worktree switch**. A result that outlives a worktree switch therefore still
 arrives, so whoever installs it has to check it is still the one asked for.
 The sender shares that generation through an `Arc<AtomicU64>` — copying the value
 into `EventSender` makes every watcher signal after the first switch vanish.
-`Services::spawn_unscoped` is the exception, used only by Smart Worktree: its result starts
-Claude in a worktree and branch that already exist, so dropping it on a repository switch
-would leave them with no session.
+`Services::spawn_unscoped` is the exception, used by Smart Worktree and by the Sessions
+list's worktree delete: their result acts on a worktree that already exists (starts
+Claude in it / removes it after the processes were stopped), so dropping it on a
+repository switch would leave them half done.
 
 **A periodically spawned `Task` needs an in-flight guard.** On a repository with
 175,388 tracked files the worktree list takes 25s, the working-tree diff 9s, and

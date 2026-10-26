@@ -12,6 +12,28 @@ fn at(secs: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_000_000 + secs)
 }
 
+fn inspection(path: &str) -> Inspection {
+    Inspection {
+        repo: PathBuf::from("/r/app"),
+        path: PathBuf::from(path),
+        label: "feature/a".into(),
+        check: conductor_core::git_engine::DeletionCheck {
+            recorded: PathBuf::from(path),
+            branch: Some("feature/a".into()),
+            keeps_branch: false,
+            head: Some("abc".into()),
+            base: Some("origin/main".into()),
+            unmerged: Some(0),
+            dirty: Some(0),
+        },
+        claudes: Vec::new(),
+        panels: Vec::new(),
+        own_claudes: 0,
+        shells: 0,
+        in_window_repo: false,
+    }
+}
+
 fn live(pid: u32, cwd: &str, session: &str, status: Status, owner: Owner) -> LiveSession {
     LiveSession {
         pid,
@@ -1287,6 +1309,23 @@ mod pane {
     }
 
     #[test]
+    fn worktree_を消すとその中で開いたこの窓のタブだけを閉じる() {
+        let (mut ws, mut svc, dir) = opened();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let inside = spawn(&mut ws, dir.path());
+        let outside = spawn(&mut ws, elsewhere.path());
+        let mut doomed = inspection("/nowhere");
+        doomed.panels = vec![inside.clone()];
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::DeleteFleetWorktree(Box::new(doomed))],
+        );
+        assert!(ws.panels.terminal.session_dir(&inside).is_none());
+        assert!(ws.panels.terminal.session_dir(&outside).is_some());
+    }
+
+    #[test]
     fn フォーカスのある側だけ枠が太線になり_右の題は入り方か入力中かを言う() {
         let (mut ws, mut svc, dir) = opened();
         let listed = spawn(&mut ws, dir.path());
@@ -2077,28 +2116,6 @@ mod tree {
         assert!(status_text(&again).contains("Still checking"), "{again:?}");
     }
 
-    fn inspection(path: &str) -> Inspection {
-        Inspection {
-            repo: PathBuf::from("/r/app"),
-            path: PathBuf::from(path),
-            label: "feature/a".into(),
-            check: conductor_core::git_engine::DeletionCheck {
-                recorded: PathBuf::from(path),
-                branch: Some("feature/a".into()),
-                keeps_branch: false,
-                head: Some("abc".into()),
-                base: Some("origin/main".into()),
-                unmerged: Some(0),
-                dirty: Some(0),
-            },
-            claudes: Vec::new(),
-            panels: Vec::new(),
-            own_claudes: 0,
-            shells: 0,
-            in_window_repo: false,
-        }
-    }
-
     fn asking_for_a() -> FleetPanel {
         let ws = Workspace::for_test();
         let mut fleet = app();
@@ -2155,6 +2172,36 @@ mod tree {
             ),
             "repo を切り替えて結果が捨てられても D は効く: {after_switch:?}"
         );
+    }
+
+    #[test]
+    fn 点検が返ったとき一覧にフォーカスが無いかモーダルが開いていれば確認を出さない() {
+        let path = Path::new("/r/app-a");
+        let result = || crate::task::TaskResult::FleetWorktreeInspected {
+            path: path.to_path_buf(),
+            outcome: Inspected::Ready(Box::new(inspection("/r/app-a"))),
+        };
+        let confirms = |effects: &[Effect]| {
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::PushModal(Modal::Confirm(_))))
+        };
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::Fleet;
+        assert!(confirms(&ws.accept(result())));
+
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::FleetSession;
+        assert!(!confirms(&ws.accept(result())), "右の区画で打っている");
+
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = asking_for_a();
+        ws.focus = Focus::Fleet;
+        ws.modals
+            .push(Modal::Confirm(Confirm::ask("other?", Vec::new())));
+        assert!(!confirms(&ws.accept(result())), "別のモーダルが開いている");
     }
 
     fn confirm_text(inspection: Inspection) -> (String, Vec<String>) {
