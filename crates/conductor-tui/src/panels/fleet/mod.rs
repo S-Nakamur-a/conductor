@@ -15,6 +15,7 @@ use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Wait
 use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
 
+use crate::click::ClickTracker;
 use crate::effect::Effect;
 use crate::modal::popup::{Choices, Popup};
 use crate::modal::{Confirm, Modal};
@@ -105,6 +106,13 @@ pub struct Worktree {
 pub enum Item {
     Worktree(Worktree),
     Session(Row),
+}
+
+/// 一覧の本文で押した 1 点。
+pub struct ListPress<'a> {
+    pub hit: Option<&'a render::Slot>,
+    pub button: Option<&'a render::Slot>,
+    pub in_button_columns: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +211,7 @@ pub struct FleetPanel {
     /// gg や押しっぱなしでタブが何枚も開かないように、開き終わるまで次の g を捨てる。
     opening_page: bool,
     came_from: Option<Focus>,
+    row_clicks: ClickTracker<(u16, bool, Option<Selected>)>,
 }
 
 impl FleetPanel {
@@ -322,7 +331,7 @@ impl FleetPanel {
     }
 
     /// 一覧の [+] / [✧] を押した。行き先は押した行から取り、選択は動かさない。
-    pub fn click_button(&mut self, slot: &render::Slot, at: (u16, u16)) -> Vec<Effect> {
+    fn click_button(&mut self, slot: &render::Slot, at: (u16, u16)) -> Vec<Effect> {
         match slot {
             render::Slot::Worktree(w) => vec![Effect::PushModal(Modal::Popup(Popup::numbered(
                 "New session",
@@ -330,8 +339,36 @@ impl FleetPanel {
                 Some(at),
             )))],
             render::Slot::Repo(Some(root)) => vec![Effect::FleetSmartPrompt(root.clone())],
-            render::Slot::Repo(None) | render::Slot::Other => Vec::new(),
+            render::Slot::Repo(None) | render::Slot::Session(_) | render::Slot::Other => Vec::new(),
         }
+    }
+
+    /// 一覧は選んだ行に合わせて送られるので、二度目は同じ画面の行に別の行やボタンが来ている。
+    /// 二度目はボタンも含めて引き直さず、一度目に選んだ行がまだ選ばれていればそこへ入る。
+    pub fn click_list(&mut self, at: (u16, u16), press: ListPress) -> Vec<Effect> {
+        let key = (at.1, press.in_button_columns, self.selected.clone());
+        if self.row_clicks.is_double(key) {
+            return match self.selected {
+                Some(Selected::Session(..)) => vec![Effect::Focus(Focus::FleetSession)],
+                _ => Vec::new(),
+            };
+        }
+        if let Some(button) = press.button {
+            self.row_clicks = ClickTracker::default();
+            return self.click_button(button, at);
+        }
+        let item = match press.hit {
+            Some(render::Slot::Worktree(w)) => Item::Worktree(w.clone()),
+            Some(render::Slot::Session(row)) => Item::Session(row.clone()),
+            _ => {
+                self.row_clicks = ClickTracker::default();
+                return Vec::new();
+            }
+        };
+        self.select(&item, SystemTime::now());
+        self.row_clicks
+            .arm((at.1, press.in_button_columns, self.selected.clone()));
+        Vec::new()
     }
 
     pub fn defer_focus(&mut self, focus: Focus) {

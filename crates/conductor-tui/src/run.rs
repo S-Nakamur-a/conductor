@@ -608,21 +608,6 @@ fn on_mouse(
                 apply(ws, svc, effects);
                 return;
             }
-            if region == Region::FleetList
-                && ws.modals.is_empty()
-                && let Some(rect) = layout.rect(region)
-                && let Some(composed) = crate::panels::fleet::render::compose(ws, rect)
-                && let Some(slot) =
-                    crate::panels::fleet::render::button_hit(&composed, mouse.column, mouse.row)
-            {
-                let slot = slot.clone();
-                let effects = ws
-                    .panels
-                    .fleet
-                    .click_button(&slot, (mouse.column, mouse.row));
-                apply(ws, svc, effects);
-                return;
-            }
             let Some(focus) = focus_for(region) else {
                 return;
             };
@@ -674,12 +659,33 @@ fn on_mouse(
                     )
                 }
                 Focus::TerminalClaude | Focus::TerminalShell => ws.panels.terminal.click(focus),
+                Focus::Fleet => fleet_row_click(ws, layout, mouse),
                 _ => Vec::new(),
             };
             apply(ws, svc, effects);
         }
         _ => {}
     }
+}
+
+fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Vec<Effect> {
+    use crate::panels::fleet::{ListPress, render};
+    if !ws.modals.is_empty() {
+        return Vec::new();
+    }
+    let Some(rect) = layout.rect(Region::FleetList) else {
+        return Vec::new();
+    };
+    let Some(composed) = render::compose(ws, rect) else {
+        return Vec::new();
+    };
+    let (x, y) = (mouse.column, mouse.row);
+    let press = ListPress {
+        hit: render::slot_at(&composed, x, y),
+        button: render::button_hit(&composed, x, y),
+        in_button_columns: render::in_button_columns(&composed, x),
+    };
+    ws.panels.fleet.click_list((x, y), press)
 }
 
 /// Viewer の region のときだけ code_columns で桁を絞る。
@@ -2327,6 +2333,13 @@ needle here
     }
 
     fn fleet_with_tree() -> (Workspace, Services<TaskResult>, Layout) {
+        fleet_listing(Vec::new(), 40)
+    }
+
+    fn fleet_listing(
+        live: Vec<conductor_core::claude_sessions::registry::LiveSession>,
+        height: u16,
+    ) -> (Workspace, Services<TaskResult>, Layout) {
         use conductor_core::git_engine::{Head, WorktreeHead};
         let mut ws = Workspace::for_test();
         let mut svc = Services::new();
@@ -2337,6 +2350,7 @@ needle here
         };
         ws.apply_fleet(
             crate::panels::fleet::FleetStatus {
+                live,
                 trees: vec![crate::panels::fleet::RepoTree {
                     root: PathBuf::from("/r/app"),
                     name: "app".into(),
@@ -2349,8 +2363,27 @@ needle here
             },
             Vec::new(),
         );
-        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let l = layout(&ws, Rect::new(0, 0, 160, height));
         (ws, svc, l)
+    }
+
+    fn click_line(
+        ws: &mut Workspace,
+        svc: &mut Services<TaskResult>,
+        l: &Layout,
+        want: impl Fn(&crate::panels::fleet::render::Slot) -> bool,
+        column: impl Fn(Rect) -> u16,
+    ) {
+        let rect = l.rect(Region::FleetList).unwrap();
+        let composed = crate::panels::fleet::render::compose(ws, rect).unwrap();
+        let index = composed.slots.iter().position(want).unwrap() - composed.offset;
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: column(composed.body),
+            row: composed.body.y + u16::try_from(index).unwrap(),
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(ws, svc, l, click);
     }
 
     fn click_button(
@@ -2359,16 +2392,296 @@ needle here
         l: &Layout,
         want: impl Fn(&crate::panels::fleet::render::Slot) -> bool,
     ) {
+        click_line(ws, svc, l, want, |body| body.right() - 1);
+    }
+
+    fn click_text(
+        ws: &mut Workspace,
+        svc: &mut Services<TaskResult>,
+        l: &Layout,
+        want: impl Fn(&crate::panels::fleet::render::Slot) -> bool,
+    ) {
+        click_line(ws, svc, l, want, |body| body.x + 1);
+    }
+
+    fn fleet_with_sessions(height: u16) -> (Workspace, Services<TaskResult>, Layout) {
+        use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
+        let session = |pid: u32, status: Status| LiveSession {
+            pid,
+            cwd: PathBuf::from("/r/app"),
+            session_id: format!("s{pid}"),
+            status,
+            status_since: None,
+            owner: Owner::Conductor,
+            started: std::time::SystemTime::UNIX_EPOCH,
+        };
+        let mut live = vec![session(7, Status::Waiting(Waiting::Question))];
+        live.extend((8..20).map(|pid| session(pid, Status::Working)));
+        fleet_listing(live, height)
+    }
+
+    fn selected_key(ws: &Workspace) -> Option<(crate::panels::fleet::RowKey, bool)> {
+        ws.panels.fleet.selected_row().map(|r| (r.key, r.pinned))
+    }
+
+    #[test]
+    fn worktree_の行の文字を押すとその_worktree_が選ばれる() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
+        click_text(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Worktree(w) if w.label == "feature/b"),
+        );
+        assert_eq!(
+            ws.panels.fleet.selected_worktree().unwrap().label,
+            "feature/b"
+        );
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn セッションの行を押すとそのセッションが選ばれ_入力待ちの箱は枠を押しても選ばれる() {
+        use crate::panels::fleet::RowKey;
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(60);
+        assert_ne!(selected_key(&ws), Some((RowKey::Pid(9), false)));
+        click_text(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if r.key == RowKey::Pid(9) && !r.pinned),
+        );
+        assert_eq!(selected_key(&ws), Some((RowKey::Pid(9), false)));
+
+        // 箱の最初の行は上の枠線。
+        click_text(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if r.pinned),
+        );
+        assert_eq!(selected_key(&ws), Some((RowKey::Pid(7), true)));
+    }
+
+    #[test]
+    fn 見出しと区画の枠を押しても選択は動かない() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(60);
+        let before = selected_key(&ws);
+        assert!(before.is_some());
+        click_text(&mut ws, &mut svc, &l, |slot| matches!(slot, Slot::Repo(_)));
+        click_text(&mut ws, &mut svc, &l, |slot| matches!(slot, Slot::Other));
+        click_line(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if !r.pinned),
+            |body| body.x - 1,
+        );
+        assert_eq!(selected_key(&ws), before);
+    }
+
+    #[test]
+    fn 確認が開いている間は行を押しても選択は動かない() {
+        use crate::panels::fleet::RowKey;
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(60);
+        let before = selected_key(&ws);
+        assert_ne!(before, Some((RowKey::Pid(9), false)));
+        ws.modals
+            .push(Modal::Confirm(crate::modal::Confirm::ask("x", Vec::new())));
+        click_text(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if r.key == RowKey::Pid(9)),
+        );
+        assert_eq!(selected_key(&ws), before);
+    }
+
+    #[test]
+    fn 右で打っている間に一覧の行を押すと選択が動き一覧へ戻る() {
+        use crate::panels::fleet::RowKey;
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(60);
+        ws.focus = Focus::FleetSession;
+        click_text(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if r.key == RowKey::Pid(9) && !r.pinned),
+        );
+        assert_eq!(selected_key(&ws), Some((RowKey::Pid(9), false)));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 下までスクロールした一覧でも押した見た目の行が選ばれる() {
+        use crate::panels::fleet::Item;
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(20);
+        let bottom = ws
+            .panels
+            .fleet
+            .items()
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Session(row) => Some(row),
+                Item::Worktree(_) => None,
+            })
+            .last()
+            .unwrap();
+        let bottom_key = bottom.key.clone();
+        ws.panels.fleet.click_list(
+            (1, 0),
+            crate::panels::fleet::ListPress {
+                hit: Some(&Slot::Session(bottom)),
+                button: None,
+                in_button_columns: false,
+            },
+        );
         let rect = l.rect(Region::FleetList).unwrap();
-        let composed = crate::panels::fleet::render::compose(ws, rect).unwrap();
-        let index = composed.slots.iter().position(want).unwrap() - composed.offset;
+        let composed = crate::panels::fleet::render::compose(&ws, rect).unwrap();
+        assert!(composed.offset > 0, "スクロールしていること");
+        let (line, row) = composed
+            .slots
+            .iter()
+            .enumerate()
+            .skip(composed.offset)
+            .find_map(|(i, slot)| match slot {
+                Slot::Session(r) if r.key != bottom_key => Some((i, r.clone())),
+                _ => None,
+            })
+            .unwrap();
         let click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: composed.body.right() - 1,
-            row: composed.body.y + u16::try_from(index).unwrap(),
+            column: composed.body.x + 1,
+            row: composed.body.y + u16::try_from(line - composed.offset).unwrap(),
             modifiers: KeyModifiers::NONE,
         };
-        on_mouse(ws, svc, l, click);
+        assert!(click.row < composed.body.bottom(), "見えている行を押すこと");
+        on_mouse(&mut ws, &mut svc, &l, click);
+        assert!(ws.panels.fleet.is_selected(&row));
+        let after = crate::panels::fleet::render::compose(&ws, rect).unwrap();
+        assert_eq!(
+            after.offset,
+            line.saturating_sub(usize::from(composed.body.height) - 2),
+            "表示位置は j / k と同じく選んだ行から決まる"
+        );
+    }
+
+    #[test]
+    fn 一度目で一覧が送られ二度目の下にボタンが来てもボタンは開かない() {
+        use crate::panels::fleet::render::{Slot, compose, slot_at};
+        let mut slid_under = 0;
+        for (height, y_off) in (16..40).flat_map(|h| (0..h).map(move |y| (h, y))) {
+            let (mut ws, mut svc, l) = fleet_with_sessions(height);
+            let rect = l.rect(Region::FleetList).unwrap();
+            let body = compose(&ws, rect).unwrap().body;
+            let (x, y) = (body.right() - 1, body.y + y_off);
+            if y >= body.bottom() {
+                continue;
+            }
+            let press = |ws: &mut Workspace, svc: &mut Services<TaskResult>| {
+                let click = |kind| MouseEvent {
+                    kind,
+                    column: x,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                };
+                on_mouse(ws, svc, &l, click(MouseEventKind::Down(MouseButton::Left)));
+                on_mouse(ws, svc, &l, click(MouseEventKind::Up(MouseButton::Left)));
+            };
+            let first = compose(&ws, rect).unwrap();
+            if !matches!(slot_at(&first, x, y), Some(Slot::Session(_))) {
+                continue;
+            }
+            press(&mut ws, &mut svc);
+            let second = compose(&ws, rect).unwrap();
+            if matches!(
+                slot_at(&second, x, y),
+                Some(Slot::Worktree(_) | Slot::Repo(Some(_)))
+            ) {
+                slid_under += 1;
+            }
+            press(&mut ws, &mut svc);
+            assert!(ws.modals.is_empty(), "y {y}: {:?}", ws.modals.len());
+        }
+        assert!(slid_under > 0, "二度目の下にボタンが来る行があること");
+    }
+
+    #[test]
+    fn worktree_の文字を押した直後に同じ行の_plus_を押しても起動メニューが開く() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        let feature_b = |slot: &Slot| matches!(slot, Slot::Worktree(w) if w.label == "feature/b");
+        click_text(&mut ws, &mut svc, &l, feature_b);
+        ws.focus = Focus::FleetSession;
+        click_button(&mut ws, &mut svc, &l, feature_b);
+        assert!(matches!(ws.modals.last(), Some(Modal::Popup(_))));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 描いた行ごとにその行の当たりがある() {
+        use crate::panels::fleet::RowKey;
+        use crate::panels::fleet::render::Slot;
+        let (ws, _, l) = fleet_with_sessions(60);
+        let composed =
+            crate::panels::fleet::render::compose(&ws, l.rect(Region::FleetList).unwrap()).unwrap();
+        assert_eq!(composed.lines.len(), composed.slots.len());
+        let text = |i: usize| composed.lines[i].to_string();
+        for (i, slot) in composed.slots.iter().enumerate() {
+            match slot {
+                Slot::Other => assert!(text(i).starts_with("入力待ち"), "{i}: {}", text(i)),
+                Slot::Repo(_) => assert!(text(i).starts_with("app"), "{i}: {}", text(i)),
+                Slot::Worktree(w) => assert!(text(i).contains(&w.label), "{i}: {}", text(i)),
+                Slot::Session(r) if r.pinned => {
+                    assert_eq!(r.key, RowKey::Pid(7));
+                    assert!(text(i).starts_with(['┌', '│', '└']), "{i}: {}", text(i));
+                }
+                Slot::Session(_) => assert!(!text(i).starts_with(['┌', '│', '└'])),
+            }
+        }
+    }
+
+    #[test]
+    fn 本文の上と下の外を押しても選択は動かない() {
+        let (mut ws, mut svc, l) = fleet_with_sessions(20);
+        let before = selected_key(&ws);
+        let rect = l.rect(Region::FleetList).unwrap();
+        let body = crate::panels::fleet::render::compose(&ws, rect)
+            .unwrap()
+            .body;
+        for row in [body.y - 1, body.bottom()] {
+            let click = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: body.x + 1,
+                row,
+                modifiers: KeyModifiers::NONE,
+            };
+            on_mouse(&mut ws, &mut svc, &l, click);
+            assert_eq!(selected_key(&ws), before, "row {row}");
+        }
+    }
+
+    #[test]
+    fn セッション行の右端を押しても選ぶ() {
+        use crate::panels::fleet::RowKey;
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_sessions(60);
+        assert_ne!(selected_key(&ws), Some((RowKey::Pid(9), false)));
+        click_button(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Session(r) if r.key == RowKey::Pid(9) && !r.pinned),
+        );
+        assert_eq!(selected_key(&ws), Some((RowKey::Pid(9), false)));
+        assert!(ws.modals.is_empty());
     }
 
     #[test]

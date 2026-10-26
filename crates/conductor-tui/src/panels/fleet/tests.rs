@@ -662,6 +662,150 @@ fn 外のプロセスを止めた結果はそれぞれの文で帯に出る() {
     );
 }
 
+fn press(fleet: &mut FleetPanel, y: u16, hit: Option<&render::Slot>) -> Vec<Effect> {
+    fleet.click_list(
+        (1, y),
+        ListPress {
+            hit,
+            button: None,
+            in_button_columns: false,
+        },
+    )
+}
+
+fn session_slot(fleet: &FleetPanel, pid: u32) -> render::Slot {
+    let row = fleet
+        .visual_rows()
+        .into_iter()
+        .find(|r| r.key == RowKey::Pid(pid) && !r.pinned)
+        .unwrap();
+    render::Slot::Session(row)
+}
+
+fn working_sessions(pids: &[u32]) -> FleetStatus {
+    status(
+        pids.iter()
+            .map(|&pid| {
+                live(
+                    pid,
+                    "/r/a",
+                    &format!("s{pid}"),
+                    Status::Working,
+                    Owner::Conductor,
+                )
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn 同じセッション行を続けて押すと二度目で右に入る() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(working_sessions(&[7, 8]), Vec::new(), None, false, at(200));
+    let slot = session_slot(&fleet, 8);
+    assert!(press(&mut fleet, 3, Some(&slot)).is_empty());
+    assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(8));
+    assert!(matches!(
+        press(&mut fleet, 3, Some(&slot)).as_slice(),
+        [Effect::Focus(Focus::FleetSession)]
+    ));
+}
+
+#[test]
+fn 一度目で一覧が送られて同じ画面の行に別の行が来ても二度目は一度目の行に入る() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(working_sessions(&[7, 8]), Vec::new(), None, false, at(200));
+    let (first, second) = (session_slot(&fleet, 7), session_slot(&fleet, 8));
+    press(&mut fleet, 3, Some(&first));
+    assert!(matches!(
+        press(&mut fleet, 3, Some(&second)).as_slice(),
+        [Effect::Focus(Focus::FleetSession)]
+    ));
+    assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(7));
+}
+
+#[test]
+fn 二度の間に選んだ行が消えて選び直されたら二度目は入らず押した行を選ぶ() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        working_sessions(&[7, 8, 9]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    let first = session_slot(&fleet, 7);
+    press(&mut fleet, 3, Some(&first));
+    fleet.apply(working_sessions(&[8, 9]), Vec::new(), None, false, at(201));
+    assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(8));
+    let second = session_slot(&fleet, 9);
+    assert!(press(&mut fleet, 3, Some(&second)).is_empty());
+    assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(9));
+}
+
+#[test]
+fn 選ばない行を押した直後の同じ画面の行は二度目にならない() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(working_sessions(&[7, 8]), Vec::new(), None, false, at(200));
+    let slot = session_slot(&fleet, 8);
+    press(&mut fleet, 3, Some(&slot));
+    press(&mut fleet, 4, Some(&render::Slot::Other));
+    assert!(press(&mut fleet, 4, Some(&slot)).is_empty());
+}
+
+#[test]
+fn 三度目以降も同じ所を続けて押す間は右に入ったまま() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(working_sessions(&[7, 8]), Vec::new(), None, false, at(200));
+    let slot = session_slot(&fleet, 8);
+    press(&mut fleet, 3, Some(&slot));
+    press(&mut fleet, 3, Some(&slot));
+    assert!(matches!(
+        press(&mut fleet, 3, Some(&slot)).as_slice(),
+        [Effect::Focus(Focus::FleetSession)]
+    ));
+}
+
+#[test]
+fn 入力待ちの箱の別の行を二度目に押してもダブルにならない() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![live(
+            7,
+            "/r/a",
+            "s7",
+            Status::Waiting(Waiting::Question),
+            Owner::Conductor,
+        )]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    let pinned = fleet.visual_rows().into_iter().find(|r| r.pinned).unwrap();
+    let slot = render::Slot::Session(pinned);
+    press(&mut fleet, 3, Some(&slot));
+    assert!(press(&mut fleet, 4, Some(&slot)).is_empty());
+}
+
+#[test]
+fn worktree_の行は続けて押しても選ぶだけ() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(working_sessions(&[7]), Vec::new(), None, false, at(200));
+    let worktree = fleet
+        .items()
+        .into_iter()
+        .find_map(|i| match i {
+            Item::Worktree(w) => Some(w),
+            Item::Session(_) => None,
+        })
+        .unwrap();
+    let slot = render::Slot::Worktree(worktree.clone());
+    press(&mut fleet, 3, Some(&slot));
+    assert!(press(&mut fleet, 3, Some(&slot)).is_empty());
+    assert_eq!(fleet.selected_worktree(), Some(worktree));
+}
+
 mod hint {
     use conductor_core::keymap::KeyMap;
     use conductor_svc::Services;
