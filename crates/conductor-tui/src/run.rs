@@ -2538,6 +2538,12 @@ needle here
         ws.chrome.fleet_open = true;
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
         assert_eq!(svc.in_flight(), 1);
+    }
+
+    #[test]
+    fn 投げ中に重ねて変更を読まない() {
+        let (mut ws, mut svc, _) = fleet_with_tree();
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
         assert_eq!(svc.in_flight(), 1, "投げ中に 2 本目を投げた");
     }
