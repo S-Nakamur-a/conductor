@@ -421,10 +421,7 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
                 format!("{label} "),
                 Style::default().fg(theme.hint),
             ));
-            spans.push(Span::styled(
-                bar(pct, 8),
-                Style::default().fg(level(theme, pct)),
-            ));
+            spans.extend(bar(pct, 8, theme));
             let mut text = format!(" {pct}%");
             if countdown {
                 text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
@@ -442,9 +439,16 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
         .collect()
 }
 
-fn bar(pct: u8, cells: usize) -> String {
-    let filled = usize::from(pct) * cells / 100;
-    format!("{}{}", "█".repeat(filled), "░".repeat(cells - filled))
+fn bar(pct: u8, cells: usize, theme: &Theme) -> Vec<Span<'static>> {
+    const PARTIAL: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    let eighths = usize::from(pct.min(100)) * cells * 8 / 100;
+    let (full, rest) = (eighths / 8, eighths % 8);
+    let filled = format!("{}{}", "█".repeat(full), PARTIAL[rest]);
+    let empty = cells - full - usize::from(rest > 0);
+    vec![
+        Span::styled(filled, Style::default().fg(level(theme, pct))),
+        Span::styled("░".repeat(empty), Style::default().fg(theme.hint)),
+    ]
 }
 
 /// statusline と同じしきい値。
@@ -583,13 +587,24 @@ fn row_line(
         " ".repeat(6usize.saturating_sub(age.width())),
         tag(row.place)
     );
-    let (right, right_color) = match (row.context_percent, row.context_tokens) {
-        (Some(pct), _) => (format!("{} {pct}%", bar(pct, 4)), level(theme, pct)),
-        (None, Some(tokens)) => (tokens_text(tokens), theme.hint),
-        (None, None) => (String::new(), theme.hint),
+    let right: Vec<Span<'static>> = match (row.context_percent, row.context_tokens) {
+        (Some(pct), _) => {
+            let mut spans = bar(pct, 4, theme);
+            spans.push(Span::styled(
+                format!(" {pct}%"),
+                Style::default().fg(level(theme, pct)),
+            ));
+            spans
+        }
+        (None, Some(tokens)) => vec![Span::styled(
+            tokens_text(tokens),
+            Style::default().fg(theme.hint),
+        )],
+        (None, None) => Vec::new(),
     };
+    let right_width: usize = right.iter().map(|s| s.content.width()).sum();
     let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
-    let room = (width as usize).saturating_sub(indent + 2 + left.width() + right.width() + 2);
+    let room = (width as usize).saturating_sub(indent + 2 + left.width() + right_width + 2);
     let title = clip(&title, room);
     let pad = room.saturating_sub(title.width());
     let title_fg = if row.title.is_some() {
@@ -597,22 +612,18 @@ fn row_line(
     } else {
         theme.hint
     };
-    crate::list::row_line(
-        vec![
-            Span::raw(" ".repeat(indent)),
-            Span::styled(
-                format!("{edge}{glyph}"),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(left, Style::default().fg(theme.hint)),
-            Span::styled(title, Style::default().fg(title_fg)),
-            Span::raw(" ".repeat(pad + 2)),
-            Span::styled(right, Style::default().fg(right_color)),
-        ],
-        theme,
-        selected,
-        focused,
-    )
+    let mut spans = vec![
+        Span::raw(" ".repeat(indent)),
+        Span::styled(
+            format!("{edge}{glyph}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(left, Style::default().fg(theme.hint)),
+        Span::styled(title, Style::default().fg(title_fg)),
+        Span::raw(" ".repeat(pad + 2)),
+    ];
+    spans.extend(right);
+    crate::list::row_line(spans, theme, selected, focused)
 }
 
 fn pinned_box(
