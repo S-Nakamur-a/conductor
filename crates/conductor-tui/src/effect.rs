@@ -386,13 +386,7 @@ fn delete_fleet_worktree(
     inspection: crate::panels::fleet::Inspection,
 ) -> Vec<Effect> {
     // 解析は止めても成果物を書きに戻るので、消した dir が作り直される。
-    let analysing = inspection.in_window_repo
-        && inspection
-            .check
-            .branch
-            .as_deref()
-            .is_some_and(|branch| ws.panels.revidere.is_running(branch));
-    if analysing {
+    if ws.panels.revidere.is_running_in(&inspection.path) {
         return vec![Effect::Status(
             StatusLevel::Warning,
             "An AI review is running in that worktree; delete it after the review ends.".into(),
@@ -747,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn そのブランチの_ai_レビューが走っていれば_worktree_を消さない() {
+    fn その_worktree_でこの窓の_ai_レビューが走っていれば消さない() {
         let inspection = || crate::panels::fleet::Inspection {
             repo: "/r".into(),
             path: "/r-a".into(),
@@ -793,6 +787,46 @@ mod tests {
                 [Effect::Status(StatusLevel::Warning, _)]
             ),
             "{analysing:?}"
+        );
+
+        let mut ws = Workspace::for_test();
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: "/r-a".into(),
+            branch: "HEAD (detached)".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        });
+        let mut detached = inspection();
+        detached.check.branch = None;
+        let effects = delete_fleet_worktree(&mut ws, detached);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Status(StatusLevel::Warning, _)]
+            ),
+            "切り離した HEAD の worktree でも解析中なら消さない: {effects:?}"
+        );
+
+        let mut ws = Workspace::for_test();
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: "/r-b".into(),
+            branch: "feature/b".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        });
+        let elsewhere = delete_fleet_worktree(&mut ws, inspection());
+        assert!(
+            matches!(
+                elsewhere.as_slice(),
+                [Effect::Spawn(Task::DeleteFleetWorktree(_))]
+            ),
+            "別の worktree の解析では断らない: {elsewhere:?}"
         );
     }
 }

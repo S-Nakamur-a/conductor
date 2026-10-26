@@ -63,7 +63,8 @@ pub struct RevidereState {
     /// 成果物の版。差し替えのたびに進み、組み立て済みの列の鍵に入る。
     epoch: u64,
     /// 実行中の解析。ブランチごとに高々 1 本なので worktree 同士が待ち合わせにならない。
-    running: HashMap<String, Arc<AtomicBool>>,
+    /// worktree も持つのは、切り離した HEAD の worktree はどれも同じ名前で入るため。
+    running: HashMap<String, (PathBuf, Arc<AtomicBool>)>,
 }
 
 impl RevidereState {
@@ -105,6 +106,13 @@ impl RevidereState {
 
     pub fn is_idle(&self) -> bool {
         self.running.is_empty()
+    }
+
+    /// worktree は canonicalize 済みで渡す。
+    pub fn is_running_in(&self, worktree: &Path) -> bool {
+        self.running
+            .values()
+            .any(|(dir, _)| dir.canonicalize().unwrap_or_else(|_| dir.clone()) == worktree)
     }
 
     /// 確認ダイアログの文言と、貯めた応答を捨てるかどうかを決める 1 つの判定。
@@ -176,8 +184,15 @@ impl RevidereState {
     /// 解析の中断旗を捕まえておく。走っている AI コマンドを途中で kill するのと、
     /// 同じブランチに 2 本目を走らせないのに要る。
     pub fn note_spawned(&mut self, task: &Task) {
-        if let Task::Analyze { branch, cancel, .. } = task {
-            self.running.insert(branch.clone(), Arc::clone(cancel));
+        if let Task::Analyze {
+            branch,
+            cancel,
+            worktree,
+            ..
+        } = task
+        {
+            self.running
+                .insert(branch.clone(), (worktree.clone(), Arc::clone(cancel)));
         }
     }
 
@@ -186,7 +201,7 @@ impl RevidereState {
     /// 「解析中」を名乗ったまま二度と解析できない。止めた本数を返す。
     pub fn abort(&mut self) -> usize {
         let stopped = self.running.len();
-        for (_, cancel) in self.running.drain() {
+        for (_, (_, cancel)) in self.running.drain() {
             cancel.store(true, Ordering::Relaxed);
         }
         stopped
@@ -195,7 +210,7 @@ impl RevidereState {
     /// そのブランチの解析だけを止める。枠は外さない。結果はブランチ名だけで届くので、
     /// ここで外すと、止まりきる前にやり直した解析の枠を古い方の結果が外してしまう。
     pub fn cancel(&mut self, branch: &str) {
-        if let Some(cancel) = self.running.get(branch) {
+        if let Some((_, cancel)) = self.running.get(branch) {
             cancel.store(true, Ordering::Relaxed);
         }
     }

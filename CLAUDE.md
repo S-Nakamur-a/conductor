@@ -162,8 +162,9 @@ with no window open, and the window opened later showed it mid-tool.
   SIGKILL after 3s, and only while `<pid>.json` and the process start time still name
   the process the list read (`registry::stop`). **D on a worktree line** stops every
   Claude whose canonical cwd is inside it, whichever window holds it, and deletes only
-  after each has ended and a second `deletion_check` finds nothing the confirmation did
-  not show (`task.rs`'s `fleet_delete`). Editors are the exception and die with the
+  after each one with a state file has ended (a Claude with no state file yet has its
+  tab closed but is not waited for) and a second `deletion_check` finds nothing the
+  confirmation did not show (`task.rs`'s `fleet_delete`). Editors are the exception and die with the
   window that opened them. The host exits
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`
