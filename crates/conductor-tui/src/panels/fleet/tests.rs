@@ -707,23 +707,46 @@ mod hint {
     }
 
     #[test]
-    fn この窓の行では開く_返事_止める_閉じるを出す() {
+    fn この窓の行では開く_返事_止める_新しいセッション_閉じる_prを出す() {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる"
+            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
     #[test]
-    fn この窓の外の行では止めると閉じるだけ() {
+    fn この窓の外の行では止める_新しいセッション_閉じる_pr() {
         let ws = listing(
             vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
             Vec::new(),
         );
         assert_eq!(
             render::hint(&ws),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+        );
+    }
+
+    #[test]
+    fn worktree_の行では新しいセッション_消す_閉じる_pr() {
+        let mut ws = listing(Vec::new(), Vec::new());
+        ws.apply_fleet(
+            FleetStatus {
+                trees: vec![RepoTree {
+                    root: PathBuf::from("/r/a"),
+                    name: "a".into(),
+                    worktrees: vec![WorktreeHead {
+                        path: PathBuf::from("/r/a"),
+                        head: conductor_core::git_engine::Head::Branch("main".into()),
+                    }],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            render::hint(&ws),
+            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く"
         );
     }
 
@@ -749,7 +772,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n");
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる"
+            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
@@ -770,7 +793,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
         assert_eq!(
             render::hint(&ws),
-            "x 止める · ctrl+n 新しいセッション · esc 閉じる"
+            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -793,10 +816,10 @@ mod hint {
         for height in 0..=4 {
             drawn(&ws, 60, height);
         }
-        let lines = drawn(&ws, 60, 3);
+        let lines = drawn(&ws, 64, 3);
         assert_eq!(
             lines[1].trim(),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる"
+            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -2913,5 +2936,216 @@ mod usage {
             .find(|t| t.contains('%'))
             .expect("使用率の行");
         assert!(text.ends_with("▍░░░ 12%"), "{text}");
+    }
+}
+
+mod branch_page_key {
+    use conductor_core::git_engine::Head;
+
+    use super::*;
+    use crate::task::Task;
+
+    fn tree() -> FleetPanel {
+        tree_with(Status::Idle)
+    }
+
+    fn tree_with(app_b: Status) -> FleetPanel {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![
+                    live(8, "/r/app-b/src", "s8", app_b, Owner::Conductor),
+                    live(9, "/tmp/scratch", "s9", Status::Idle, Owner::Elsewhere),
+                ],
+                trees: vec![RepoTree {
+                    root: PathBuf::from("/r/app"),
+                    name: "app".into(),
+                    worktrees: vec![
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app"),
+                            head: Head::Branch("main".into()),
+                        },
+                        WorktreeHead {
+                            path: PathBuf::from("/r/app-b"),
+                            head: Head::Branch("feature/b".into()),
+                        },
+                    ],
+                }],
+                placement: [(PathBuf::from("/r/app-b/src"), PathBuf::from("/r/app-b"))].into(),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        fleet
+    }
+
+    fn choose(fleet: &mut FleetPanel, pick: impl Fn(&Item) -> bool) {
+        let item = fleet.items().into_iter().find(|i| pick(i)).unwrap();
+        fleet.select(&item, at(300));
+    }
+
+    fn press(fleet: &mut FleetPanel) -> Vec<Effect> {
+        let ws = Workspace::for_test();
+        fleet.update(Action::OpenBranchPage, &ws.ctx()).unwrap()
+    }
+
+    fn opened(dir: &str) -> Vec<Effect> {
+        vec![Effect::Spawn(Task::OpenBranchPage {
+            dir: PathBuf::from(dir),
+        })]
+    }
+
+    #[test]
+    fn worktree_の行ではその_worktree_を開く() {
+        let mut fleet = tree();
+        choose(
+            &mut fleet,
+            |i| matches!(i, Item::Worktree(w) if w.path == Path::new("/r/app")),
+        );
+        assert_eq!(press(&mut fleet), opened("/r/app"));
+    }
+
+    #[test]
+    fn セッションの行ではそれを含む_worktree_を開き_置き場が無ければ_cwd() {
+        let mut fleet = tree();
+        choose(
+            &mut fleet,
+            |i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(8)),
+        );
+        assert_eq!(press(&mut fleet), opened("/r/app-b"));
+
+        let mut fleet = tree();
+        choose(
+            &mut fleet,
+            |i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(9)),
+        );
+        assert_eq!(press(&mut fleet), opened("/tmp/scratch"));
+    }
+
+    #[test]
+    fn 入力待ちの欄に重ねた行でも同じ_worktree_を開く() {
+        let mut fleet = tree_with(Status::Waiting(Waiting::Question));
+        choose(&mut fleet, |i| matches!(i, Item::Session(r) if r.pinned));
+        assert_eq!(press(&mut fleet), opened("/r/app-b"));
+    }
+
+    #[test]
+    fn 行が無ければ何も開かず窓の操作にも落とさない() {
+        let mut fleet = FleetPanel::default();
+        assert_eq!(press(&mut fleet), Vec::new());
+    }
+
+    #[test]
+    fn 開き終わるまでの次の押下は捨てる() {
+        let mut fleet = tree();
+        assert_eq!(press(&mut fleet).len(), 1);
+        assert_eq!(press(&mut fleet), Vec::new(), "gg で 2 枚開かない");
+        fleet.note_page_opened();
+        assert_eq!(press(&mut fleet).len(), 1);
+        fleet.forget_in_flight();
+        assert_eq!(
+            press(&mut fleet).len(),
+            1,
+            "repo の切り替えで結果が捨てられても次が押せる"
+        );
+    }
+
+    #[test]
+    fn 一覧の_g_はページを開き_g_の大文字は末尾へ() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let ws = Workspace::for_test();
+        let resolve = |code, modifiers| {
+            ws.keymap.resolve(
+                &KeyEvent::new(code, modifiers),
+                conductor_core::keymap::KeyContext::Fleet,
+            )
+        };
+        assert_eq!(
+            resolve(KeyCode::Char('g'), KeyModifiers::NONE),
+            Some(Action::OpenBranchPage)
+        );
+        assert_eq!(
+            resolve(KeyCode::Char('G'), KeyModifiers::SHIFT),
+            Some(Action::GoToBottom)
+        );
+    }
+
+    const REPO: &str = "https://github.com/o/r";
+
+    fn page(
+        head: Head,
+        pr: Option<PrLookup>,
+        repo: Option<&str>,
+    ) -> Result<(String, String), String> {
+        branch_page(&head, pr, repo.map(str::to_string))
+    }
+
+    #[test]
+    fn pr_があればそれを開き_無ければ_repo_を開いて理由を書く() {
+        let branch = || Head::Branch("feature/b".into());
+        assert_eq!(
+            page(
+                branch(),
+                Some(PrLookup::Found(format!("{REPO}/pull/7"))),
+                Some(REPO)
+            ),
+            Ok((
+                format!("{REPO}/pull/7"),
+                "Opened the pull request for 'feature/b'.".into()
+            ))
+        );
+        assert_eq!(
+            page(branch(), Some(PrLookup::Missing), Some(REPO)),
+            Ok((
+                REPO.into(),
+                "No pull request for 'feature/b'; opened the repository.".into()
+            ))
+        );
+        assert_eq!(
+            page(Head::Detached("abc1234".into()), None, Some(REPO)),
+            Ok((
+                REPO.into(),
+                "Not on a branch (abc1234); opened the repository.".into()
+            ))
+        );
+        assert_eq!(
+            page(Head::Unborn("main".into()), None, Some(REPO)),
+            Ok((
+                REPO.into(),
+                "No commit on 'main' yet; opened the repository.".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn gh_が答えられなければ_pr_が無いとは言わずに_repo_を開く() {
+        let stderr = "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`";
+        let (url, message) = page(
+            Head::Branch("feature/b".into()),
+            Some(PrLookup::Failed(stderr.into())),
+            Some("https://gitlab.com/o/r"),
+        )
+        .unwrap();
+        assert_eq!(url, "https://gitlab.com/o/r");
+        assert!(
+            message.starts_with("Could not ask gh for a pull request (none of"),
+            "{message}"
+        );
+        assert!(!message.contains("No pull request"), "{message}");
+    }
+
+    #[test]
+    fn pr_も_repo_の_url_も無ければ開かない() {
+        assert_eq!(
+            page(
+                Head::Branch("feature/b".into()),
+                Some(PrLookup::Missing),
+                None
+            ),
+            Err("No pull request for 'feature/b', and origin has no web URL to open.".into())
+        );
     }
 }

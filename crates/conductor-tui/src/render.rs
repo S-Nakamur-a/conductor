@@ -300,6 +300,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("stop", &[Action::StopSession]),
             ("new", &[Action::NewSessionMenu]),
             ("back", &[Action::ExitSubPanel]),
+            ("pr", &[Action::OpenBranchPage]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
         Focus::Worktree => &[

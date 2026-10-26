@@ -441,6 +441,13 @@ impl Workspace {
                 }
                 effects
             }
+            TaskResult::BranchPageOpened(opened) => {
+                self.panels.fleet.note_page_opened();
+                vec![match opened {
+                    Ok(message) => Effect::Status(StatusLevel::Info, message),
+                    Err(error) => Effect::Status(StatusLevel::Error, error),
+                }]
+            }
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }

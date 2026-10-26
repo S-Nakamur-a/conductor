@@ -214,6 +214,10 @@ pub enum Task {
     OpenPullRequest {
         branch: String,
     },
+    /// 窓の repo ではなく dir の repo を見る。一覧には他の repo の行も並ぶ。
+    OpenBranchPage {
+        dir: PathBuf,
+    },
     /// PR 番号か URL を worktree にする。取り込めたら PR のメタデータも書く。
     IntakePr {
         input: String,
@@ -381,6 +385,7 @@ pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
     FleetStatus(Box<crate::panels::fleet::FleetStatus>),
     SessionStopped(conductor_core::claude_sessions::registry::Stopped),
+    BranchPageOpened(Result<String, String>),
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
         path: PathBuf,
@@ -832,6 +837,9 @@ impl Task {
                     TaskResult::GitDone,
                 );
             }
+            Task::OpenBranchPage { dir } => {
+                svc.spawn(move || open_branch_page(&dir), TaskResult::BranchPageOpened);
+            }
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
             }
@@ -1245,6 +1253,60 @@ fn open_pull_request(env: &TaskEnv, branch: &str) -> Result<String, String> {
         .ok_or("could not determine the remote URL")?;
     open::that(&url).map_err(|e| format!("failed to open the browser: {e}"))?;
     Ok(format!("Opened the pull request for '{branch}'"))
+}
+
+fn open_branch_page(dir: &Path) -> Result<String, String> {
+    use crate::panels::fleet::branch_page;
+    use conductor_core::git_engine::Head;
+    if !dir.is_dir() {
+        return Err(format!("{} no longer exists.", dir.display()));
+    }
+    let git = GitEngine::open(dir)
+        .map_err(|_| format!("{} is not in a git repository.", dir.display()))?;
+    let head = git.head();
+    let pr = match &head {
+        Head::Branch(branch) => Some(lookup_pr(dir, branch)),
+        Head::Detached(_) | Head::Unborn(_) => None,
+    };
+    let (url, message) = branch_page(&head, pr, git.repo_web_url())?;
+    open::that(&url).map_err(|e| format!("failed to open the browser: {e}"))?;
+    Ok(message)
+}
+
+/// `gh pr view <branch>` は数字だけや `#` で始まる名前を PR 番号と読み、`--head` だけだと
+/// 同じ名前の他人の fork の PR も拾う。
+const OWN_PR_BY_HEAD: &str =
+    r#"[.[] | select(.isCrossRepository | not)] | sort_by(.state != "OPEN") | .[0].url // empty"#;
+
+fn lookup_pr(dir: &Path, branch: &str) -> crate::panels::fleet::PrLookup {
+    let output = std::process::Command::new("gh")
+        .current_dir(dir)
+        .args([
+            "pr", "list", "--head", branch, "--state", "all", "--limit", "30",
+        ])
+        .args([
+            "--json",
+            "url,isCrossRepository,state",
+            "--jq",
+            OWN_PR_BY_HEAD,
+        ])
+        .output();
+    match output {
+        Err(e) => crate::panels::fleet::PrLookup::Failed(format!("gh: {e}")),
+        Ok(out) => pr_lookup_of(&out),
+    }
+}
+
+fn pr_lookup_of(out: &std::process::Output) -> crate::panels::fleet::PrLookup {
+    use crate::panels::fleet::PrLookup;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return PrLookup::Failed(stderr.lines().next().unwrap_or_default().trim().to_string());
+    }
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "" => PrLookup::Missing,
+        url => PrLookup::Found(url.to_string()),
+    }
 }
 
 fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
@@ -1867,6 +1929,61 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn 消えた_dir_では_gh_を呼ばずにそう言う() {
+        let gone = tempfile::tempdir().unwrap().path().join("gone");
+        assert_eq!(
+            open_branch_page(&gone),
+            Err(format!("{} no longer exists.", gone.display()))
+        );
+    }
+
+    #[test]
+    fn gh_の答えは_pr_と_pr_無しと答えられないに分ける() {
+        use crate::panels::fleet::PrLookup;
+        use std::os::unix::process::ExitStatusExt;
+        let out = |code: i32, stdout: &str, stderr: &str| std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        };
+        let pr = "https://github.com/S-Nakamur-a/conductor/pull/419";
+        assert_eq!(
+            pr_lookup_of(&out(0, &format!("{pr}\n"), "")),
+            PrLookup::Found(pr.into())
+        );
+        assert_eq!(pr_lookup_of(&out(0, "", "")), PrLookup::Missing);
+        assert_eq!(pr_lookup_of(&out(0, " \n", "")), PrLookup::Missing);
+        let ghe = "none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`\n";
+        assert_eq!(
+            pr_lookup_of(&out(1, "", ghe)),
+            PrLookup::Failed(ghe.trim().into())
+        );
+    }
+
+    #[test]
+    fn gitでない_dir_ではそう言う() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            open_branch_page(dir.path()),
+            Err(format!(
+                "{} is not in a git repository.",
+                dir.path().display()
+            ))
+        );
+    }
+
+    #[test]
+    fn ブランチも_origin_も無い_repo_では何も開かない() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        let unborn = open_branch_page(dir.path()).unwrap_err();
+        assert!(
+            unborn.ends_with("origin has no web URL to open."),
+            "{unborn}"
+        );
+    }
 
     #[test]
     fn gitでないディレクトリではレビュー依頼を問い合わせずに黙る() {

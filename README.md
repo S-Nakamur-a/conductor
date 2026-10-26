@@ -123,6 +123,16 @@ line does the same as 1 and 2, and the `[✧]` beside a repository's name starts
 Worktree there. The result of a Smart Worktree started before switching to another
 repository still arrives.
 
+**g** opens the selected line's pull request in the browser: one whose head is the branch
+checked out in that worktree (on a session's line, the worktree it runs in), as
+`gh pr list --head` finds it — an open one first, otherwise a merged or closed one.
+Pull requests from forks that happen to use the same branch name are not counted.
+Without one — no pull request, not on a branch,
+or gh cannot answer (not installed, not logged in, not GitHub) — it opens the repository
+that `origin` points to, and the status line says which and why. It works on any
+repository's line, not only the one this window opened. To reach the top of the list,
+press **K** until it stops moving.
+
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
 with Ctrl held, or with Alt held where the terminal sends Alt as a modifier, too. ← highlights
@@ -131,7 +141,7 @@ other key cancels, `h` and `l` included. Keys the list does not use
 are dropped, so a sentence typed into the list by mistake stops nothing unless a
 capital D is followed by a y somewhere in it ("Dynamic", "READY"), or by arrow keys
 ending in ← and then Enter; it then stops
-whichever line is selected at that moment, which any j, k, g or G earlier in the
+whichever line is selected at that moment, which any j, k or G earlier in the
 sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still there
 3s later, and only while it is still the process the list showed. On Linux, Claude Code
 records its start time in a form conductor does not read yet, so **D** cannot stop a
@@ -171,7 +181,7 @@ command by name.
 | **Ctrl+Alt+Z** / **Ctrl+Alt+Arrow** | maximize / resize the focused panel |
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |
 | **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell (in the Sessions list, Ctrl+n opens its own menu) |
-| **j/k** · **h/l** · **g/G** | up/down · collapse/expand · top/bottom |
+| **j/k** · **h/l** · **g/G** | up/down · collapse/expand · top/bottom (in the Sessions list, g opens the pull request) |
 | **/** · **Ctrl+g** | search · full-text (grep) search |
 | **Esc** · **Ctrl+q** | back / close overlay · quit |
 

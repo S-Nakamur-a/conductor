@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use conductor_core::cc_hook::statusline::Usage;
 use conductor_core::claude_log::summary::{Summary, Title};
 use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
-use conductor_core::git_engine::WorktreeHead;
+use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
 
 use crate::effect::Effect;
@@ -200,6 +200,8 @@ pub struct FleetPanel {
     /// 消す前の点検を待っている worktree。点検は 1 本だけ。
     inspecting: Option<PathBuf>,
     polling: bool,
+    /// gg や押しっぱなしでタブが何枚も開かないように、開き終わるまで次の g を捨てる。
+    opening_page: bool,
     came_from: Option<Focus>,
 }
 
@@ -218,6 +220,7 @@ impl FleetPanel {
     pub fn forget_in_flight(&mut self) {
         self.polling = false;
         self.inspecting = None;
+        self.opening_page = false;
     }
 
     /// 会話ログを読み直さなくていいもの。会話の id → 前に読んだときの mtime。
@@ -280,23 +283,31 @@ impl FleetPanel {
         self.smart_target.take()
     }
 
-    /// 起動する dir と、その dir が属する git の repo の root。選んだ worktree、選んだセッションの
-    /// worktree (外の端末はその cwd)、何も無ければ fallback の順。
+    /// 起動する dir と、その dir が属する git の repo の root。選んだ行の dir、何も無ければ fallback。
     pub fn launch_target(&self, fallback: &Path) -> (PathBuf, Option<PathBuf>) {
-        let dir = match &self.selected {
-            Some(Selected::Worktree(path)) => path.clone(),
-            Some(Selected::Session(..)) => match self.selected_row() {
-                Some(row) => self
-                    .placement
-                    .get(&row.working_dir)
-                    .cloned()
-                    .unwrap_or(row.working_dir),
-                None => fallback.to_path_buf(),
-            },
-            None => fallback.to_path_buf(),
-        };
+        let dir = self
+            .selected_dir()
+            .unwrap_or_else(|| fallback.to_path_buf());
         let root = self.tree_root_of(&dir);
         (dir, root)
+    }
+
+    /// 選んだ worktree、選んだセッションの worktree (外の端末はその cwd)。
+    fn selected_dir(&self) -> Option<PathBuf> {
+        match &self.selected {
+            Some(Selected::Worktree(path)) => Some(path.clone()),
+            Some(Selected::Session(..)) => self.selected_row().map(|row| {
+                self.placement
+                    .get(&row.working_dir)
+                    .cloned()
+                    .unwrap_or(row.working_dir)
+            }),
+            None => None,
+        }
+    }
+
+    pub fn note_page_opened(&mut self) {
+        self.opening_page = false;
     }
 
     fn tree_root_of(&self, dir: &Path) -> Option<PathBuf> {
@@ -744,6 +755,7 @@ impl FleetPanel {
                     None => self.ask_stop().into_iter().collect(),
                 });
             }
+            Action::OpenBranchPage => return Some(self.open_page().into_iter().collect()),
             Action::NewSessionMenu => {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
@@ -801,6 +813,15 @@ impl FleetPanel {
         }]
     }
 
+    fn open_page(&mut self) -> Option<Effect> {
+        if self.opening_page {
+            return None;
+        }
+        let dir = self.selected_dir()?;
+        self.opening_page = true;
+        Some(Effect::Spawn(crate::task::Task::OpenBranchPage { dir }))
+    }
+
     /// 止める相手は押した時点の行で決める。確認の間に並びが変わっても相手は動かない。
     fn ask_stop(&self) -> Option<Effect> {
         let row = self.selected_row()?;
@@ -843,6 +864,34 @@ pub fn launch_choices(dir: &Path, smart: Option<PathBuf>) -> Choices {
     ];
     choices.extend(smart.map(|root| ("Smart Worktree…", Effect::FleetSmartPrompt(root))));
     choices
+}
+
+/// HEAD のブランチ名で gh に PR を聞いた答え。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrLookup {
+    Found(String),
+    Missing,
+    Failed(String),
+}
+
+/// 開く URL と、ステータスに出す文。`pr` が None なのは HEAD がブランチでなく、gh に聞いていないとき。
+pub fn branch_page(
+    head: &Head,
+    pr: Option<PrLookup>,
+    repo: Option<String>,
+) -> Result<(String, String), String> {
+    let branch = head.label();
+    if let Some(PrLookup::Found(url)) = pr {
+        return Ok((url, format!("Opened the pull request for '{branch}'.")));
+    }
+    let reason = match (pr, head) {
+        (Some(PrLookup::Missing), _) => format!("No pull request for '{branch}'"),
+        (Some(PrLookup::Failed(why)), _) => format!("Could not ask gh for a pull request ({why})"),
+        (_, Head::Unborn(_)) => format!("No commit on '{branch}' yet"),
+        _ => format!("Not on a branch {branch}"),
+    };
+    let repo = repo.ok_or_else(|| format!("{reason}, and origin has no web URL to open."))?;
+    Ok((repo, format!("{reason}; opened the repository.")))
 }
 
 fn key_order(a: &RowKey, b: &RowKey) -> std::cmp::Ordering {
