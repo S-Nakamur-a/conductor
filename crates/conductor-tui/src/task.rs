@@ -2288,6 +2288,7 @@ mod fleet_delete_tests {
         );
         assert!(wt.exists());
     }
+
     #[test]
     fn 外の_claude_は止めて終わったのを確かめてから消す() {
         let (dir, main, wt) = repo();
@@ -2313,5 +2314,41 @@ mod fleet_delete_tests {
         assert_eq!(outcome, Ok("Deleted wt.".to_string()));
         assert!(procs.info(9).is_none(), "SIGTERM が届いている");
         assert!(!wt.exists());
+    }
+    #[test]
+    fn 無視ファイルは未コミットに数えず_worktree_ごと消える() {
+        let (dir, main, wt) = repo();
+        std::fs::create_dir_all(main.join(".git/info")).unwrap();
+        std::fs::write(main.join(".git/info/exclude"), ".env\n").unwrap();
+        std::fs::write(wt.join(".env"), "SECRET=1").unwrap();
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &[]));
+        assert_eq!(inspection.check.dirty, Some(0));
+        let outcome = run(
+            &inspection,
+            &dir.path().join("sessions"),
+            &procs(&[]),
+            Duration::ZERO,
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(!wt.join(".env").exists());
+    }
+
+    #[test]
+    fn 状態ファイルの無いこの窓の_claude_はタブを閉じる側に入り_終わりは待たない() {
+        let (dir, main, wt) = repo();
+        let own = [pty("p1", SessionKind::ClaudeCode, &wt, Some("s1"))];
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &own, &main, &[]));
+        assert!(inspection.claudes.is_empty());
+        assert_eq!(inspection.own_claudes, 1);
+        assert_eq!(inspection.panels, ["p1"]);
+        let begun = std::time::Instant::now();
+        let outcome = run(
+            &inspection,
+            &dir.path().join("sessions"),
+            &procs(&[]),
+            Duration::ZERO,
+        );
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(begun.elapsed() < Duration::from_secs(5), "待っていない");
     }
 }

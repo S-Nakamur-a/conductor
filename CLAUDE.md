@@ -164,11 +164,11 @@ with no window open, and the window opened later showed it mid-tool.
   Claude whose canonical cwd is inside it, whichever window holds it, and deletes only
   after each one with a state file has ended (a Claude with no state file yet has its
   tab closed but is not waited for) and a second `deletion_check` finds nothing the
-  confirmation did not show (`task.rs`'s `fleet_delete`). Editors are the exception and die with the
-  window that opened them. The host exits
-  once it has had no sessions and no window for 3s. **A host of another version is
-  kept while it has sessions** (the status bar says so) and is told to `Shutdown`
-  when it has none; the frame protocol carries its own number for that reason.
+  confirmation did not show (`task.rs`'s `fleet_delete`). Editors are the exception
+  and die with the window that opened them. The host exits once it has had no sessions
+  and no window for 3s. **A host of another version is kept while it has sessions**
+  (the status bar says so) and is told to `Shutdown` when it has none; the frame
+  protocol carries its own number for that reason.
 - **Not on Linux yet:** Claude Code (seen on 2.1.310) writes `procStart` there as
   `/proc/<pid>/stat` starttime ticks (`"37242291"`), not the ctime string macOS gets,
   and `registry` reads only the latter. So on Linux the list's **D** never signals a
