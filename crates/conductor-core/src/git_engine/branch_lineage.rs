@@ -120,8 +120,7 @@ impl GitEngine {
 
     /// origin の URL から、GitHub なら /pull/<branch>、GitLab なら MR 作成フォームの URL を作る。
     pub fn pr_url_for_branch(&self, branch: &str) -> Option<String> {
-        let remote = self.repo.find_remote("origin").ok()?;
-        let base = remote_url_to_https_base(remote.url()?)?;
+        let base = self.repo_web_url()?;
         if base.contains("gitlab") {
             Some(format!(
                 "{base}/-/merge_requests/new?merge_request[source_branch]={branch}"
@@ -129,6 +128,12 @@ impl GitEngine {
         } else {
             Some(format!("{base}/pull/{branch}"))
         }
+    }
+
+    /// origin の repo のトップページ。origin が無いか web の URL に直せなければ None。
+    pub fn repo_web_url(&self) -> Option<String> {
+        let remote = self.repo.find_remote("origin").ok()?;
+        remote_url_to_https_base(remote.url()?)
     }
 }
 

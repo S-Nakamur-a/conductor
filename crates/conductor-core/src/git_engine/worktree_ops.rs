@@ -26,6 +26,11 @@ fn head_of(repo: &Repository) -> Head {
 }
 
 impl GitEngine {
+    /// 開いた dir の worktree の HEAD。
+    pub fn head(&self) -> Head {
+        head_of(&self.repo)
+    }
+
     /// main と linked のすべての worktree を、ブランチつきで返す (件数は数えない)。
     /// 1 つでも調べられればそれを返し、調べられなかったものはログに残して飛ばす。
     ///

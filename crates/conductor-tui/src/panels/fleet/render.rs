@@ -273,23 +273,27 @@ pub fn hint(ws: &Workspace) -> String {
         let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
         return format!("{}← などは Claude に届く", back.unwrap_or_default());
     }
-    let items: &[(Action, &str)] = match ws.panels.fleet.selected_row().map(|row| row.place) {
+    let fleet = &ws.panels.fleet;
+    let items: &[(Action, &str)] = match fleet.selected_row().map(|row| row.place) {
         Some(Place::Mine) => &[
             (Action::Select, "開く"),
             (Action::ExpandOrRight, "返事"),
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
+            (Action::OpenBranchPage, "PR を開く"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
+            (Action::OpenBranchPage, "PR を開く"),
         ],
-        None if ws.panels.fleet.selected_worktree().is_some() => &[
+        None if fleet.selected_worktree().is_some() => &[
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::StopSession, "worktree を消す"),
             (Action::ExitSubPanel, "閉じる"),
+            (Action::OpenBranchPage, "PR を開く"),
         ],
         None => &[
             (Action::NewSessionMenu, "新しいセッション"),
