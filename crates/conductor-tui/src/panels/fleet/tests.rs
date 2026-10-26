@@ -1909,6 +1909,69 @@ mod tree {
     }
 
     #[test]
+    fn 大文字の_j_k_は入力待ちの欄と_repo_の先頭へ跳び_repo_の途中からの_k_はその_repo_の先頭へ戻る()
+     {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![
+                    live(
+                        7,
+                        "/r/app",
+                        "s7",
+                        Status::Waiting(Waiting::Question),
+                        Owner::Conductor,
+                    ),
+                    live(9, "/r/zoo", "s9", Status::Working, Owner::Conductor),
+                ],
+                trees: vec![
+                    repo(
+                        "/r/app",
+                        vec![
+                            worktree("/r/app", Head::Branch("main".into())),
+                            worktree("/r/app-a", Head::Branch("feature/a".into())),
+                        ],
+                    ),
+                    repo(
+                        "/r/zoo",
+                        vec![worktree("/r/zoo", Head::Branch("trunk".into()))],
+                    ),
+                ],
+                placement: placed(&[("/r/app", "/r/app"), ("/r/zoo", "/r/zoo")]),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let current = |fleet: &FleetPanel| {
+            let items = fleet.items();
+            let i = items
+                .iter()
+                .position(|item| fleet.is_selected_item(item))
+                .unwrap();
+            (i, shape(fleet)[i].clone())
+        };
+        let ws = Workspace::for_test();
+        assert_eq!(current(&fleet), (0, "  Pid(7)".to_string()), "入力待ちの欄");
+        let steps = [
+            (Action::NextRepo, 1, "main"),
+            (Action::NextRepo, 4, "trunk"),
+            (Action::NextRepo, 4, "trunk"),
+            (Action::NavigateDown, 5, "  Pid(9)"),
+            (Action::PrevRepo, 4, "trunk"),
+            (Action::PrevRepo, 1, "main"),
+            (Action::PrevRepo, 0, "  Pid(7)"),
+            (Action::PrevRepo, 0, "  Pid(7)"),
+        ];
+        for (action, index, label) in steps {
+            fleet.update(action, &ws.ctx());
+            assert_eq!(current(&fleet), (index, label.to_string()), "{action:?}");
+        }
+    }
+
+    #[test]
     fn worktree_の行では_enter_も_tab_も止めるキーも何もしない() {
         let mut fleet = app();
         let ws = Workspace::for_test();

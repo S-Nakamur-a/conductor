@@ -287,6 +287,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Fleet => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("repo", &[Action::NextRepo, Action::PrevRepo]),
             ("type", &[Action::ExpandOrRight]),
             ("open", &[Action::Select]),
             ("stop", &[Action::StopSession]),

@@ -100,6 +100,9 @@ Claude redraws the status line, so an edit shows from the next redraw; its `padd
 and `refreshInterval` are not carried over. Usage appears once a session conductor
 started has drawn its status line.
 
+**j** / **k** move one line; **J** / **K** (or **Shift+↓** / **Shift+↑**) jump to the
+next repository, or back to the top of the current one.
+
 A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
 there resizes it, so the Claude panel loses what had scrolled off (the transcript view
