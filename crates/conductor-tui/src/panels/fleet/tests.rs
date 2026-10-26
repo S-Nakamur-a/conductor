@@ -2093,6 +2093,7 @@ mod tree {
             },
             claudes: Vec::new(),
             panels: Vec::new(),
+            own_claudes: 0,
             shells: 0,
             in_window_repo: false,
         }
@@ -2195,6 +2196,7 @@ mod tree {
                 own: false,
             },
         ];
+        lossy.own_claudes = 1;
         lossy.shells = 1;
         let (_, lines) = confirm_text(lossy);
         for expected in [
@@ -2207,6 +2209,14 @@ mod tree {
                 "{expected}: {lines:?}"
             );
         }
+
+        let mut unrecorded = inspection("/r/app-a");
+        unrecorded.own_claudes = 1;
+        let (_, lines) = confirm_text(unrecorded);
+        assert!(
+            lines.contains(&"止まる Claude 1 本 (うちこの窓の外 0 本)".to_string()),
+            "状態ファイルをまだ書いていないこの窓の Claude も数える: {lines:?}"
+        );
 
         let mut unknown = inspection("/r/app-a");
         unknown.check.dirty = None;

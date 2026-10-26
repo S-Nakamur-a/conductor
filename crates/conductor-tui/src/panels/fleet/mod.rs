@@ -157,6 +157,8 @@ pub struct Inspection {
     pub claudes: Vec<Doomed>,
     /// この窓で閉じるパネル (Claude とシェル)。
     pub panels: Vec<String>,
+    /// panels のうち Claude。状態ファイルをまだ書いていない Claude も数える。
+    pub own_claudes: usize,
     pub shells: usize,
     pub in_window_repo: bool,
 }

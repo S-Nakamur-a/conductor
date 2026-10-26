@@ -1749,6 +1749,10 @@ pub(crate) mod fleet_delete {
             check,
             claudes,
             panels: closing.iter().map(|p| p.panel_id.clone()).collect(),
+            own_claudes: closing
+                .iter()
+                .filter(|p| p.kind == SessionKind::ClaudeCode)
+                .count(),
             shells: closing
                 .iter()
                 .filter(|p| p.kind == SessionKind::Shell)
@@ -2159,7 +2163,7 @@ mod fleet_delete_tests {
         let pids: Vec<(u32, bool)> = inspection.claudes.iter().map(|c| (c.pid, c.own)).collect();
         assert_eq!(pids, [(7, true), (9, false)]);
         assert_eq!(inspection.panels, ["p1", "p2"]);
-        assert_eq!(inspection.shells, 1);
+        assert_eq!((inspection.own_claudes, inspection.shells), (1, 1));
         assert!(inspection.in_window_repo);
     }
 

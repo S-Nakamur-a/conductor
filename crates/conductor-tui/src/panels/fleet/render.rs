@@ -327,7 +327,7 @@ pub(super) fn delete_confirm(inspection: Inspection) -> Confirm {
         _ => detail.push("どこにも入っていないコミットがあるか確かめられなかった".into()),
     }
     let outside = inspection.claudes.iter().filter(|c| !c.own).count();
-    let claudes = inspection.claudes.len();
+    let claudes = inspection.own_claudes + outside;
     detail.push(match (claudes, inspection.shells) {
         (0, 0) => "止まるセッションは無い".to_string(),
         (c, 0) => format!("止まる Claude {c} 本 (うちこの窓の外 {outside} 本)"),

@@ -763,6 +763,7 @@ mod tests {
             },
             claudes: Vec::new(),
             panels: Vec::new(),
+            own_claudes: 0,
             shells: 0,
             in_window_repo: true,
         };
