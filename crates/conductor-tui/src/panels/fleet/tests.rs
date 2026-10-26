@@ -3314,6 +3314,35 @@ mod review_key {
         assert!(ws.panels.revidere.is_running("main"), "窓の解析は残る");
     }
 
+    /// repo に branch を切り、parent/branch に linked worktree を作る。
+    fn linked(repo: &Path, branch: &str, parent: &Path) -> PathBuf {
+        let repo = git2::Repository::open(repo).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let reference = repo.branch(branch, &head, false).unwrap().into_reference();
+        std::fs::create_dir_all(parent).unwrap();
+        let path = parent.join(branch);
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&reference));
+        repo.worktree(branch, &path, Some(&opts)).unwrap();
+        path.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn 別の_repo_同士で_worktree_の名前とブランチが同じでも鍵は分かれる() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = repo_at(dir.path(), "app");
+        let a = repo_at(dir.path(), "a");
+        let b = repo_at(dir.path(), "b");
+        let a_wt = linked(&a, "refactor", &dir.path().join("a-worktrees"));
+        let b_wt = linked(&b, "refactor", &dir.path().join("b-worktrees"));
+        let mut ws = Workspace::for_test();
+        ws.repo.root = app;
+        let key =
+            |dir: &Path| started(&crate::command::confirm_analyze_worktree(&ws, dir.into())).1;
+        assert_eq!(key(&a_wt), "a:refactor");
+        assert_eq!(key(&b_wt), "b:refactor");
+    }
+
     #[test]
     fn 外の端末の_cwd_が_worktree_の下でも解析先は根で_印と削除のガードがその根に効く() {
         let dir = tempfile::tempdir().unwrap();

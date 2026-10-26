@@ -413,7 +413,8 @@ pub fn confirm_analyze_worktree(ws: &Workspace, dir: PathBuf) -> Vec<Effect> {
 
 /// dir を含む worktree の根と、走っている解析の鍵。鍵は窓の repo の中でしか一意でない
 /// ブランチ名なので、窓の repo なら窓の側 (worktree 一覧) と同じ綴りにし、別の repo なら
-/// worktree の名前を前に付けてぶつからないようにする (`:` は ref 名に使えない)。
+/// repo の名前を前に付けてぶつからないようにする (`:` は ref 名に使えない)。worktree の
+/// ディレクトリ名はブランチ名から作られるので、前置きにすると別の repo の同名ブランチとぶつかる。
 fn analysis_key(ws: &Workspace, dir: &std::path::Path) -> Option<(PathBuf, String)> {
     use conductor_core::git_engine::{GitEngine, Head};
     let canonical = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
@@ -435,7 +436,9 @@ fn analysis_key(ws: &Workspace, dir: &std::path::Path) -> Option<(PathBuf, Strin
     if main.is_some() && main == window_main {
         return Some((worktree, branch));
     }
-    let name = worktree
+    let name = main
+        .as_deref()
+        .unwrap_or(&worktree)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
