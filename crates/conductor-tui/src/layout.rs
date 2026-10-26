@@ -20,6 +20,8 @@ pub enum Region {
     RevidereOrder,
     RevidereDiff,
     FleetList,
+    /// 一覧で選んだ行のブランチの変更ファイル。表示だけでフォーカスは持たない。
+    FleetChanges,
     /// 一覧で選んだセッション。
     FleetSession,
     StatusBar,
@@ -95,6 +97,9 @@ const REVIDERE_CLAUDE_PCT: u16 = 38;
 /// 一覧の列。1 本 1 行に題まで入る幅で頭打ちにし、残りは右の区画に回す。
 const FLEET_LIST_PCT: u16 = 45;
 const FLEET_LIST_MAX: u16 = 100;
+const FLEET_CHANGES_PCT: u16 = 40;
+/// これより低いと一覧の本文が数行しか残らないので、下区画を出さない。
+const FLEET_CHANGES_MIN_HEIGHT: u16 = 20;
 
 /// 幅の配分。フォーカスされた列が広がるアコーディオン。
 pub fn layout(ws: &Workspace, area: Rect) -> Layout {
@@ -139,10 +144,19 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     // 読みながら Claude に訊くのが主な使い方なので、右端は常に Claude。
     if ws.chrome.fleet_open {
         let list_w = (main.width * FLEET_LIST_PCT / 100).min(FLEET_LIST_MAX);
-        regions.push((
-            Region::FleetList,
-            Rect::new(main.x, main.y, list_w, main.height),
-        ));
+        let changes_h = if main.height >= FLEET_CHANGES_MIN_HEIGHT {
+            main.height * FLEET_CHANGES_PCT / 100
+        } else {
+            0
+        };
+        let list_h = main.height - changes_h;
+        regions.push((Region::FleetList, Rect::new(main.x, main.y, list_w, list_h)));
+        if changes_h > 0 {
+            regions.push((
+                Region::FleetChanges,
+                Rect::new(main.x, main.y + list_h, list_w, changes_h),
+            ));
+        }
         regions.push((
             Region::FleetSession,
             Rect::new(main.x + list_w, main.y, main.width - list_w, main.height),

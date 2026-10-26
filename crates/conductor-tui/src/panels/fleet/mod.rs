@@ -3,6 +3,7 @@
 //! 状態は Claude Code が自分で書く状態ファイルから取り、この窓のセッションとは会話の id で
 //! 突き合わせる。この窓のセッションの行はパネルの id で持つ — 会話の id は `/clear` で変わる。
 
+pub mod changes;
 pub mod render;
 
 use std::collections::{BTreeSet, HashMap};
@@ -212,6 +213,7 @@ pub struct FleetPanel {
     opening_page: bool,
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, bool, Option<Selected>)>,
+    pub changes: changes::BranchChanges,
 }
 
 impl FleetPanel {
@@ -220,8 +222,10 @@ impl FleetPanel {
     }
 
     pub fn note_spawned(&mut self, task: &crate::task::Task) {
-        if matches!(task, crate::task::Task::FleetStatus { .. }) {
-            self.polling = true;
+        match task {
+            crate::task::Task::FleetStatus { .. } => self.polling = true,
+            crate::task::Task::FleetChanges { .. } => self.changes.note_fetching(),
+            _ => {}
         }
     }
 
@@ -230,6 +234,7 @@ impl FleetPanel {
         self.polling = false;
         self.inspecting = None;
         self.opening_page = false;
+        self.changes.forget_in_flight();
     }
 
     /// 会話ログを読み直さなくていいもの。会話の id → 前に読んだときの mtime。
@@ -302,7 +307,7 @@ impl FleetPanel {
     }
 
     /// 選んだ worktree、選んだセッションの worktree (外の端末はその cwd)。
-    fn selected_dir(&self) -> Option<PathBuf> {
+    pub fn selected_dir(&self) -> Option<PathBuf> {
         match &self.selected {
             Some(Selected::Worktree(path)) => Some(path.clone()),
             Some(Selected::Session(..)) => self.selected_row().map(|row| {

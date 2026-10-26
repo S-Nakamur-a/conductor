@@ -447,8 +447,8 @@ the two whole-repository walks behind the Explorer 1.8s (the file-name index) an
 than results return piles up one thread per second — measured 476 threads at 303%
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
-under one guard), and the per-worktree change counts; each one grew this same hole
-independently.
+under one guard), the per-worktree change counts, and the Sessions list's
+`poll_fleet_changes`; each one grew this same hole independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
 channel, so `PtyStore` (the mirror of the PTY host's screens) lives in svc and the
@@ -511,6 +511,15 @@ so whichever region shows that session draws it, and a region showing another on
 live. Host notifications (Claude's
 state, session ids) are sent with `send_watch_unscoped` so a repository switch does
 not drop them; every other watch event keeps its generation.
+
+Under the list, `Region::FleetChanges` shows the Git Changes of the
+selected line's worktree (`FleetPanel::selected_dir`, derived the same way), read on a
+worker against *that* repository's default branch — another repository's base is not
+the window's `main_branch`. It holds no focus. A result is kept only if its dir is still
+the one selected, because two worktrees on the same base have equal `DiffSource`s, and
+the region draws nothing but `loading…` until the selected dir's own result lands. The
+diff is the Explorer's own, warming included: on a repository no window has open, its
+`git status` can still take the warming turn (`status_map.rs`) and write that index.
 
 ### Key modules
 

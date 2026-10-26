@@ -1,6 +1,7 @@
 //! 画面全体の状態。旧 App の代わりだが、パネルの update はここを受け取らない。
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use conductor_core::config::{self, Config};
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
@@ -451,6 +452,14 @@ impl Workspace {
                 }
                 effects
             }
+            TaskResult::FleetChanges { dir, diff, status } => {
+                let fleet = &mut self.panels.fleet;
+                let target = fleet.selected_dir();
+                fleet
+                    .changes
+                    .install(dir, *diff, status, target.as_deref(), Instant::now());
+                Vec::new()
+            }
             TaskResult::BranchPageOpened(opened) => {
                 self.panels.fleet.note_page_opened();
                 vec![match opened {
@@ -884,6 +893,12 @@ impl Workspace {
             .terminal
             .sync_sizes(layout, fleet_session.as_deref());
         self.panels.revidere.sync_layout(layout);
+        if let Some(rect) = layout.rect(crate::layout::Region::FleetChanges) {
+            self.panels
+                .fleet
+                .changes
+                .set_viewport(crate::list::Viewport::inside(rect, 0));
+        }
         let modal = crate::render::comment_list_rect(layout.area);
         for open in &mut self.modals {
             if let Modal::CommentList(list) = open {

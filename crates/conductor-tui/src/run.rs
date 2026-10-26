@@ -215,6 +215,7 @@ pub fn run(
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
         poll_fleet(ws, svc, &mut fleet_poll, Instant::now());
+        poll_fleet_changes(ws, svc, Instant::now());
         dirty |= ws.fx.tick();
 
         if ws.should_quit {
@@ -396,6 +397,16 @@ fn poll_fleet(ws: &mut Workspace, svc: &mut Services<TaskResult>, timer: &mut Ti
     }
     let task = fleet_status_task(ws);
     apply(ws, svc, vec![Effect::Spawn(task)]);
+}
+
+fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: Instant) {
+    if !ws.chrome.fleet_open {
+        return;
+    }
+    let fleet = &ws.panels.fleet;
+    if let Some(dir) = fleet.changes.wanted(fleet.selected_dir(), now) {
+        apply(ws, svc, vec![Effect::Spawn(Task::FleetChanges { dir })]);
+    }
 }
 
 /// この窓で開いた repo は、セッションが無くても木を引く。
@@ -857,6 +868,7 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::RevidereOrder | Region::RevidereDiff => Some(Focus::Revidere),
         Region::FleetList => Some(Focus::Fleet),
         Region::FleetSession => Some(Focus::FleetSession),
+        Region::FleetChanges => None,
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
 }
@@ -2436,6 +2448,149 @@ needle here
             modifiers: KeyModifiers::NONE,
         };
         on_mouse(ws, svc, l, click);
+    }
+
+    #[test]
+    fn 低い窓では変更の区画を出さず一覧が全部取る() {
+        let (_, _, low) = fleet_listing(Vec::new(), 22);
+        assert_eq!(low.rect(Region::FleetChanges), None);
+        assert_eq!(low.rect(Region::FleetList).unwrap().height, low.main.height);
+        let (_, _, tall) = fleet_listing(Vec::new(), 40);
+        let list = tall.rect(Region::FleetList).unwrap();
+        let changes = tall.rect(Region::FleetChanges).unwrap();
+        assert_eq!(list.height + changes.height, tall.main.height);
+        assert_eq!(changes.y, list.bottom());
+    }
+
+    #[test]
+    fn 変更の区画で縮んだ一覧でも_plus_は押した行の起動メニューを開く() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_listing(Vec::new(), 24);
+        assert!(l.rect(Region::FleetChanges).is_some());
+        click_button(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Worktree(w) if w.label == "feature/b"),
+        );
+        assert!(matches!(ws.modals.last(), Some(Modal::Popup(_))));
+    }
+
+    #[test]
+    fn 変更の区画を押してもキーボードは動かない() {
+        for focus in [Focus::Fleet, Focus::FleetSession] {
+            let (mut ws, mut svc, l) = fleet_with_tree();
+            ws.focus = focus;
+            let rect = l.rect(Region::FleetChanges).unwrap();
+            let click = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: rect.x + 3,
+                row: rect.y + 2,
+                modifiers: KeyModifiers::NONE,
+            };
+            on_mouse(&mut ws, &mut svc, &l, click);
+            assert_eq!(ws.focus, focus);
+        }
+    }
+
+    fn drawn_changes(ws: &mut Workspace, l: &Layout) -> String {
+        ws.sync_layout(l);
+        let rect = l.rect(Region::FleetChanges).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(l.area.width, l.area.height)).unwrap();
+        terminal
+            .draw(|frame| crate::panels::fleet::render::changes(frame, rect, ws))
+            .unwrap();
+        format!("{:?}", terminal.backend().buffer())
+    }
+
+    #[test]
+    fn 選び直した行の結果が届くまで前の行の一覧を出さず_loading_を出す() {
+        use conductor_core::diff_state::{DiffSource, DiffState};
+        let (mut ws, _svc, l) = fleet_with_tree();
+        let mut diff = DiffState::new(DiffSource::working_tree("main"));
+        diff.error = Some("app-main-only".into());
+        ws.accept(TaskResult::FleetChanges {
+            dir: PathBuf::from("/r/app"),
+            diff: Box::new(diff),
+            status: Default::default(),
+        });
+        assert!(drawn_changes(&mut ws, &l).contains("app-main-only"));
+        ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        assert_eq!(
+            ws.panels.fleet.selected_dir(),
+            Some(PathBuf::from("/r/app-b"))
+        );
+        let after = drawn_changes(&mut ws, &l);
+        assert!(!after.contains("app-main-only"), "{after}");
+        assert!(after.contains("loading"), "{after}");
+        assert_eq!(
+            crate::panels::fleet::render::changes_title(&ws),
+            " Git Changes "
+        );
+    }
+
+    #[test]
+    fn 一覧を閉じている間は変更を読まない() {
+        let (mut ws, mut svc, _) = fleet_with_tree();
+        ws.chrome.fleet_open = false;
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 0);
+        ws.chrome.fleet_open = true;
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 1);
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 1, "投げ中に 2 本目を投げた");
+    }
+
+    #[test]
+    fn 据えた結果のファイルと増減が区画と題に出る() {
+        use conductor_core::diff_state::{DiffSource, DiffState, FileDiff, FileStatus};
+        let (mut ws, _svc, l) = fleet_with_tree();
+        let mut diff = DiffState::new(DiffSource::working_tree("main"));
+        diff.files.push(FileDiff {
+            path: "src/lib.rs".into(),
+            status: FileStatus::Modified,
+            added_lines: 7,
+            deleted_lines: 2,
+            hunks: Vec::new(),
+        });
+        diff.rebuild_display_list();
+        ws.accept(TaskResult::FleetChanges {
+            dir: PathBuf::from("/r/app"),
+            diff: Box::new(diff),
+            status: Default::default(),
+        });
+        let drawn = drawn_changes(&mut ws, &l);
+        assert!(drawn.contains("lib.rs"), "{drawn}");
+        assert!(drawn.contains("+7"), "{drawn}");
+        assert_eq!(
+            crate::panels::fleet::render::changes_title(&ws),
+            " Git Changes (1) +7 -2 "
+        );
+    }
+
+    #[test]
+    fn 選択が戻った後に届いた前の行の結果は戻った行の一覧を消さない() {
+        use conductor_core::diff_state::{DiffSource, DiffState};
+        use conductor_core::keymap::Action;
+        let land = |ws: &mut Workspace, dir: &str, marker: &str| {
+            let mut diff = DiffState::new(DiffSource::working_tree("main"));
+            diff.error = Some(marker.into());
+            let effects = ws.accept(TaskResult::FleetChanges {
+                dir: PathBuf::from(dir),
+                diff: Box::new(diff),
+                status: Default::default(),
+            });
+            assert!(effects.is_empty(), "読み直すたびに帯へ出る: {effects:?}");
+        };
+        let (mut ws, _svc, l) = fleet_with_tree();
+        ws.dispatch_to(Focus::Fleet, Action::NavigateDown);
+        land(&mut ws, "/r/app-b", "b-only");
+        ws.dispatch_to(Focus::Fleet, Action::NavigateUp);
+        ws.dispatch_to(Focus::Fleet, Action::NavigateDown);
+        land(&mut ws, "/r/app", "a-only");
+        let drawn = drawn_changes(&mut ws, &l);
+        assert!(drawn.contains("b-only"), "{drawn}");
     }
 
     fn click_button(
