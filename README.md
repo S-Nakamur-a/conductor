@@ -136,9 +136,9 @@ press **K** until it stops moving.
 **W** (Shift+w) asks revidere to review the selected line's worktree (on a session's
 line, the worktree it runs in), after a `y` (or ← then Enter; any other key cancels). The
 worktree's line then shows `review…` while it runs and `review ✓` (or `review ✗` if it
-failed) once it ends. These marks last until the window closes or switches repository,
-which also stops a review still running; open the review itself from that worktree's
-screen.
+failed) once it ends. These marks last until the window closes; switching repository
+stops a review still running (its `review…` mark goes, ✓ and ✗ stay). Open the review
+itself from that worktree's screen.
 
 The list's bottom row names the keys that work on the selected line. **D** (Shift+d)
 stops that session, wherever it runs, after asking. A `y` answers yes — upper case,
