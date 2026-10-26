@@ -12,7 +12,9 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::Action;
 
-use super::{Ask, FleetPanel, Place, Row, RowKey, State, Worktree};
+use super::{Ask, FleetPanel, Inspection, Place, Row, RowKey, State, Worktree};
+use crate::effect::Effect;
+use crate::modal::Confirm;
 use crate::workspace::{Focus, Workspace};
 
 const UNTITLED: &str = "(まだ何も頼んでいない)";
@@ -284,6 +286,11 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
         ],
+        None if ws.panels.fleet.selected_worktree().is_some() => &[
+            (Action::NewSessionMenu, "新しいセッション"),
+            (Action::StopSession, "worktree を消す"),
+            (Action::ExitSubPanel, "閉じる"),
+        ],
         None => &[
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
@@ -294,6 +301,47 @@ pub fn hint(ws: &Workspace) -> String {
         .filter_map(|(action, label)| chord(*action).map(|key| format!("{key} {label}")))
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+/// 失うもの (未コミット、入っていないコミット、止まるセッション) を数えて見せる。数えられなかったものは
+/// 0 と名乗らせない。
+pub(super) fn delete_confirm(inspection: Inspection) -> Confirm {
+    let check = &inspection.check;
+    let label = clip(&inspection.label, 30);
+    let question = match (&check.branch, check.keeps_branch) {
+        (Some(_), false) => format!("worktree '{label}' とブランチを消す?"),
+        (Some(_), true) => format!("worktree '{label}' を消す? (ブランチは残す)"),
+        (None, _) => format!("worktree '{label}' を消す?"),
+    };
+    let mut detail = Vec::new();
+    match check.dirty {
+        Some(0) => {}
+        Some(n) => detail.push(format!("未コミットの変更 {n} 件は失われる")),
+        None => detail.push("未コミットの変更を確かめられなかった (あれば失われる)".into()),
+    }
+    match (check.unmerged, &check.base) {
+        (Some(0), _) => {}
+        (Some(n), Some(base)) => detail.push(format!(
+            "{base} に入っていないコミット {n} 個 (squash で merge した PR もここに出る)"
+        )),
+        _ => detail.push("どこにも入っていないコミットがあるか確かめられなかった".into()),
+    }
+    let outside = inspection.claudes.iter().filter(|c| !c.own).count();
+    let claudes = inspection.claudes.len();
+    detail.push(match (claudes, inspection.shells) {
+        (0, 0) => "止まるセッションは無い".to_string(),
+        (c, 0) => format!("止まる Claude {c} 本 (うちこの窓の外 {outside} 本)"),
+        (0, s) => format!("止まるシェル {s} 本 (ここで開いたもの)"),
+        (c, s) => format!("止まる Claude {c} 本 (うちこの窓の外 {outside} 本)、シェル {s} 本"),
+    });
+    detail.into_iter().fold(
+        Confirm::yes_only(
+            question,
+            vec![Effect::DeleteFleetWorktree(Box::new(inspection))],
+        )
+        .title("Delete worktree"),
+        Confirm::detail,
+    )
 }
 
 pub(super) fn stop_question(row: &Row) -> String {

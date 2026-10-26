@@ -160,7 +160,11 @@ with no window open, and the window opened later showed it mid-tool.
   deleting its worktree, and **Repo ▸ Quit and Stop Sessions**. The list's **D** takes
   the tab-closing path for this window's sessions; any other Claude gets SIGTERM, then
   SIGKILL after 3s, and only while `<pid>.json` and the process start time still name
-  the process the list read (`registry::stop`). Editors are the exception and die
+  the process the list read (`registry::stop`). **D on a worktree line** stops every
+  Claude whose canonical cwd is inside it, whichever window holds it, and deletes only
+  after each has ended — `registry::stop` answers AlreadyGone when it merely cannot
+  match the record, so `task.rs`'s `fleet_delete` asks `ended_within` itself — and after
+  a second `deletion_check` finds nothing the confirmation did not show. Editors are the exception and die
   with the window that opened them. The host exits
   once it has had no sessions and no window for 3s. **A host of another version is
   kept while it has sessions** (the status bar says so) and is told to `Shutdown`

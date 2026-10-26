@@ -1,12 +1,103 @@
 //! ブランチと worktree の削除、消えた worktree エントリの整理。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use super::GitEngine;
 
+/// 消す前に確認文へ出すもの。消す直前にもう一度数え、増えていたら消さない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletionCheck {
+    /// git の記録にある綴りのパス。消すときはこれを渡す。
+    pub recorded: PathBuf,
+    /// 切り離した HEAD とコミットの無いブランチでは None。
+    pub branch: Option<String>,
+    /// 既定ブランチを checkout している worktree。ブランチは消さずに残す。
+    pub keeps_branch: bool,
+    pub head: Option<String>,
+    /// 入っていないコミットを数えた相手 (origin/main など)。
+    pub base: Option<String>,
+    pub unmerged: Option<usize>,
+    pub dirty: Option<usize>,
+}
+
+/// 何も止めないうちに断る理由。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    Main,
+    NotRegistered,
+    Locked,
+    Nested(PathBuf),
+}
+
 impl GitEngine {
+    /// path (canonicalize 済み) の linked worktree を消してよいかを調べる。
+    pub fn deletion_check(
+        &self,
+        path: &Path,
+    ) -> Result<std::result::Result<DeletionCheck, Refusal>> {
+        let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        if canonical(&self.main_worktree_path()?) == path {
+            return Ok(Err(Refusal::Main));
+        }
+        let mut target = None;
+        let mut nested = None;
+        for name in self.repo.worktrees()?.iter().flatten() {
+            let Ok(wt) = self.repo.find_worktree(name) else {
+                continue;
+            };
+            let at = canonical(wt.path());
+            if at == path {
+                target = Some(wt);
+            } else if at.starts_with(path) {
+                nested = Some(at);
+            }
+        }
+        let Some(wt) = target else {
+            return Ok(Err(Refusal::NotRegistered));
+        };
+        if let Some(inner) = nested {
+            return Ok(Err(Refusal::Nested(inner)));
+        }
+        if !matches!(wt.is_locked(), Ok(git2::WorktreeLockStatus::Unlocked)) {
+            return Ok(Err(Refusal::Locked));
+        }
+        let repo = git2::Repository::open(wt.path())?;
+        let head = repo.head().ok();
+        let branch = head
+            .as_ref()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand())
+            .map(String::from);
+        let head_oid = head.as_ref().and_then(|h| h.target());
+        let default = self.default_branch();
+        let base = [format!("origin/{default}"), default.clone()]
+            .into_iter()
+            .find(|name| self.repo.revparse_single(name).is_ok());
+        let unmerged = match (head_oid, &base) {
+            (None, _) => Some(0),
+            (Some(oid), Some(base)) => self.commits_not_in(oid, base).ok(),
+            (Some(_), None) => None,
+        };
+        Ok(Ok(DeletionCheck {
+            recorded: wt.path().to_path_buf(),
+            keeps_branch: branch.as_deref() == Some(default.as_str()),
+            branch,
+            head: head_oid.map(|oid| oid.to_string()),
+            base,
+            unmerged,
+            dirty: Self::change_counts_at(wt.path()).ok().map(|c| c.total()),
+        }))
+    }
+
+    fn commits_not_in(&self, head: git2::Oid, base: &str) -> Result<usize> {
+        let mut walk = self.repo.revwalk()?;
+        walk.push(head)?;
+        walk.hide(self.repo.revparse_single(base)?.peel_to_commit()?.id())?;
+        Ok(walk.count())
+    }
+
     /// ローカルブランチを削除する。force は `git branch -D` に相当。
     pub fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
         let mut branch = self

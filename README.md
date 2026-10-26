@@ -137,6 +137,21 @@ sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still
 records its start time in a form conductor does not read yet, so **D** cannot stop a
 session elsewhere there: it reports the session as already ended and leaves it running.
 
+**D** on a worktree's line deletes that worktree and its branch. It first checks the
+worktree, then asks — but only if the list still has the keyboard and the same line is
+selected when the check returns; otherwise it says so and you press D again. The
+question counts what is lost: uncommitted changes, commits not on `origin/<default
+branch>` (a squash-merged pull request shows here too), and the sessions that will stop
+— every Claude whose working directory is inside the worktree, in this window or not,
+and the shells this window opened there. On yes it closes this window's tabs, stops the
+other Claudes the same way **D** stops one, and deletes only after each has ended and a
+second count finds no new commit, no more uncommitted changes and no newly started
+Claude; otherwise nothing is deleted. It refuses up front, stopping nothing, for the main
+worktree, a directory git does not list as a worktree, a locked worktree, one with
+another worktree inside it, one with an editor open in it, the worktree this window has
+open as its repository, and while an AI review runs on its branch. A worktree on the
+default branch is deleted but the branch is kept.
+
 ### Keybindings
 
 Press **?** in the app for the full list; **Ctrl+p** (or **:** outside a

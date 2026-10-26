@@ -54,6 +54,14 @@ pub enum Effect {
     EnterSession(crate::panels::fleet::RowKey),
     /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
     StopFleetSession(crate::panels::fleet::StopTarget),
+    /// 一覧で選んだ worktree を消す前に、消せるかと失うものを worker で調べる。
+    InspectFleetWorktree {
+        repo: PathBuf,
+        path: PathBuf,
+        label: String,
+    },
+    /// 確認で y が押された。中のセッションを止め、点検のときから増えていなければ消す。
+    DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
     NewSession(SessionKind),
     NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す (窓の repo に作る)。Prompt の on_submit は関数
@@ -264,6 +272,18 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             }
             Effect::EnterSession(key) => queue.extend(enter_session(ws, svc, key)),
             Effect::StopFleetSession(target) => queue.extend(stop_fleet_session(ws, target)),
+            Effect::InspectFleetWorktree { repo, path, label } => {
+                queue.push_back(Effect::Spawn(Task::InspectFleetWorktree {
+                    repo,
+                    path,
+                    label,
+                    own: ws.panels.terminal.own_ptys(),
+                    window_root: ws.repo.root.clone(),
+                }));
+            }
+            Effect::DeleteFleetWorktree(inspection) => {
+                queue.extend(delete_fleet_worktree(ws, *inspection));
+            }
             Effect::Status(level, text) => {
                 ws.chrome.status = Some(StatusMessage {
                     level,
@@ -358,6 +378,34 @@ fn stop_fleet_session(ws: &mut Workspace, target: crate::panels::fleet::StopTarg
     } else {
         Effect::Status(StatusLevel::Info, "That session had already ended.".into())
     }]
+}
+
+/// この窓のタブはここで閉じ、外のプロセスの停止と、終わりの確認と、消すのは worker に任せる。
+fn delete_fleet_worktree(
+    ws: &mut Workspace,
+    inspection: crate::panels::fleet::Inspection,
+) -> Vec<Effect> {
+    // 解析は止めても成果物を書きに戻るので、消した dir が作り直される。
+    let analysing = inspection.in_window_repo
+        && inspection
+            .check
+            .branch
+            .as_deref()
+            .is_some_and(|branch| ws.panels.revidere.is_running(branch));
+    if analysing {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            "An AI review is running in that worktree; delete it after the review ends.".into(),
+        )];
+    }
+    ws.panels.terminal.close_sessions(&inspection.panels);
+    let own = ws.panels.terminal.own_claude_sessions();
+    for id in &inspection.panels {
+        ws.panels.fleet.forget_stopped(id, own.clone());
+    }
+    vec![Effect::Spawn(Task::DeleteFleetWorktree(Box::new(
+        inspection,
+    )))]
 }
 
 /// 今の repo が git でなければ別の repo とみなす。
@@ -695,6 +743,55 @@ mod tests {
                 [Effect::Spawn(Task::StopSession { pid: 9, started: s })] if *s == started
             ),
             "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn そのブランチの_ai_レビューが走っていれば_worktree_を消さない() {
+        let inspection = || crate::panels::fleet::Inspection {
+            repo: "/r".into(),
+            path: "/r-a".into(),
+            label: "feature/a".into(),
+            check: conductor_core::git_engine::DeletionCheck {
+                recorded: "/r-a".into(),
+                branch: Some("feature/a".into()),
+                keeps_branch: false,
+                head: None,
+                base: None,
+                unmerged: Some(0),
+                dirty: Some(0),
+            },
+            claudes: Vec::new(),
+            panels: Vec::new(),
+            shells: 0,
+            in_window_repo: true,
+        };
+        let mut ws = Workspace::for_test();
+        let idle = delete_fleet_worktree(&mut ws, inspection());
+        assert!(
+            matches!(
+                idle.as_slice(),
+                [Effect::Spawn(Task::DeleteFleetWorktree(_))]
+            ),
+            "{idle:?}"
+        );
+
+        ws.panels.revidere.note_spawned(&Task::Analyze {
+            worktree: "/r-a".into(),
+            branch: "feature/a".into(),
+            scope: Default::default(),
+            force: false,
+            api: Default::default(),
+            review: Default::default(),
+            cancel: Default::default(),
+        });
+        let analysing = delete_fleet_worktree(&mut ws, inspection());
+        assert!(
+            matches!(
+                analysing.as_slice(),
+                [Effect::Status(StatusLevel::Warning, _)]
+            ),
+            "{analysing:?}"
         );
     }
 }

@@ -1286,3 +1286,98 @@ fn worktree_heads_はdirの消えたworktreeを飛ばす() {
         .collect();
     assert_eq!(paths, [repo.path.canonicalize().unwrap()]);
 }
+
+fn checked(repo: &TestRepo, path: &Path) -> std::result::Result<DeletionCheck, Refusal> {
+    repo.engine().deletion_check(&canonical(path)).unwrap()
+}
+
+#[test]
+fn 消す前の点検は_main_と記録に無い_dir_と_lock_中と入れ子を断る() {
+    let repo = TestRepo::with_base_commit();
+    let wt = repo.linked_worktree("wt");
+    assert_eq!(checked(&repo, &repo.path), Err(Refusal::Main));
+
+    let stray = repo.path.parent().unwrap().join("stray");
+    fs::create_dir_all(&stray).unwrap();
+    assert_eq!(checked(&repo, &stray), Err(Refusal::NotRegistered));
+
+    let inner_path = wt.path.join("inner");
+    repo.repo
+        .branch(
+            "inner",
+            &repo.repo.head().unwrap().peel_to_commit().unwrap(),
+            false,
+        )
+        .unwrap();
+    let inner_ref = repo.repo.find_reference("refs/heads/inner").unwrap();
+    let inner = repo
+        .repo
+        .worktree(
+            "inner",
+            &inner_path,
+            Some(git2::WorktreeAddOptions::new().reference(Some(&inner_ref))),
+        )
+        .unwrap();
+    assert_eq!(
+        checked(&repo, &wt.path),
+        Err(Refusal::Nested(canonical(&inner_path)))
+    );
+
+    inner.lock(Some("test")).unwrap();
+    assert_eq!(checked(&repo, &inner_path), Err(Refusal::Locked));
+}
+
+#[test]
+fn 消す前の点検は未コミットと既定ブランチに入っていないコミットを数える() {
+    let repo = TestRepo::with_base_commit();
+    let wt = repo.linked_worktree("wt");
+    let clean = checked(&repo, &wt.path).unwrap();
+    assert_eq!(
+        (
+            clean.branch.as_deref(),
+            clean.keeps_branch,
+            clean.base.as_deref()
+        ),
+        (Some("wt"), false, Some("main"))
+    );
+    assert_eq!((clean.unmerged, clean.dirty), (Some(0), Some(0)));
+
+    wt.file("f.txt", "1\n").add("f.txt").commit("one");
+    wt.file("g.txt", "2\n").add("g.txt").commit("two");
+    wt.file("dirty.txt", "x\n");
+    let ahead = checked(&repo, &wt.path).unwrap();
+    assert_eq!((ahead.unmerged, ahead.dirty), (Some(2), Some(1)));
+    assert_eq!(ahead.head, Some(wt.tip("wt").to_string()));
+
+    repo.remote_ref("origin/main", wt.tip("wt"));
+    let pushed = checked(&repo, &wt.path).unwrap();
+    assert_eq!(
+        (pushed.base.as_deref(), pushed.unmerged),
+        (Some("origin/main"), Some(0))
+    );
+}
+
+#[test]
+fn 既定ブランチを持つ_worktree_はブランチを残し_切り離した_head_はブランチを持たない() {
+    let repo = TestRepo::with_base_commit();
+    repo.branch("dev");
+    let on_main = repo.path.parent().unwrap().join("on-main");
+    let main_ref = repo.repo.find_reference("refs/heads/main").unwrap();
+    repo.repo
+        .worktree(
+            "on-main",
+            &on_main,
+            Some(git2::WorktreeAddOptions::new().reference(Some(&main_ref))),
+        )
+        .unwrap();
+    let keeps = checked(&repo, &on_main).unwrap();
+    assert_eq!(
+        (keeps.branch.as_deref(), keeps.keeps_branch),
+        (Some("main"), true)
+    );
+
+    let wt = repo.linked_worktree("wt");
+    wt.repo.set_head_detached(wt.tip("wt")).unwrap();
+    let detached = checked(&repo, &wt.path).unwrap();
+    assert_eq!((detached.branch, detached.keeps_branch), (None, false));
+}
