@@ -401,11 +401,10 @@ impl Workspace {
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
             Focus::Revidere => panels.revidere.update(action, &ctx),
-            Focus::FleetSession => panels
+            Focus::Fleet | Focus::FleetSession => panels
                 .terminal
                 .update(action, &ctx)
                 .or_else(|| panels.fleet.update(action, &ctx)),
-            Focus::Fleet => panels.fleet.update(action, &ctx),
             _ => None,
         }
     }

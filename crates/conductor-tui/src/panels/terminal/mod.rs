@@ -454,13 +454,17 @@ impl TerminalPanel {
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         let shown = match ctx.focus {
-            Focus::FleetSession => ctx.fleet_session.clone(),
+            Focus::FleetSession | Focus::Fleet => ctx.fleet_session.clone(),
             focus => self.session_in(focus),
         };
+        // 一覧ごと閉じると、同じセッションを映す Claude 区画が読みビューのまま開いてキーを飲む。
+        if ctx.focus == Focus::Fleet {
+            return (action == Action::ExitSubPanel && self.reading(shown.as_deref()))
+                .then(|| self.close_transcript());
+        }
         if self.reading(shown.as_deref()) {
             return self.transcript_action(action, ctx);
         }
-        // 一覧の右で引き受けるのはスクロールだけ。残りは一覧の解釈に任せる。
         let scrolling = matches!(
             action,
             Action::ScrollbackUp
@@ -681,7 +685,6 @@ impl TerminalPanel {
     }
 
     /// チップを踏んでいたら最新へ飛ぶ。踏んでいなければ何もしない。
-    /// area は区画が映している中身の範囲で、session はそこに映っているセッション。
     pub fn transcript_click(&mut self, area: Rect, session: Option<&str>, x: u16, y: u16) -> bool {
         let Some(reflow) = self
             .transcript
@@ -702,7 +705,6 @@ impl TerminalPanel {
     }
 
     /// 端末区画のホイール。子プロセスへ渡す座標が要るので区画ごと受け取る。
-    /// fleet_session は一覧の右に映っているセッションで、その区画のときだけ読む。
     pub fn wheel(
         &mut self,
         region: Region,
@@ -2093,10 +2095,121 @@ mod tests {
             Some("CC:9"),
         );
 
-        while panel.transcript.is_some() {
+        for _ in 0..50 {
             panel.wheel(Region::FleetSession, rect, 5, 5, 3, Some("CC:9".into()));
         }
+        assert!(panel.transcript.is_none(), "下へ回し続けても閉じない");
         assert_eq!(panel.claude.scroll, 4);
+    }
+
+    fn esc(modifiers: crossterm::event::KeyModifiers) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, modifiers)
+    }
+
+    #[test]
+    fn 一覧の右で読んでいる間のescは読みビューを閉じてフォーカスは右のまま() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, id) = fleet_showing_shell(&mut ws, &mut svc);
+        open_for(&mut ws.panels.terminal, &id);
+        ws.focus = Focus::FleetSession;
+
+        crate::run::on_key(&mut ws, &mut svc, esc(crossterm::event::KeyModifiers::NONE));
+
+        assert!(ws.panels.terminal.transcript.is_none());
+        assert_eq!(ws.focus, Focus::FleetSession);
+    }
+
+    #[test]
+    fn 一覧にフォーカスを置いたまま右で読んでいる間のescは一覧を閉じずに読みビューを閉じる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, id) = fleet_showing_shell(&mut ws, &mut svc);
+        open_for(&mut ws.panels.terminal, &id);
+        ws.focus = Focus::Fleet;
+
+        crate::run::on_key(&mut ws, &mut svc, esc(crossterm::event::KeyModifiers::NONE));
+
+        assert!(ws.panels.terminal.transcript.is_none());
+        assert!(ws.chrome.fleet_open, "読みビューより先に一覧が閉じた");
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 一覧にフォーカスを置いたまま右が別のセッションをライブで映していればescは一覧を閉じる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, _) = fleet_showing_shell(&mut ws, &mut svc);
+        open_for(&mut ws.panels.terminal, "CC:9");
+        ws.focus = Focus::Fleet;
+
+        crate::run::on_key(&mut ws, &mut svc, esc(crossterm::event::KeyModifiers::NONE));
+
+        assert!(!ws.chrome.fleet_open);
+        assert!(
+            ws.panels.terminal.transcript.is_some(),
+            "映していない読みビューを閉じた"
+        );
+    }
+
+    #[test]
+    fn 一覧の右のキーはclaude区画ではなく右に映すセッションのログを開きに行く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, _) = fleet_showing_shell(&mut ws, &mut svc);
+        ws.panels.terminal.claude.session = Some("CC:elsewhere".into());
+        ws.focus = Focus::FleetSession;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        crate::run::on_key(&mut ws, &mut svc, key);
+
+        assert_eq!(
+            status_text(&ws),
+            "this panel has not reported its session id yet"
+        );
+    }
+
+    fn drawn_text(draw: impl FnOnce(&mut ratatui::Frame)) -> String {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 20)).unwrap();
+        terminal.draw(draw).unwrap();
+        let buffer = terminal.backend().buffer();
+        buffer.content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn 一覧の右は映しているセッションの読みビューを描く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, id) = fleet_showing_shell(&mut ws, &mut svc);
+        let rect = Rect::new(0, 0, 60, 20);
+        let content = render::editor_area(rect);
+        ws.panels.terminal.fleet_size = (content.height, content.width);
+        open_for(&mut ws.panels.terminal, &id);
+        ws.prepare();
+
+        let text = drawn_text(|frame| render::fleet(frame, rect, &ws, &id));
+        assert!(text.contains("turn 29"), "{text}");
+    }
+
+    #[test]
+    fn claude区画は別のセッションの読みビューを描かない() {
+        let mut ws = Workspace::for_test();
+        let rect = Rect::new(0, 0, 60, 20);
+        ws.panels.terminal.claude.size = (render::content_area(rect).height, 58);
+        open_for(&mut ws.panels.terminal, "CC:9");
+        ws.prepare();
+
+        ws.panels.terminal.claude.session = Some("CC:other".into());
+        let other = drawn_text(|frame| render::pane(frame, rect, &ws, Region::TerminalClaude));
+        assert!(!other.contains("turn"), "{other}");
+
+        ws.panels.terminal.claude.session = Some("CC:9".into());
+        let same = drawn_text(|frame| render::pane(frame, rect, &ws, Region::TerminalClaude));
+        assert!(same.contains("turn 29"), "{same}");
     }
 
     #[test]
