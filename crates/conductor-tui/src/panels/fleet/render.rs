@@ -15,6 +15,7 @@ use conductor_core::keymap::Action;
 use super::{Ask, FleetPanel, Inspection, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
 use crate::modal::Confirm;
+use crate::panels::revidere::Badge;
 use crate::workspace::{Focus, Workspace};
 
 const UNTITLED: &str = "(まだ何も頼んでいない)";
@@ -187,6 +188,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     lines.push(worktree_line(
                         theme,
                         worktree,
+                        ws.panels.revidere.badge(&worktree.path),
                         inner.width,
                         selected,
                         focused,
@@ -282,18 +284,21 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
+            (Action::AnalyzeRevidere, "レビュー"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
+            (Action::AnalyzeRevidere, "レビュー"),
         ],
         None if fleet.selected_worktree().is_some() => &[
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::StopSession, "worktree を消す"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
+            (Action::AnalyzeRevidere, "レビュー"),
         ],
         None => &[
             (Action::NewSessionMenu, "新しいセッション"),
@@ -489,7 +494,7 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
                 format!("{label} "),
                 Style::default().fg(theme.hint),
             ));
-            spans.extend(bar(pct, 8, theme, theme.hint));
+            spans.extend(bar(pct, 8, theme));
             let mut text = format!(" {pct}%");
             if countdown {
                 text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
@@ -507,7 +512,8 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
         .collect()
 }
 
-fn bar(pct: u8, cells: usize, theme: &Theme, empty_fg: Color) -> Vec<Span<'static>> {
+/// 空きを hint で描くと、暗いテーマでは地に沈んで上限が見えない。
+fn bar(pct: u8, cells: usize, theme: &Theme) -> Vec<Span<'static>> {
     const PARTIAL: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
     let eighths = usize::from(pct.min(100)) * cells * 8 / 100;
     let (full, rest) = (eighths / 8, eighths % 8);
@@ -515,7 +521,7 @@ fn bar(pct: u8, cells: usize, theme: &Theme, empty_fg: Color) -> Vec<Span<'stati
     let empty = cells - full - usize::from(rest > 0);
     vec![
         Span::styled(filled, Style::default().fg(level(theme, pct))),
-        Span::styled("░".repeat(empty), Style::default().fg(empty_fg)),
+        Span::styled("░".repeat(empty), Style::default().fg(theme.fg)),
     ]
 }
 
@@ -615,23 +621,30 @@ fn tag(place: Place) -> &'static str {
 fn worktree_line(
     theme: &Theme,
     worktree: &Worktree,
+    badge: Option<Badge>,
     width: u16,
     selected: bool,
     focused: bool,
 ) -> Line<'static> {
-    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
+    let badge = badge.map(|badge| match badge {
+        Badge::Running => ("review…", theme.accent),
+        Badge::Ready => ("review ✓", theme.success),
+        Badge::Failed => ("review ✗", theme.error),
+    });
+    let badge_width = badge.map_or(0, |(text, _)| text.width() + 1);
+    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3)).saturating_sub(badge_width);
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
-    crate::list::row_line(
-        vec![
-            Span::styled(format!("  {label}"), Style::default().fg(theme.fg)),
-            Span::raw(" ".repeat(pad + 1)),
-            Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
-        ],
-        theme,
-        selected,
-        focused,
-    )
+    let mut spans = vec![
+        // repo の見出しと同じ色で、下に並ぶセッションの題と分ける。
+        Span::styled(format!("  {label}"), Style::default().fg(theme.info)),
+        Span::raw(" ".repeat(pad + 1)),
+    ];
+    if let Some((text, color)) = badge {
+        spans.push(Span::styled(format!("{text} "), Style::default().fg(color)));
+    }
+    spans.push(Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)));
+    crate::list::row_line(spans, theme, selected, focused)
 }
 
 fn row_line(
@@ -657,9 +670,7 @@ fn row_line(
     );
     let right: Vec<Span<'static>> = match (row.context_percent, row.context_tokens) {
         (Some(pct), _) => {
-            // 選んだ行の地は hint と近く、空きが溶けて上限が見えない。
-            let empty_fg = if selected { theme.fg } else { theme.hint };
-            let mut spans = bar(pct, 4, theme, empty_fg);
+            let mut spans = bar(pct, 4, theme);
             spans.push(Span::styled(
                 format!(" {pct}%"),
                 Style::default().fg(level(theme, pct)),

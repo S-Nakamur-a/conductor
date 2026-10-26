@@ -433,9 +433,11 @@ Options:
 /// 端末の背景色 (OSC11) を問い合わせ、設定が無ければ明暗に合うテーマへ切り替える。
 /// 応答を自分で stdin から読むので、呼ぶ場所はモジュール doc の順序制約に従う。
 fn apply_auto_theme(ws: &mut Workspace) {
-    let Some(lum) = term_caps::query_background_luminance() else {
+    let Some(rgb) = term_caps::query_background() else {
         return;
     };
+    ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(rgb.0, rgb.1, rgb.2));
+    let lum = term_caps::luminance(rgb);
     match term_caps::auto_theme_for_background(lum, ws.config.ui.theme.as_deref()) {
         // セッション限りの切り替え。テーマピッカーで上書きできる。
         Some(name) => ws.theme = Theme::from_name(name),

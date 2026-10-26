@@ -62,6 +62,8 @@ pub enum Effect {
     },
     /// 確認で y が押された。中のセッションを止め、点検のときから増えていなければ消す。
     DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
+    /// 一覧で選んだ worktree の AI レビューを、確認を挟んで始める。
+    AnalyzeFleetWorktree(PathBuf),
     NewSession(SessionKind),
     NewClaudeWithChrome,
     /// 自由記述のタスクを Smart Worktree に渡す (窓の repo に作る)。Prompt の on_submit は関数
@@ -280,6 +282,9 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     own: ws.panels.terminal.own_ptys(),
                     window_root: ws.repo.root.clone(),
                 }));
+            }
+            Effect::AnalyzeFleetWorktree(path) => {
+                queue.extend(crate::command::confirm_analyze_worktree(ws, path));
             }
             Effect::DeleteFleetWorktree(inspection) => {
                 queue.extend(delete_fleet_worktree(ws, *inspection));

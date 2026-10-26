@@ -5,8 +5,8 @@ mod exec;
 mod tests;
 
 pub use exec::{
-    Enabled, analyze_worktree, by_hand, confirm_requested_analyze, drag_divider, enabled, execute,
-    persist_layout,
+    Enabled, analyze_worktree, by_hand, confirm_analyze_worktree, confirm_requested_analyze,
+    drag_divider, enabled, execute, persist_layout,
 };
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
