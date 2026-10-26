@@ -2315,6 +2315,7 @@ mod fleet_delete_tests {
         assert!(procs.info(9).is_none(), "SIGTERM が届いている");
         assert!(!wt.exists());
     }
+
     #[test]
     fn 無視ファイルは未コミットに数えず_worktree_ごと消える() {
         let (dir, main, wt) = repo();
