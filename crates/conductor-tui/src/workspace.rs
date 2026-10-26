@@ -223,6 +223,8 @@ pub struct Ctx<'a> {
     pub reviewing: bool,
     /// フォーカス中の区画とモードで決まる層。キーの案内とスコープが読む。
     pub key_context: KeyContext,
+    /// 一覧の右に映っているセッション ([Workspace::fleet_session])。
+    pub fleet_session: Option<String>,
 }
 
 pub struct Workspace {
@@ -303,6 +305,7 @@ impl Workspace {
             focus: self.focus,
             reviewing: self.reviewing(),
             key_context: self.key_context(),
+            fleet_session: self.fleet_session(),
         }
     }
 
@@ -351,6 +354,7 @@ impl Workspace {
     ) -> (&'a mut Panels, &'a mut Vec<Modal>, Ctx<'a>) {
         let key_context = self.key_context();
         let reviewing = self.reviewing();
+        let fleet_session = self.fleet_session();
         let Self {
             panels,
             modals,
@@ -376,6 +380,7 @@ impl Workspace {
             focus: *focus,
             reviewing,
             key_context,
+            fleet_session,
         };
         (panels, modals, ctx)
     }
@@ -396,7 +401,11 @@ impl Workspace {
             Focus::Viewer => panels.viewer.update(action, &ctx),
             Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
             Focus::Revidere => panels.revidere.update(action, &ctx),
-            Focus::Fleet | Focus::FleetSession => panels.fleet.update(action, &ctx),
+            Focus::FleetSession => panels
+                .terminal
+                .update(action, &ctx)
+                .or_else(|| panels.fleet.update(action, &ctx)),
+            Focus::Fleet => panels.fleet.update(action, &ctx),
             _ => None,
         }
     }
@@ -829,10 +838,11 @@ impl Workspace {
         }
         let effects = self.panels.viewer.prepare(&self.config, &self.theme);
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
-        if self.panels.terminal.transcript().is_none() {
+        if !self.panels.terminal.has_transcript() {
             return effects;
         }
         let overlay_open = !self.modals.is_empty();
+        let fleet_session = self.fleet_session();
         let Self {
             panels,
             theme,
@@ -842,7 +852,12 @@ impl Workspace {
         let Panels {
             viewer, terminal, ..
         } = panels;
-        terminal.prepare(theme, viewer.highlighter(config), overlay_open);
+        terminal.prepare(
+            theme,
+            viewer.highlighter(config),
+            overlay_open,
+            fleet_session.as_deref(),
+        );
         effects
     }
 

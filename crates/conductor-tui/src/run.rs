@@ -630,12 +630,26 @@ fn on_mouse(
                 return;
             }
             // 「最新へ」チップは PTY の中身より上にある。
-            if focus == Focus::TerminalClaude
-                && let Some(rect) = layout.rect(Region::TerminalClaude)
-                && ws
-                    .panels
-                    .terminal
-                    .transcript_click(rect, mouse.column, mouse.row)
+            let chip = match focus {
+                Focus::TerminalClaude => layout.rect(region).map(|rect| {
+                    let session = ws.panels.terminal.visible_claude().map(str::to_string);
+                    (crate::panels::terminal::render::content_area(rect), session)
+                }),
+                Focus::FleetSession => layout.rect(region).map(|rect| {
+                    (
+                        crate::panels::terminal::render::editor_area(rect),
+                        ws.fleet_session(),
+                    )
+                }),
+                _ => None,
+            };
+            if let Some((area, session)) = chip
+                && ws.panels.terminal.transcript_click(
+                    area,
+                    session.as_deref(),
+                    mouse.column,
+                    mouse.row,
+                )
             {
                 return;
             }
@@ -812,14 +826,19 @@ fn scroll_region(
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
         // 端末はホイールの行き先が中身次第 (子プロセス / トランスクリプト /
         // スクロールバック) なので、判断はパネルが持つ。
-        Region::TerminalClaude | Region::TerminalShell | Region::Editor => {
+        Region::TerminalClaude | Region::TerminalShell | Region::Editor | Region::FleetSession => {
             let Some(rect) = layout.rect(region) else {
                 return;
             };
-            let effects = ws
-                .panels
-                .terminal
-                .wheel(region, rect, mouse.column, mouse.row, delta);
+            let fleet_session = ws.fleet_session();
+            let effects = ws.panels.terminal.wheel(
+                region,
+                rect,
+                mouse.column,
+                mouse.row,
+                delta,
+                fleet_session,
+            );
             apply(ws, svc, effects);
         }
         Region::RevidereOrder | Region::RevidereDiff => ws.panels.revidere.scroll(region, delta),
@@ -1140,6 +1159,39 @@ mod tests {
         };
         on_mouse(&mut ws, &mut svc, &l, click);
         assert_eq!(ws.focus, Focus::FleetSession);
+    }
+
+    #[test]
+    fn 一覧の右のホイールはフォーカスを動かさずにそのセッションのログを開きに行く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let dir = tempfile::tempdir().unwrap();
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let own = crate::panels::fleet::OwnSession {
+            panel_id: ws.panels.terminal.visible_claude().unwrap().to_string(),
+            working_dir: dir.path().to_path_buf(),
+            claude_session_id: None,
+        };
+        ws.apply_fleet(Default::default(), vec![own]);
+        let focus = ws.focus;
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let right = l.rect(Region::FleetSession).unwrap();
+        let wheel = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: right.x + 5,
+            row: right.y + 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, wheel);
+
+        assert_eq!(ws.focus, focus);
+        let status = ws.chrome.status.as_ref().map(|s| s.text.as_str());
+        assert_eq!(
+            status,
+            Some("this panel has not reported its session id yet"),
+            "右に映したセッションのログを開きに行っていない"
+        );
     }
 
     #[test]

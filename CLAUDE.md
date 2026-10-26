@@ -502,7 +502,13 @@ the list's selection every time (`Workspace::fleet_session`), never stored, and
 when the row being typed into disappears the keyboard goes back to the list rather
 than to whatever got selected instead. That right side gives a PTY a second shape,
 so `sync_sizes` compares each session's own grid with its region, not the region's
-remembered size. Host notifications (Claude's
+remembered size. That resize is also why the right side scrolls through the transcript
+view rather than vt100's scrollback: `set_size` drops the scrollback, and Claude Code does
+not repaint its history after a SIGWINCH (measured on 2.1.x: 60 printed lines, then
+100→80 columns, brought back 1245 bytes of prompt area and none of the lines). The
+transcript view belongs to the panel id it was opened for (`TerminalPanel::transcript_of`),
+so whichever region shows that session draws it, and a region showing another one stays
+live. Host notifications (Claude's
 state, session ids) are sent with `send_watch_unscoped` so a repository switch does
 not drop them; every other watch event keeps its generation.
 

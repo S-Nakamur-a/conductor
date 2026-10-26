@@ -94,17 +94,25 @@ struct ClaudeArgs<'a> {
 }
 
 struct PendingTranscript {
+    panel: String,
     session: String,
     scroll_back: usize,
+}
+
+/// 開いたセッションのパネル id に紐づく。それを映している区画だけが描く。
+struct Transcript {
+    panel: String,
+    reflow: Reflow,
 }
 
 pub struct TerminalPanel {
     pty: PtyStore,
     claude: Pane,
     shell: Pane,
-    /// Claude 区画に重ねているトランスクリプト。
-    transcript: Option<Reflow>,
+    transcript: Option<Transcript>,
     pending_transcript: Option<PendingTranscript>,
+    /// 一覧の右のグリッドの (行, 桁)。そこで読むトランスクリプトはこの幅で組む。
+    fleet_size: (u16, u16),
     /// 一覧から別の repo のセッションへ入った。その worktree が選ばれたら Claude 区画に映す。
     pending_show: Option<String>,
     editor: Option<Editor>,
@@ -130,6 +138,7 @@ impl TerminalPanel {
             shell: Pane::new(SessionKind::Shell, (6, 80)),
             transcript: None,
             pending_transcript: None,
+            fleet_size: (24, 80),
             pending_show: None,
             editor: None,
             wants_clear: false,
@@ -328,8 +337,9 @@ impl TerminalPanel {
                 if let Some(pane) = self.pane_mut(focus)
                     && pane.session.as_deref() != Some(session.as_str())
                 {
+                    let leaving = pane.session.clone();
                     pane.show(Some(session));
-                    self.cancel_pending_transcript(focus);
+                    self.cancel_pending_transcript(leaving.as_deref());
                 }
                 self.activate_visible();
                 Some(Vec::new())
@@ -358,14 +368,14 @@ impl TerminalPanel {
         };
         let _ = self.pty.kill_session(index);
         self.pty.remove_session(index);
+        // 落としたセッションのログを読んだままにはできない。
+        if self.transcript.as_ref().is_some_and(|t| t.panel == id) {
+            self.transcript = None;
+            self.wants_clear = true;
+        }
+        self.cancel_pending_transcript(Some(id));
         if self.pane(region_of(focus)).session.as_deref() != Some(id) {
             return;
-        }
-        // 落としたセッションのログを読んだままにはできない。
-        if focus == Focus::TerminalClaude {
-            self.transcript = None;
-            self.pending_transcript = None;
-            self.wants_clear = true;
         }
         let kind = self.pane(region_of(focus)).kind;
         let next = self
@@ -443,16 +453,34 @@ impl TerminalPanel {
     }
 
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
-        if self.reading(ctx.focus) {
+        let shown = match ctx.focus {
+            Focus::FleetSession => ctx.fleet_session.clone(),
+            focus => self.session_in(focus),
+        };
+        if self.reading(shown.as_deref()) {
             return self.transcript_action(action, ctx);
+        }
+        // 一覧の右で引き受けるのはスクロールだけ。残りは一覧の解釈に任せる。
+        let scrolling = matches!(
+            action,
+            Action::ScrollbackUp
+                | Action::ScrollbackTop
+                | Action::ScrollbackDown
+                | Action::SnapToLive
+        );
+        if ctx.focus == Focus::FleetSession && !scrolling {
+            return None;
         }
         match action {
             Action::LeaveTerminal => return Some(vec![Effect::Focus(left_of_terminal(ctx))]),
             Action::NextSession => self.cycle(ctx.focus, true),
             Action::PrevSession => self.cycle(ctx.focus, false),
             Action::ScrollbackUp => {
-                let lines = page_lines(self.claude.size);
-                let (opened, effects) = self.enter_transcript(ctx.focus, lines);
+                let size = match ctx.focus {
+                    Focus::FleetSession => self.fleet_size,
+                    _ => self.claude.size,
+                };
+                let (opened, effects) = self.enter_transcript(ctx.focus, shown, page_lines(size));
                 if !opened {
                     self.scroll(ctx.focus, action);
                 }
@@ -460,18 +488,18 @@ impl TerminalPanel {
             }
             // 溜める行数に上限は要らないので usize::MAX。
             Action::ScrollbackTop => {
-                let (opened, effects) = self.enter_transcript(ctx.focus, usize::MAX);
+                let (opened, effects) = self.enter_transcript(ctx.focus, shown, usize::MAX);
                 if !opened {
                     self.scroll(ctx.focus, action);
                 }
                 return Some(effects);
             }
             Action::ScrollbackDown => {
-                self.cancel_pending_transcript(ctx.focus);
+                self.cancel_pending_transcript(shown.as_deref());
                 self.scroll(ctx.focus, action);
             }
             Action::SnapToLive => {
-                self.cancel_pending_transcript(ctx.focus);
+                self.cancel_pending_transcript(shown.as_deref());
                 if let Some(pane) = self.pane_mut(ctx.focus) {
                     pane.scroll = 0;
                 }
@@ -481,9 +509,16 @@ impl TerminalPanel {
         Some(Vec::new())
     }
 
-    /// Claude 区画がトランスクリプトを映しているか。
-    pub fn reading(&self, focus: Focus) -> bool {
-        focus == Focus::TerminalClaude && self.transcript.is_some()
+    pub fn reading(&self, session: Option<&str>) -> bool {
+        self.transcript_of(session).is_some()
+    }
+
+    /// 別のセッションのトランスクリプトは返さない。
+    pub(crate) fn transcript_of(&self, session: Option<&str>) -> Option<&Reflow> {
+        self.transcript
+            .as_ref()
+            .filter(|t| Some(t.panel.as_str()) == session)
+            .map(|t| &t.reflow)
     }
 
     /// 読んでいる間の Action。持たないものは外の解釈へ落とす (パレット、区画のリサイズ)。
@@ -497,7 +532,7 @@ impl TerminalPanel {
             }
             _ => {}
         }
-        let reflow = self.transcript.as_mut()?;
+        let reflow = &mut self.transcript.as_mut()?.reflow;
         let page = reflow.page() as isize;
         match action {
             Action::ScrollbackUp => reflow.scroll_by(-page),
@@ -511,33 +546,56 @@ impl TerminalPanel {
     /// ライブ表示の一番上でさらに上へ動かしたときだけ、vt100 の行数で頭打ちになる
     /// スクロールバックではなく .jsonl そのものを読むビューへ入る。キーとホイールが
     /// 同じ判断を通る唯一の場所。
-    fn enter_transcript(&mut self, focus: Focus, lines: usize) -> (bool, Vec<Effect>) {
-        if focus != Focus::TerminalClaude || self.claude.scroll != 0 {
+    ///
+    /// 一覧の右はスクロールバックを持たない — 右へ映すたびのリサイズで vt100 が捨てるので、
+    /// いつもライブの先頭にいる扱いで入る。
+    fn enter_transcript(
+        &mut self,
+        focus: Focus,
+        session: Option<String>,
+        lines: usize,
+    ) -> (bool, Vec<Effect>) {
+        let at_live = match focus {
+            Focus::TerminalClaude => self.claude.scroll == 0,
+            Focus::FleetSession => true,
+            _ => false,
+        };
+        if !at_live {
             return (false, Vec::new());
         }
-        if let Some(pending) = self.pending_transcript.as_mut() {
+        if let Some(pending) = self
+            .pending_transcript
+            .as_mut()
+            .filter(|p| Some(p.panel.as_str()) == session.as_deref())
+        {
             pending.scroll_back = pending.scroll_back.saturating_add(lines);
             return (true, Vec::new());
         }
-        self.open_transcript(lines)
+        self.open_transcript(session, lines)
     }
 
     /// 開けたかどうかも返す — 開けなければ呼び出し側は通常のスクロールバックに落ちる。
     /// 読み込みが終わるまで self.transcript は立てない — ライブ PTY を出したままにする。
-    fn open_transcript(&mut self, initial_scroll: usize) -> (bool, Vec<Effect>) {
+    fn open_transcript(
+        &mut self,
+        panel: Option<String>,
+        initial_scroll: usize,
+    ) -> (bool, Vec<Effect>) {
         let unavailable = |message: &str| {
             (
                 false,
                 vec![Effect::Status(StatusLevel::Warning, message.to_string())],
             )
         };
-        let Some(index) = self.index_of(self.claude.session.as_deref()) else {
+        let Some((panel, index)) = panel.and_then(|p| Some((p.clone(), self.index_of(Some(&p))?)))
+        else {
             return unavailable("no Claude Code session in this panel");
         };
         let Some((working_dir, session_id, _)) = self.pty.claude_session_ref(index) else {
             return unavailable("this panel has not reported its session id yet");
         };
         self.pending_transcript = Some(PendingTranscript {
+            panel,
             session: session_id.clone(),
             scroll_back: initial_scroll,
         });
@@ -550,8 +608,12 @@ impl TerminalPanel {
         )
     }
 
-    fn cancel_pending_transcript(&mut self, focus: Focus) {
-        if focus == Focus::TerminalClaude {
+    fn cancel_pending_transcript(&mut self, session: Option<&str>) {
+        if self
+            .pending_transcript
+            .as_ref()
+            .is_some_and(|p| Some(p.panel.as_str()) == session)
+        {
             self.pending_transcript = None;
         }
     }
@@ -577,7 +639,10 @@ impl TerminalPanel {
                 "the session log has nothing to show yet".into(),
             )],
             Ok(entries) => {
-                self.transcript = Some(Reflow::new(entries, pending.scroll_back));
+                self.transcript = Some(Transcript {
+                    panel: pending.panel,
+                    reflow: Reflow::new(entries, pending.scroll_back),
+                });
                 Vec::new()
             }
             Err(e) => vec![Effect::Status(StatusLevel::Warning, e)],
@@ -586,36 +651,44 @@ impl TerminalPanel {
 
     /// ライブ PTY へ戻す。
     fn close_transcript(&mut self) -> Vec<Effect> {
-        self.transcript = None;
-        self.claude.scroll = 0;
+        if let Some(closed) = self.transcript.take()
+            && Some(closed.panel) == self.claude.session
+        {
+            self.claude.scroll = 0;
+        }
         self.wants_clear = true;
         Vec::new()
     }
 
     pub fn transcript_key(&mut self, key: KeyEvent) -> Vec<Effect> {
-        let Some(reflow) = self.transcript.as_mut() else {
+        let Some(transcript) = self.transcript.as_mut() else {
             return Vec::new();
         };
-        match reflow.key(key) {
+        match transcript.reflow.key(key) {
             Handled::Consumed => Vec::new(),
             Handled::Close => self.close_transcript(),
         }
     }
 
     fn transcript_wheel(&mut self, delta: isize) -> Vec<Effect> {
-        let Some(reflow) = self.transcript.as_mut() else {
+        let Some(transcript) = self.transcript.as_mut() else {
             return Vec::new();
         };
-        match reflow.wheel(delta) {
+        match transcript.reflow.wheel(delta) {
             Handled::Consumed => Vec::new(),
             Handled::Close => self.close_transcript(),
         }
     }
 
     /// チップを踏んでいたら最新へ飛ぶ。踏んでいなければ何もしない。
-    pub fn transcript_click(&mut self, panel: Rect, x: u16, y: u16) -> bool {
-        let area = render::content_area(panel);
-        let Some(reflow) = self.transcript.as_mut() else {
+    /// area は区画が映している中身の範囲で、session はそこに映っているセッション。
+    pub fn transcript_click(&mut self, area: Rect, session: Option<&str>, x: u16, y: u16) -> bool {
+        let Some(reflow) = self
+            .transcript
+            .as_mut()
+            .filter(|t| Some(t.panel.as_str()) == session)
+            .map(|t| &mut t.reflow)
+        else {
             return false;
         };
         let Some(rect) = reflow.badge_rect(area) else {
@@ -629,6 +702,7 @@ impl TerminalPanel {
     }
 
     /// 端末区画のホイール。子プロセスへ渡す座標が要るので区画ごと受け取る。
+    /// fleet_session は一覧の右に映っているセッションで、その区画のときだけ読む。
     pub fn wheel(
         &mut self,
         region: Region,
@@ -636,16 +710,25 @@ impl TerminalPanel {
         col: u16,
         row: u16,
         delta: isize,
+        fleet_session: Option<String>,
     ) -> Vec<Effect> {
-        let focus = focus_of(region);
-        let (content, session) = match focus {
-            Focus::Editor => (
+        let (focus, content, session) = match region {
+            Region::Editor => (
+                Focus::Editor,
                 render::editor_area(rect),
-                self.editor.as_ref().map(|e| e.session.as_str()),
+                self.editor.as_ref().map(|e| e.session.clone()),
+            ),
+            // 他の窓や外の端末の行は、右にセッションを映していない。
+            Region::FleetSession if fleet_session.is_none() => return Vec::new(),
+            Region::FleetSession => (
+                Focus::FleetSession,
+                render::editor_area(rect),
+                fleet_session,
             ),
             _ => (
+                focus_of(region),
                 render::content_area(rect),
-                self.pane(region).session.as_deref(),
+                self.pane(region).session.clone(),
             ),
         };
         let lines = delta.unsigned_abs();
@@ -653,7 +736,7 @@ impl TerminalPanel {
 
         // マウスを要求している子 (vim, less --mouse) と自前のスクロールバックを持たない
         // ページャは自分で捌く。こちらのオフセットも動かすと画面が二重に流れる。
-        if let Some(index) = self.index_of(session) {
+        if let Some(index) = self.index_of(session.as_deref()) {
             let pty_col = col.saturating_sub(content.x) + 1;
             let pty_row = row.saturating_sub(content.y) + 1;
             if self
@@ -667,15 +750,15 @@ impl TerminalPanel {
         if focus == Focus::Editor {
             return Vec::new();
         }
-        if region == Region::TerminalClaude && self.transcript.is_some() {
+        if self.reading(session.as_deref()) {
             return self.transcript_wheel(delta);
         }
         if !up {
-            self.cancel_pending_transcript(focus);
+            self.cancel_pending_transcript(session.as_deref());
             self.scroll_lines(focus, lines, false);
             return Vec::new();
         }
-        let (opened, effects) = self.enter_transcript(focus, lines);
+        let (opened, effects) = self.enter_transcript(focus, session, lines);
         if !opened {
             self.scroll_lines(focus, lines, true);
         }
@@ -695,9 +778,19 @@ impl TerminalPanel {
     }
 
     /// 描く前に行を組み直す。トランスクリプトを開いていなければ何もしない。
-    pub fn prepare(&mut self, theme: &Theme, highlighter: &Highlighter, overlay_open: bool) {
-        let size = self.claude.size;
-        if let Some(reflow) = self.transcript.as_mut() {
+    pub fn prepare(
+        &mut self,
+        theme: &Theme,
+        highlighter: &Highlighter,
+        overlay_open: bool,
+        fleet_session: Option<&str>,
+    ) {
+        let size = if self.reading(fleet_session) {
+            self.fleet_size
+        } else {
+            self.claude.size
+        };
+        if let Some(Transcript { reflow, .. }) = self.transcript.as_mut() {
             reflow.prepare(theme, highlighter, size, overlay_open);
             self.wants_clear |= reflow.take_clear_request();
         }
@@ -772,8 +865,8 @@ impl TerminalPanel {
         std::mem::take(&mut self.wants_clear)
     }
 
-    pub(crate) fn transcript(&self) -> Option<&Reflow> {
-        self.transcript.as_ref()
+    pub(crate) fn has_transcript(&self) -> bool {
+        self.transcript.is_some()
     }
 
     fn cycle(&mut self, focus: Focus, forward: bool) {
@@ -799,8 +892,9 @@ impl TerminalPanel {
         };
         let target = ids[next].clone();
         if let Some(pane) = self.pane_mut(focus) {
+            let leaving = pane.session.clone();
             pane.show(Some(target));
-            self.cancel_pending_transcript(focus);
+            self.cancel_pending_transcript(leaving.as_deref());
         }
         self.activate_visible();
     }
@@ -1132,12 +1226,12 @@ impl TerminalPanel {
                 }
             }
         }
-        if let (Some(rect), Some(index)) = (
-            layout.rect(Region::FleetSession),
-            self.index_of(fleet_session),
-        ) {
+        if let Some(rect) = layout.rect(Region::FleetSession) {
             let content = render::editor_area(rect);
-            self.fit(index, (content.height.max(1), content.width.max(1)));
+            self.fleet_size = (content.height.max(1), content.width.max(1));
+            if let Some(index) = self.index_of(fleet_session) {
+                self.fit(index, self.fleet_size);
+            }
         }
         for region in [Region::TerminalClaude, Region::TerminalShell] {
             let Some(rect) = layout.rect(region) else {
@@ -1275,7 +1369,9 @@ pub(super) fn focus_of(region: Region) -> Focus {
 
 /// 端末を抜けた先。レビュー画面では左隣が Explorer ではなく読む順になる。
 fn left_of_terminal(ctx: &Ctx) -> Focus {
-    if ctx.reviewing {
+    if ctx.focus == Focus::FleetSession {
+        Focus::Fleet
+    } else if ctx.reviewing {
         Focus::Revidere
     } else {
         Focus::Explorer
@@ -1443,9 +1539,9 @@ mod tests {
         wait_for(&ws, "line59");
 
         let panel = &mut ws.panels.terminal;
-        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3, None);
         assert!(panel.shell.scroll > 0, "素の子なら遡れる");
-        panel.wheel(Region::TerminalShell, RECT, 5, 5, 3);
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, 3, None);
         assert_eq!(panel.shell.scroll, 0);
 
         let index = panel.index_of(panel.shell.session.as_deref()).unwrap();
@@ -1457,7 +1553,7 @@ mod tests {
         wait_for(&ws, "mouseon");
 
         let panel = &mut ws.panels.terminal;
-        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3);
+        panel.wheel(Region::TerminalShell, RECT, 5, 5, -3, None);
         assert_eq!(panel.shell.scroll, 0, "子に渡したらこちらは動かさない");
     }
 
@@ -1465,10 +1561,14 @@ mod tests {
     #[test]
     fn ホイールの上スクロールもトランスクリプトの入口を通る() {
         let mut ws = Workspace::for_test();
-        let effects =
-            ws.panels
-                .terminal
-                .wheel(Region::TerminalClaude, Rect::new(0, 0, 42, 12), 5, 5, -3);
+        let effects = ws.panels.terminal.wheel(
+            Region::TerminalClaude,
+            Rect::new(0, 0, 42, 12),
+            5,
+            5,
+            -3,
+            None,
+        );
         assert!(matches!(
             effects.as_slice(),
             [Effect::Status(StatusLevel::Warning, _)]
@@ -1573,7 +1673,7 @@ mod tests {
         let mut ws = Workspace::for_test();
         let _dir = spawn_shell(&mut ws, "");
         let panel = &mut ws.panels.terminal;
-        let (opened, effects) = panel.open_transcript(0);
+        let (opened, effects) = panel.open_transcript(panel.shell.session.clone(), 0);
         assert!(!opened && panel.transcript.is_none() && panel.pending_transcript.is_none());
         assert!(matches!(
             effects[0],
@@ -1581,12 +1681,22 @@ mod tests {
         ));
     }
 
+    const PANEL: &str = "CC:1";
+
+    /// Claude 区画が PANEL を映している。PTY は起こさない。
+    fn claude_panel_for_test() -> TerminalPanel {
+        let mut panel = TerminalPanel::new(&Config::default());
+        panel.claude.session = Some(PANEL.into());
+        panel
+    }
+
     /// トラックパッドの慣性で入ったビューから、同じ慣性で戻れないと閉じ込められる。
     #[test]
     fn トランスクリプトの最下部でさらに下へ回すとライブへ戻る() {
-        let mut panel = TerminalPanel::new(&Config::default());
+        let mut panel = claude_panel_for_test();
         panel.claude.size = (5, 40);
         panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
             session: "session-a".into(),
             scroll_back: 0,
         });
@@ -1607,14 +1717,15 @@ mod tests {
             &Theme::default(),
             &Highlighter::new(&Config::default()),
             false,
+            None,
         );
         let rect = Rect::new(0, 0, 42, 7);
 
-        panel.wheel(Region::TerminalClaude, rect, 5, 5, -3);
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, -3, None);
         assert!(panel.transcript.is_some(), "遡っている間は開いたまま");
-        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3, None);
         assert!(panel.transcript.is_some(), "最下部に戻っただけでは畳まない");
-        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3, None);
         assert!(panel.transcript.is_none(), "最下部でさらに下へ回したら畳む");
         assert_eq!(panel.claude.scroll, 0);
     }
@@ -1622,8 +1733,9 @@ mod tests {
     /// /clear のローテーション中に届いた、開いているのとは別のセッションの結果は捨てる。
     #[test]
     fn 別のセッションの結果は捨てる() {
-        let mut panel = TerminalPanel::new(&Config::default());
+        let mut panel = claude_panel_for_test();
         panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
             session: "session-a".into(),
             scroll_back: 0,
         });
@@ -1651,9 +1763,10 @@ mod tests {
     }
 
     fn install_with_scroll_back(scroll_back: usize) -> TerminalPanel {
-        let mut panel = TerminalPanel::new(&Config::default());
+        let mut panel = claude_panel_for_test();
         panel.claude.size = (5, 40);
         panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
             session: "session-a".into(),
             scroll_back,
         });
@@ -1670,6 +1783,7 @@ mod tests {
             &Theme::default(),
             &Highlighter::new(&Config::default()),
             false,
+            None,
         );
         panel
     }
@@ -1679,10 +1793,12 @@ mod tests {
         let landed_at_bottom = install_with_scroll_back(0)
             .transcript
             .expect("読み込めたはず")
+            .reflow
             .scroll();
         let scrolled_up_by_4 = install_with_scroll_back(4)
             .transcript
             .expect("読み込めたはず")
+            .reflow
             .scroll();
         assert_eq!(scrolled_up_by_4, landed_at_bottom.saturating_sub(4));
         assert!(
@@ -1693,14 +1809,15 @@ mod tests {
 
     #[test]
     fn 届く前に下へ回すと取り消され届いても捨てられる() {
-        let mut panel = TerminalPanel::new(&Config::default());
+        let mut panel = claude_panel_for_test();
         panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
             session: "session-a".into(),
             scroll_back: 5,
         });
         let rect = Rect::new(0, 0, 42, 7);
 
-        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3);
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3, None);
         assert!(panel.pending_transcript.is_none(), "下へ回したら取り消す");
 
         let entries = vec![LogEntry {
@@ -1762,5 +1879,245 @@ mod tests {
         crate::testing::wait_for(|| ws.panels.terminal.cleanup_dead());
         assert!(ws.panels.terminal.pty.sessions().is_empty());
         assert!(ws.panels.terminal.shell.session.is_none());
+    }
+
+    fn turns(n: usize) -> Vec<LogEntry> {
+        (0..n)
+            .map(|i| LogEntry {
+                role: conductor_core::claude_log::Role::User,
+                blocks: vec![conductor_core::claude_log::DisplayBlock::Text(format!(
+                    "turn {i}"
+                ))],
+            })
+            .collect()
+    }
+
+    fn open_for(panel: &mut TerminalPanel, id: &str) {
+        panel.pending_transcript = Some(PendingTranscript {
+            panel: id.into(),
+            session: format!("session-of-{id}"),
+            scroll_back: 0,
+        });
+        panel.install_transcript(&format!("session-of-{id}"), Ok(turns(30)));
+    }
+
+    fn fleet_showing_shell(
+        ws: &mut Workspace,
+        svc: &mut conductor_svc::Services<crate::task::TaskResult>,
+    ) -> (tempfile::TempDir, String) {
+        crate::effect::apply(ws, svc, vec![Effect::OpenFleet]);
+        let dir = tempfile::tempdir().unwrap();
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let id = ws.panels.terminal.visible_claude().unwrap().to_string();
+        ws.apply_fleet(
+            Default::default(),
+            vec![crate::panels::fleet::OwnSession {
+                panel_id: id.clone(),
+                working_dir: dir.path().to_path_buf(),
+                claude_session_id: None,
+            }],
+        );
+        assert_eq!(ws.fleet_session().as_deref(), Some(id.as_str()));
+        (dir, id)
+    }
+
+    fn status_text(ws: &Workspace) -> String {
+        ws.chrome
+            .status
+            .as_ref()
+            .map(|s| s.text.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn 一覧の右でshift_pageupを押すとそのセッションのログを開きに行く() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, _) = fleet_showing_shell(&mut ws, &mut svc);
+        ws.focus = Focus::FleetSession;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageUp,
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        crate::run::on_key(&mut ws, &mut svc, key);
+
+        assert!(
+            status_text(&ws).contains("not reported its session id"),
+            "{}",
+            status_text(&ws)
+        );
+    }
+
+    #[test]
+    fn 一覧の右で読んでいる間のctrl_escは読みビューを閉じて一覧へ戻る() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, id) = fleet_showing_shell(&mut ws, &mut svc);
+        open_for(&mut ws.panels.terminal, &id);
+        ws.focus = Focus::FleetSession;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        crate::run::on_key(&mut ws, &mut svc, key);
+
+        assert!(ws.panels.terminal.transcript.is_none());
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(ws.chrome.fleet_open);
+    }
+
+    #[test]
+    fn 一覧の右で読んでいない間のctrl_escは一覧へ戻る() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, _) = fleet_showing_shell(&mut ws, &mut svc);
+        ws.focus = Focus::FleetSession;
+
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+        crate::run::on_key(&mut ws, &mut svc, key);
+
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 一覧の右でスクロール以外のキーは一覧に任せる() {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::new();
+        let (_dir, _) = fleet_showing_shell(&mut ws, &mut svc);
+        ws.focus = Focus::FleetSession;
+        let fleet_alone = {
+            let root = ws.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = ws.split(&root);
+            panels.fleet.update(Action::NextSession, &ctx)
+        };
+        assert_eq!(ws.dispatch(Action::NextSession), fleet_alone);
+    }
+
+    #[test]
+    fn 一覧の右で右にセッションが映っていなければホイールは何もしない() {
+        let mut panel = claude_panel_for_test();
+        let effects = panel.wheel(
+            Region::FleetSession,
+            Rect::new(0, 0, 42, 12),
+            5,
+            5,
+            -3,
+            None,
+        );
+        assert!(effects.is_empty(), "{effects:?}");
+        assert!(panel.pending_transcript.is_none());
+    }
+
+    #[test]
+    fn 一覧の右の読み込み待ちは上で溜まり下で取り消され別のセッションの分には触らない() {
+        let rect = Rect::new(0, 0, 42, 12);
+        let mut panel = claude_panel_for_test();
+        panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
+            session: "session-a".into(),
+            scroll_back: 5,
+        });
+
+        panel.wheel(Region::FleetSession, rect, 5, 5, -3, Some(PANEL.into()));
+        assert_eq!(panel.pending_transcript.as_ref().unwrap().scroll_back, 8);
+
+        panel.wheel(Region::FleetSession, rect, 5, 5, -3, Some("CC:9".into()));
+        assert_eq!(
+            panel.pending_transcript.as_ref().unwrap().scroll_back,
+            8,
+            "別のセッションへの上スクロールが待っている分に溜まった"
+        );
+
+        panel.wheel(Region::FleetSession, rect, 5, 5, 3, Some(PANEL.into()));
+        assert!(panel.pending_transcript.is_none());
+    }
+
+    #[test]
+    fn 読んでいるのと別のセッションを映す区画のホイールは読みビューを動かさない() {
+        let rect = Rect::new(0, 0, 42, 7);
+        let mut panel = claude_panel_for_test();
+        panel.claude.size = (5, 40);
+        open_for(&mut panel, "CC:9");
+        panel.prepare(
+            &Theme::default(),
+            &Highlighter::new(&Config::default()),
+            false,
+            None,
+        );
+        let before = panel.transcript.as_ref().unwrap().reflow.scroll();
+
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3, None);
+        panel.wheel(Region::TerminalClaude, rect, 5, 5, 3, None);
+        panel.wheel(Region::FleetSession, rect, 5, 5, 3, Some(PANEL.into()));
+
+        let after = panel.transcript.as_ref().map(|t| t.reflow.scroll());
+        assert_eq!(after, Some(before), "見えていない読みビューが動いた");
+    }
+
+    #[test]
+    fn 一覧の右で読むログは右の大きさで組む() {
+        let mut panel = claude_panel_for_test();
+        panel.claude.size = (5, 40);
+        panel.fleet_size = (20, 60);
+        open_for(&mut panel, PANEL);
+        let prepare = |panel: &mut TerminalPanel, fleet: Option<&str>| {
+            panel.prepare(
+                &Theme::default(),
+                &Highlighter::new(&Config::default()),
+                false,
+                fleet,
+            );
+            panel.transcript.as_ref().unwrap().reflow.page()
+        };
+
+        assert_eq!(prepare(&mut panel, Some(PANEL)), 10);
+        assert_eq!(prepare(&mut panel, None), 2);
+    }
+
+    #[test]
+    fn 一覧の右で読みビューを閉じてもclaude区画の遡りは戻さない() {
+        let rect = Rect::new(0, 0, 42, 12);
+        let mut panel = claude_panel_for_test();
+        panel.claude.scroll = 4;
+        panel.fleet_size = (10, 40);
+        open_for(&mut panel, "CC:9");
+        panel.prepare(
+            &Theme::default(),
+            &Highlighter::new(&Config::default()),
+            false,
+            Some("CC:9"),
+        );
+
+        while panel.transcript.is_some() {
+            panel.wheel(Region::FleetSession, rect, 5, 5, 3, Some("CC:9".into()));
+        }
+        assert_eq!(panel.claude.scroll, 4);
+    }
+
+    #[test]
+    fn 読んでいるセッションを止めたら読みビューを落とし別のセッションなら残す() {
+        let mut ws = Workspace::for_test();
+        let dir = tempfile::tempdir().unwrap();
+        ws.panels.terminal.show_shell_as_claude_for_test(dir.path());
+        let id = ws.panels.terminal.visible_claude().unwrap().to_string();
+        let panel = &mut ws.panels.terminal;
+
+        open_for(panel, "CC:9");
+        panel.close_sessions(std::slice::from_ref(&id));
+        assert!(
+            panel.transcript.is_some(),
+            "別のセッションの読みビューが落ちた"
+        );
+
+        panel.show_shell_as_claude_for_test(dir.path());
+        let id = panel.visible_claude().unwrap().to_string();
+        open_for(panel, &id);
+        panel.close_sessions(std::slice::from_ref(&id));
+        assert!(panel.transcript.is_none());
     }
 }

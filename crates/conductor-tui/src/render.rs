@@ -176,9 +176,15 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
     let focused = focused_region(ws) == region;
     // 読みモードに入ると枠がアクセント色から補色へ移る。色そのものが「ここは
     // 過去を読んでいる」という常時の合図になる。
-    let reading = (region == Region::TerminalClaude)
-        .then(|| ws.panels.terminal.transcript())
-        .flatten()
+    let shown = match region {
+        Region::TerminalClaude => ws.panels.terminal.visible_claude().map(str::to_string),
+        Region::FleetSession => ws.fleet_session(),
+        _ => None,
+    };
+    let reading = ws
+        .panels
+        .terminal
+        .transcript_of(shown.as_deref())
         .filter(|_| focused);
     let border = match reading {
         Some(reflow) => Style::default().fg(reflow.border_color(&ws.theme)),

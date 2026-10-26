@@ -106,8 +106,11 @@ session's line selects it, and a double click on a session does what **Tab** doe
 
 A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
-there resizes it, so the Claude panel loses what had scrolled off (the transcript view
-still has it). `Enter` opens that session's worktree in the main screen with the session in
+there resizes it, and a resize drops what had scrolled off, there and in the Claude
+panel alike. Scrolling up over it —
+the wheel works without stepping in, **Shift+PageUp** once you have — opens the
+transcript view of that session instead, the same one the Claude panel uses; scrolling
+down past the end, **Esc**, or **Ctrl+Esc** goes back to it live. `Enter` opens that session's worktree in the main screen with the session in
 the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
 a plain terminal runs, or that a window of an older version still holds, are listed with
 their state, but cannot be opened or typed into from here. The states come from the files

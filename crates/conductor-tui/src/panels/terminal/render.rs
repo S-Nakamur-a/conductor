@@ -219,6 +219,10 @@ pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
 
 /// 一覧の右に映す、この窓のセッション。
 pub fn fleet(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
+    if let Some(reflow) = ws.panels.terminal.transcript_of(Some(session)) {
+        super::reflow::render(frame, editor_area(rect), reflow);
+        return;
+    }
     grid(
         frame,
         rect,
@@ -265,15 +269,15 @@ pub fn pane(frame: &mut Frame, rect: Rect, ws: &Workspace, region: Region) {
     let panel = &ws.panels.terminal;
     // トランスクリプトは Claude 区画の中身を置き換える。タブ行は残す —
     // どのセッションの履歴を読んでいるのかが分からなくなる。
+    let pane = panel.pane(region);
     if let Some(reflow) = panel
-        .transcript()
+        .transcript_of(pane.session.as_deref())
         .filter(|_| region == Region::TerminalClaude)
     {
         super::reflow::render(frame, content_area(rect), reflow);
         return;
     }
 
-    let pane = panel.pane(region);
     let Some(index) = panel.index_of(pane.session.as_deref()) else {
         return;
     };
