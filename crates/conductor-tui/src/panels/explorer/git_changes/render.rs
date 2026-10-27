@@ -1,7 +1,7 @@
 //! Git Changes の描画。行は純関数が組む。
 
 use conductor_core::config::Config;
-use conductor_core::diff_state::{DiffListEntry, DiffSource, FileDiff, FileStatus};
+use conductor_core::diff_state::{DiffListEntry, DiffSource, FileDiff, FileStatus, short_oid};
 use conductor_core::git_engine::GitStatusMap;
 use conductor_core::icons::{COMMENT, IconSet, expand_arrow};
 use conductor_core::review_store::CommentStatus;
@@ -19,11 +19,12 @@ pub fn title(changes: &GitChanges) -> String {
     if changes.listing() == Listing::Log {
         return format!(" Git Changes: commits ({}) ", changes.log().commits().len());
     }
-    let source = match changes.source() {
-        DiffSource::WorkingTree { .. } => String::new(),
-        other => format!("{} ", other.label()),
-    };
     let diff = changes.diff();
+    let source = match (changes.source(), &diff.head) {
+        (DiffSource::WorkingTree { .. }, Some(head)) => format!("{} ", short_oid(head)),
+        (DiffSource::WorkingTree { .. }, None) => String::new(),
+        (other, _) => format!("{} ", other.label()),
+    };
     let total = diff.files.len();
     if diff.error.is_some() {
         return format!(" Git Changes {source}({total}, error) ");
@@ -598,6 +599,15 @@ mod tests {
         let oid = "0123456789abcdef0123456789abcdef01234567";
         changes.set_source(DiffSource::commit(oid));
         changes.install(DiffState::new(DiffSource::commit(oid)));
+        assert_eq!(title(&changes), " Git Changes 01234567 (0) ");
+    }
+
+    #[test]
+    fn 作業ツリーの見出しには今の_head_の短縮ハッシュが付く() {
+        let mut changes = GitChanges::default();
+        let mut diff = DiffState::new(changes.source().clone());
+        diff.head = Some("0123456789abcdef0123456789abcdef01234567".into());
+        changes.install(diff);
         assert_eq!(title(&changes), " Git Changes 01234567 (0) ");
     }
 

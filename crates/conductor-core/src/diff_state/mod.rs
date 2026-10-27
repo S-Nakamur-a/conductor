@@ -126,6 +126,8 @@ pub struct DiffState {
     pub error: Option<String>,
     /// 変更サマリーがあるときだけ [DiffListEntry::Summary] を先頭に出す。
     pub has_summary: bool,
+    /// 作業ツリーの diff を読んだときの HEAD。
+    pub head: Option<String>,
 }
 
 impl DiffState {
@@ -137,6 +139,7 @@ impl DiffState {
             source,
             error: None,
             has_summary: false,
+            head: None,
         }
     }
 }
