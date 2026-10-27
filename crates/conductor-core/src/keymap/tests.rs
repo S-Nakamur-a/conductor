@@ -120,6 +120,7 @@ fn 既定のキーが解決する() {
         ),
         (Fleet, shift('D'), Action::StopSession),
         (Fleet, ctrl('n'), Action::NewSessionMenu),
+        (Fleet, ctrl('g'), Action::ShowFleetChanges),
         (Fleet, shift('J'), Action::NextRepo),
         (
             Fleet,

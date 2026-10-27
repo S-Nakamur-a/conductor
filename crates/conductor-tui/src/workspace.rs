@@ -31,14 +31,24 @@ pub enum Focus {
     Fleet,
     /// 一覧の右に映した、この窓のセッション。
     FleetSession,
+    /// 一覧の左下に映した、選んだ worktree のシェル。
+    FleetShell,
 }
 
 impl Focus {
     pub fn is_pty(self) -> bool {
         matches!(
             self,
-            Self::TerminalClaude | Self::TerminalShell | Self::Editor | Self::FleetSession
+            Self::TerminalClaude
+                | Self::TerminalShell
+                | Self::Editor
+                | Self::FleetSession
+                | Self::FleetShell
         )
+    }
+
+    pub fn in_fleet(self) -> bool {
+        matches!(self, Self::Fleet | Self::FleetSession | Self::FleetShell)
     }
 
     /// Tab の輪。Editor は開いている間だけ通る。
@@ -48,7 +58,9 @@ impl Focus {
             Self::Explorer => Self::Viewer,
             Self::Viewer | Self::Editor => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
-            Self::TerminalShell | Self::Fleet | Self::FleetSession => Self::Explorer,
+            Self::TerminalShell | Self::Fleet | Self::FleetSession | Self::FleetShell => {
+                Self::Explorer
+            }
         }
     }
 
@@ -58,7 +70,7 @@ impl Focus {
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
-            Self::Fleet | Self::FleetSession => Self::Explorer,
+            Self::Fleet | Self::FleetSession | Self::FleetShell => Self::Explorer,
         }
     }
 
@@ -73,6 +85,7 @@ impl Focus {
             Self::Editor => "Editor",
             Self::Fleet => "Sessions",
             Self::FleetSession => "Session",
+            Self::FleetShell => "Shell",
         }
     }
 
@@ -82,7 +95,9 @@ impl Focus {
             Self::Fleet => KeyContext::Fleet,
             Self::Explorer => KeyContext::Explorer,
             Self::Viewer => KeyContext::Viewer,
-            Self::TerminalClaude | Self::TerminalShell | Self::FleetSession => KeyContext::Terminal,
+            Self::TerminalClaude | Self::TerminalShell | Self::FleetSession | Self::FleetShell => {
+                KeyContext::Terminal
+            }
             Self::Editor => KeyContext::Editor,
         }
     }
@@ -387,6 +402,8 @@ impl Workspace {
                 .terminal
                 .update(action, &ctx)
                 .or_else(|| panels.fleet.update(action, &ctx)),
+            // 端末パネルの読みビューとスクロールは右の Claude のもの。左下のシェルには無い。
+            Focus::FleetShell => panels.fleet.update(action, &ctx),
             _ => None,
         }
     }
@@ -421,9 +438,11 @@ impl Workspace {
                 self.panels.fleet.inspected(&path, outcome, undisturbed)
             }
             TaskResult::FleetWorktreeDeleted {
+                path,
                 in_window_repo,
                 outcome,
             } => {
+                self.panels.fleet.note_deleted(&path);
                 let mut effects = vec![match outcome {
                     Ok(done) => Effect::Status(StatusLevel::Success, done),
                     Err(why) => Effect::Status(StatusLevel::Error, why),
@@ -731,6 +750,15 @@ impl Workspace {
         }
     }
 
+    /// 一覧の左下に映っている、選んだ worktree のシェル。
+    pub fn fleet_shell(&self) -> Option<String> {
+        let fleet = &self.panels.fleet;
+        if !self.chrome.fleet_open || !fleet.shows_shell() {
+            return None;
+        }
+        self.panels.terminal.live_shell_in(&fleet.selected_dir()?)
+    }
+
     /// キーと貼り付けを受け取るセッション。
     pub fn pty_session(&self) -> Option<String> {
         match self.focus {
@@ -738,6 +766,9 @@ impl Workspace {
                 self.panels.terminal.session_in(self.focus)
             }
             Focus::FleetSession => self.fleet_session(),
+            Focus::FleetShell => self
+                .fleet_shell()
+                .filter(|id| self.panels.fleet.typing_shell() == Some(id.as_str())),
             Focus::Worktree | Focus::Explorer | Focus::Viewer | Focus::Fleet => None,
         }
     }
@@ -773,11 +804,18 @@ impl Workspace {
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
         self.panels.viewer.sync_layout(layout);
+        let lower = layout.rect(crate::layout::Region::FleetChanges);
+        self.panels.fleet.set_lower_shown(lower.is_some());
+        // 打ち先が消えた・入れ替わった・見えなくなったときは、次のシェルへ打たせず一覧へ戻す。
+        if self.focus == Focus::FleetShell && self.pty_session().is_none() {
+            self.focus = Focus::Fleet;
+        }
         let fleet_session = self.fleet_session();
+        let fleet_shell = self.fleet_shell();
         self.panels
             .terminal
-            .sync_sizes(layout, fleet_session.as_deref());
-        if let Some(rect) = layout.rect(crate::layout::Region::FleetChanges) {
+            .sync_sizes(layout, fleet_session.as_deref(), fleet_shell.as_deref());
+        if let Some(rect) = lower {
             self.panels
                 .fleet
                 .changes

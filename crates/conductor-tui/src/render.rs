@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
                     Region::FleetList => crate::panels::fleet::render::list(frame, rect, ws),
                     Region::FleetSession => crate::panels::fleet::render::detail(frame, rect, ws),
-                    Region::FleetChanges => crate::panels::fleet::render::changes(frame, rect, ws),
+                    Region::FleetChanges => crate::panels::fleet::render::lower(frame, rect, ws),
                     _ => {}
                 }
             }
@@ -188,11 +188,14 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::TerminalShell => " Shell ".to_string(),
         Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
         Region::FleetSession => crate::panels::fleet::render::session_title(ws),
-        Region::FleetChanges => crate::panels::fleet::render::changes_title(ws),
+        Region::FleetChanges => crate::panels::fleet::render::lower_title(ws),
         _ => String::new(),
     };
     // 一覧と右のセッションは見た目が似ているので、フォーカス側は色に加えて線の太さでも示す。
-    let fleet = matches!(region, Region::FleetList | Region::FleetSession);
+    let fleet = matches!(
+        region,
+        Region::FleetList | Region::FleetSession | Region::FleetChanges
+    );
     Block::default()
         .borders(Borders::ALL)
         .border_type(if fleet && focused {
@@ -245,6 +248,7 @@ fn focused_region(ws: &Workspace) -> Region {
         Focus::TerminalShell => Region::TerminalShell,
         Focus::Fleet => Region::FleetList,
         Focus::FleetSession => Region::FleetSession,
+        Focus::FleetShell => Region::FleetChanges,
     }
 }
 
@@ -303,10 +307,16 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("open", &[Action::Select]),
             ("stop", &[Action::StopSession]),
             ("new", &[Action::NewSessionMenu]),
+            ("shell", &[Action::NewShell]),
+            ("changes", &[Action::ShowFleetChanges]),
             ("back", &[Action::ExitSubPanel]),
             ("pr", &[Action::OpenBranchPage]),
         ],
         Focus::FleetSession => &[("list", &[Action::LeaveTerminal])],
+        Focus::FleetShell => &[
+            ("list", &[Action::LeaveTerminal]),
+            ("changes", &[Action::OpenFileFromTerminal]),
+        ],
         Focus::Worktree => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),

@@ -483,7 +483,7 @@ pub fn on_paste(ws: &mut Workspace, svc: &mut Services<TaskResult>, data: String
         modal.paste(&data);
         return;
     }
-    let typing_into_fleet = ws.focus == Focus::FleetSession;
+    let typing_into_fleet = matches!(ws.focus, Focus::FleetSession | Focus::FleetShell);
     if dropped_file(&data).is_some() && !typing_into_fleet {
         if ws.chrome.fleet_open {
             apply(
@@ -851,7 +851,7 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::FleetList => Some(Focus::Fleet),
         Region::FleetSession => Some(Focus::FleetSession),
-        Region::FleetChanges => None,
+        Region::FleetChanges => Some(Focus::FleetShell),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
 }
@@ -2437,7 +2437,7 @@ needle here
         let rect = l.rect(Region::FleetChanges).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(l.area.width, l.area.height)).unwrap();
         terminal
-            .draw(|frame| crate::panels::fleet::render::changes(frame, rect, ws))
+            .draw(|frame| crate::panels::fleet::render::lower(frame, rect, ws))
             .unwrap();
         format!("{:?}", terminal.backend().buffer())
     }
@@ -2463,7 +2463,7 @@ needle here
         assert!(!after.contains("app-main-only"), "{after}");
         assert!(after.contains("loading"), "{after}");
         assert_eq!(
-            crate::panels::fleet::render::changes_title(&ws),
+            crate::panels::fleet::render::lower_title(&ws),
             " Git Changes "
         );
     }
@@ -2509,7 +2509,7 @@ needle here
         assert!(drawn.contains("lib.rs"), "{drawn}");
         assert!(drawn.contains("+7"), "{drawn}");
         assert_eq!(
-            crate::panels::fleet::render::changes_title(&ws),
+            crate::panels::fleet::render::lower_title(&ws),
             " Git Changes (1) +7 -2 "
         );
     }
@@ -2536,6 +2536,482 @@ needle here
         land(&mut ws, "/r/app", "a-only");
         let drawn = drawn_changes(&mut ws, &l);
         assert!(drawn.contains("b-only"), "{drawn}");
+    }
+
+    struct ShellFleet {
+        ws: Workspace,
+        svc: Services<TaskResult>,
+        l: Layout,
+        _tmp: tempfile::TempDir,
+        main: PathBuf,
+        branch: PathBuf,
+    }
+
+    /// 一覧の木は worker が canonical にして返すので、木の dir も canonical にしておく。
+    fn shell_fleet(height: u16) -> ShellFleet {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let (main, branch) = (root.join("app"), root.join("app-b"));
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&branch).unwrap();
+        let mut config = conductor_core::config::Config::default();
+        config.general.shell = "/bin/sh".into();
+        let mut ws = Workspace::for_test_with(config);
+        let mut svc = Services::new();
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let worktree = |path: &PathBuf, branch: &str| WorktreeHead {
+            path: path.clone(),
+            head: Head::Branch(branch.into()),
+        };
+        ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: main.clone(),
+                    name: "app".into(),
+                    worktrees: vec![worktree(&main, "main"), worktree(&branch, "feature/b")],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        let l = layout(&ws, Rect::new(0, 0, 160, height));
+        ws.sync_layout(&l);
+        ShellFleet {
+            ws,
+            svc,
+            l,
+            _tmp: tmp,
+            main,
+            branch,
+        }
+    }
+
+    fn chord(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    fn ctrl_t() -> KeyEvent {
+        chord(KeyCode::Char('t'), KeyModifiers::CONTROL)
+    }
+
+    fn ctrl_g() -> KeyEvent {
+        chord(KeyCode::Char('g'), KeyModifiers::CONTROL)
+    }
+
+    fn shells_in(ws: &Workspace, dir: &std::path::Path) -> usize {
+        ws.panels
+            .terminal
+            .own_ptys()
+            .iter()
+            .filter(|p| p.kind == SessionKind::Shell && p.working_dir == dir)
+            .count()
+    }
+
+    #[test]
+    fn 一覧の_ctrl_t_は選んだ_worktree_でシェルを起こして入り本画面の_worktree_は動かさない() {
+        let mut f = shell_fleet(40);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &f.branch), 1);
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+        assert!(f.ws.fleet_shell().is_some());
+        assert_eq!(f.ws.pty_session(), f.ws.fleet_shell());
+        assert_eq!(
+            f.ws.panels.terminal.session_in(Focus::TerminalShell),
+            None,
+            "本画面のシェル区画に別の worktree のシェルが出た"
+        );
+    }
+
+    #[test]
+    fn ctrl_t_は何度押してもシェル1本に入る() {
+        let mut f = shell_fleet(40);
+        for _ in 0..2 {
+            on_key(&mut f.ws, &mut f.svc, ctrl_t());
+            assert_eq!(f.ws.focus, Focus::FleetShell);
+            on_key(
+                &mut f.ws,
+                &mut f.svc,
+                chord(KeyCode::Esc, KeyModifiers::CONTROL),
+            );
+            assert_eq!(f.ws.focus, Focus::Fleet);
+            assert_eq!(
+                f.ws.panels.fleet.lower(),
+                crate::panels::fleet::Lower::Shell,
+                "一覧へ戻っても左下はシェルのまま"
+            );
+        }
+        assert_eq!(shells_in(&f.ws, &f.main), 1);
+    }
+
+    #[test]
+    fn シェルの中の文字とctrl_tはシェルへ届く() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        for k in [
+            key(KeyCode::Char('a')),
+            key(KeyCode::Esc),
+            key(KeyCode::Tab),
+            ctrl_t(),
+        ] {
+            assert!(
+                matches!(route(&mut f.ws, k), Routed::ForwardToPty(_)),
+                "{k:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_g_はシェルの中からでも一覧からでも左下を_git_changes_にして一覧へ戻る() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        for _ in 0..2 {
+            on_key(&mut f.ws, &mut f.svc, ctrl_g());
+            assert_eq!(f.ws.focus, Focus::Fleet);
+            assert_eq!(
+                f.ws.panels.fleet.lower(),
+                crate::panels::fleet::Lower::Changes
+            );
+            assert!(f.ws.modals.is_empty(), "一覧の ctrl+g が全文検索を開いた");
+        }
+        assert_eq!(
+            shells_in(&f.ws, &f.main),
+            1,
+            "Git Changes へ戻すとシェルが止まった"
+        );
+    }
+
+    #[test]
+    fn シェルの中の_ctrl_g_はファイルを開きに行かない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let effects =
+            f.ws.dispatch(conductor_core::keymap::Action::OpenFileFromTerminal)
+                .unwrap();
+        assert!(
+            matches!(effects.as_slice(), [Effect::Focus(Focus::Fleet)]),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn シェルの中のスクロールは右の_claude_の読みビューを開かない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        for action in [
+            conductor_core::keymap::Action::ScrollbackUp,
+            conductor_core::keymap::Action::ScrollbackTop,
+        ] {
+            assert_eq!(f.ws.dispatch(action), Some(Vec::new()));
+        }
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+    }
+
+    #[test]
+    fn シェルから一覧を開き直して閉じても見えないシェルに入らない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        apply(&mut f.ws, &mut f.svc, vec![Effect::OpenFleet]);
+        let effects =
+            f.ws.dispatch(conductor_core::keymap::Action::ExitSubPanel)
+                .unwrap();
+        apply(&mut f.ws, &mut f.svc, effects);
+        assert!(!f.ws.chrome.fleet_open);
+        assert_eq!(f.ws.focus, Focus::Explorer);
+        assert_eq!(f.ws.pty_session(), None);
+    }
+
+    #[test]
+    fn 打っていたシェルが閉じたら同じ_dir_の別のシェルへは打たせず一覧へ戻す() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let first = f.ws.pty_session().unwrap();
+        let config = f.ws.config.clone();
+        f.ws.panels
+            .terminal
+            .launch_shell_in(&f.main, &config)
+            .unwrap();
+        f.ws.panels.terminal.close_sessions(&[first]);
+        assert_eq!(f.ws.pty_session(), None);
+        f.ws.sync_layout(&f.l);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 打っている間に読み直しで選んだ行が動いたら一覧へ戻す() {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        f.ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: f.branch.clone(),
+                    name: "other".into(),
+                    worktrees: vec![WorktreeHead {
+                        path: f.branch.clone(),
+                        head: Head::Branch("feature/b".into()),
+                    }],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(f.ws.panels.fleet.selected_dir(), Some(f.branch.clone()));
+        f.ws.sync_layout(&f.l);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 窓を縮めて左下が消えたら一覧へ戻り_ctrl_t_は起こさない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let low = layout(&f.ws, Rect::new(0, 0, 160, 22));
+        f.ws.sync_layout(&low);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &f.branch), 0);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        assert!(matches!(
+            f.ws.chrome.status.as_ref().map(|s| s.level),
+            Some(StatusLevel::Warning)
+        ));
+    }
+
+    #[test]
+    fn 消す点検中の_worktree_にはシェルを起こさない() {
+        let mut f = shell_fleet(40);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::StopSession);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &f.branch), 0);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+    }
+
+    fn branch_inspection(f: &ShellFleet) -> crate::panels::fleet::Inspection {
+        crate::panels::fleet::Inspection {
+            repo: f.main.clone(),
+            path: f.branch.clone(),
+            label: "feature/b".into(),
+            check: conductor_core::git_engine::DeletionCheck {
+                recorded: f.branch.clone(),
+                branch: Some("feature/b".into()),
+                keeps_branch: false,
+                head: None,
+                base: None,
+                unmerged: Some(0),
+                dirty: Some(0),
+            },
+            claudes: Vec::new(),
+            panels: Vec::new(),
+            own_claudes: 0,
+            shells: 0,
+            in_window_repo: false,
+        }
+    }
+
+    #[test]
+    fn 削除を確定した_worktree_には消えるまでシェルを起こさない() {
+        let mut f = shell_fleet(40);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        let inspection = branch_inspection(&f);
+        // 消す worker は走らせない。結果が届くまでの区間だけを見る。
+        crate::effect::delete_fleet_worktree(&mut f.ws, inspection);
+        f.ws.panels.fleet.forget_in_flight();
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &f.branch), 0);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        f.ws.accept(TaskResult::FleetWorktreeDeleted {
+            path: f.branch.clone(),
+            in_window_repo: false,
+            outcome: Err("failed".into()),
+        });
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &f.branch), 1, "消せなかった後も起こせない");
+    }
+
+    #[test]
+    fn exit_したシェルは片付く前でも映さず_ctrl_t_で新しく起こす() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let first = f.ws.pty_session().unwrap();
+        for c in "exit\r".chars() {
+            let code = if c == '\r' {
+                KeyCode::Enter
+            } else {
+                KeyCode::Char(c)
+            };
+            f.ws.panels.terminal.forward_key(key(code), &first);
+        }
+        crate::testing::wait_for(|| f.ws.fleet_shell().is_none());
+        assert!(
+            f.ws.panels.terminal.has_session(&first),
+            "片付いた後を見ている"
+        );
+        f.ws.sync_layout(&f.l);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let second = f.ws.pty_session().unwrap();
+        assert_ne!(second, first);
+    }
+
+    #[test]
+    fn 木に載らない外の端末の行にはシェルを起こさない() {
+        use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status};
+        let mut f = shell_fleet(40);
+        let outside = f.main.join("sub");
+        std::fs::create_dir_all(&outside).unwrap();
+        f.ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                live: vec![LiveSession {
+                    pid: 9,
+                    cwd: outside.clone(),
+                    session_id: "s9".into(),
+                    status: Status::Idle,
+                    status_since: None,
+                    owner: Owner::Elsewhere,
+                    started: std::time::SystemTime::UNIX_EPOCH,
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(f.ws.panels.fleet.selected_dir(), Some(outside.clone()));
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &outside), 0);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        assert_eq!(
+            f.ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Changes
+        );
+    }
+
+    #[test]
+    fn 右の_claude_に入力中の_ctrl_g_は左下もフォーカスも変えない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        f.ws.focus = Focus::FleetSession;
+        let effects =
+            f.ws.dispatch(conductor_core::keymap::Action::OpenFileFromTerminal)
+                .unwrap_or_default();
+        apply(&mut f.ws, &mut f.svc, effects);
+        assert_eq!(f.ws.focus, Focus::FleetSession);
+        assert_eq!(
+            f.ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Shell
+        );
+    }
+
+    #[test]
+    fn 消えた_worktree_にはシェルを起こさずモードもフォーカスも変えない() {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        on_key(&mut ws, &mut svc, ctrl_t());
+        assert_eq!(ws.panels.terminal.own_ptys().len(), 0);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert_eq!(
+            ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Changes
+        );
+        assert!(matches!(
+            ws.chrome.status.as_ref().map(|s| s.level),
+            Some(StatusLevel::Warning)
+        ));
+    }
+
+    #[test]
+    fn 本画面と同じ_worktree_に起こしたシェルは綴りを揃えて本画面のシェル区画にも映る() {
+        let mut f = shell_fleet(40);
+        let spelled = f._tmp.path().join("app");
+        assert_ne!(
+            spelled, f.main,
+            "tempdir が canonical だと綴りの差を確かめられない"
+        );
+        f.ws.panels.terminal.follow_worktree(Some(spelled.clone()));
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(shells_in(&f.ws, &spelled), 1);
+        assert_eq!(
+            f.ws.panels.terminal.session_in(Focus::TerminalShell),
+            f.ws.fleet_shell()
+        );
+        on_key(
+            &mut f.ws,
+            &mut f.svc,
+            chord(KeyCode::Esc, KeyModifiers::CONTROL),
+        );
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(
+            shells_in(&f.ws, &spelled),
+            1,
+            "綴りの違いで 2 本目を起こした"
+        );
+    }
+
+    #[test]
+    fn 左下のシェルを押すと入り_シェルが無ければ入らない() {
+        let mut f = shell_fleet(40);
+        let rect = f.l.rect(Region::FleetChanges).unwrap();
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 3,
+            row: rect.y + 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        on_key(&mut f.ws, &mut f.svc, ctrl_g());
+        on_mouse(&mut f.ws, &mut f.svc, &f.l, click);
+        assert_eq!(f.ws.focus, Focus::Fleet, "Git Changes を押して入った");
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        on_key(
+            &mut f.ws,
+            &mut f.svc,
+            chord(KeyCode::Esc, KeyModifiers::CONTROL),
+        );
+        on_mouse(&mut f.ws, &mut f.svc, &f.l, click);
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+    }
+
+    #[test]
+    fn 左下のシェルに落としたファイルはシェルへ貼る() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        f.ws.chrome.status = None;
+        let dropped = f.main.join("dropped.png");
+        std::fs::write(&dropped, b"").unwrap();
+        on_paste(&mut f.ws, &mut f.svc, format!("{} ", dropped.display()));
+        assert!(f.ws.chrome.status.is_none(), "{:?}", f.ws.chrome.status);
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+    }
+
+    #[test]
+    fn 一覧を閉じたら左下のシェルは打ち先にならない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        f.ws.chrome.fleet_open = false;
+        assert_eq!(f.ws.fleet_shell(), None);
+        assert_eq!(f.ws.pty_session(), None);
+    }
+
+    #[test]
+    fn 左下の題と案内はフォーカスとシェルの有無で変わる() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        let title = crate::panels::fleet::render::lower_title(&f.ws);
+        assert!(
+            title.contains("入力中") && title.contains("ctrl+g"),
+            "{title}"
+        );
+        on_key(
+            &mut f.ws,
+            &mut f.svc,
+            chord(KeyCode::Esc, KeyModifiers::CONTROL),
+        );
+        let title = crate::panels::fleet::render::lower_title(&f.ws);
+        assert!(title.contains("ctrl+t で入る"), "{title}");
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        let drawn = drawn_changes(&mut f.ws, &f.l);
+        assert!(drawn.contains("シェルなし"), "{drawn}");
     }
 
     fn click_button(

@@ -365,6 +365,7 @@ pub enum TaskResult {
     },
     /// `in_window_repo` なら worktree パネルの一覧も読み直す。
     FleetWorktreeDeleted {
+        path: PathBuf,
         in_window_repo: bool,
         outcome: Result<String, String>,
     },
@@ -538,6 +539,7 @@ impl Task {
                 svc.spawn_unscoped(
                     move || {
                         let in_window_repo = inspection.in_window_repo;
+                        let path = inspection.path.clone();
                         use conductor_core::claude_sessions::registry;
                         let outcome = fleet_delete::run(
                             &inspection,
@@ -545,9 +547,10 @@ impl Task {
                             &registry::SystemProcesses,
                             STOP_GRACE,
                         );
-                        (in_window_repo, outcome)
+                        (path, in_window_repo, outcome)
                     },
-                    |(in_window_repo, outcome)| TaskResult::FleetWorktreeDeleted {
+                    |(path, in_window_repo, outcome)| TaskResult::FleetWorktreeDeleted {
+                        path,
                         in_window_repo,
                         outcome,
                     },

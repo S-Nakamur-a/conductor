@@ -192,6 +192,14 @@ pub struct FleetStatus {
 
 const OUTSIDE_GROUP: &str = "外の端末";
 
+/// 一覧の左下に映すもの。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lower {
+    #[default]
+    Changes,
+    Shell,
+}
+
 #[derive(Debug, Default)]
 pub struct FleetPanel {
     selected: Option<Selected>,
@@ -208,12 +216,20 @@ pub struct FleetPanel {
     smart_target: Option<PathBuf>,
     /// 消す前の点検を待っている worktree。点検は 1 本だけ。
     inspecting: Option<PathBuf>,
+    /// 消すと確定し、結果がまだ届いていない worktree。結果は repo を切り替えても届くので、
+    /// [Self::forget_in_flight] では下ろさない。
+    deleting: BTreeSet<PathBuf>,
     polling: bool,
     /// gg や押しっぱなしでタブが何枚も開かないように、開き終わるまで次の g を捨てる。
     opening_page: bool,
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, bool, Option<Selected>)>,
     pub changes: changes::BranchChanges,
+    lower: Lower,
+    /// 窓が低いと左下の区画ごと無い。レイアウトから毎フレーム写す。
+    lower_shown: bool,
+    /// 左下のシェルに入ったときに映っていたもの。打ち先がこれから変わったら打たせない。
+    typing_shell: Option<String>,
 }
 
 impl FleetPanel {
@@ -245,8 +261,67 @@ impl FleetPanel {
             .collect()
     }
 
+    pub fn lower(&self) -> Lower {
+        self.lower
+    }
+
+    pub fn set_lower_shown(&mut self, shown: bool) {
+        self.lower_shown = shown;
+    }
+
+    pub fn shows_shell(&self) -> bool {
+        self.lower == Lower::Shell && self.lower_shown
+    }
+
+    pub fn show_shell(&mut self) {
+        self.lower = Lower::Shell;
+    }
+
+    pub fn enter_shell(&mut self, id: String) {
+        self.typing_shell = Some(id);
+    }
+
+    pub fn typing_shell(&self) -> Option<&str> {
+        self.typing_shell.as_deref()
+    }
+
+    fn show_changes(&mut self) -> Vec<Effect> {
+        self.lower = Lower::Changes;
+        vec![Effect::Focus(Focus::Fleet)]
+    }
+
+    /// 左下にシェルを起こしてよい dir。木に載らない dir に起こすと、元の行が消えた後に辿れなくなる。
+    pub fn shell_dir(&self) -> Result<PathBuf, &'static str> {
+        if !self.lower_shown {
+            return Err("The window is too short to show a shell under the list.");
+        }
+        let dir = self.selected_dir().ok_or("Select a worktree first.")?;
+        if self.tree_root_of(&dir).is_none() {
+            return Err("A shell opens only in a git worktree listed here.");
+        }
+        if self.inspecting.as_deref() == Some(dir.as_path()) {
+            return Err("Still checking this worktree to delete it.");
+        }
+        if self.deleting.contains(&dir) {
+            return Err("Still deleting this worktree.");
+        }
+        // 無い dir でもシェルの起動は失敗せず、すぐ終わるシェルが残る。
+        if !dir.is_dir() {
+            return Err("This worktree's directory is gone.");
+        }
+        Ok(dir)
+    }
+
+    pub fn note_deleting(&mut self, path: PathBuf) {
+        self.deleting.insert(path);
+    }
+
+    pub fn note_deleted(&mut self, path: &Path) {
+        self.deleting.remove(path);
+    }
+
     pub fn open(&mut self, from: Focus, own: Vec<OwnSession>) {
-        if !matches!(from, Focus::Fleet | Focus::FleetSession) {
+        if !from.in_fleet() {
             self.came_from = Some(from);
         }
         self.set_own(own);
@@ -764,6 +839,20 @@ impl FleetPanel {
         if ctx.focus == Focus::FleetSession {
             return (action == Action::LeaveTerminal).then(|| vec![Effect::Focus(Focus::Fleet)]);
         }
+        if ctx.focus == Focus::FleetShell {
+            return match action {
+                Action::LeaveTerminal => Some(vec![Effect::Focus(Focus::Fleet)]),
+                // シェルの中の ctrl+g は端末層ではファイルを開くキー。左下には開く先が無い。
+                Action::OpenFileFromTerminal => Some(self.show_changes()),
+                Action::ScrollbackUp
+                | Action::ScrollbackDown
+                | Action::ScrollbackTop
+                | Action::SnapToLive
+                | Action::NextSession
+                | Action::PrevSession => Some(Vec::new()),
+                _ => None,
+            };
+        }
         let items = self.items();
         let at = items.iter().position(|item| self.is_selected_item(item));
         let last = items.len().saturating_sub(1);
@@ -798,6 +887,8 @@ impl FleetPanel {
                 });
             }
             Action::OpenBranchPage => return Some(self.open_page().into_iter().collect()),
+            Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
+            Action::ShowFleetChanges => return Some(self.show_changes()),
             Action::NewSessionMenu => {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(

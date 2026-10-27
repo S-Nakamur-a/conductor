@@ -1078,6 +1078,39 @@ impl TerminalPanel {
         self.launch(SessionKind::ClaudeCode, claude, dir, dir, config)
     }
 
+    /// dir で生きている最初のシェル。一覧の木は canonical、本画面の worktree は git の綴りで dir を持つ。
+    pub fn live_shell_in(&self, dir: &Path) -> Option<String> {
+        self.pty
+            .sessions()
+            .iter()
+            .enumerate()
+            .find(|(i, s)| {
+                s.kind == SessionKind::Shell
+                    && self.pty.is_session_alive(*i)
+                    && same_dir(&s.working_dir, dir)
+            })
+            .map(|(_, s)| s.id.clone())
+    }
+
+    /// 一覧から起こすシェル。本画面が追う worktree は動かさない。同じ worktree なら本画面の綴りで
+    /// 起こし、シェル区画が空ならそこにも映す — でないと本画面ではタブだけ出て中身が映らない。
+    pub fn launch_shell_in(&mut self, dir: &Path, config: &Config) -> Result<String> {
+        let here = self.worktree.clone().filter(|w| same_dir(w, dir));
+        let working_dir = here.clone().unwrap_or_else(|| dir.to_path_buf());
+        let id = self.launch(
+            SessionKind::Shell,
+            ClaudeArgs::default(),
+            &working_dir,
+            &working_dir,
+            config,
+        )?;
+        if here.is_some() && self.shell.session.is_none() {
+            self.shell.show(Some(id.clone()));
+            self.activate_visible();
+        }
+        Ok(id)
+    }
+
     /// 起動待ちのプロンプトを、受け取れる状態になったものから流し込む。
     ///
     /// 普段は is_waiting_for_input で足りるが、起動直後はまだアイドルに達しないので、
@@ -1216,7 +1249,19 @@ impl TerminalPanel {
 
     /// 区画とセッションの大きさが違えば PTY へ伝える。同じ worktree の同じ種類は
     /// まとめて合わせる — タブを切り替えた先が別の幅のままだと絵が崩れる。
-    pub fn sync_sizes(&mut self, layout: &Layout, fleet_session: Option<&str>) {
+    pub fn sync_sizes(
+        &mut self,
+        layout: &Layout,
+        fleet_session: Option<&str>,
+        fleet_shell: Option<&str>,
+    ) {
+        if let (Some(rect), Some(index)) = (
+            layout.rect(Region::FleetChanges),
+            self.index_of(fleet_shell),
+        ) {
+            let content = render::editor_area(rect);
+            self.fit(index, (content.height.max(1), content.width.max(1)));
+        }
         if let (Some(rect), Some(editor)) = (layout.rect(Region::Editor), self.editor.as_mut()) {
             let content = render::editor_area(rect);
             let size = (content.height.max(1), content.width.max(1));
@@ -1332,6 +1377,14 @@ const EDITOR_FALLBACK: &str = "vi";
 
 /// レイアウトが決まる前の暫定。次のフレームの [TerminalPanel::sync_sizes] が直す。
 const DEFAULT_PTY_SIZE: (u16, u16) = (24, 80);
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
 
 /// 環境が指すエディタ。
 pub(crate) fn editor_argv() -> Vec<String> {
