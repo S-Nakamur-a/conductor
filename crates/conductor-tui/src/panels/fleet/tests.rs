@@ -2884,10 +2884,10 @@ mod usage {
         );
         let line = |width| squeeze(&text(&render::summary_line(&fleet, &theme, now(), width)));
         let stages = [
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42% 2h13m · 7d ████▉░░░ 61% 3d4h",
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42% · 7d ████▉░░░ 61%",
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎░░░░ 42%",
-            "作業中 1 5h ███▎░░░░ 42%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% · 7d ████▉ 61%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42%",
+            "作業中 1 5h ███▎ 42%",
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0",
         ];
         let mut seen = Vec::new();
@@ -2926,7 +2926,7 @@ mod usage {
             let line = render::summary_line(&fleet, &theme, now(), 200);
             line.spans
                 .iter()
-                .find(|s| s.content.contains('░') || s.content.contains('█'))
+                .find(|s| s.content.contains('█'))
                 .and_then(|s| s.style.fg)
         };
         assert_eq!(bar_color(69.0), Some(theme.accent));
@@ -2959,30 +2959,21 @@ mod usage {
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('%')))
             .expect("使用率の行");
-        let tail: Vec<_> = line.spans[line.spans.len() - 3..]
+        let tail: Vec<_> = line.spans[line.spans.len() - 4..]
             .iter()
-            .map(|s| (s.content.to_string(), s.style.fg))
+            .map(|s| (s.content.to_string(), s.style.fg, s.style.bg))
             .collect();
+        let (accent, hint) = (Some(ws.theme.accent), Some(ws.theme.hint));
         assert_eq!(
             tail,
             [
-                ("█▋".to_string(), Some(ws.theme.accent)),
-                ("░░".to_string(), Some(ws.theme.fg)),
-                (" 42%".to_string(), Some(ws.theme.accent)),
+                ("█".to_string(), accent, None),
+                ("▋".to_string(), accent, hint),
+                ("  ".to_string(), None, hint),
+                ("  42%".to_string(), accent, None),
             ],
-            "空きは地に溶けないよう本文の色"
+            "端数のマスの残りにも空きと同じ地を敷く"
         );
-        let mut fleet = std::mem::take(&mut ws.panels.fleet);
-        fleet.update(Action::NavigateDown, &ws.ctx());
-        ws.panels.fleet = fleet;
-        let unselected = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
-        let empty = unselected
-            .lines
-            .iter()
-            .flat_map(|l| &l.spans)
-            .find(|s| s.content == "░░")
-            .expect("空きのマス");
-        assert_eq!(empty.style.fg, Some(ws.theme.fg));
         assert_eq!(
             composed
                 .lines
@@ -3018,7 +3009,43 @@ mod usage {
             })
             .find(|t| t.contains('%'))
             .expect("使用率の行");
-        assert!(text.ends_with("▍░░░ 12%"), "{text}");
+        assert!(text.ends_with("▍     12%"), "{text}");
+    }
+
+    #[test]
+    fn 行のバーは百分率の桁数によらず同じ桁から始まる() {
+        let mut context = std::collections::HashMap::new();
+        context.insert("s7".to_string(), 0.0);
+        context.insert("s8".to_string(), 29.0);
+        context.insert("s9".to_string(), 100.0);
+        let mut ws = Workspace::for_test();
+        ws.panels.fleet = fleet_with(
+            Usage {
+                context,
+                ..Default::default()
+            },
+            ["s7", "s8", "s9"]
+                .into_iter()
+                .zip(7..)
+                .map(|(id, pid)| live(pid, "/r/a", id, Status::Working, Owner::Conductor))
+                .collect(),
+        );
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let tails: Vec<String> = composed
+            .lines
+            .iter()
+            .filter(|l| l.spans.iter().any(|s| s.content.contains('%')))
+            .map(|l| {
+                l.spans[l.spans.len() - 4..]
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(tails.len(), 3);
+        for tail in &tails {
+            assert_eq!(tail.width(), 9, "{tails:?}");
+        }
     }
 }
 

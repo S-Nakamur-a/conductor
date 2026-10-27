@@ -627,16 +627,19 @@ fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<
         .collect()
 }
 
-/// 空きを hint で描くと、暗いテーマでは地に沈んで上限が見えない。
+/// 空きは網かけでなく地を敷いたマスで描く。網かけは暗いテーマで地に沈み、
+/// 端数のブロックはマスの左しか塗らないので、地を敷かないと塗りと空きの間が抜ける。
 fn bar(pct: u8, cells: usize, theme: &Theme) -> Vec<Span<'static>> {
     const PARTIAL: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
     let eighths = usize::from(pct.min(100)) * cells * 8 / 100;
     let (full, rest) = (eighths / 8, eighths % 8);
-    let filled = format!("{}{}", "█".repeat(full), PARTIAL[rest]);
     let empty = cells - full - usize::from(rest > 0);
+    let fill = Style::default().fg(level(theme, pct));
+    let track = Style::default().bg(theme.hint);
     vec![
-        Span::styled(filled, Style::default().fg(level(theme, pct))),
-        Span::styled("░".repeat(empty), Style::default().fg(theme.fg)),
+        Span::styled("█".repeat(full), fill),
+        Span::styled(PARTIAL[rest], fill.bg(theme.hint)),
+        Span::styled(" ".repeat(empty), track),
     ]
 }
 
@@ -787,7 +790,7 @@ fn row_line(
         (Some(pct), _) => {
             let mut spans = bar(pct, 4, theme);
             spans.push(Span::styled(
-                format!(" {pct}%"),
+                format!(" {pct:>3}%"),
                 Style::default().fg(level(theme, pct)),
             ));
             spans
