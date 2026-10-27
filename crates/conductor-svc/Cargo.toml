@@ -1,6 +1,6 @@
 [package]
 name = "conductor-svc"
-version = "0.1.0-wt.fleet-shell-toggle-git-changes"
+version = "0.1.0"
 edition = "2024"
 publish = false
 description = "conductor の副作用の実行者。Task を受けて Event を返す"
