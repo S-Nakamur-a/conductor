@@ -208,6 +208,19 @@ fn コミットで変えて作業ツリーで戻したファイルは出ない()
     assert_eq!(changed(&repo, "main"), (vec!["b.txt".to_string()], None));
 }
 
+#[test]
+fn 作業ツリーを読むと今の_head_を覚え_コミットでは覚えない() {
+    let repo = TestRepo::new();
+    let base = base_then_feature(&repo);
+    let head = repo.repo.head().unwrap().target().unwrap();
+
+    assert_eq!(loaded(&repo, "main").head, Some(head.to_string()));
+
+    let mut commit = DiffState::new(DiffSource::commit(&base.to_string()));
+    commit.load(&repo.path, false, 4);
+    assert_eq!(commit.head, None);
+}
+
 /// リモート追跡 ref は worktree ごとではなく共有の commondir にある。
 #[test]
 fn リンクされたworktreeからもリモート追跡refを解決する() {

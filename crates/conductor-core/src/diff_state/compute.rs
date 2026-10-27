@@ -33,8 +33,18 @@ impl DiffState {
                 self.error = Some(format!("{e:#}"));
             }
         }
+        self.head = match self.source {
+            DiffSource::WorkingTree { .. } => head_oid(worktree_path),
+            DiffSource::Commit { .. } => None,
+        };
         self.rebuild_display_list();
     }
+}
+
+fn head_oid(worktree_path: &Path) -> Option<String> {
+    let repo = Repository::open(worktree_path).ok()?;
+    let commit = repo.head().ok()?.peel_to_commit().ok()?;
+    Some(commit.id().to_string())
 }
 
 impl DiffSource {
