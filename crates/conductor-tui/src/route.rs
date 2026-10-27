@@ -125,6 +125,22 @@ mod tests {
     }
 
     #[test]
+    fn 一覧の感嘆符は右の区画と左下のシェルでは端末へ届く() {
+        let mut ws = Workspace::for_test();
+        let bang = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::SHIFT);
+        ws.focus = Focus::Fleet;
+        assert_eq!(route(&mut ws, bang), Routed::Action(Action::GoToWaiting));
+        for focus in [Focus::FleetSession, Focus::FleetShell] {
+            ws.focus = focus;
+            assert_eq!(
+                route(&mut ws, bang),
+                Routed::ForwardToPty(bang),
+                "{focus:?}"
+            );
+        }
+    }
+
+    #[test]
     fn パネルフォーカスでは_keymapで解決する() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;

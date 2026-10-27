@@ -394,7 +394,9 @@ Input ─route()─> Routed ─update()─> Vec<Effect> ─apply()─> Workspace
   consume**, which keeps an IME's composing glyphs from leaking outward; it is a
   property of the top modal, not a rule repeated per stage.
 - `Action::fires_in_terminal()` is the single source of truth for what a terminal
-  panel does *not* forward to the PTY.
+  panel does *not* forward to the PTY. A plain-character key added to a layer whose
+  screen also has a PTY region (Sessions: its right side and the lower shell) gets a
+  `route.rs` test that it still reaches the PTY there: `!` is Claude's bash mode.
 - **`render` takes `&Workspace` only.** Hit geometry is never a by-product of
   drawing: `layout(&Workspace, area) -> Layout` is pure, and both the renderer and
   the mouse hit test call it.
