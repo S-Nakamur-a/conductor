@@ -452,6 +452,9 @@ def validate(r) -> None:
                 raise Failure(f"{where}.relations[{j}] に to と reason が無い")
             if not isinstance(rel.get("primary", False), bool):
                 raise Failure(f"{where}.relations[{j}].primary が true / false でない")
+        concerns = s.get("concerns", [])
+        if not isinstance(concerns, list) or not all(nonblank(c) for c in concerns):
+            raise Failure(f"{where}（{s['title']}）の concerns が空でない文字列の配列でない")
     impacts = r.get("impacts", [])
     if not isinstance(impacts, list):
         raise Failure("impacts が配列でない")
@@ -754,6 +757,26 @@ def hunk_positions(f: dict, h: dict):
             yield (f["path"], "old", old_no)
 
 
+def verdict_chip(s: dict) -> str:
+    n = len(s.get("concerns", []))
+    if n:
+        return f'<span class="chip concern">懸念あり {n}</span>'
+    return '<span class="chip lgtm">LGTM</span>' if s["importance"] == "core" else ""
+
+
+def verdict(sections: list[dict], complete: bool) -> str:
+    items = [
+        f'<li><a href="#s{i}">{esc(s["title"])}</a>{prose(c)}</li>'
+        for i, s in enumerate(sections)
+        for c in s.get("concerns", [])
+    ]
+    if items:
+        return f'<span class="chip concern">懸念あり {len(items)}</span><ul class="concerns">{"".join(items)}</ul>'
+    if not complete:
+        return '<span class="chip warnchip">判定できない</span><p class="note">説明もれ検査が通っていない。</p>'
+    return '<span class="chip lgtm">LGTM</span><p class="note">どの節にも懸念は無い。</p>'
+
+
 def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> str:
     sections = sorted_sections(review)
     cov = coverage(ledger, sections)
@@ -766,8 +789,9 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
     for i, (s, sc) in enumerate(zip(sections, cov["sections"])):
         imp = s["importance"]
         toc.append(
-            f'<li><a href="#s{i}"><span class="chip {imp}">{IMPORTANCE_JA[imp]}</span>{esc(s["title"])}</a></li>'
+            f'<li><a href="#s{i}"><span class="chip {imp}">{IMPORTANCE_JA[imp]}</span>{verdict_chip(s)}{esc(s["title"])}</a></li>'
         )
+        concerns = "".join(f"<li>{prose(c)}</li>" for c in s.get("concerns", []))
         rels, primary_seen = [], False
         for rel in s.get("relations", []):
             j = anchor.get(rel["to"])
@@ -784,9 +808,10 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
             notes.append(f'<p class="warn">台帳に無い位置を指している: <code>{esc(describe_gaps(sc["unknown"]).strip())}</code></p>')
         body.append(
             f'<section class="sec {imp}" id="s{i}"><header><span class="chip {imp}">{IMPORTANCE_JA[imp]}</span>'
-            f'<h3>{esc(s["title"])}</h3></header>'
+            f'{verdict_chip(s)}<h3>{esc(s["title"])}</h3></header>'
             f'<div class="why"><span class="label">理由</span>{prose(s["reason"])}</div>'
-            f"{prose(s['body'])}"
+            + (f'<ul class="concerns">{concerns}</ul>' if concerns else "")
+            + f"{prose(s['body'])}"
             + (f'<ul class="rels">{"".join(rels)}</ul>' if rels else "")
             + "".join(notes)
             + excerpts(files, sc["positions"], conflicts, meta)
@@ -838,6 +863,7 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
         total=cov["total"],
         files=len(files),
         banner="".join(banner),
+        verdict=verdict(sections, is_complete(cov)),
         overview=overview,
         toc="".join(toc),
         sections="".join(body),
@@ -891,6 +917,14 @@ dl {{ margin: 0; }}
 .chip {{ flex: none; font-size: .72rem; font-weight: 700; letter-spacing: .06em; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }}
 .chip.core {{ color: var(--core); }} .chip.ripple {{ color: var(--ripple); }} .chip.follow {{ color: var(--follow); }}
 .chip.minor {{ color: var(--minor); }} .chip.warnchip {{ color: var(--warn); }}
+.chip.lgtm {{ color: var(--bg); background: var(--follow); border-color: var(--follow); }}
+.chip.concern {{ color: var(--bg); background: var(--core); border-color: var(--core); }}
+.verdict {{ display: grid; gap: 8px; justify-items: start; }}
+.verdict .chip {{ font-size: .95rem; padding: 2px 14px; }}
+.concerns {{ margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }}
+.verdict .concerns {{ justify-self: stretch; }}
+.verdict .concerns a {{ font-weight: 700; margin-right: .5em; }}
+.sec .concerns {{ color: var(--core); }}
 .sec {{ background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--minor); border-radius: 6px;
   padding: 16px; display: grid; gap: 12px; min-width: 0; scroll-margin-top: 16px; }}
 .sec.core {{ border-left-color: var(--core); }} .sec.ripple {{ border-left-color: var(--ripple); }}
@@ -940,6 +974,7 @@ tr.gap td {{ color: var(--muted); text-align: center; }}
 <div class="meta"><span>{base_ref} (<code>{base}</code>) から作業ツリーまで{dirty}</span><span>HEAD <code>{head}</code></span><span>{files} ファイル / 変更位置 {total}</span></div>
 {banner}
 </header>
+<section class="verdict"><h2>判定</h2>{verdict}</section>
 <section><h2>概要</h2><dl>{overview}</dl></section>
 <nav><h2>読む順</h2><ol class="toc">{toc}</ol></nav>
 <section><h2>節ごとの変更</h2><div class="sections">{sections}</div></section>

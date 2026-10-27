@@ -464,6 +464,8 @@ class Validate(unittest.TestCase):
             "feature が空": (lambda r: r["impacts"][0].update(feature=""), "feature"),
             "fact で change が空": (lambda r: r["impacts"][0].update(change=""), "fact"),
             "confidence が無効": (lambda r: r["impacts"][0].update(confidence="maybe"), "confidence"),
+            "concerns が文字列": (lambda r: s(r).update(concerns="c"), "concerns"),
+            "concerns に空白": (lambda r: s(r).update(concerns=["c", " "]), "concerns"),
         }
         for name, (mutate, needle) in cases.items():
             with self.subTest(name):
@@ -730,6 +732,43 @@ class RenderPage(RepoTest):
         self.assertIn("line 47", first)
         self.assertNotIn("line 46", first)
         self.assertIn("…", first)
+
+    def test_懸念が無く検査が通ればLGTM_本題以外には札を付けない(self):
+        self.r.write("a.txt", "a\nb\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("a.txt", "new", 1)]), section("y", [rng("a.txt", "new", 2)], importance="minor")])
+        page = self.render(d)
+        verdict = page.split('class="verdict"')[1].split("</section>")[0]
+        self.assertIn("LGTM", verdict)
+        self.assertEqual(page.split('id="s0"')[1].split("</header>")[0].count("LGTM"), 1)
+        self.assertNotIn("LGTM", page.split('id="s1"')[1].split("</header>")[0])
+
+    def test_懸念はどの節のものも冒頭に節へのリンクつきで集まる(self):
+        self.r.write("a.txt", "a\nb\n")
+        d, _ = self.r.prepare()
+        core = section("x", [rng("a.txt", "new", 1)])
+        core["concerns"] = ["一つ目", "二つ目"]
+        follow = section("y", [rng("a.txt", "new", 2)], importance="follow")
+        follow["concerns"] = ["三つ目"]
+        write_review(d, [core, follow])
+        page = self.render(d)
+        verdict = page.split('class="verdict"')[1].split("</section>")[0]
+        self.assertIn("懸念あり 3", verdict)
+        self.assertNotIn("LGTM", verdict)
+        for text in ("一つ目", "二つ目", "三つ目"):
+            self.assertIn(text, verdict)
+        self.assertEqual(verdict.count('href="#s1"'), 1)
+        self.assertIn("懸念あり 1", page.split('id="s1"')[1].split("</header>")[0])
+        self.assertIn("懸念あり 2", page.split('id="s0"')[1].split("</header>")[0])
+        self.assertNotIn("LGTM", page.split('id="s0"')[1].split("</header>")[0])
+
+    def test_説明もれがあれば懸念が無くてもLGTMにしない(self):
+        self.r.write("a.txt", "a\nb\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("a.txt", "new", 1)])])
+        verdict = self.render(d).split('class="verdict"')[1].split("</section>")[0]
+        self.assertNotIn("LGTM", verdict)
+        self.assertIn("判定できない", verdict)
 
     def render(self, d):
         code, out, err = self.r.run("render", d)
