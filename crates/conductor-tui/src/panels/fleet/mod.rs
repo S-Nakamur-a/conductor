@@ -872,6 +872,18 @@ impl FleetPanel {
                 at.and_then(|i| starts.into_iter().rev().find(|&s| s < i))
                     .unwrap_or(0)
             }
+            Action::GoToWaiting => {
+                let waiting = items
+                    .iter()
+                    .position(|item| matches!(item, Item::Session(row) if row.pinned));
+                let Some(i) = waiting else {
+                    return Some(vec![Effect::Status(
+                        StatusLevel::Info,
+                        "No session is waiting for input.".to_string(),
+                    )]);
+                };
+                i
+            }
             Action::Select => {
                 return Some(match &self.selected {
                     Some(Selected::Session(key, _)) => vec![Effect::EnterSession(key.clone())],

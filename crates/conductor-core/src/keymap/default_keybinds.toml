@@ -133,6 +133,7 @@
 "shift+down" = "next_repo"
 "K" = "prev_repo"
 "shift+up" = "prev_repo"
+"!" = "go_to_waiting"
 # g は依頼で素の文字にした。打ちかけの文から届くと、選んだ行の PR がブラウザで開く (連打は 1 回に畳む)。
 # 一覧の先頭へは K を重ねて行く。
 "g" = "open_branch_page"

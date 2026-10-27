@@ -303,6 +303,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
         Focus::Fleet => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("repo", &[Action::NextRepo, Action::PrevRepo]),
+            ("waiting", &[Action::GoToWaiting]),
             ("type", &[Action::ExpandOrRight]),
             ("open", &[Action::Select]),
             ("stop", &[Action::StopSession]),
