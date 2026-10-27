@@ -128,6 +128,7 @@ fn 既定のキーが解決する() {
             Action::NextRepo,
         ),
         (Fleet, shift('K'), Action::PrevRepo),
+        (Fleet, shift('!'), Action::GoToWaiting),
         (
             Fleet,
             key(KeyCode::Up, KeyModifiers::SHIFT),

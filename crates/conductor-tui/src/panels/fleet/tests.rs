@@ -2159,6 +2159,64 @@ mod tree {
     }
 
     #[test]
+    fn 感嘆符は入力待ちの欄の先頭を選ぶ() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![
+                    live(7, "/r/app", "s7", Status::Working, Owner::Conductor),
+                    live(
+                        8,
+                        "/r/app",
+                        "s8",
+                        Status::Waiting(Waiting::Permission),
+                        Owner::Conductor,
+                    ),
+                    live(
+                        9,
+                        "/r/app",
+                        "s9",
+                        Status::Waiting(Waiting::Question),
+                        Owner::Conductor,
+                    ),
+                ],
+                trees: vec![repo(
+                    "/r/app",
+                    vec![worktree("/r/app", Head::Branch("main".into()))],
+                )],
+                placement: placed(&[("/r/app", "/r/app")]),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let ws = Workspace::for_test();
+        fleet.update(Action::GoToBottom, &ws.ctx());
+        assert!(!fleet.selected_row().unwrap().pinned);
+
+        assert_eq!(
+            fleet.update(Action::GoToWaiting, &ws.ctx()),
+            Some(Vec::new())
+        );
+        let row = fleet.selected_row().unwrap();
+        assert_eq!((row.key, row.pinned), (RowKey::Pid(8), true));
+    }
+
+    #[test]
+    fn 入力待ちが無いときの感嘆符は選択を動かさずにそう告げる() {
+        let mut fleet = app();
+        let ws = Workspace::for_test();
+        fleet.update(Action::GoToBottom, &ws.ctx());
+        let before = fleet.selected_row().unwrap().key;
+
+        let effects = fleet.update(Action::GoToWaiting, &ws.ctx()).unwrap();
+        assert_eq!(status_text(&effects), "No session is waiting for input.");
+        assert_eq!(fleet.selected_row().unwrap().key, before);
+    }
+
+    #[test]
     fn worktree_の行では_enter_は何もせず_d_は消す前の点検を頼む() {
         let mut fleet = app();
         let ws = Workspace::for_test();
