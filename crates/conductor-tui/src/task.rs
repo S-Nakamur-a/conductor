@@ -218,6 +218,14 @@ pub enum Task {
     IntakePr {
         input: String,
     },
+    /// 設定したリポジトリの、自分にレビューが依頼された PR を 1 件 worktree にする。
+    /// `window_root` は取り込み先が窓のリポジトリかを見分けるためだけに使う。
+    ReviewRequests {
+        repos: Vec<PathBuf>,
+        tried: std::collections::HashSet<(PathBuf, u64)>,
+        window_root: PathBuf,
+        worktree_dir: Option<PathBuf>,
+    },
     /// 未公開コメントと投稿先。
     /// 差分の外のコメントを落とすので、いまの worktree の差分をここで取る。
     /// Explorer が見ている差分は出どころを替えられるので使えない。
@@ -435,6 +443,10 @@ pub enum TaskResult {
     StaleWorktrees(Result<Vec<String>, String>),
     Commits(Result<Vec<CommitInfo>, String>),
     PrIntake(Result<Box<IntakenPr>, String>),
+    ReviewRound {
+        round: Box<pr_intake::ReviewRound>,
+        in_window_repo: bool,
+    },
     Publishable(Result<Box<Publishable>, String>),
     Published(PublishOutcome),
     UpdateCheck {
@@ -810,6 +822,21 @@ impl Task {
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
             }
+            // 結果が届かないと次の問い合わせが始まらないので、repo を切り替えても捨てない。
+            Task::ReviewRequests {
+                repos,
+                tried,
+                window_root,
+                worktree_dir,
+            } => {
+                svc.spawn_unscoped(
+                    move || review_round(&repos, &tried, &window_root, worktree_dir.as_deref()),
+                    |(round, in_window_repo)| TaskResult::ReviewRound {
+                        round: Box::new(round),
+                        in_window_repo,
+                    },
+                );
+            }
             Task::LoadPublishable { worktree } => {
                 svc.spawn(
                     move || publishable(&env, &worktree),
@@ -1126,13 +1153,44 @@ fn pr_lookup_of(out: &std::process::Output) -> crate::panels::fleet::PrLookup {
 }
 
 fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
-    let intaken = pr_intake::intake_pr(&env.root, env.worktree_dir.as_deref(), input)
-        .map_err(|e| e.to_string())?;
+    intake_pr_into(&env.root, env.worktree_dir.as_deref(), input).map(Box::new)
+}
+
+/// PR のメタデータは取り込み先のリポジトリの DB に書く。窓のリポジトリとは限らない。
+fn intake_pr_into(
+    root: &Path,
+    worktree_dir: Option<&Path>,
+    input: &str,
+) -> Result<IntakenPr, String> {
+    let intaken = pr_intake::intake_pr(root, worktree_dir, input).map_err(|e| e.to_string())?;
     // 取り込みは済んでいるので、メタデータを書けなくても worktree は返す。
-    if let Err(e) = save_pr_meta(env, intaken.pr_number, &intaken.meta) {
+    if let Err(e) = save_pr_meta(root, intaken.pr_number, &intaken.meta) {
         log::warn!("could not record the PR metadata: {e}");
     }
-    Ok(Box::new(intaken))
+    Ok(intaken)
+}
+
+fn review_round(
+    repos: &[PathBuf],
+    tried: &std::collections::HashSet<(PathBuf, u64)>,
+    window_root: &Path,
+    worktree_dir: Option<&Path>,
+) -> (pr_intake::ReviewRound, bool) {
+    let round = pr_intake::review_round(
+        repos,
+        tried,
+        pr_intake::repo_worktrees,
+        pr_intake::review_requests,
+        |main, number| intake_pr_into(main, worktree_dir, &number.to_string()),
+    );
+    let window_main = GitEngine::open(window_root)
+        .and_then(|git| git.main_worktree_path())
+        .ok();
+    let in_window_repo = round
+        .intaken
+        .as_ref()
+        .is_some_and(|intake| window_main.as_ref() == Some(&intake.repo));
+    (round, in_window_repo)
 }
 
 /// dir がサブディレクトリでも、それを含む worktree の変更を読む。失敗は diff の error に入れて必ず返す
@@ -1259,8 +1317,8 @@ fn fleet_trees(
     (trees, placement)
 }
 
-fn save_pr_meta(env: &TaskEnv, pr_number: u64, meta: &pr_intake::FetchedPr) -> Result<(), String> {
-    let store = open_store(env)?;
+fn save_pr_meta(root: &Path, pr_number: u64, meta: &pr_intake::FetchedPr) -> Result<(), String> {
+    let store = open_store_at(root)?;
     store
         .save_worktree_base_branch(&meta.branch, &meta.base_ref)
         .and_then(|()| store.save_pr_review_meta(&meta.branch, &meta.review_meta(pr_number)))
@@ -1438,7 +1496,11 @@ fn save_history(
 }
 
 fn open_store(env: &TaskEnv) -> Result<ReviewStore, String> {
-    let dir = conductor_dir(&env.root);
+    open_store_at(&env.root)
+}
+
+fn open_store_at(root: &Path) -> Result<ReviewStore, String> {
+    let dir = conductor_dir(root);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     ReviewStore::open(&dir.join("conductor.db")).map_err(|e| e.to_string())
 }
@@ -1755,6 +1817,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn prのメタデータは取り込み先のリポジトリのdbに書く() {
+        let window = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let meta = pr_intake::FetchedPr {
+            branch: String::from("feature/a"),
+            title: String::from("t"),
+            base_ref: String::from("main"),
+            head_ref: String::from("feature/a"),
+            url: String::from("https://example.com/pull/7"),
+            head_owner_login: None,
+        };
+        save_pr_meta(target.path(), 7, &meta).unwrap();
+        let read = |root: &Path| {
+            open_store_at(root)
+                .unwrap()
+                .get_pr_review_meta("feature/a")
+                .unwrap()
+        };
+        assert_eq!(read(target.path()).and_then(|m| m.pr_number), Some(7));
+        assert!(read(window.path()).is_none());
+    }
 
     #[test]
     fn 消えた_dir_では_gh_を呼ばずにそう言う() {

@@ -9,6 +9,8 @@ pub const WORKTREE_POLL: Duration = Duration::from_secs(3);
 pub const PTY_CLEANUP: Duration = Duration::from_secs(10);
 /// Claude の状態ファイルは状態が変わった瞬間に書き換わる。入力待ちに気づくのを遅らせない間隔。
 pub const FLEET_POLL: Duration = Duration::from_secs(1);
+/// 自分へのレビュー依頼の問い合わせ。1 回ごとに設定したリポジトリの数だけ GitHub の API を叩く。
+pub const REVIEW_REQUEST_POLL: Duration = Duration::from_secs(60);
 /// ファイルウォッチャーの通知をまとめる猶予。エディタ保存や git checkout は
 /// 短時間に何件も飛んでくるので、都度 Explorer を投げ直すと無駄が積み重なる。
 pub const FS_DEBOUNCE: Duration = Duration::from_millis(500);

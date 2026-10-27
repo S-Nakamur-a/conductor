@@ -253,3 +253,209 @@ fn マージ済みのprはpull_headから取り込める() {
     let path = checkout_pull_head(&engine, 279, "main", None).unwrap();
     assert_eq!(Tree::open(path).head_branch(), "pr-279");
 }
+
+#[test]
+fn gh_pr_listの出力は1行ずつprのheadになる() {
+    let listed: Vec<PrHead> = serde_json::from_str(
+        r#"[{"headRefName":"feature/pty-daemon","isCrossRepository":false,"number":396,"state":"MERGED"},{"headRefName":"fix/warm-when-cold","isCrossRepository":false,"number":395,"state":"MERGED"}]"#,
+    )
+    .unwrap();
+    let numbers: Vec<u64> = listed.iter().map(|pr| pr.number).collect();
+    assert_eq!(numbers, [396, 395]);
+}
+
+fn requested_heads() -> Vec<PrHead> {
+    serde_json::from_str(
+        r#"[{"headRefName":"a","isCrossRepository":false,"number":1,"state":"OPEN"},
+            {"headRefName":"b","isCrossRepository":false,"number":2,"state":"OPEN"},
+            {"headRefName":"c","isCrossRepository":false,"number":3,"state":"OPEN"}]"#,
+    )
+    .unwrap()
+}
+
+fn intaken(repo: &Path, number: u64) -> Result<IntakenPr, String> {
+    Ok(IntakenPr {
+        pr_number: number,
+        worktree_path: repo.join(number.to_string()),
+        meta: FetchedPr {
+            branch: number.to_string(),
+            title: String::new(),
+            base_ref: String::from("main"),
+            head_ref: number.to_string(),
+            url: String::new(),
+            head_owner_login: None,
+        },
+        pulled: None,
+    })
+}
+
+fn opened(main: &str, branches: &[&str]) -> impl Fn(&Path) -> anyhow::Result<RepoWorktrees> {
+    let main = PathBuf::from(main);
+    let branches: Vec<String> = branches.iter().map(|b| b.to_string()).collect();
+    move |_: &Path| {
+        Ok(RepoWorktrees {
+            main: main.clone(),
+            branches: branches.clone(),
+        })
+    }
+}
+
+#[test]
+fn worktreeも試した記録も無い最初の1件だけを取り込む() {
+    let tried = HashSet::from([(PathBuf::from("/r"), 2)]);
+    let round = review_round(
+        &[PathBuf::from("/r")],
+        &tried,
+        opened("/r", &["main", "a"]),
+        |_| Ok(requested_heads()),
+        intaken,
+    );
+    let intake = round.intaken.expect("取り込んでいない");
+    assert_eq!((intake.repo, intake.number), (PathBuf::from("/r"), 3));
+    assert!(round.failures.is_empty());
+}
+
+#[test]
+fn 取り込むものが無ければ何も呼ばない() {
+    let round = review_round(
+        &[PathBuf::from("/r")],
+        &HashSet::new(),
+        opened("/r", &["a", "b", "c"]),
+        |_| Ok(requested_heads()),
+        |_, _| panic!("取り込もうとした"),
+    );
+    assert!(round.intaken.is_none());
+    assert!(round.failures.is_empty());
+}
+
+#[test]
+fn 開けないリポジトリとghの失敗は名前を残して次のリポジトリを見る() {
+    let repos = [
+        PathBuf::from("/missing"),
+        PathBuf::from("/unauthed"),
+        PathBuf::from("/ok"),
+    ];
+    let round = review_round(
+        &repos,
+        &HashSet::new(),
+        |path| match path.to_str() {
+            Some("/missing") => anyhow::bail!("not a git repository"),
+            _ => Ok(RepoWorktrees {
+                main: path.to_path_buf(),
+                branches: Vec::new(),
+            }),
+        },
+        |main| match main.to_str() {
+            Some("/unauthed") => Err(PrIntakeError::Other(String::from("gh auth login"))),
+            _ => Ok(requested_heads()),
+        },
+        intaken,
+    );
+    assert_eq!(
+        round.intaken.expect("取り込んでいない").repo,
+        PathBuf::from("/ok")
+    );
+    assert_eq!(round.failures.len(), 2, "{:?}", round.failures);
+    assert!(
+        round.failures[0].starts_with("/missing: "),
+        "{:?}",
+        round.failures
+    );
+    assert!(
+        round.failures[1].starts_with("/unauthed: "),
+        "{:?}",
+        round.failures
+    );
+}
+
+#[test]
+fn 同じリポジトリを別の綴りで書いても問い合わせは1回() {
+    let repo = TestRepo::with_base_commit();
+    repo.linked_worktree("a");
+    let linked = repo.linked_worktree("b");
+    let link = repo.path.parent().unwrap().join("link");
+    std::os::unix::fs::symlink(&repo.path, &link).unwrap();
+    let asked = std::cell::Cell::new(0);
+    let round = review_round(
+        &[repo.path.clone(), link, linked.path.clone()],
+        &HashSet::new(),
+        repo_worktrees,
+        |_| {
+            asked.set(asked.get() + 1);
+            Ok(Vec::new())
+        },
+        intaken,
+    );
+    assert_eq!(asked.get(), 1);
+    assert!(round.failures.is_empty(), "{:?}", round.failures);
+}
+
+#[test]
+fn worktreeのあるブランチは取り込み済みとみなす() {
+    let repo = TestRepo::with_base_commit();
+    repo.linked_worktree("a");
+    let found = repo_worktrees(&repo.path).unwrap();
+    assert!(
+        found.branches.contains(&String::from("a")),
+        "{:?}",
+        found.branches
+    );
+    assert!(
+        found.branches.contains(&String::from("main")),
+        "{:?}",
+        found.branches
+    );
+}
+
+#[test]
+fn 読めた依頼一覧は取り込んだ1件より後ろのworktreeありまで数える() {
+    let round = review_round(
+        &[PathBuf::from("/r")],
+        &HashSet::new(),
+        opened("/r", &["c"]),
+        |_| Ok(requested_heads()),
+        intaken,
+    );
+    assert_eq!(round.intaken.expect("取り込んでいない").number, 1);
+    let [queried] = round.queried.as_slice() else {
+        panic!("{:?}", round.queried);
+    };
+    let mut listed = queried.listed.clone();
+    listed.sort();
+    assert_eq!(listed, [1, 2, 3]);
+    assert_eq!(queried.with_worktree, [3]);
+}
+
+#[test]
+fn 取り込んだrepoより後ろと失敗したrepoは読めた側に入らない() {
+    let repos = [
+        PathBuf::from("/fail"),
+        PathBuf::from("/a"),
+        PathBuf::from("/b"),
+    ];
+    let asked = std::cell::RefCell::new(Vec::new());
+    let round = review_round(
+        &repos,
+        &HashSet::new(),
+        |path| {
+            Ok(RepoWorktrees {
+                main: path.to_path_buf(),
+                branches: Vec::new(),
+            })
+        },
+        |main| {
+            asked.borrow_mut().push(main.to_path_buf());
+            match main.to_str() {
+                Some("/fail") => Err(PrIntakeError::Other(String::from("offline"))),
+                _ => Ok(requested_heads()),
+            }
+        },
+        intaken,
+    );
+    let mains: Vec<&Path> = round.queried.iter().map(|q| q.main.as_path()).collect();
+    assert_eq!(mains, [Path::new("/a")]);
+    assert_eq!(
+        *asked.borrow(),
+        [PathBuf::from("/fail"), PathBuf::from("/a")]
+    );
+}

@@ -416,7 +416,9 @@ into `EventSender` makes every watcher signal after the first switch vanish.
 `Services::spawn_unscoped` is the exception, used by Smart Worktree and by the Sessions
 list's worktree delete: their result acts on a worktree that already exists (starts
 Claude in it / removes it after the processes were stopped), so dropping it on a
-repository switch would leave them half done.
+repository switch would leave them half done. The review-request poll
+(`Task::ReviewRequests`) is the third: it creates a worktree in a repository that need not
+be the window's, and its in-flight guard comes down only when the result arrives.
 
 **A periodically spawned `Task` needs an in-flight guard.** On a repository with
 175,388 tracked files the worktree list takes 25s, the working-tree diff 9s, and
@@ -425,8 +427,9 @@ the two whole-repository walks behind the Explorer 1.8s (the file-name index) an
 than results return piles up one thread per second — measured 476 threads at 303%
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
-under one guard), the per-worktree change counts, and the Sessions list's
-`poll_fleet_changes`; each one grew this same hole independently.
+under one guard), the per-worktree change counts, the Sessions list's
+`poll_fleet_changes`, and the review-request poll (`Workspace::ask_review_requests`);
+each one grew this same hole independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
 channel, so `PtyStore` (the mirror of the PTY host's screens) lives in svc and the
@@ -463,7 +466,9 @@ latter. Rows hang under repository → worktree. The same worker lists the workt
 (`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under
 the deepest worktree containing it, comparing canonicalised paths component-wise. A
 repository once listed stays (`kept_roots`) so it can still be launched into after its
-last session ends. When a selected row moves between the waiting box and its worktree,
+last session ends, and the repositories in `[review] auto_review_repos` are listed with
+no session at all, so a PR worktree taken in there shows up. When a selected row moves
+between the waiting box and its worktree,
 the selection follows the session: re-selecting anything else would make
 `apply_fleet` pull the keyboard out of the session being typed into.
 **Whether the list is open is not derived from `Focus`**

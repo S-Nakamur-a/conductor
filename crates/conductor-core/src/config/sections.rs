@@ -121,6 +121,15 @@ impl Default for ApiConfig {
     }
 }
 
+/// [review] セクション。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReviewConfig {
+    /// 自分にレビューが依頼された PR を worktree に取り込むリポジトリ。窓がどの
+    /// リポジトリを開いていても見る。
+    pub auto_review_repos: Vec<PathBuf>,
+}
+
 /// [updates] セクション。GitHub Releases との照合。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
