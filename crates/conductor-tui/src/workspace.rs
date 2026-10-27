@@ -249,6 +249,15 @@ pub struct Workspace {
     pub appearance: Appearance,
     pub keymap: KeyMap,
     pub config: Config,
+    review_requests: ReviewRequests,
+}
+
+/// repo を切り替えても持ち越す。他の repo で消した worktree を作り直さないため。
+#[derive(Default)]
+struct ReviewRequests {
+    in_flight: bool,
+    /// 依頼が続いている間、もう取り込まない (main worktree, PR 番号)。試したものと worktree を見たもの。
+    tried: std::collections::HashSet<(PathBuf, u64)>,
 }
 
 impl Workspace {
@@ -290,6 +299,7 @@ impl Workspace {
             theme,
             keymap,
             config,
+            review_requests: ReviewRequests::default(),
         }
     }
 
@@ -497,6 +507,10 @@ impl Workspace {
             }
             TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
             TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
+            TaskResult::ReviewRound {
+                round,
+                in_window_repo,
+            } => self.accept_review_round(*round, in_window_repo),
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
             TaskResult::Review(loaded) => {
@@ -669,6 +683,82 @@ impl Workspace {
                 _ => vec![Effect::Status(StatusLevel::Error, e)],
             },
         }
+    }
+
+    /// 前の問い合わせが返るまで次を投げない。取り込みは checkout を伴い、1 分で返る保証が無い。
+    pub fn ask_review_requests(&mut self) -> Option<crate::task::Task> {
+        let repos = &self.config.review.auto_review_repos;
+        if repos.is_empty() || self.review_requests.in_flight {
+            return None;
+        }
+        self.review_requests.in_flight = true;
+        Some(crate::task::Task::ReviewRequests {
+            repos: repos.clone(),
+            tried: self.review_requests.tried.clone(),
+            window_root: self.repo.root.clone(),
+            worktree_dir: self.config.general.worktree_dir.clone(),
+        })
+    }
+
+    /// 頼まれて取り込んだ PR では、見ている worktree から引き剥がさないよう選択もフォーカスも動かさない。
+    /// Status は 1 枠なので、1 周で起きたことを 1 つの文にまとめる。
+    fn accept_review_round(
+        &mut self,
+        round: conductor_core::pr_intake::ReviewRound,
+        in_window_repo: bool,
+    ) -> Vec<Effect> {
+        self.review_requests.in_flight = false;
+        let tried = &mut self.review_requests.tried;
+        for queried in round.queried {
+            tried.retain(|(repo, number)| *repo != queried.main || queried.listed.contains(number));
+            tried.extend(
+                queried
+                    .with_worktree
+                    .into_iter()
+                    .map(|number| (queried.main.clone(), number)),
+            );
+        }
+        let mut effects = Vec::new();
+        let mut parts = Vec::new();
+        let mut failed = !round.failures.is_empty();
+        if let Some(intake) = round.intaken {
+            let name = intake.repo.file_name().map_or_else(
+                || intake.repo.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let number = intake.number;
+            self.review_requests.tried.insert((intake.repo, number));
+            match intake.outcome {
+                Ok(pr) => {
+                    parts.push(format!(
+                        "Review requested on {name} PR #{number}: checked out '{}'. Run /revidere there.",
+                        pr.meta.branch
+                    ));
+                    if in_window_repo {
+                        effects.push(Effect::Spawn(crate::task::Task::ListWorktrees));
+                    }
+                }
+                Err(e) => {
+                    failed = true;
+                    parts.push(format!("Review requested on {name} PR #{number}: {e}"));
+                }
+            }
+        }
+        parts.extend(
+            round
+                .failures
+                .into_iter()
+                .map(|f| format!("review requests: {f}")),
+        );
+        if !parts.is_empty() {
+            let level = if failed {
+                StatusLevel::Warning
+            } else {
+                StatusLevel::Info
+            };
+            effects.push(Effect::Status(level, parts.join(" \u{b7} ")));
+        }
+        effects
     }
 
     fn accept_publishable(
@@ -947,6 +1037,194 @@ fn stopped_status(stopped: conductor_core::claude_sessions::registry::Stopped) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conductor_core::pr_intake::{FetchedPr, RequestedIntake, ReviewRound};
+
+    fn intake(repo: &str, number: u64, outcome: Result<(), &str>) -> ReviewRound {
+        let outcome = outcome.map_err(String::from).map(|()| IntakenPr {
+            pr_number: number,
+            worktree_path: PathBuf::from(repo).join("feature-a"),
+            meta: FetchedPr {
+                branch: String::from("feature/a"),
+                title: String::new(),
+                base_ref: String::from("main"),
+                head_ref: String::from("feature/a"),
+                url: String::new(),
+                head_owner_login: None,
+            },
+            pulled: None,
+        });
+        ReviewRound {
+            intaken: Some(RequestedIntake {
+                repo: PathBuf::from(repo),
+                number,
+                outcome,
+            }),
+            queried: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
+
+    fn statuses(effects: &[Effect]) -> Vec<(StatusLevel, String)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Status(level, text) => Some((*level, text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn tried_of(task: Option<crate::task::Task>) -> std::collections::HashSet<(PathBuf, u64)> {
+        match task {
+            Some(crate::task::Task::ReviewRequests { tried, .. }) => tried,
+            other => panic!("問い合わせない: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn 設定が空ならレビュー依頼を問い合わせない() {
+        let mut ws = Workspace::for_test();
+        assert!(ws.ask_review_requests().is_none());
+    }
+
+    #[test]
+    fn 問い合わせが返るまで次を投げない() {
+        let mut ws = Workspace::for_test();
+        ws.config.review.auto_review_repos = vec!["/r".into()];
+        assert!(ws.ask_review_requests().is_some());
+        assert!(ws.ask_review_requests().is_none(), "投げ中に次を投げた");
+
+        ws.accept(TaskResult::ReviewRound {
+            round: Box::default(),
+            in_window_repo: false,
+        });
+        assert!(
+            ws.ask_review_requests().is_some(),
+            "返ってもガードが下りない"
+        );
+    }
+
+    #[test]
+    fn 取り込んだprは選択もフォーカスも動かさずstatusで知らせる() {
+        let mut ws = Workspace::for_test();
+        ws.config.review.auto_review_repos = vec!["/r/webshop".into()];
+        ws.modals.push(Modal::PrInput(Default::default()));
+        let focus = ws.focus;
+        ws.ask_review_requests();
+
+        let effects = ws.accept(TaskResult::ReviewRound {
+            round: Box::new(intake("/r/webshop", 7, Ok(()))),
+            in_window_repo: false,
+        });
+        assert_eq!(
+            statuses(&effects),
+            [(
+                StatusLevel::Info,
+                String::from(
+                    "Review requested on webshop PR #7: checked out 'feature/a'. Run /revidere there."
+                )
+            )]
+        );
+        assert_eq!(effects.len(), 1, "{effects:?}");
+        assert_eq!(ws.focus, focus);
+        assert!(matches!(ws.modals.last(), Some(Modal::PrInput(_))));
+        assert!(
+            tried_of(ws.ask_review_requests()).contains(&(PathBuf::from("/r/webshop"), 7)),
+            "取り込んだ PR を次の周でも試す"
+        );
+    }
+
+    #[test]
+    fn 窓のリポジトリへ取り込んだら一覧を取り直す() {
+        let mut ws = Workspace::for_test();
+        let effects = ws.accept(TaskResult::ReviewRound {
+            round: Box::new(intake("/r", 7, Ok(()))),
+            in_window_repo: true,
+        });
+        assert!(matches!(
+            effects.first(),
+            Some(Effect::Spawn(crate::task::Task::ListWorktrees))
+        ));
+    }
+
+    #[test]
+    fn 取り込めなかったprも次の周で試し直さない() {
+        let mut ws = Workspace::for_test();
+        ws.config.review.auto_review_repos = vec!["/r".into()];
+        ws.ask_review_requests();
+        let effects = ws.accept(TaskResult::ReviewRound {
+            round: Box::new(intake("/r", 7, Err("network down"))),
+            in_window_repo: false,
+        });
+        assert_eq!(statuses(&effects)[0].0, StatusLevel::Warning);
+        assert!(tried_of(ws.ask_review_requests()).contains(&(PathBuf::from("/r"), 7)));
+    }
+
+    #[test]
+    fn 依頼から外れたprは忘れworktreeを見たprは覚える() {
+        let mut ws = Workspace::for_test();
+        ws.config.review.auto_review_repos = vec!["/r".into(), "/s".into()];
+        for repo in ["/r", "/s"] {
+            ws.accept(TaskResult::ReviewRound {
+                round: Box::new(intake(repo, 7, Ok(()))),
+                in_window_repo: false,
+            });
+        }
+        let round = ReviewRound {
+            queried: vec![conductor_core::pr_intake::QueriedRepo {
+                main: PathBuf::from("/r"),
+                listed: vec![8, 9],
+                with_worktree: vec![8],
+            }],
+            ..Default::default()
+        };
+        ws.accept(TaskResult::ReviewRound {
+            round: Box::new(round),
+            in_window_repo: false,
+        });
+        let tried = tried_of(ws.ask_review_requests());
+        assert_eq!(
+            tried,
+            std::collections::HashSet::from([(PathBuf::from("/r"), 8), (PathBuf::from("/s"), 7),]),
+            "外れた /r の 7 を忘れ、別 repo の /s の 7 は残し、worktree のある 8 を覚える"
+        );
+    }
+
+    #[test]
+    fn 取り込みと別リポジトリの失敗は1つのstatusにまとめる() {
+        let mut ws = Workspace::for_test();
+        let mut round = intake("/r/webshop", 7, Ok(()));
+        round.failures.push(String::from("/r/other: gh auth login"));
+        let effects = ws.accept(TaskResult::ReviewRound {
+            round: Box::new(round),
+            in_window_repo: false,
+        });
+        let shown = statuses(&effects);
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert_eq!(shown[0].0, StatusLevel::Warning);
+        assert!(shown[0].1.contains("PR #7"), "{}", shown[0].1);
+        assert!(
+            shown[0].1.contains("/r/other: gh auth login"),
+            "{}",
+            shown[0].1
+        );
+    }
+
+    #[test]
+    fn repoを切り替えても問い合わせの結果は届きガードが下りる() {
+        let repo = crate::testing::TestRepo::new();
+        let other = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        ws.config.review.auto_review_repos = vec!["/nonexistent/repo".into()];
+        let task = ws.ask_review_requests().expect("問い合わせない");
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::Spawn(task)]);
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(other.root())]);
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(
+            ws.ask_review_requests().is_some(),
+            "結果が捨てられてガードが上がったまま"
+        );
+    }
 
     #[test]
     fn 設定に差が無ければ何も起きない() {

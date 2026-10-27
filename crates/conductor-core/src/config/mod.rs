@@ -20,8 +20,8 @@ pub use persist::{
     persist_ui_icons, persist_ui_theme,
 };
 pub use sections::{
-    ApiConfig, DiffConfig, GeneralConfig, LayoutConfig, TerminalConfig, UiConfig, UpdatesConfig,
-    ViewerConfig,
+    ApiConfig, DiffConfig, GeneralConfig, LayoutConfig, ReviewConfig, TerminalConfig, UiConfig,
+    UpdatesConfig, ViewerConfig,
 };
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
 
@@ -39,6 +39,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub layout: LayoutConfig,
     pub updates: UpdatesConfig,
+    pub review: ReviewConfig,
 }
 
 impl Config {
@@ -80,6 +81,12 @@ impl Config {
             .syntax_theme_file
             .as_deref()
             .map(|p| expand_tilde(Path::new(p)).to_string_lossy().into_owned());
+        let review = &mut self.review;
+        review.auto_review_repos = review
+            .auto_review_repos
+            .iter()
+            .map(|p| expand_tilde(p))
+            .collect();
     }
 }
 

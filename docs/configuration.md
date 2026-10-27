@@ -106,6 +106,15 @@ immediately on save; everything else needs a restart.
 # You do not need a wrapper script: what a task requires — that the model must
 # not use tools, the output format, which directory to read — is part of the
 # prompt Conductor builds for that task.
+
+[review]
+# Repositories watched for pull requests that request your review (directly, not
+# through a team). Whichever repository the window has open, they are checked
+# once a minute, and each time at most one PR across all of them, the first
+# without a worktree, is checked out; run /revidere there for the AI review.
+# Write the main worktree's path. Takes effect on restart.
+#
+# auto_review_repos = ["~/src/my-repo"]
 ```
 
 ## The default branch

@@ -80,6 +80,9 @@ fn non_default() -> Config {
             check_on_startup: false,
             check_interval_secs: 60,
         },
+        review: ReviewConfig {
+            auto_review_repos: vec![PathBuf::from("/r")],
+        },
     }
 }
 
@@ -280,7 +283,7 @@ fn 読み込み時にパスのチルダを展開する() {
 }
 
 #[test]
-fn 消した_review_節が残っていても読み込める() {
+fn review節のstyleは読み飛ばしauto_review_reposはチルダを展開する() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(
@@ -291,6 +294,7 @@ fn 消した_review_節が残っていても読み込める() {
     .unwrap();
     let cfg = Config::load_from(&path).unwrap();
     assert_eq!(cfg.general.shell, "/bin/zsh");
+    assert_eq!(cfg.review.auto_review_repos, vec![home().join("p")]);
 }
 
 #[test]

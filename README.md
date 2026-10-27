@@ -268,8 +268,9 @@ Claude Code auto-resume), `[terminal]` (scrollback limits), `[viewer]` (syntax
 theme, tab width), `[diff]` (unified / side-by-side, word diff), `[ui]` (colour
 theme, contrast, icons, startup animation), `[layout]` (column and split
 proportions), `[updates]` (the GitHub release check), `[keybinds]` (per-chord
-overrides layered over the defaults, globally or per panel), and `[api]` (the
-LLM provider shared by every AI feature).
+overrides layered over the defaults, globally or per panel), `[api]` (the
+LLM provider shared by every AI feature), and `[review]` (the repositories where a
+PR that requests your review is checked out into a worktree on its own).
 
 ## Development
 

@@ -27,8 +27,8 @@ use crate::route::{Routed, global_effects, route};
 use crate::select;
 use crate::task::{Task, TaskResult};
 use crate::timer::{
-    CONFIG_DEBOUNCE, Debounce, FLEET_POLL, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP, Timer,
-    WORKTREE_POLL,
+    CONFIG_DEBOUNCE, Debounce, FLEET_POLL, FS_DEBOUNCE, GIT_DEBOUNCE, PTY_CLEANUP,
+    REVIEW_REQUEST_POLL, Timer, WORKTREE_POLL,
 };
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
@@ -100,6 +100,7 @@ pub fn run(
     let mut worktree_poll = Timer::new(WORKTREE_POLL, last_input);
     let mut pty_cleanup = Timer::new(PTY_CLEANUP, last_input);
     let mut fleet_poll = Timer::new(FLEET_POLL, last_input);
+    let mut review_request_poll = Timer::new(REVIEW_REQUEST_POLL, last_input);
     let update_interval = Duration::from_secs(ws.config.updates.check_interval_secs);
     let mut update_poll = ws
         .config
@@ -213,6 +214,11 @@ pub fn run(
             update_poll.as_mut().map(|timer| (timer, update_interval)),
         );
         poll_fleet(ws, svc, &mut fleet_poll, Instant::now());
+        if review_request_poll.due(Instant::now())
+            && let Some(task) = ws.ask_review_requests()
+        {
+            apply(ws, svc, vec![Effect::Spawn(task)]);
+        }
         poll_fleet_changes(ws, svc, Instant::now());
         dirty |= ws.fx.tick();
 
@@ -398,7 +404,7 @@ fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: I
     }
 }
 
-/// この窓で開いた repo は、セッションが無くても木を引く。
+/// この窓で開いた repo と、レビュー依頼を取り込む repo は、セッションが無くても木を引く。
 fn fleet_status_task(ws: &Workspace) -> Task {
     let sessions = ws.panels.terminal.own_claude_sessions();
     let dirs = sessions.iter().map(|s| s.working_dir.clone()).collect();
@@ -408,6 +414,7 @@ fn fleet_status_task(ws: &Workspace) -> Task {
         .collect();
     let mut roots = ws.panels.fleet.kept_roots();
     roots.extend(ws.repo.known.iter().cloned());
+    roots.extend(ws.config.review.auto_review_repos.iter().cloned());
     Task::FleetStatus {
         known: ws.panels.fleet.known_transcripts(),
         own,
@@ -2333,6 +2340,16 @@ needle here
             panic!("not a fleet status task");
         };
         assert!(roots.contains(&PathBuf::from("/r/opened")), "{roots:?}");
+    }
+
+    #[test]
+    fn 一覧の木はレビュー依頼を取り込む_repo_もセッションが無くても引く() {
+        let mut ws = Workspace::for_test();
+        ws.config.review.auto_review_repos = vec![PathBuf::from("/r/webshop")];
+        let Task::FleetStatus { roots, .. } = fleet_status_task(&ws) else {
+            panic!("not a fleet status task");
+        };
+        assert!(roots.contains(&PathBuf::from("/r/webshop")), "{roots:?}");
     }
 
     fn fleet_with_tree() -> (Workspace, Services<TaskResult>, Layout) {

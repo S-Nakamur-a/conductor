@@ -3,6 +3,7 @@
 //! gh のサブコマンドと JSON フィールド名、refspec の綴りをここ 1 か所に集める。
 //! 散らばると gh の出力が変わったときに直す場所を取りこぼす。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -167,6 +168,7 @@ fn gh<T: serde::de::DeserializeOwned>(
     let output = Command::new("gh")
         .current_dir(repo_path)
         .args(args)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output();
@@ -203,6 +205,136 @@ fn fetch_pr_meta(repo_path: &Path, pr_number: u64) -> Result<PrMeta, PrIntakeErr
         ],
         |stderr| classify_failure_text(pr_number, stderr),
     )
+}
+
+/// 自分に直接レビューが依頼されている open な PR。チーム宛ての依頼は含めない。
+/// 含めると、チームに来た PR を全部取り込むことになる。
+/// --limit は、既定の件数で打ち切ると外れたと見なして tried を忘れるので広げてある。
+pub fn review_requests(repo_path: &Path) -> Result<Vec<PrHead>, PrIntakeError> {
+    gh(
+        repo_path,
+        &[
+            "pr",
+            "list",
+            "--search",
+            "user-review-requested:@me",
+            "--state",
+            "open",
+            "--limit",
+            "200",
+            "--json",
+            "number,headRefName,isCrossRepository,state",
+        ],
+        |stderr| other(stderr.trim()),
+    )
+}
+
+/// repo_worktrees の結果。
+pub struct RepoWorktrees {
+    pub main: PathBuf,
+    pub branches: Vec<String>,
+}
+
+/// repo_path の main worktree と、各 worktree が checkout しているブランチ。detached は含めない。
+pub fn repo_worktrees(repo_path: &Path) -> anyhow::Result<RepoWorktrees> {
+    let engine = GitEngine::open(repo_path)?;
+    let heads = engine.worktree_heads()?;
+    let branches = heads
+        .iter()
+        .filter_map(|w| match &w.head {
+            crate::git_engine::Head::Branch(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    Ok(RepoWorktrees {
+        main: engine.main_worktree_path()?,
+        branches,
+    })
+}
+
+/// 1 周の結果。取り込みを試した 1 件、依頼一覧を読めた repo、問い合わせられなかった repo。
+#[derive(Debug, Default)]
+pub struct ReviewRound {
+    pub intaken: Option<RequestedIntake>,
+    /// 取り込んだ repo より後ろは問い合わせないので入らない。
+    pub queried: Vec<QueriedRepo>,
+    /// 問い合わせられなかったリポジトリと理由。
+    pub failures: Vec<String>,
+}
+
+/// 依頼一覧を読めた repo。一覧から外れた PR は、依頼し直されたら取り込み直してよい。
+#[derive(Debug)]
+pub struct QueriedRepo {
+    pub main: PathBuf,
+    pub listed: Vec<u64>,
+    /// 既に worktree のある PR。消されても作り直さない。
+    pub with_worktree: Vec<u64>,
+}
+
+/// 取り込みを試した PR とその結果。
+#[derive(Debug)]
+pub struct RequestedIntake {
+    /// main worktree のパス。同じ PR を試し直さないための鍵にもなる。
+    pub repo: PathBuf,
+    pub number: u64,
+    pub outcome: Result<IntakenPr, String>,
+}
+
+/// repos を順に見て、worktree がまだ無く tried にも無い依頼 PR を 1 件だけ取り込む。
+/// 1 周に 1 件なのは、大きなリポジトリの checkout を同時にいくつも走らせないため。
+pub fn review_round(
+    repos: &[PathBuf],
+    tried: &HashSet<(PathBuf, u64)>,
+    open: impl Fn(&Path) -> anyhow::Result<RepoWorktrees>,
+    requested: impl Fn(&Path) -> Result<Vec<PrHead>, PrIntakeError>,
+    intake: impl FnOnce(&Path, u64) -> Result<IntakenPr, String>,
+) -> ReviewRound {
+    let mut round = ReviewRound::default();
+    let mut seen = HashSet::new();
+    for repo in repos {
+        let opened = match open(repo) {
+            Ok(opened) => opened,
+            Err(e) => {
+                round.failures.push(format!("{}: {e}", repo.display()));
+                continue;
+            }
+        };
+        if !seen.insert(opened.main.clone()) {
+            continue;
+        }
+        let heads = match requested(&opened.main) {
+            Ok(heads) => heads,
+            Err(e) => {
+                round.failures.push(format!("{}: {e}", repo.display()));
+                continue;
+            }
+        };
+        let (with_worktree, without): (Vec<PrHead>, Vec<PrHead>) = heads
+            .into_iter()
+            .partition(|pr| opened.branches.contains(&pr.local_branch()));
+        let listed = with_worktree
+            .iter()
+            .chain(&without)
+            .map(|pr| pr.number)
+            .collect();
+        round.queried.push(QueriedRepo {
+            main: opened.main.clone(),
+            listed,
+            with_worktree: with_worktree.iter().map(|pr| pr.number).collect(),
+        });
+        let fresh = without
+            .into_iter()
+            .find(|pr| !tried.contains(&(opened.main.clone(), pr.number)));
+        if let Some(pr) = fresh {
+            round.intaken = Some(RequestedIntake {
+                outcome: intake(&opened.main, pr.number),
+                repo: opened.main,
+                number: pr.number,
+            });
+            return round;
+        }
+    }
+    round
 }
 
 /// gh から取った PR のメタデータ。
