@@ -3306,6 +3306,39 @@ mod branch_page_key {
     }
 
     #[test]
+    fn 選んだ行だけが左に_accent_の印を持つ() {
+        type Pick = fn(&Item) -> bool;
+        let cases: [(&str, Pick); 3] = [
+            (
+                "feature/b",
+                |i| matches!(i, Item::Worktree(w) if w.path == Path::new("/r/app-b")),
+            ),
+            (
+                "worktree 配下のセッション",
+                |i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(8)),
+            ),
+            (
+                "repo の外のセッション",
+                |i| matches!(i, Item::Session(r) if r.key == RowKey::Pid(9)),
+            ),
+        ];
+        for (name, pick) in cases {
+            let mut ws = Workspace::for_test();
+            ws.panels.fleet = tree();
+            choose(&mut ws.panels.fleet, pick);
+            let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 16)).unwrap();
+            let marks: Vec<_> = composed
+                .lines
+                .iter()
+                .flat_map(|l| &l.spans)
+                .filter(|s| s.content.contains('❯'))
+                .collect();
+            assert_eq!(marks.len(), 1, "{name}");
+            assert_eq!(marks[0].style.fg, Some(ws.theme.accent), "{name}");
+        }
+    }
+
+    #[test]
     fn pr_も_repo_の_url_も無ければ開かない() {
         assert_eq!(
             page(
