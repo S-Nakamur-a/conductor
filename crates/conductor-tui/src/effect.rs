@@ -54,6 +54,8 @@ pub enum Effect {
     EnterSession(crate::panels::fleet::RowKey),
     /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
     StopFleetSession(crate::panels::fleet::StopTarget),
+    /// 一覧の左下を選んだ worktree のシェルにして入る。無ければ起こす。
+    OpenFleetShell,
     /// 一覧で選んだ worktree を消す前に、消せるかと失うものを worker で調べる。
     InspectFleetWorktree {
         repo: PathBuf,
@@ -254,7 +256,14 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     None => Focus::Fleet,
                 };
             }
+            Effect::Focus(Focus::FleetShell) => {
+                if let Some(id) = ws.fleet_shell() {
+                    ws.panels.fleet.enter_shell(id);
+                    ws.focus = Focus::FleetShell;
+                }
+            }
             Effect::Focus(focus) => ws.set_screen_focus(focus),
+            Effect::OpenFleetShell => queue.extend(open_fleet_shell(ws)),
             Effect::OpenFleet => {
                 ws.panels
                     .fleet
@@ -374,11 +383,12 @@ fn stop_fleet_session(ws: &mut Workspace, target: crate::panels::fleet::StopTarg
 }
 
 /// この窓のタブはここで閉じ、外のプロセスの停止と、終わりの確認と、消すのは worker に任せる。
-fn delete_fleet_worktree(
+pub(crate) fn delete_fleet_worktree(
     ws: &mut Workspace,
     inspection: crate::panels::fleet::Inspection,
 ) -> Vec<Effect> {
     ws.panels.terminal.close_sessions(&inspection.panels);
+    ws.panels.fleet.note_deleting(inspection.path.clone());
     let own = ws.panels.terminal.own_claude_sessions();
     for id in &inspection.panels {
         ws.panels.fleet.forget_stopped(id, own.clone());
@@ -483,6 +493,20 @@ fn smart_worktree(ws: &Workspace, repo: PathBuf, description: String) -> Vec<Eff
             "Smart worktree: generating\u{2026}".into(),
         ),
     ]
+}
+
+fn open_fleet_shell(ws: &mut Workspace) -> Vec<Effect> {
+    let dir = match ws.panels.fleet.shell_dir() {
+        Ok(dir) => dir,
+        Err(why) => return vec![Effect::Status(StatusLevel::Warning, why.into())],
+    };
+    if ws.panels.terminal.live_shell_in(&dir).is_none()
+        && let Err(e) = ws.panels.terminal.launch_shell_in(&dir, &ws.config)
+    {
+        return vec![Effect::Status(StatusLevel::Error, format!("{e:#}"))];
+    }
+    ws.panels.fleet.show_shell();
+    vec![Effect::Focus(Focus::FleetShell)]
 }
 
 fn new_claude_in(ws: &mut Workspace, dir: &std::path::Path, chrome: bool) -> Vec<Effect> {

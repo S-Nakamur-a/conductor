@@ -489,11 +489,25 @@ not drop them; every other watch event keeps its generation.
 Under the list, `Region::FleetChanges` shows the Git Changes of the
 selected line's worktree (`FleetPanel::selected_dir`, derived from the selection every time, like the right side), read on a
 worker against *that* repository's default branch — another repository's base is not
-the window's `main_branch`. It holds no focus. A result is kept only if its dir is still
+the window's `main_branch`. A result is kept only if its dir is still
 the one selected, because two worktrees on the same base have equal `DiffSource`s, and
 the region draws nothing but `loading…` until the selected dir's own result lands. The
 diff is the Explorer's own, warming included: on a repository no window has open, its
 `git status` can still take the warming turn (`status_map.rs`) and write that index.
+
+The same region shows a shell of that worktree instead (`FleetPanel::lower`): **Ctrl+t**
+(`new_shell`, caught by the list) shows it and steps into `Focus::FleetShell`, starting
+one only if none is alive there; **Ctrl+g** shows Git Changes and returns to the list —
+from inside the shell it arrives as the terminal layer's `open_file_from_terminal`. Neither
+toggles, so neither depends on what is showing. The shell is derived every time like the
+right side (`Workspace::fleet_shell`: the first live shell whose dir equals the selected
+one, compared canonically — the tree is canonical, the main screen keeps git's spelling),
+and is the main screen's own: it is started with `TerminalPanel::launch_shell_in`, which
+leaves the window's worktree alone. **Typing follows the id stepped into, not the
+derivation**: `pty_session` answers only while they agree, and `sync_layout` returns the
+keyboard to the list the frame they part (the shell exits, the selection moves, the region
+disappears), so keys never land in a shell nobody chose. FleetShell is dispatched to the
+list alone — the terminal panel's transcript and scroll logic belong to the right side.
 
 ### Key modules
 

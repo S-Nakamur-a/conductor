@@ -18,7 +18,7 @@ pub enum Region {
     TerminalClaude,
     TerminalShell,
     FleetList,
-    /// 一覧で選んだ行のブランチの変更ファイル。表示だけでフォーカスは持たない。
+    /// 一覧で選んだ行のブランチの変更ファイルか、その worktree のシェル。フォーカスを持つのはシェルのときだけ。
     FleetChanges,
     /// 一覧で選んだセッション。
     FleetSession,
@@ -150,9 +150,11 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         ));
     } else if ws.chrome.maximized {
         match ws.focus {
-            Focus::Worktree | Focus::Explorer | Focus::Fleet | Focus::FleetSession => {
-                push_explorer(&mut regions, main)
-            }
+            Focus::Worktree
+            | Focus::Explorer
+            | Focus::Fleet
+            | Focus::FleetSession
+            | Focus::FleetShell => push_explorer(&mut regions, main),
             Focus::Editor => regions.push((Region::Editor, main)),
             Focus::Viewer => regions.push((Region::Viewer, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),

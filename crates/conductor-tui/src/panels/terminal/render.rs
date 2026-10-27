@@ -232,6 +232,16 @@ pub fn fleet(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
     );
 }
 
+pub fn fleet_shell(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
+    grid(
+        frame,
+        rect,
+        ws,
+        Some(session),
+        ws.focus == Focus::FleetShell,
+    );
+}
+
 /// タブ行もスクロールバックも無く、PTY のグリッドだけ。
 fn grid(frame: &mut Frame, rect: Rect, ws: &Workspace, session: Option<&str>, focused: bool) {
     let panel = &ws.panels.terminal;

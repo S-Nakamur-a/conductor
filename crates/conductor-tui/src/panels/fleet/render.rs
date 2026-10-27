@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::Action;
 
-use super::{Ask, FleetPanel, Inspection, Place, Row, RowKey, State, Worktree};
+use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
 use crate::modal::Confirm;
 use crate::panels::explorer::git_changes;
@@ -278,6 +278,16 @@ pub fn hint(ws: &Workspace) -> String {
         let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
         return format!("{}← などは Claude に届く", back.unwrap_or_default());
     }
+    if ws.focus == Focus::FleetShell {
+        let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
+        let changes =
+            chord(Action::OpenFileFromTerminal).map(|key| format!("{key} Git Changes · "));
+        return format!(
+            "{}{}ほかのキーはシェルに届く",
+            back.unwrap_or_default(),
+            changes.unwrap_or_default()
+        );
+    }
     let fleet = &ws.panels.fleet;
     let items: &[(Action, &str)] = match fleet.selected_row().map(|row| row.place) {
         Some(Place::Mine) => &[
@@ -285,6 +295,7 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::ExpandOrRight, "返事"),
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
+            (Action::NewShell, "シェル"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
         ],
@@ -296,6 +307,7 @@ pub fn hint(ws: &Workspace) -> String {
         ],
         None if fleet.selected_worktree().is_some() => &[
             (Action::NewSessionMenu, "新しいセッション"),
+            (Action::NewShell, "シェル"),
             (Action::StopSession, "worktree を消す"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
@@ -468,15 +480,76 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-pub fn changes_title(ws: &Workspace) -> String {
+pub fn lower_title(ws: &Workspace) -> String {
     let fleet = &ws.panels.fleet;
-    match fleet.changes.for_target(fleet.selected_dir().as_deref()) {
-        Some((changes, _)) => git_changes::render::title(changes),
-        None => " Git Changes ".to_string(),
+    if fleet.lower() == Lower::Changes {
+        return match fleet.changes.for_target(fleet.selected_dir().as_deref()) {
+            Some((changes, _)) => git_changes::render::title(changes),
+            None => " Git Changes ".to_string(),
+        };
+    }
+    match (ws.focus, ws.fleet_shell()) {
+        (Focus::FleetShell, _) => format!(
+            " Shell · 入力中{} ",
+            keys(
+                ws,
+                &[
+                    (Action::LeaveTerminal, "で一覧へ"),
+                    (Action::OpenFileFromTerminal, "で Git Changes"),
+                ]
+            )
+        ),
+        (_, Some(_)) => format!(
+            " Shell{} ",
+            keys(
+                ws,
+                &[
+                    (Action::NewShell, "で入る"),
+                    (Action::ShowFleetChanges, "で Git Changes"),
+                ]
+            )
+        ),
+        (_, None) => " Shell ".to_string(),
     }
 }
 
-pub fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+/// 割り当ての無いキーは案内に出さない。
+fn keys(ws: &Workspace, items: &[(Action, &str)]) -> String {
+    items
+        .iter()
+        .filter_map(|(action, label)| {
+            crate::render::representative_chord(&ws.keymap, ws.key_context(), *action)
+                .map(|key| format!(" · {key} {label}"))
+        })
+        .collect()
+}
+
+/// 一覧の左下。Git Changes か、選んだ行の worktree のシェル。
+pub fn lower(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    if ws.panels.fleet.lower() == Lower::Changes {
+        return changes(frame, rect, ws);
+    }
+    if let Some(session) = ws.fleet_shell() {
+        crate::panels::terminal::render::fleet_shell(frame, rect, ws, &session);
+        return;
+    }
+    let text = format!(
+        "  シェルなし{}",
+        keys(
+            ws,
+            &[
+                (Action::NewShell, "で起動"),
+                (Action::ShowFleetChanges, "で Git Changes"),
+            ]
+        )
+    );
+    frame.render_widget(
+        Paragraph::new(Line::styled(text, Style::default().fg(ws.theme.hint))),
+        inner(rect),
+    );
+}
+
+fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = inner(rect);
     let fleet = &ws.panels.fleet;
     let target = fleet.selected_dir();

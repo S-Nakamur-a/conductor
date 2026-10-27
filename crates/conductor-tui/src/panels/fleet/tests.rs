@@ -855,7 +855,7 @@ mod hint {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
         );
     }
 
@@ -890,7 +890,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "ctrl+n 新しいセッション · D worktree を消す · esc 閉じる · g PR を開く"
+            "ctrl+n 新しいセッション · ctrl+t シェル · D worktree を消す · esc 閉じる · g PR を開く"
         );
     }
 
@@ -916,7 +916,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n");
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "enter 開く · tab 返事 · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
         );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
