@@ -756,9 +756,11 @@ fn worktree_line(
     let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
+    let lead = if selected { " ❯" } else { "  " };
     let mut spans = vec![
+        Span::styled(lead, Style::default().fg(theme.accent)),
         // repo の見出しと同じ色で、下に並ぶセッションの題と分ける。
-        Span::styled(format!("  {label}"), Style::default().fg(theme.info)),
+        Span::styled(label, Style::default().fg(theme.info)),
         Span::raw(" ".repeat(pad + 1)),
     ];
     spans.push(Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)));
@@ -775,10 +777,13 @@ fn row_line(
     now: SystemTime,
 ) -> Line<'static> {
     let (glyph, color) = look(theme, &row.state);
-    let edge = if row.place == Place::Outside {
-        "╎"
+    // 選択は地の色だけだと薄く、地を明るくすると hint の文字とバーの空きが沈むので印で示す。
+    let (edge, edge_fg) = if selected {
+        ("❯", theme.accent)
+    } else if row.place == Place::Outside {
+        ("╎", color)
     } else {
-        "▌"
+        ("▌", color)
     };
     let age = row.since.map(|s| elapsed(s, now)).unwrap_or_default();
     let left = format!(
@@ -814,7 +819,11 @@ fn row_line(
     let mut spans = vec![
         Span::raw(" ".repeat(indent)),
         Span::styled(
-            format!("{edge}{glyph}"),
+            edge,
+            Style::default().fg(edge_fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            glyph,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(left, Style::default().fg(theme.hint)),
