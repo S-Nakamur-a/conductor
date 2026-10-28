@@ -18,6 +18,7 @@ use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Wait
 use conductor_core::config::Config;
 use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
+use conductor_core::revidere_records::Mark;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
@@ -109,6 +110,8 @@ pub struct Node {
 pub struct Worktree {
     pub path: PathBuf,
     pub label: String,
+    /// git の worktree 一覧に載っている。載らないのは、木を引けなかった dir の仮の行。
+    pub in_tree: bool,
 }
 
 /// 一覧で j / k が止まるもの。並びは描画と同じ。
@@ -121,8 +124,8 @@ pub enum Item {
 /// 一覧の本文で押した 1 点。
 pub struct ListPress<'a> {
     pub hit: Option<&'a render::Slot>,
-    pub button: Option<&'a render::Slot>,
-    pub in_button_columns: bool,
+    pub button: Option<(render::Button, &'a render::Slot)>,
+    pub button_column: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,9 +202,12 @@ pub struct FleetStatus {
     /// セッションの working_dir → それを含む worktree のパス。
     pub placement: HashMap<PathBuf, PathBuf>,
     pub usage: Usage,
+    pub reviews: HashMap<PathBuf, Mark>,
 }
 
 const OUTSIDE_GROUP: &str = "外の端末";
+
+const REVIDERE_COMMAND: &str = "/conductor:revidere";
 
 /// 一覧の左下に映すもの。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -222,6 +228,7 @@ pub struct FleetPanel {
     trees: Vec<RepoTree>,
     placement: HashMap<PathBuf, PathBuf>,
     usage: Usage,
+    reviews: HashMap<PathBuf, Mark>,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
     /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
@@ -235,7 +242,8 @@ pub struct FleetPanel {
     /// gg や押しっぱなしでタブが何枚も開かないように、開き終わるまで次の g を捨てる。
     opening_page: bool,
     came_from: Option<Focus>,
-    row_clicks: ClickTracker<(u16, bool, Option<Selected>)>,
+    row_clicks: ClickTracker<(u16, Option<usize>, Option<Selected>)>,
+    revidere_clicks: ClickTracker<u16>,
     pub changes: changes::BranchChanges,
     pub artifacts: artifacts::SessionArtifacts,
     lower: Lower,
@@ -389,6 +397,10 @@ impl FleetPanel {
         &self.usage
     }
 
+    pub fn review_of(&self, worktree: &Path) -> Option<Mark> {
+        self.reviews.get(worktree).copied()
+    }
+
     pub fn came_from(&self) -> Focus {
         self.came_from.unwrap_or(Focus::Explorer)
     }
@@ -461,37 +473,57 @@ impl FleetPanel {
         self.trees.iter().any(|t| t.root == root)
     }
 
-    /// 一覧の [+] / [✧] を押した。行き先は押した行から取り、選択は動かさない。
+    fn enter_selected(&self) -> Vec<Effect> {
+        match self.selected {
+            Some(Selected::Session(..)) => vec![Effect::Focus(Focus::FleetSession)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// 一覧のボタンを押した。行き先は押した行から取る。
     fn click_button(
         &mut self,
+        button: render::Button,
         slot: &render::Slot,
         at: (u16, u16),
         config: &Config,
     ) -> Vec<Effect> {
-        match slot {
-            render::Slot::Worktree(w) => vec![Effect::PushModal(Modal::Popup(Popup::numbered(
-                "New session",
-                launch_choices(&w.path, None, config),
-                Some(at),
-            )))],
-            render::Slot::Repo(Some(root)) => vec![Effect::FleetSmartPrompt(root.clone())],
-            render::Slot::Repo(None) | render::Slot::Session(_) | render::Slot::Other => Vec::new(),
+        match (button, slot) {
+            (render::Button::New, render::Slot::Worktree(w)) => {
+                vec![Effect::PushModal(Modal::Popup(Popup::numbered(
+                    "New session",
+                    launch_choices(&w.path, None, config),
+                    Some(at),
+                )))]
+            }
+            (render::Button::Revidere, render::Slot::Worktree(w)) => vec![Effect::NewClaudeIn {
+                dir: w.path.clone(),
+                chrome: false,
+                account: None,
+                startup_prompt: Some(REVIDERE_COMMAND.to_string()),
+            }],
+            (render::Button::Smart, render::Slot::Repo(Some(root))) => {
+                vec![Effect::FleetSmartPrompt(root.clone())]
+            }
+            _ => Vec::new(),
         }
     }
 
     /// 一覧は選んだ行に合わせて送られるので、二度目は同じ画面の行に別の行やボタンが来ている。
     /// 二度目はボタンも含めて引き直さず、一度目に選んだ行がまだ選ばれていればそこへ入る。
     pub fn click_list(&mut self, at: (u16, u16), press: ListPress, config: &Config) -> Vec<Effect> {
-        let key = (at.1, press.in_button_columns, self.selected.clone());
+        let key = (at.1, press.button_column, self.selected.clone());
         if self.row_clicks.is_double(key) {
-            return match self.selected {
-                Some(Selected::Session(..)) => vec![Effect::Focus(Focus::FleetSession)],
-                _ => Vec::new(),
-            };
+            return self.enter_selected();
         }
-        if let Some(button) = press.button {
+        if let Some((button, slot)) = press.button {
             self.row_clicks = ClickTracker::default();
-            return self.click_button(button, at, config);
+            // [R] はモーダルを挟まずに起こし、起こした行へ選択が移るので、選択を鍵に含めない。
+            // [+] と [✧] の二度目は、一度目に開いたモーダルが先に取る。
+            if button == render::Button::Revidere && self.revidere_clicks.is_double(at.1) {
+                return self.enter_selected();
+            }
+            return self.click_button(button, slot, at, config);
         }
         let item = match press.hit {
             Some(render::Slot::Worktree(w)) => Item::Worktree(w.clone()),
@@ -503,7 +535,7 @@ impl FleetPanel {
         };
         self.select(&item, SystemTime::now());
         self.row_clicks
-            .arm((at.1, press.in_button_columns, self.selected.clone()));
+            .arm((at.1, press.button_column, self.selected.clone()));
         Vec::new()
     }
 
@@ -530,6 +562,7 @@ impl FleetPanel {
         self.trees = status.trees;
         self.placement = status.placement;
         self.usage = status.usage;
+        self.reviews = status.reviews;
         self.set_own(own);
         if listing {
             self.mark_selected(now);
@@ -640,6 +673,7 @@ impl FleetPanel {
                         worktree: Some(Worktree {
                             path: w.path.clone(),
                             label: w.head.label(),
+                            in_tree: true,
                         }),
                         rows: Vec::new(),
                     })
@@ -675,6 +709,7 @@ impl FleetPanel {
                             worktree: Some(Worktree {
                                 path: row.working_dir.clone(),
                                 label: name.clone(),
+                                in_tree: false,
                             }),
                             rows: vec![row],
                         }],
@@ -1162,6 +1197,7 @@ pub fn launch_choices(dir: &Path, smart: Option<PathBuf>, config: &Config) -> Ch
                     dir: dir.to_path_buf(),
                     chrome,
                     account: account.map(str::to_string),
+                    startup_prompt: None,
                 };
                 (format!("Claude Code{name}{suffix}"), effect)
             })

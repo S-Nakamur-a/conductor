@@ -11,7 +11,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use conductor_core::icons::{self, IconSet};
 use conductor_core::keymap::Action;
+use conductor_core::revidere_records::Mark;
 
 use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
@@ -194,7 +196,9 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     }
                     lines.push(worktree_line(
                         theme,
+                        ws.config.ui.icon_set(),
                         worktree,
+                        fleet.review_of(&worktree.path),
                         inner.width,
                         selected,
                         focused,
@@ -792,24 +796,41 @@ fn countdown_text(secs: i64) -> String {
     }
 }
 
-/// 本文の右端 3 桁のボタン。当たり判定は [button_hit] が同じ桁を読む。
+/// 本文の右端に右から並ぶボタン。当たり判定は [buttons] を読み、描画 (worktree_line /
+/// repo_header) は同じ並びで直書きしている。
 pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
 const BUTTON_WIDTH: u16 = 3;
 
-pub fn in_button_columns(composed: &Composed, x: u16) -> bool {
-    x + BUTTON_WIDTH >= composed.body.right()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    New,
+    Smart,
+    Revidere,
 }
 
-pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
-    if !in_button_columns(composed, x) {
-        return None;
-    }
-    let slot = slot_at(composed, x, y)?;
+/// 行のボタンを右端から順に。
+pub fn buttons(slot: &Slot) -> &'static [Button] {
     match slot {
-        Slot::Repo(Some(_)) | Slot::Worktree(_) => Some(slot),
-        Slot::Repo(None) | Slot::Session(_) | Slot::Other => None,
+        Slot::Repo(Some(_)) => &[Button::Smart],
+        Slot::Worktree(w) if w.in_tree => &[Button::New, Button::Revidere],
+        Slot::Worktree(_) => &[Button::New],
+        Slot::Repo(None) | Slot::Session(_) | Slot::Other => &[],
     }
+}
+
+/// x が右端から何番目のボタンの桁か。行の中身は見ない。
+pub fn button_column(composed: &Composed, x: u16) -> Option<usize> {
+    let from_right = usize::from(composed.body.right().checked_sub(x + 1)? / BUTTON_WIDTH);
+    (from_right < MOST_BUTTONS).then_some(from_right)
+}
+
+const MOST_BUTTONS: usize = 2;
+
+pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<(Button, &Slot)> {
+    let slot = slot_at(composed, x, y)?;
+    let button = *buttons(slot).get(button_column(composed, x)?)?;
+    Some((button, slot))
 }
 
 pub fn slot_at(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
@@ -880,22 +901,37 @@ fn tag(place: Place) -> &'static str {
 
 fn worktree_line(
     theme: &Theme,
+    icons: IconSet,
     worktree: &Worktree,
+    review: Option<Mark>,
     width: u16,
     selected: bool,
     focused: bool,
 ) -> Line<'static> {
-    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 3));
+    let (badge, badge_fg) = match review {
+        Some(Mark::Current) => (icons::REVIDERE_CURRENT.get(icons), theme.success),
+        Some(Mark::Stale) => (icons::REVIDERE_STALE.get(icons), theme.warning),
+        None => (" ", theme.hint),
+    };
+    let revidere = if worktree.in_tree {
+        format!("[{}]", icons::REVIDERE.get(icons))
+    } else {
+        "   ".to_string()
+    };
+    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5));
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
     let lead = if selected { " ❯" } else { "  " };
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(lead, Style::default().fg(theme.accent)),
         // repo の見出しと同じ色で、下に並ぶセッションの題と分ける。
         Span::styled(label, Style::default().fg(theme.info)),
         Span::raw(" ".repeat(pad + 1)),
+        Span::styled(badge, Style::default().fg(badge_fg)),
+        Span::raw(" "),
+        Span::styled(revidere, Style::default().fg(theme.accent)),
+        Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
     ];
-    spans.push(Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)));
     crate::list::row_line(spans, theme, selected, focused)
 }
 

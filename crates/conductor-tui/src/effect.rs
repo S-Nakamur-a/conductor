@@ -81,6 +81,7 @@ pub enum Effect {
         dir: PathBuf,
         chrome: bool,
         account: Option<String>,
+        startup_prompt: Option<String>,
     },
     /// その repo で Smart Worktree の説明を聞く。
     FleetSmartPrompt(PathBuf),
@@ -244,12 +245,14 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 dir,
                 chrome,
                 account,
+                startup_prompt,
             } => queue.extend(new_claude_in(
                 ws,
                 &dir,
                 ClaudeArgs {
                     chrome,
                     account: account.as_deref(),
+                    startup_prompt: startup_prompt.as_deref(),
                     ..ClaudeArgs::default()
                 },
             )),

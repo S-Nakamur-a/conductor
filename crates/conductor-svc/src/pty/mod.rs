@@ -31,7 +31,7 @@ mod wire;
 pub use client::Attached;
 pub use host::run as run_host;
 pub use io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence};
-pub use spawn::{Launch, Spawn};
+pub use spawn::{Conversation, Launch, Spawn};
 
 /// リフローの再生のためにセッションごとに残す PTY 生出力の上限。
 ///

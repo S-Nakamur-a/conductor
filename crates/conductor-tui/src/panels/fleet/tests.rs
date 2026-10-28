@@ -705,7 +705,7 @@ fn press(fleet: &mut FleetPanel, y: u16, hit: Option<&render::Slot>) -> Vec<Effe
         ListPress {
             hit,
             button: None,
-            in_button_columns: false,
+            button_column: None,
         },
         &conductor_core::config::Config::default(),
     )
@@ -2840,11 +2840,12 @@ mod launch {
         let worktree = render::Slot::Worktree(Worktree {
             path: PathBuf::from("/r/app-b"),
             label: "feature/b".into(),
+            in_tree: true,
         });
-        let [Effect::PushModal(Modal::Popup(mut popup))] =
-            <[Effect; 1]>::try_from(fleet.click_button(&worktree, (10, 3), &Default::default()))
-                .unwrap()
-        else {
+        let [Effect::PushModal(Modal::Popup(mut popup))] = <[Effect; 1]>::try_from(
+            fleet.click_button(render::Button::New, &worktree, (10, 3), &Default::default()),
+        )
+        .unwrap() else {
             panic!()
         };
         let ws = Workspace::for_test();
@@ -2856,12 +2857,17 @@ mod launch {
 
         let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
         assert_eq!(
-            smart(&fleet.click_button(&repo, (10, 2), &Default::default())),
+            smart(&fleet.click_button(render::Button::Smart, &repo, (10, 2), &Default::default())),
             [PathBuf::from("/r/app")]
         );
         assert!(
             fleet
-                .click_button(&render::Slot::Repo(None), (10, 2), &Default::default())
+                .click_button(
+                    render::Button::Smart,
+                    &render::Slot::Repo(None),
+                    (10, 2),
+                    &Default::default()
+                )
                 .is_empty()
         );
     }
@@ -2891,7 +2897,7 @@ mod launch {
     }
 
     #[test]
-    fn ボタンは本文の右端_3_桁にあり_スクロールしていても描いた行に当たる() {
+    fn ボタンは本文の右端から_3_桁ずつ並び_スクロールしていても描いた行に当たる() {
         let rect = ratatui::layout::Rect::new(0, 0, 60, 12);
         let ws = many_worktrees(3);
         let composed = render::compose(&ws, rect).unwrap();
@@ -2899,13 +2905,25 @@ mod launch {
         let y = |slot_index: usize| composed.body.y + u16::try_from(slot_index).unwrap();
         assert_eq!(
             render::button_hit(&composed, right - 1, y(0)),
-            Some(&render::Slot::Repo(Some(PathBuf::from("/r/app-00"))))
+            Some((
+                render::Button::Smart,
+                &render::Slot::Repo(Some(PathBuf::from("/r/app-00")))
+            ))
         );
-        let Some(render::Slot::Worktree(w)) = render::button_hit(&composed, right - 3, y(2)) else {
+        assert_eq!(render::button_hit(&composed, right - 4, y(0)), None);
+        let Some((render::Button::New, render::Slot::Worktree(w))) =
+            render::button_hit(&composed, right - 3, y(2))
+        else {
             panic!("worktree の [+]");
         };
         assert_eq!(w.label, "b01");
-        assert_eq!(render::button_hit(&composed, right - 4, y(2)), None);
+        for x in [right - 4, right - 6] {
+            assert!(matches!(
+                render::button_hit(&composed, x, y(2)),
+                Some((render::Button::Revidere, render::Slot::Worktree(_)))
+            ));
+        }
+        assert_eq!(render::button_hit(&composed, right - 7, y(2)), None);
         assert_eq!(render::button_hit(&composed, right, y(2)), None);
 
         let mut ws = many_worktrees(30);
@@ -2918,7 +2936,7 @@ mod launch {
             composed.body.y + u16::try_from(composed.lines.len() - 1 - composed.offset).unwrap();
         assert!(last_row < composed.body.bottom());
         let hit = render::button_hit(&composed, composed.body.right() - 1, last_row);
-        let Some(render::Slot::Worktree(w)) = hit else {
+        let Some((render::Button::New, render::Slot::Worktree(w))) = hit else {
             panic!("{hit:?}");
         };
         let drawn = &composed.lines[composed.offset + usize::from(last_row - composed.body.y)];
@@ -2927,7 +2945,7 @@ mod launch {
     }
 
     #[test]
-    fn ボタンは当たり判定と同じ右端_3_桁に描き_狭くて名前が長くても右端に残る() {
+    fn ボタンは当たり判定と同じ桁に描き_狭くて名前が長くても右端に残る() {
         use unicode_width::UnicodeWidthStr;
         for width in [60, 20] {
             let mut ws = Workspace::for_test();
@@ -2949,10 +2967,15 @@ mod launch {
             );
             let composed =
                 render::compose(&ws, ratatui::layout::Rect::new(0, 0, width, 12)).unwrap();
+            let revidere = format!(
+                "[{}]{}",
+                conductor_core::icons::REVIDERE.get(ws.config.ui.icon_set()),
+                render::NEW_BUTTON
+            );
             for (index, slot) in composed.slots.iter().enumerate() {
                 let button = match slot {
                     render::Slot::Repo(Some(_)) => render::SMART_BUTTON,
-                    render::Slot::Worktree(_) => render::NEW_BUTTON,
+                    render::Slot::Worktree(_) => revidere.as_str(),
                     _ => continue,
                 };
                 let text: String = composed.lines[index]
@@ -2967,12 +2990,155 @@ mod launch {
                 );
                 assert!(text.ends_with(button), "{width}: {text}");
                 let y = composed.body.y + u16::try_from(index - composed.offset).unwrap();
-                assert_eq!(
-                    render::button_hit(&composed, composed.body.right() - 3, y),
-                    Some(slot)
-                );
+                let buttons = render::buttons(slot);
+                for (column, button) in buttons.iter().enumerate() {
+                    let x = composed.body.right() - 3 * (u16::try_from(column).unwrap() + 1);
+                    assert_eq!(render::button_hit(&composed, x, y), Some((*button, slot)));
+                }
             }
         }
+    }
+
+    fn revidere_launches(effects: &[Effect]) -> Vec<PathBuf> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::NewClaudeIn {
+                    dir,
+                    chrome: false,
+                    account: None,
+                    startup_prompt: Some(prompt),
+                } if prompt == "/conductor:revidere" => Some(dir.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn press_at(ws: &mut Workspace, x: u16, y: u16) -> Vec<Effect> {
+        let rect = ratatui::layout::Rect::new(0, 0, 60, 12);
+        let composed = render::compose(ws, rect).unwrap();
+        let (x, y) = (composed.body.right() - x, composed.body.y + y);
+        let press = ListPress {
+            hit: render::slot_at(&composed, x, y),
+            button: render::button_hit(&composed, x, y),
+            button_column: render::button_column(&composed, x),
+        };
+        let config = ws.config.clone();
+        ws.panels.fleet.click_list((x, y), press, &config)
+    }
+
+    #[test]
+    fn worktree_の_revidere_ボタンは押した行の_worktree_で_revidere_を起こす() {
+        let mut ws = many_worktrees(3);
+        assert_eq!(
+            revidere_launches(&press_at(&mut ws, 5, 2)),
+            [PathBuf::from("/r/app-01")]
+        );
+    }
+
+    #[test]
+    fn revidere_ボタンの二度押しは_2_本目を起こさない() {
+        let mut ws = many_worktrees(3);
+        assert_eq!(revidere_launches(&press_at(&mut ws, 5, 2)).len(), 1);
+        let own = vec![OwnSession {
+            panel_id: "p1".into(),
+            working_dir: PathBuf::from("/r/app-01"),
+            claude_session_id: None,
+        }];
+        ws.panels.fleet.note_launched("p1".into(), own);
+        let second = press_at(&mut ws, 5, 2);
+        assert!(revidere_launches(&second).is_empty());
+        assert!(
+            matches!(second[..], [Effect::Focus(Focus::FleetSession)]),
+            "二度目は起こしたセッションへ入り直す: {second:?}"
+        );
+        assert_eq!(
+            revidere_launches(&press_at(&mut ws, 5, 3)),
+            [PathBuf::from("/r/app-02")],
+            "別の行の [R] は二度押しではない"
+        );
+        let opens_menu =
+            |effects: &[Effect]| matches!(effects, [Effect::PushModal(Modal::Popup(_))]);
+        assert!(opens_menu(&press_at(&mut ws, 1, 3)));
+        assert!(
+            opens_menu(&press_at(&mut ws, 1, 3)),
+            "[+] の押し直しは、閉じたメニューを開き直す"
+        );
+        let asks_smart = |effects: &[Effect]| matches!(effects, [Effect::FleetSmartPrompt(_)]);
+        assert!(asks_smart(&press_at(&mut ws, 1, 0)));
+        assert!(
+            asks_smart(&press_at(&mut ws, 1, 0)),
+            "[✧] の押し直しも、閉じた説明を聞き直す"
+        );
+    }
+
+    #[test]
+    fn 行を押した直後に同じ行の_revidere_ボタンを押しても起こす() {
+        let mut ws = many_worktrees(3);
+        assert!(revidere_launches(&press_at(&mut ws, 30, 2)).is_empty());
+        assert_eq!(
+            revidere_launches(&press_at(&mut ws, 5, 2)),
+            [PathBuf::from("/r/app-01")]
+        );
+    }
+
+    #[test]
+    fn 木に載らない仮の行には_revidere_ボタンが無い() {
+        let provisional = render::Slot::Worktree(Worktree {
+            path: PathBuf::from("/tmp/notes"),
+            label: "notes".into(),
+            in_tree: false,
+        });
+        assert_eq!(render::buttons(&provisional), [render::Button::New]);
+    }
+
+    #[test]
+    fn revidere_の印は今の_commit_なら_success_前の_commit_だけなら_warning_で描く() {
+        use conductor_core::icons;
+        use conductor_core::revidere_records::Mark;
+        let mut ws = many_worktrees(3);
+        let mut status = FleetStatus {
+            trees: ws.panels.fleet.trees.clone(),
+            ..Default::default()
+        };
+        status.reviews = HashMap::from([
+            (PathBuf::from("/r/app-01"), Mark::Current),
+            (PathBuf::from("/r/app-02"), Mark::Stale),
+        ]);
+        ws.apply_fleet(status, Vec::new());
+        let set = ws.config.ui.icon_set();
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 60, 12)).unwrap();
+        let badge = |label: &str| {
+            let index = composed
+                .slots
+                .iter()
+                .position(|s| matches!(s, render::Slot::Worktree(w) if w.label == label))
+                .unwrap();
+            let line = &composed.lines[index];
+            let at = line
+                .spans
+                .iter()
+                .position(|s| s.content.starts_with('['))
+                .unwrap();
+            let span = &line.spans[at - 2];
+            (span.content.to_string(), span.style.fg)
+        };
+        let theme = &ws.theme;
+        assert_eq!(badge("b00"), (" ".to_string(), Some(theme.hint)));
+        assert_eq!(
+            badge("b01"),
+            (
+                icons::REVIDERE_CURRENT.get(set).to_string(),
+                Some(theme.success)
+            )
+        );
+        assert_eq!(
+            badge("b02"),
+            (
+                icons::REVIDERE_STALE.get(set).to_string(),
+                Some(theme.warning)
+            )
+        );
     }
 }
 
