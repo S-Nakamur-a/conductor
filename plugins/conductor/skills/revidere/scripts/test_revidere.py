@@ -531,12 +531,13 @@ class PublishedCommand(RepoTest):
 
     def test_URLをmeta_jsonに書き足し_出し直しは上書きし_ほかの欄は残す(self):
         before = rv.read_json(self.meta)
+        inode = os.stat(self.meta).st_ino
         self.assertEqual(self.r.run("published", self.d, "https://claude.ai/artifact/a")[:2], (0, ""))
+        self.assertNotEqual(os.stat(self.meta).st_ino, inode, "書きかけを見せないよう、別のファイルで置き換える")
         self.assertEqual(self.r.run("published", self.d, "https://claude.ai/artifact/b")[0], 0)
         after = rv.read_json(self.meta)
         self.assertEqual(after.pop("artifact_url"), "https://claude.ai/artifact/b")
         self.assertEqual(after, before)
-        self.assertFalse(os.path.exists(self.meta + ".tmp"), "一時ファイルは置き換えで消える")
 
     def test_ArtifactでないURLと読めないmetaはexit2で何も書かない(self):
         before = read_bytes(self.meta)
