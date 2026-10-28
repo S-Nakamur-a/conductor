@@ -3564,3 +3564,216 @@ fn 変更を読んでいる間に_repo_を切り替えたら次を投げられ�
         Some(PathBuf::from("/r/a"))
     );
 }
+
+mod reopen {
+    use std::path::PathBuf;
+
+    use conductor_core::config::{ClaudeAccount, Config};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+
+    /// work の Claude が /r/a で s1 を開いている。work の projects にはログがあり、
+    /// personal にもあるかは選べる。
+    fn setup(
+        state: Status,
+        personal_has_log: bool,
+    ) -> ([tempfile::TempDir; 2], FleetPanel, Workspace) {
+        let [work, personal] = [(); 2].map(|_| tempfile::tempdir().unwrap());
+        for dir in std::iter::once(&work).chain(personal_has_log.then_some(&personal)) {
+            let logs = dir.path().join("projects/-r-a");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("s1.jsonl"), "").unwrap();
+        }
+        let mut config = Config::default();
+        config.claude.accounts = vec![
+            ClaudeAccount {
+                name: "work".into(),
+                config_dir: Some(work.path().to_path_buf()),
+                ..Default::default()
+            },
+            ClaudeAccount {
+                name: "personal".into(),
+                config_dir: Some(personal.path().to_path_buf()),
+                ..Default::default()
+            },
+        ];
+        let mut mine = live(7, "/r/a", "s1", state, Owner::Conductor);
+        mine.sessions_dir = work.path().join("sessions");
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            status(vec![mine]),
+            vec![own("CC:1", "/r/a", Some("s1"))],
+            None,
+            false,
+            at(200),
+        );
+        ([work, personal], fleet, Workspace::for_test_with(config))
+    }
+
+    fn press_a(fleet: &mut FleetPanel, ws: &Workspace) -> Vec<Effect> {
+        fleet.update(Action::ReopenAsAccount, &ws.ctx()).unwrap()
+    }
+
+    fn choose_first(effects: Vec<Effect>, ws: &Workspace) -> Vec<Effect> {
+        let [Effect::PushModal(Modal::Popup(mut popup))] =
+            <[Effect; 1]>::try_from(effects).unwrap()
+        else {
+            panic!("ポップアップが出ない");
+        };
+        popup.update(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            &ws.ctx(),
+        )
+    }
+
+    fn warning(effects: &[Effect]) -> Option<&str> {
+        match effects {
+            [Effect::Status(StatusLevel::Warning, why)] => Some(why),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn 止まっている自分のセッションは今と違うアカウントだけを並べて選べばそのまま開き直す() {
+        let (_dirs, mut fleet, ws) = setup(Status::Idle, true);
+        let effects = choose_first(press_a(&mut fleet, &ws), &ws);
+        let Some(Effect::ReopenAs(reopen)) = effects.last() else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(
+            reopen,
+            &Reopen {
+                panel: "CC:1".into(),
+                pid: 7,
+                started: at(7),
+                session_id: "s1".into(),
+                dir: PathBuf::from("/r/a"),
+                account: "personal".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn 動いているセッションは止める前に確かめる() {
+        let (_dirs, mut fleet, ws) = setup(Status::Working, true);
+        let effects = choose_first(press_a(&mut fleet, &ws), &ws);
+        assert!(
+            matches!(effects.last(), Some(Effect::PushModal(Modal::Confirm(_)))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 移り先から会話のログが見えなければ止めずに断る() {
+        let (_dirs, mut fleet, ws) = setup(Status::Idle, false);
+        let effects = press_a(&mut fleet, &ws);
+        assert_eq!(
+            warning(&effects),
+            Some("No other account can see this conversation's log")
+        );
+    }
+
+    #[test]
+    fn 開き直しを待っている会話は受けない() {
+        let (_dirs, mut fleet, ws) = setup(Status::Idle, true);
+        fleet.note_reopening("s1".into());
+        assert_eq!(
+            warning(&press_a(&mut fleet, &ws)),
+            Some("This session is already being reopened")
+        );
+        fleet.reopened("s1");
+        assert!(warning(&press_a(&mut fleet, &ws)).is_none());
+    }
+
+    #[test]
+    fn 外の端末の行とアカウントが1つのときは開き直さない() {
+        let (_dirs, mut fleet, mut ws) = setup(Status::Idle, true);
+        let mut outside = live(9, "/r/b", "s9", Status::Idle, Owner::Elsewhere);
+        outside.sessions_dir = PathBuf::from("/w/sessions");
+        fleet.apply(status(vec![outside]), Vec::new(), None, false, at(300));
+        assert_eq!(
+            warning(&press_a(&mut fleet, &ws)),
+            Some("Only a session of this window that has started can be reopened")
+        );
+        ws.config.claude.accounts.truncate(1);
+        assert_eq!(
+            warning(&press_a(&mut fleet, &ws)),
+            Some("Reopening needs two [[claude.accounts]] or more")
+        );
+    }
+
+    #[test]
+    fn 開き直すと区画を一覧から外し_待ちに入れて終わるのを待つ() {
+        let (_dirs, fleet, mut ws) = setup(Status::Idle, true);
+        ws.panels.fleet = fleet;
+        let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
+        crate::effect::apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::ReopenAs(Reopen {
+                panel: "CC:1".into(),
+                pid: 7,
+                started: at(7),
+                session_id: "s1".into(),
+                dir: PathBuf::from("/r/a"),
+                account: "personal".into(),
+            })],
+        );
+        assert!(ws.panels.fleet.reopening.contains("s1"));
+        assert!(ws.panels.fleet.selected_row().is_none());
+        let mut waited = None;
+        crate::testing::wait_for(|| {
+            if let Some(event) = svc.try_recv() {
+                waited = Some(event.kind);
+            }
+            waited.is_some()
+        });
+        assert!(
+            matches!(
+                waited,
+                Some(conductor_svc::EventKind::Task(crate::task::TaskResult::Reopened { ref reopen, .. })) if reopen.session_id == "s1"
+            ),
+            "{waited:?}"
+        );
+    }
+
+    #[test]
+    fn 止まったら同じ会話を選んだアカウントで開き直し_止まらなければ帯で知らせる() {
+        let (_dirs, fleet, mut ws) = setup(Status::Idle, true);
+        ws.panels.fleet = fleet;
+        let reopen = Reopen {
+            panel: "CC:1".into(),
+            pid: 7,
+            started: at(7),
+            session_id: "s1".into(),
+            dir: PathBuf::from("/r/a"),
+            account: "personal".into(),
+        };
+        ws.panels.fleet.note_reopening("s1".into());
+
+        let effects = ws.accept(crate::task::TaskResult::Reopened {
+            reopen: reopen.clone(),
+            ended: true,
+        });
+        assert!(
+            matches!(effects.as_slice(), [Effect::LaunchReopened(launched)] if launched == &reopen),
+            "{effects:?}"
+        );
+
+        ws.panels.fleet.note_reopening("s1".into());
+        let effects = ws.accept(crate::task::TaskResult::Reopened {
+            reopen,
+            ended: false,
+        });
+        assert!(
+            matches!(effects.as_slice(), [Effect::Status(StatusLevel::Warning, why)] if why.contains("Resume list as personal")),
+            "{effects:?}"
+        );
+        let mut fleet = std::mem::take(&mut ws.panels.fleet);
+        assert!(
+            warning(&press_a(&mut fleet, &ws)).is_none(),
+            "結果を受けたら同じ会話をまた受ける"
+        );
+    }
+}

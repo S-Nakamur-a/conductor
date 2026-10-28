@@ -266,6 +266,19 @@ fn 読んだsessions_dirの綴りからアカウントを引く() {
 }
 
 #[test]
+fn config_dirの無いアカウントのdirはホームの_claude() {
+    let cfg = Config::default();
+    assert_eq!(
+        cfg.claude_dir_of(&account("work", None)),
+        Some(home().join(".claude"))
+    );
+    assert_eq!(
+        cfg.claude_dir_of(&account("personal", Some(Path::new("/p")))),
+        Some(PathBuf::from("/p"))
+    );
+}
+
+#[test]
 fn accountsの重なりと色の書き損じを知らせる() {
     let mut cfg = Config::default();
     let mut bad_color = account("c", Some(Path::new("/c")));

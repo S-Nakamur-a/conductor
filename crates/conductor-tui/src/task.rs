@@ -100,6 +100,8 @@ pub enum Task {
     },
     /// 中の Claude が終わったのを確かめ、点検のときから増えていなければ消す。
     DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
+    /// 止めた Claude が終わるのを待つ。開き直すのは結果を受けた側。
+    AwaitReopen(crate::panels::fleet::Reopen),
     LoadTree {
         root: PathBuf,
         expanded: Vec<String>,
@@ -377,6 +379,11 @@ pub enum TaskResult {
     WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
+    /// 開き直す Claude が止まったか。止まっていれば選んだアカウントで開き直す。
+    Reopened {
+        reopen: crate::panels::fleet::Reopen,
+        ended: bool,
+    },
     FleetWorktreeInspected {
         path: PathBuf,
         outcome: crate::panels::fleet::Inspected,
@@ -558,6 +565,22 @@ impl Task {
                         (path, outcome)
                     },
                     |(path, outcome)| TaskResult::FleetWorktreeInspected { path, outcome },
+                );
+            }
+            // repo を切り替えても開き直す。止めたのはもう済んでいる。
+            Task::AwaitReopen(reopen) => {
+                svc.spawn_unscoped(
+                    move || {
+                        use conductor_core::claude_sessions::registry;
+                        let ended = registry::ended_within(
+                            reopen.pid,
+                            reopen.started,
+                            &registry::SystemProcesses,
+                            fleet_delete::OWN_WAIT,
+                        );
+                        (reopen, ended)
+                    },
+                    |(reopen, ended)| TaskResult::Reopened { reopen, ended },
                 );
             }
             // repo を切り替えても、消したかどうかは知らせる。
@@ -1671,7 +1694,7 @@ pub(crate) mod fleet_delete {
     use crate::panels::fleet::{Doomed, Inspected, Inspection, OwnPty};
 
     /// この窓のタブを閉じてから、その Claude が終わるのを待つ上限。
-    const OWN_WAIT: Duration = Duration::from_secs(5);
+    pub(crate) const OWN_WAIT: Duration = Duration::from_secs(5);
 
     fn canonical(p: &Path) -> PathBuf {
         p.canonicalize().unwrap_or_else(|_| p.to_path_buf())

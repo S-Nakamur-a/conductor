@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use conductor_core::cc_hook::statusline::Usage;
 use conductor_core::claude_log::summary::{Summary, Title};
+use conductor_core::claude_sessions::ClaudeHome;
 use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
 use conductor_core::config::Config;
 use conductor_core::git_engine::{Head, WorktreeHead};
@@ -239,6 +240,8 @@ pub struct FleetPanel {
     lower_shown: bool,
     /// 左下のシェルに入ったときに映っていたもの。打ち先がこれから変わったら打たせない。
     typing_shell: Option<String>,
+    /// 止まるのを待って開き直す会話。待っている間は同じ会話を受けない。
+    reopening: BTreeSet<String>,
 }
 
 impl FleetPanel {
@@ -912,6 +915,7 @@ impl FleetPanel {
                     None => self.ask_stop().into_iter().collect(),
                 });
             }
+            Action::ReopenAsAccount => return Some(self.ask_reopen(ctx.config)),
             Action::OpenBranchPage => return Some(self.open_page().into_iter().collect()),
             Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
             Action::ShowFleetChanges => return Some(self.show_changes()),
@@ -981,6 +985,88 @@ impl FleetPanel {
         Some(Effect::Spawn(crate::task::Task::OpenBranchPage { dir }))
     }
 
+    /// この窓のセッションを止め、同じ会話を別のアカウントで開き直す。移り先は会話のログが
+    /// 見えるアカウントだけ並べ、動いている最中なら止める前に確かめる。
+    fn ask_reopen(&self, config: &Config) -> Vec<Effect> {
+        let warn = |why: &str| vec![Effect::Status(StatusLevel::Warning, why.into())];
+        let Some(row) = self.selected_row() else {
+            return Vec::new();
+        };
+        if config.claude.accounts.len() < 2 {
+            return warn("Reopening needs two [[claude.accounts]] or more");
+        }
+        let live = match &row.key {
+            RowKey::Panel(panel) => self.live_of(panel).map(|live| (panel, live)),
+            RowKey::Pid(_) => None,
+        };
+        let Some((panel, live)) = live else {
+            return warn("Only a session of this window that has started can be reopened");
+        };
+        if self.reopening.contains(&live.session_id) {
+            return warn("This session is already being reopened");
+        }
+        let current = config
+            .account_of(&live.sessions_dir)
+            .map(|a| a.name.as_str());
+        let choices: Choices = config
+            .claude
+            .accounts
+            .iter()
+            .filter(|account| Some(account.name.as_str()) != current)
+            .filter(|account| {
+                config.claude_dir_of(account).is_some_and(|dir| {
+                    ClaudeHome::of(vec![dir])
+                        .session_log(&live.cwd, &live.session_id)
+                        .is_some()
+                })
+            })
+            .map(|account| {
+                let reopen = Effect::ReopenAs(Reopen {
+                    panel: panel.clone(),
+                    pid: live.pid,
+                    started: live.started,
+                    session_id: live.session_id.clone(),
+                    dir: live.cwd.clone(),
+                    account: account.name.clone(),
+                });
+                let effect = if live.status == Status::Idle {
+                    reopen
+                } else {
+                    Effect::PushModal(Modal::Confirm(
+                        Confirm::yes_only(
+                            format!("Stop this session and reopen it as {}?", account.name),
+                            vec![reopen],
+                        )
+                        .title("Reopen session")
+                        .detail("It is not idle: the work it is doing ends."),
+                    ))
+                };
+                (account.name.clone(), effect)
+            })
+            .collect();
+        if choices.is_empty() {
+            return warn("No other account can see this conversation's log");
+        }
+        vec![Effect::PushModal(Modal::Popup(Popup::numbered(
+            "Reopen as",
+            choices,
+            None,
+        )))]
+    }
+
+    fn live_of(&self, panel: &str) -> Option<&LiveSession> {
+        let at = self.own.iter().position(|own| own.panel_id == panel)?;
+        self.pairing()[at]
+    }
+
+    pub fn note_reopening(&mut self, session_id: String) {
+        self.reopening.insert(session_id);
+    }
+
+    pub fn reopened(&mut self, session_id: &str) {
+        self.reopening.remove(session_id);
+    }
+
     /// 止める相手は押した時点の行で決める。確認の間に並びが変わっても相手は動かない。
     fn ask_stop(&self) -> Option<Effect> {
         let row = self.selected_row()?;
@@ -1005,6 +1091,17 @@ impl FleetPanel {
         );
         Some(Effect::PushModal(Modal::Confirm(confirm)))
     }
+}
+
+/// 開き直す相手。押した時点の写しで決め、止まったかはこの pid と起動時刻で見る。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reopen {
+    pub panel: String,
+    pub pid: u32,
+    pub started: SystemTime,
+    pub session_id: String,
+    pub dir: PathBuf,
+    pub account: String,
 }
 
 /// Smart Worktree は repo の root が分かるときだけ並べる。アカウントを選ぶ行は数字が変わらないよう末尾に置く。

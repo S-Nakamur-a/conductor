@@ -448,6 +448,21 @@ impl Workspace {
                 let undisturbed = self.focus == Focus::Fleet && self.modals.is_empty();
                 self.panels.fleet.inspected(&path, outcome, undisturbed)
             }
+            TaskResult::Reopened { reopen, ended } => {
+                self.panels.fleet.reopened(&reopen.session_id);
+                vec![if ended {
+                    Effect::LaunchReopened(reopen)
+                } else {
+                    Effect::Status(
+                        StatusLevel::Warning,
+                        format!(
+                            "The session did not end within {}s: once it has, resume it from the Resume list as {}",
+                            crate::task::fleet_delete::OWN_WAIT.as_secs(),
+                            reopen.account
+                        ),
+                    )
+                }]
+            }
             TaskResult::FleetWorktreeDeleted {
                 path,
                 in_window_repo,

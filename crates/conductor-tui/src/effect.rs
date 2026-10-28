@@ -55,6 +55,10 @@ pub enum Effect {
     EnterSession(crate::panels::fleet::RowKey),
     /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
     StopFleetSession(crate::panels::fleet::StopTarget),
+    /// この窓のセッションを止め、終わったら同じ会話を選んだアカウントで開き直す。
+    ReopenAs(crate::panels::fleet::Reopen),
+    /// 止まったのを確かめた会話を選んだアカウントで起こす。裏で届くので選択もフォーカスも動かさない。
+    LaunchReopened(crate::panels::fleet::Reopen),
     /// 一覧の左下を選んだ worktree のシェルにして入る。無ければ起こす。
     OpenFleetShell,
     /// 一覧で選んだ worktree を消す前に、消せるかと失うものを worker で調べる。
@@ -240,7 +244,15 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 dir,
                 chrome,
                 account,
-            } => queue.extend(new_claude_in(ws, &dir, chrome, account.as_deref())),
+            } => queue.extend(new_claude_in(
+                ws,
+                &dir,
+                ClaudeArgs {
+                    chrome,
+                    account: account.as_deref(),
+                    ..ClaudeArgs::default()
+                },
+            )),
             Effect::SmartSession {
                 worktree,
                 name,
@@ -329,6 +341,8 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             }
             Effect::EnterSession(key) => queue.extend(enter_session(ws, svc, key)),
             Effect::StopFleetSession(target) => queue.extend(stop_fleet_session(ws, target)),
+            Effect::ReopenAs(reopen) => queue.extend(reopen_as(ws, reopen)),
+            Effect::LaunchReopened(reopen) => queue.push_back(launch_reopened(ws, &reopen)),
             Effect::InspectFleetWorktree { repo, path, label } => {
                 queue.push_back(Effect::Spawn(Task::InspectFleetWorktree {
                     repo,
@@ -440,6 +454,31 @@ fn stop_fleet_session(ws: &mut Workspace, target: crate::panels::fleet::StopTarg
     } else {
         Effect::Status(StatusLevel::Info, "That session had already ended.".into())
     }]
+}
+
+/// タブを閉じる経路で止め、終わるのを worker で待つ。
+fn reopen_as(ws: &mut Workspace, reopen: crate::panels::fleet::Reopen) -> Vec<Effect> {
+    ws.panels.terminal.stop_claude(&reopen.panel);
+    let own = ws.panels.terminal.own_claude_sessions();
+    ws.panels.fleet.forget_stopped(&reopen.panel, own);
+    ws.panels.fleet.note_reopening(reopen.session_id.clone());
+    vec![Effect::Spawn(Task::AwaitReopen(reopen))]
+}
+
+fn launch_reopened(ws: &mut Workspace, reopen: &crate::panels::fleet::Reopen) -> Effect {
+    let claude = ClaudeArgs {
+        resume: Some(&reopen.session_id),
+        account: Some(&reopen.account),
+        ..ClaudeArgs::default()
+    };
+    match ws
+        .panels
+        .terminal
+        .launch_claude_in(&reopen.dir, &ws.config, claude)
+    {
+        Ok(_) => Effect::Status(StatusLevel::Info, format!("Reopened as {}", reopen.account)),
+        Err(e) => Effect::Status(StatusLevel::Error, format!("{e:#}")),
+    }
 }
 
 /// この窓のタブはここで閉じ、外のプロセスの停止と、終わりの確認と、消すのは worker に任せる。
@@ -581,16 +620,8 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
-fn new_claude_in(
-    ws: &mut Workspace,
-    dir: &std::path::Path,
-    chrome: bool,
-    account: Option<&str>,
-) -> Vec<Effect> {
-    let launched = ws
-        .panels
-        .terminal
-        .launch_claude_in(dir, &ws.config, chrome, account);
+fn new_claude_in(ws: &mut Workspace, dir: &std::path::Path, claude: ClaudeArgs<'_>) -> Vec<Effect> {
+    let launched = ws.panels.terminal.launch_claude_in(dir, &ws.config, claude);
     let own = ws.panels.terminal.own_claude_sessions();
     after_launch(ws, launched, own)
 }

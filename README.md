@@ -173,6 +173,17 @@ sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still
 records its start time in a form conductor does not read yet, so **D** cannot stop a
 session elsewhere there: it reports the session as already ended and leaves it running.
 
+**A** (Shift+a) moves one of this window's sessions to another of the
+`[[claude.accounts]]`, for when one account's usage has run out. It offers each other
+account whose config dir has the conversation's log, answers to a digit or a click, and
+asks again first unless the list last read the session as idle (it reads once a second).
+It then stops the session, waits up to 5s for it to end, and resumes the same
+conversation in the same directory as the account chosen. The reopened session does not
+carry over --chrome or --name. The new session starts in the background: the selection
+and the keyboard stay where they are, and the status line says when it has started. If the
+old one does not end in time, nothing is started and the status line says to resume it
+from the Resume list once it has. The key is not shown on the bottom row.
+
 **D** on a worktree's line deletes that worktree and its branch. It first checks the
 worktree, then asks — but only if the list still has the keyboard and the same line is
 selected when the check returns; otherwise it says so and you press D again. The

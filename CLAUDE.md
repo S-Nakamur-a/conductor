@@ -155,7 +155,8 @@ with no window open, and the window opened later showed it mid-tool.
   freed later is picked up by reopening the window. The repository lock is still taken
   too, because an older window knows only that one.
 - A session ends only with its own exit, closing its tab, **D** in the session list,
-  deleting its worktree, and **Repo ▸ Quit and Stop Sessions**. The list's **D** takes
+  **A** in the list (it stops the session to reopen it as another account), deleting its
+  worktree, and **Repo ▸ Quit and Stop Sessions**. The list's **D** takes
   the tab-closing path for this window's sessions; any other Claude gets SIGTERM, then
   SIGKILL after 3s, and only while `<pid>.json` and the process start time still name
   the process the list read (`registry::stop`). **D on a worktree line** stops every
@@ -473,7 +474,10 @@ on the child alone (`spawn.rs`'s `use_account`): the default account gets `CLAUD
 *removed*, because spelling out `~/.claude` reads as logged out. A resume starts as the
 account whose `history.jsonl` last ran the conversation (`ResumableSession::config_dir`,
 counting only rows whose log is in that config dir) unless one is chosen by hand, so a
-conversation moved to another account stays there. A row of this window is
+conversation moved to another account stays there. **A** in the list moves one of this
+window's sessions to another account (`Effect::ReopenAs`): it stops the panel, waits on
+`registry::ended_within`, and resumes only once the old process is gone; if it is not
+gone in 5s nothing is started. A row of this window is
 keyed by its panel id, not the conversation id, because `/clear` changes the
 latter. Rows hang under repository → worktree. The same worker lists the worktrees
 (`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under

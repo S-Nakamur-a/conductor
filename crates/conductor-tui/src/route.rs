@@ -141,6 +141,18 @@ mod tests {
     }
 
     #[test]
+    fn 一覧の大文字のaは右の区画と左下のシェルでは端末へ届く() {
+        let mut ws = Workspace::for_test();
+        let a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        ws.focus = Focus::Fleet;
+        assert_eq!(route(&mut ws, a), Routed::Action(Action::ReopenAsAccount));
+        for focus in [Focus::FleetSession, Focus::FleetShell] {
+            ws.focus = focus;
+            assert_eq!(route(&mut ws, a), Routed::ForwardToPty(a), "{focus:?}");
+        }
+    }
+
+    #[test]
     fn パネルフォーカスでは_keymapで解決する() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;
