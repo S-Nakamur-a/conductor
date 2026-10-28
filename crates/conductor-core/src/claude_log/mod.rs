@@ -4,6 +4,7 @@
 //! レコード (サイドチェイン、isMeta、compact の要約、ジャーナル) はここで落とす。
 //! 描画は持たない。tool_use をどう描くかは [classify] の答えを描画側が解釈する。
 
+pub mod artifacts;
 mod convert;
 mod model;
 mod sanitize;

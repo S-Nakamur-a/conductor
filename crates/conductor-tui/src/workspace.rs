@@ -489,6 +489,21 @@ impl Workspace {
                     .install(dir, *diff, status, target.as_deref(), Instant::now());
                 Vec::new()
             }
+            TaskResult::FleetArtifacts { session, scan } => {
+                let fleet = &mut self.panels.fleet;
+                let target = fleet.selected_conversation().map(|c| c.id);
+                fleet
+                    .artifacts
+                    .install(session, scan, target.as_deref(), Instant::now());
+                Vec::new()
+            }
+            TaskResult::ArtifactOpened(opened) => {
+                self.panels.fleet.artifacts.note_opened();
+                vec![match opened {
+                    Ok(message) => Effect::Status(StatusLevel::Info, message),
+                    Err(error) => Effect::Status(StatusLevel::Error, error),
+                }]
+            }
             TaskResult::BranchPageOpened(opened) => {
                 self.panels.fleet.note_page_opened();
                 vec![match opened {

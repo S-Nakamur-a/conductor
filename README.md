@@ -122,6 +122,11 @@ screen's Shell panel shows for that worktree, and it keeps running when Git Chan
 comes back. It has no scrollback or tabs here, and is not started for a line outside
 the listed git worktrees.
 
+**Ctrl+a** shows the artifacts the selected session published there instead, newest
+first; double-click one to open it in the browser. **Ctrl+g** and **Ctrl+t** bring
+Git Changes and the shell back. Only that session's own log is read, so artifacts
+made before a `/clear` or by a subagent are not listed, and a deleted one stays.
+
 A session this window runs shows live on the right: **Tab** steps into it to
 type, paste or drop a file there, and **Ctrl+Esc** steps back to the list. Showing it
 there resizes it, and a resize drops what had scrolled off, there and in the Claude
@@ -220,7 +225,7 @@ command by name.
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |
 | **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell (in the Sessions list, Ctrl+n opens its own menu and Ctrl+t the selected worktree's shell under the list) |
 | **j/k** · **h/l** · **g/G** | up/down · collapse/expand · top/bottom (in the Sessions list, g opens the pull request) |
-| **/** · **Ctrl+g** | search · full-text (grep) search (in the Sessions list, Ctrl+g shows Git Changes under the list) |
+| **/** · **Ctrl+g** | search · full-text (grep) search (in the Sessions list, Ctrl+g shows Git Changes under the list and Ctrl+a the selected session's artifacts) |
 | **Esc** · **Ctrl+q** | back / close overlay · quit |
 
 To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code

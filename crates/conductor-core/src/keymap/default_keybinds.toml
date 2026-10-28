@@ -153,6 +153,8 @@
 # ctrl+t は全体の new_shell を一覧が拾う (ここに行は要らない)。
 # ctrl+g はここでは全文検索を上書きする。全文検索はパレットとメニューに残る。
 "ctrl+g" = "show_fleet_changes"
+# 左下を、選んだセッションの Artifact 一覧にする。左下のシェルの中では ctrl+a は行頭へ行くキーなので、シェルへ届く。
+"ctrl+a" = "show_fleet_artifacts"
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]

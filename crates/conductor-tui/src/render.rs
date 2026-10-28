@@ -310,6 +310,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
             ("new", &[Action::NewSessionMenu]),
             ("shell", &[Action::NewShell]),
             ("changes", &[Action::ShowFleetChanges]),
+            ("artifacts", &[Action::ShowFleetArtifacts]),
             ("back", &[Action::ExitSubPanel]),
             ("pr", &[Action::OpenBranchPage]),
         ],

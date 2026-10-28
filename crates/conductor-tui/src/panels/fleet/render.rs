@@ -500,11 +500,31 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
 
 pub fn lower_title(ws: &Workspace) -> String {
     let fleet = &ws.panels.fleet;
-    if fleet.lower() == Lower::Changes {
-        return match fleet.changes.for_target(fleet.selected_dir().as_deref()) {
-            Some((changes, _)) => git_changes::render::title(changes),
-            None => " Git Changes ".to_string(),
-        };
+    match fleet.lower() {
+        Lower::Changes => {
+            return match fleet.changes.for_target(fleet.selected_dir().as_deref()) {
+                Some((changes, _)) => git_changes::render::title(changes),
+                None => " Git Changes ".to_string(),
+            };
+        }
+        Lower::Artifacts => {
+            let target = fleet.selected_conversation().map(|c| c.id);
+            let count = fleet
+                .artifacts
+                .for_target(target.as_deref())
+                .map_or_else(String::new, |list| format!(" ({})", list.len()));
+            return format!(
+                " Artifacts{count}{} ",
+                keys(
+                    ws,
+                    &[
+                        (Action::ShowFleetChanges, "で Git Changes"),
+                        (Action::NewShell, "でシェル"),
+                    ]
+                )
+            );
+        }
+        Lower::Shell => {}
     }
     match (ws.focus, ws.fleet_shell()) {
         (Focus::FleetShell, _) => format!(
@@ -542,10 +562,12 @@ fn keys(ws: &Workspace, items: &[(Action, &str)]) -> String {
         .collect()
 }
 
-/// 一覧の左下。Git Changes か、選んだ行の worktree のシェル。
+/// 一覧の左下。Git Changes か、選んだ行の worktree のシェルか、選んだセッションの Artifact。
 pub fn lower(frame: &mut Frame, rect: Rect, ws: &Workspace) {
-    if ws.panels.fleet.lower() == Lower::Changes {
-        return changes(frame, rect, ws);
+    match ws.panels.fleet.lower() {
+        Lower::Changes => return changes(frame, rect, ws),
+        Lower::Artifacts => return artifacts(frame, rect, ws),
+        Lower::Shell => {}
     }
     if let Some(session) = ws.fleet_shell() {
         crate::panels::terminal::render::fleet_shell(frame, rect, ws, &session);
@@ -601,7 +623,42 @@ fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn inner(rect: Rect) -> Rect {
+/// 1 行目が先頭の Artifact。押した行はこの並びで引く (`SessionArtifacts::click`)。
+fn artifacts(frame: &mut Frame, rect: Rect, ws: &Workspace) {
+    let fleet = &ws.panels.fleet;
+    let hint = |text: &str| {
+        vec![Line::styled(
+            text.to_string(),
+            Style::default().fg(ws.theme.hint),
+        )]
+    };
+    let target = fleet.selected_conversation();
+    let lines = match (
+        &target,
+        fleet
+            .artifacts
+            .for_target(target.as_ref().map(|c| c.id.as_str())),
+    ) {
+        (None, _) => hint("  セッションを選ぶと出ます"),
+        (Some(_), None) => vec![Line::styled(
+            "  loading\u{2026}",
+            Style::default().fg(ws.theme.muted),
+        )],
+        (Some(_), Some([])) => hint("  Artifact はまだありません"),
+        (Some(_), Some(list)) => list
+            .iter()
+            .map(|a| {
+                Line::from(vec![
+                    Span::styled(a.title.clone(), Style::default().fg(ws.theme.fg)),
+                    Span::styled(format!("  {}", a.url), Style::default().fg(ws.theme.hint)),
+                ])
+            })
+            .collect(),
+    };
+    frame.render_widget(Paragraph::new(lines), inner(rect));
+}
+
+pub fn inner(rect: Rect) -> Rect {
     Rect::new(
         rect.x + 1,
         rect.y + 1,
