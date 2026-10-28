@@ -514,10 +514,10 @@ state, session ids) are sent with `send_watch_unscoped` so a repository switch d
 not drop them; every other watch event keeps its generation.
 
 The list is `min(main × 45%, 100)` columns wide (`layout.rs`'s `FLEET_LIST_PCT` /
-`FLEET_LIST_MAX`), so a line drawn inside it never gets more than 98 — about 68 on a
-160-column terminal. A width test for anything in the list takes its widths from that;
-one at 200 columns pins a screen nobody can open (#441 passed at 200 and 90 while two
-accounts' 5h / 7d vanished at every real width).
+`FLEET_LIST_MAX`) and its border takes 2, so a line drawn inside it never gets more than
+98 — 70 on a 160-column terminal. A width test for anything in the list takes its widths
+from that range: one that hands the list's renderer 200 pins a screen nobody can open
+(#441's tests passed at 200 and 90, while at the real width two accounts' 5h / 7d were gone).
 
 Under the list, `Region::FleetChanges` shows the Git Changes of the
 selected line's worktree (`FleetPanel::selected_dir`, derived from the selection every time, like the right side), read on a
