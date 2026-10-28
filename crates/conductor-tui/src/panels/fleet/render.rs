@@ -670,8 +670,8 @@ pub fn inner(rect: Rect) -> Rect {
 type LimitsSpans<'a> = dyn Fn(&[(&str, Limit)]) -> Vec<Span<'static>> + 'a;
 
 /// 5h / 7d の表し方を、広いものから順に。アカウントがあれば、アカウントごとに名前をその色で前に置き、
-/// 一番狭い形は名前と 5h の % だけ (5h が無ければ 7d と書いて) にする。2 つ並ぶとバーつきでは一覧の幅に
-/// 収まらない。
+/// 一番狭い形は名前と 5h の % だけ (5h が無ければ 7d と書いて) にする。2 つ並ぶとバーつきでは、窓が狭いと
+/// 一覧の幅に収まらない。
 fn usage_options(
     usage: &Usage,
     accounts: &[ClaudeAccount],

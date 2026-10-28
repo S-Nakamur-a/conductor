@@ -3123,6 +3123,44 @@ mod usage {
     }
 
     #[test]
+    fn 幅206の窓の一覧には2アカウントの7dまでバーつきで入る() {
+        use conductor_core::config::ClaudeAccount;
+        let theme = Theme::from_name("catppuccin-mocha");
+        let mut ws = Workspace::for_test();
+        ws.chrome.fleet_open = true;
+        let list = crate::layout::layout(&ws, ratatui::layout::Rect::new(0, 0, 206, 79))
+            .rect(crate::layout::Region::FleetList)
+            .unwrap();
+        let accounts = ["work", "personal"].map(|name| ClaudeAccount {
+            name: name.into(),
+            ..Default::default()
+        });
+        let fleet = fleet_with(
+            Usage {
+                limits: vec![pair(42.0, 61.0), pair(90.0, 10.0)],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        let line = |width| {
+            squeeze(&text(&render::summary_line(
+                &fleet,
+                &theme,
+                &accounts,
+                now(),
+                width,
+            )))
+        };
+        assert_eq!(
+            line(usize::from(list.width - 2)),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% · 7d ████▉ 61% │ personal 5h ███████▏ 90% · 7d ▊ 10%"
+        );
+        assert!(line(123).contains("7d"));
+        assert!(!line(122).contains("7d"), "123 が下限");
+        assert!(!line(95).contains("7d"), "160 桁の窓の一覧には入らない");
+    }
+
+    #[test]
     fn 一番狭い形は5hの百分率で_5hが無いアカウントだけ7dと書く() {
         use conductor_core::config::ClaudeAccount;
         let theme = Theme::from_name("catppuccin-mocha");

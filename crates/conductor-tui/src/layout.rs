@@ -83,9 +83,9 @@ pub enum Divider {
     TerminalSplit,
 }
 
-/// 一覧の列。1 本 1 行に題まで入る幅で頭打ちにし、残りは右の区画に回す。
-const FLEET_LIST_PCT: u16 = 45;
-const FLEET_LIST_MAX: u16 = 100;
+/// 一覧の列。2 アカウントの 5h / 7d がバーつきで上の 1 行に入る幅で頭打ちにし、残りは右の区画に回す。
+const FLEET_LIST_PCT: u16 = 61;
+const FLEET_LIST_MAX: u16 = 125;
 const FLEET_CHANGES_PCT: u16 = 40;
 /// これより低いと一覧の本文が数行しか残らないので、下区画を出さない。
 const FLEET_CHANGES_MIN_HEIGHT: u16 = 20;
