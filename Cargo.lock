@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-core"
-version = "0.1.0"
+version = "0.1.0-wt.session-artifacts-list-panel"
 dependencies = [
  "anyhow",
  "chrono",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-mcp"
-version = "0.1.0"
+version = "0.1.0-wt.session-artifacts-list-panel"
 dependencies = [
  "anyhow",
  "conductor-core",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-svc"
-version = "0.1.0"
+version = "0.1.0-wt.session-artifacts-list-panel"
 dependencies = [
  "anyhow",
  "conductor-core",
@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "conductor-tui"
-version = "0.1.0"
+version = "0.1.0-wt.session-artifacts-list-panel"
 dependencies = [
  "aa-media",
  "anyhow",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-core"
-version = "0.2.0"
+version = "0.2.0-wt.session-artifacts-list-panel"
 dependencies = [
  "ignore",
  "libc",
