@@ -7,7 +7,7 @@ use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence}
 use super::locale::{utf8_chunks, utf8_locale_overrides};
 use super::reader::{note_shown_cursor, trim_raw_history};
 use super::screen::rebuild_parser;
-use super::spawn::{Launch, build_command, relay_statusline};
+use super::spawn::{Launch, build_command, relay_statusline, use_account};
 
 #[test]
 fn 隠している間のカーソル位置は取り込まない() {
@@ -257,6 +257,7 @@ fn フックを降りたセッションはsettingsを渡さず書きもしない
         session_name: None,
         session_hooks,
         chrome: false,
+        account: None,
     };
     let passes_settings = |launch: &Launch<'_>| {
         let (cmd, _) = build_command(launch, "panel");
@@ -284,6 +285,7 @@ fn chromeを頼んだセッションだけがchromeフラグを渡す() {
             session_name: None,
             session_hooks: false,
             chrome,
+            account: None,
         };
         let (cmd, _) = build_command(&launch, "panel");
         cmd.get_argv().iter().any(|arg| arg == "--chrome")
@@ -330,6 +332,7 @@ fn フックを降りてもpanel_idは渡しソケットは渡さない() {
             session_name: None,
             session_hooks: false,
             chrome: false,
+            account: None,
         },
         "panel",
     );
@@ -359,4 +362,28 @@ fn claude_には写しの置き場を渡し_窓から継いだ中継の印は消
         cmd.get_env(statusline::DIR_ENV),
         Some(statusline::dir().as_os_str())
     );
+}
+
+#[test]
+fn アカウントの_config_dir_は綴りのまま渡し_既定のアカウントは継いだ値を外し_accounts_が無ければ触らない()
+ {
+    use conductor_core::cc_hook::statusline::CONFIG_DIR_ENV;
+    use conductor_core::config::ClaudeAccount;
+    let started_from = |account: Option<&ClaudeAccount>| {
+        let mut cmd = portable_pty::CommandBuilder::new("claude");
+        cmd.env(CONFIG_DIR_ENV, "/inherited");
+        use_account(&mut cmd, account);
+        cmd.get_env(CONFIG_DIR_ENV).map(|v| v.to_owned())
+    };
+    let personal = ClaudeAccount {
+        config_dir: Some("/home/me/.claude-personal/".into()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        started_from(Some(&personal)),
+        Some("/home/me/.claude-personal/".into())
+    );
+    assert_eq!(started_from(Some(&ClaudeAccount::default())), None);
+    assert_eq!(started_from(None), Some("/inherited".into()));
 }

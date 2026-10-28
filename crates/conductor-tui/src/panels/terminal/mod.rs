@@ -37,14 +37,24 @@ use reflow::{Handled, Reflow};
 /// セッションのラベルに使う番号。同じ worktree で空いている一番小さいものを取る。
 const SESSION_SLOTS: usize = 9;
 
-fn claude_launches() -> Choices {
-    vec![
-        ("Claude Code", Effect::Command(CommandId::NewClaudeCode)),
+fn claude_launches(config: &Config) -> Choices {
+    let mut choices: Choices = vec![
         (
-            "Claude Code + Chrome",
+            "Claude Code".into(),
+            Effect::Command(CommandId::NewClaudeCode),
+        ),
+        (
+            "Claude Code + Chrome".into(),
             Effect::Command(CommandId::NewClaudeCodeWithChrome),
         ),
-    ]
+    ];
+    choices.extend(crate::panels::fleet::account_names(config).map(|name| {
+        (
+            format!("Claude Code as {name}"),
+            Effect::NewClaudeAs(name.to_string()),
+        )
+    }));
+    choices
 }
 
 /// 端末パネル 1 枚。
@@ -87,10 +97,14 @@ struct Editor {
 
 /// シェルを起こすときは読まれない。
 #[derive(Default)]
-struct ClaudeArgs<'a> {
-    resume: Option<&'a str>,
-    name: Option<&'a str>,
-    chrome: bool,
+pub struct ClaudeArgs<'a> {
+    pub resume: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub chrome: bool,
+    /// 手で選んだアカウントの名前。
+    pub account: Option<&'a str>,
+    /// resume する会話を走らせた config dir。手で選んでいなければこのアカウントで起こす。
+    pub ran_in: Option<&'a Path>,
 }
 
 struct PendingTranscript {
@@ -321,7 +335,13 @@ impl TerminalPanel {
 
     /// タブ行のクリック。押せる区画に当たらなければ None を返して、空の区画の
     /// ダブルクリック起動へ渡す。
-    pub fn tab_click(&mut self, focus: Focus, column: u16, tabs: Rect) -> Option<Vec<Effect>> {
+    pub fn tab_click(
+        &mut self,
+        focus: Focus,
+        column: u16,
+        tabs: Rect,
+        config: &Config,
+    ) -> Option<Vec<Effect>> {
         let region = match focus {
             Focus::TerminalClaude => Region::TerminalClaude,
             Focus::TerminalShell => Region::TerminalShell,
@@ -351,7 +371,7 @@ impl TerminalPanel {
             tabs::SlotKind::Add if region == Region::TerminalClaude => {
                 Some(vec![Effect::PushModal(Modal::Popup(Popup::new(
                     "New",
-                    claude_launches(),
+                    claude_launches(config),
                     Some((tabs.x + slot.start, tabs.y + 1)),
                     0,
                 )))])
@@ -960,6 +980,7 @@ impl TerminalPanel {
                 session_name: claude.name,
                 session_hooks: self.session_hooks,
                 chrome: claude.chrome,
+                account: config.claude_account_to_launch(claude.account, claude.ran_in, worktree),
             },
         };
         let index = self.pty.spawn(Spawn {
@@ -977,17 +998,11 @@ impl TerminalPanel {
     pub fn spawn(
         &mut self,
         kind: SessionKind,
-        resume: Option<&str>,
+        claude: ClaudeArgs<'_>,
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
-        chrome: bool,
     ) -> Result<()> {
-        let claude = ClaudeArgs {
-            resume,
-            name: None,
-            chrome,
-        };
         let id = self.launch(kind, claude, worktree, repo_root, config)?;
         // spawn した先の worktree を映していないと、そのセッションはどこにも出ない。
         self.worktree = Some(worktree.to_path_buf());
@@ -1028,13 +1043,14 @@ impl TerminalPanel {
     /// いま映している worktree で、その区画がまだ空のときだけ。
     pub fn resume(
         &mut self,
-        session_id: &str,
+        session: (&str, &Path),
         worktree: &Path,
         repo_root: &Path,
         config: &Config,
     ) -> Result<()> {
         let claude = ClaudeArgs {
-            resume: Some(session_id),
+            resume: Some(session.0),
+            ran_in: Some(session.1),
             ..ClaudeArgs::default()
         };
         let id = self.launch(SessionKind::ClaudeCode, claude, worktree, repo_root, config)?;
@@ -1070,9 +1086,11 @@ impl TerminalPanel {
         dir: &Path,
         config: &Config,
         chrome: bool,
+        account: Option<&str>,
     ) -> Result<String> {
         let claude = ClaudeArgs {
             chrome,
+            account,
             ..ClaudeArgs::default()
         };
         self.launch(SessionKind::ClaudeCode, claude, dir, dir, config)
@@ -1533,13 +1551,23 @@ mod tests {
         let add = x_of(&tabs::SlotKind::Add);
 
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, second, Rect::new(0, 0, WIDTH, 1)),
+            panel.tab_click(
+                Focus::TerminalShell,
+                second,
+                Rect::new(0, 0, WIDTH, 1),
+                &Config::default()
+            ),
             Some(Vec::new()),
             "タブを選ぶのに Effect は要らない"
         );
         assert_eq!(panel.shell.session.as_deref(), Some(ids[1].as_str()));
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, add, Rect::new(0, 0, WIDTH, 1)),
+            panel.tab_click(
+                Focus::TerminalShell,
+                add,
+                Rect::new(0, 0, WIDTH, 1),
+                &Config::default()
+            ),
             Some(vec![Effect::NewSession(SessionKind::Shell)])
         );
 
@@ -1548,7 +1576,12 @@ mod tests {
             session: ids[1].clone(),
         });
         assert_eq!(
-            panel.tab_click(Focus::TerminalShell, close, Rect::new(0, 0, WIDTH, 1)),
+            panel.tab_click(
+                Focus::TerminalShell,
+                close,
+                Rect::new(0, 0, WIDTH, 1),
+                &Config::default()
+            ),
             Some(Vec::new())
         );
         let left: Vec<String> = panel
@@ -1566,7 +1599,12 @@ mod tests {
             .find(|slot| matches!(slot.kind, tabs::SlotKind::Close { .. }))
             .unwrap()
             .start;
-        panel.tab_click(Focus::TerminalShell, close, Rect::new(0, 0, WIDTH, 1));
+        panel.tab_click(
+            Focus::TerminalShell,
+            close,
+            Rect::new(0, 0, WIDTH, 1),
+            &Config::default(),
+        );
         assert!(panel.sessions(SessionKind::Shell).is_empty());
         assert_eq!(panel.shell.session, None);
     }
@@ -1898,7 +1936,12 @@ mod tests {
             .expect("チップが無い");
 
         let mut effects = panel
-            .tab_click(Focus::TerminalClaude, tabs.x + add.start, tabs)
+            .tab_click(
+                Focus::TerminalClaude,
+                tabs.x + add.start,
+                tabs,
+                &Config::default(),
+            )
             .unwrap();
         let [Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice() else {
             panic!("{effects:?}");
@@ -1912,6 +1955,41 @@ mod tests {
                 Effect::Command(CommandId::NewClaudeCodeWithChrome)
             ]
         ));
+    }
+
+    #[test]
+    fn アカウントが2つ以上ならclaudeの追加チップでアカウントを選んで起こせる() {
+        let mut config = Config::default();
+        config.claude.accounts = ["work", "personal"]
+            .map(|name| conductor_core::config::ClaudeAccount {
+                name: name.into(),
+                ..Default::default()
+            })
+            .to_vec();
+        let mut panel = TerminalPanel::new(&config);
+        let tabs = Rect::new(30, 3, 80, 1);
+        let add = panel
+            .tab_slots(Region::TerminalClaude, tabs.width)
+            .into_iter()
+            .find(|slot| slot.kind == tabs::SlotKind::Add)
+            .expect("チップが無い");
+
+        let mut effects = panel
+            .tab_click(Focus::TerminalClaude, tabs.x + add.start, tabs, &config)
+            .unwrap();
+        let [Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice() else {
+            panic!("{effects:?}");
+        };
+        let screen = Rect::new(0, 0, 120, 40);
+        let inner = crate::list::inner(crate::modal::popup::rect(popup, screen));
+        let effects = popup.click(inner.x, inner.y + 3, screen);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::PopModal, Effect::NewClaudeAs(name)] if name == "personal"
+            ),
+            "{effects:?}"
+        );
     }
 
     #[test]

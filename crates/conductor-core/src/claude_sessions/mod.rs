@@ -22,6 +22,9 @@ struct HistoryEntry {
     session_id: String,
     timestamp: u64,
     project: String,
+    /// この行を読んだ history.jsonl の config dir。その会話を走らせたアカウント。
+    #[serde(skip)]
+    config_dir: PathBuf,
 }
 
 /// resume 可能なセッションと、一覧表示用に導出した情報。
@@ -34,15 +37,14 @@ pub struct ResumableSession {
     pub project_name: String,
     /// "3h ago" の形。
     pub time_ago: String,
+    /// この会話を最後に走らせた config dir。resume はこのアカウントで起こす。
+    pub config_dir: PathBuf,
 }
 
 /// Claude Code の config dir (~/.claude など) の組。アカウントごとに 1 つ。
 #[derive(Debug, Clone)]
 pub struct ClaudeHome {
     roots: Vec<PathBuf>,
-    /// resume の候補として数える会話のログを探す root。projects を共有していないと、
-    /// 起こすアカウントの root にログの無い会話は開けない。
-    opens_in: Vec<PathBuf>,
 }
 
 impl ClaudeHome {
@@ -52,25 +54,7 @@ impl ClaudeHome {
     }
 
     pub fn of(roots: Vec<PathBuf>) -> Self {
-        Self {
-            opens_in: roots.clone(),
-            roots,
-        }
-    }
-
-    /// conductor が自分で選んで resume する会話を、root で起こす Claude が開けるものに絞る。
-    pub fn opening_in(self, root: PathBuf) -> Self {
-        Self {
-            opens_in: vec![root],
-            ..self
-        }
-    }
-
-    /// root で起こす Claude がその会話を resume できるか。
-    pub fn can_open(&self, working_dir: &Path, session_id: &str) -> bool {
-        self.opens_in
-            .iter()
-            .any(|root| log_in_root(root, working_dir, session_id).is_some())
+        Self { roots }
     }
 
     fn projects_dir_in(root: &Path, working_dir: &Path) -> PathBuf {
@@ -83,14 +67,14 @@ impl ClaudeHome {
         Self::projects_dir_in(&self.roots[0], working_dir)
     }
 
-    fn session_file_exists(&self, entry: &HistoryEntry) -> bool {
-        self.opens_in.iter().any(|root| {
-            session_log_in_dir(
-                &Self::projects_dir_in(root, Path::new(&entry.project)),
-                &entry.session_id,
-            )
-            .is_some()
-        })
+    /// その行のアカウントで resume できるか。projects を共有していなければ、ほかの root の
+    /// ログはそのアカウントから見えない。
+    fn session_file_exists(entry: &HistoryEntry) -> bool {
+        session_log_in_dir(
+            &Self::projects_dir_in(&entry.config_dir, Path::new(&entry.project)),
+            &entry.session_id,
+        )
+        .is_some()
     }
 
     /// パネルが書き込んでいるセッションログ。どの root にあってもよい。無ければ None。

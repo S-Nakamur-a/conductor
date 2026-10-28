@@ -10,36 +10,34 @@ use super::discovery::now_ms;
 
 impl ClaudeHome {
     /// <session_id>.jsonl と、あればサブエージェントの <session_id>/ を dest 側へリンクし、
-    /// dest の resume 一覧に出るよう history.jsonl にも追記する。
-    /// 移行は resume する Claude の config dir ([Self::opening_in]) の中で済ませる。そこにログが
-    /// 無ければ何もせず Ok(false)。
+    /// dest の resume 一覧に出るよう history.jsonl にも追記する。どちらも会話を走らせた
+    /// config_dir の中で済ませる。そこにログが無ければ何もせず Ok(false)。
     pub fn migrate_session(
-        &self,
+        config_dir: &Path,
         session_id: &str,
         source_working_dir: &Path,
         dest_working_dir: &Path,
         display_hint: &str,
     ) -> Result<bool> {
         let log_name = format!("{session_id}.jsonl");
-        let Some(root) = self.opens_in.iter().find(|root| {
-            Self::projects_dir_in(root, source_working_dir)
-                .join(&log_name)
-                .exists()
-        }) else {
+        if !Self::projects_dir_in(config_dir, source_working_dir)
+            .join(&log_name)
+            .exists()
+        {
             log::warn!(
                 "migrate_session: no {log_name} for {}",
                 source_working_dir.display()
             );
             return Ok(false);
-        };
-        let src_dir = Self::projects_dir_in(root, source_working_dir);
-        let dst_dir = Self::projects_dir_in(root, dest_working_dir);
+        }
+        let src_dir = Self::projects_dir_in(config_dir, source_working_dir);
+        let dst_dir = Self::projects_dir_in(config_dir, dest_working_dir);
         std::fs::create_dir_all(&dst_dir)?;
         link(&src_dir.join(&log_name), &dst_dir.join(&log_name))?;
         if src_dir.join(session_id).is_dir() {
             link(&src_dir.join(session_id), &dst_dir.join(session_id))?;
         }
-        append_history_entry(root, session_id, dest_working_dir, display_hint)?;
+        append_history_entry(config_dir, session_id, dest_working_dir, display_hint)?;
         Ok(true)
     }
 

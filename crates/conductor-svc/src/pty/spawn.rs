@@ -5,6 +5,7 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 use conductor_core::cc_hook;
+use conductor_core::config::ClaudeAccount;
 use portable_pty::CommandBuilder;
 use uuid::Uuid;
 
@@ -22,6 +23,8 @@ pub enum Launch<'a> {
         session_name: Option<&'a str>,
         session_hooks: bool,
         chrome: bool,
+        /// None は窓の env の CLAUDE_CONFIG_DIR のまま起こす。
+        account: Option<&'a ClaudeAccount>,
     },
     Shell {
         program: &'a str,
@@ -119,6 +122,16 @@ pub(super) fn relay_statusline(cmd: &mut CommandBuilder) {
     cmd.env(statusline::DIR_ENV, statusline::dir());
 }
 
+/// 既定の ~/.claude を綴りで渡すと、Claude Code はログインしていない扱いにする (実測) ので外す。
+pub(super) fn use_account(cmd: &mut CommandBuilder, account: Option<&ClaudeAccount>) {
+    use cc_hook::statusline::CONFIG_DIR_ENV;
+    match account.map(|account| account.config_dir.as_deref()) {
+        Some(Some(dir)) => cmd.env(CONFIG_DIR_ENV, dir),
+        Some(None) => cmd.env_remove(CONFIG_DIR_ENV),
+        None => {}
+    }
+}
+
 /// コマンド行と、Claude なら書き込み先になる session id。
 pub(super) fn build_command(
     launch: &Launch<'_>,
@@ -131,11 +144,13 @@ pub(super) fn build_command(
             session_name,
             session_hooks,
             chrome,
+            account,
         } => {
             let mut cmd = CommandBuilder::new("claude");
             if *chrome {
                 cmd.arg("--chrome");
             }
+            use_account(&mut cmd, *account);
             // resume は既存の id を保つ。新規は id を先に決めて渡すので、「worktree の
             // 最新セッション」を推測せずにログのファイル名が事前にわかる。
             let session_id = match resume_session_id {

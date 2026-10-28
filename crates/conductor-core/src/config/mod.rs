@@ -90,6 +90,7 @@ impl Config {
             .collect();
         for account in &mut self.claude.accounts {
             account.config_dir = account.config_dir.as_deref().map(expand_tilde);
+            account.paths = account.paths.iter().map(|p| expand_tilde(p)).collect();
         }
     }
 
@@ -110,6 +111,21 @@ impl Config {
             account_dir(account, home.as_deref())
                 .is_some_and(|dir| dir.join("sessions") == sessions_dir)
         })
+    }
+
+    /// dir で Claude を起こすアカウント。手で選んだ名前、resume する会話を走らせた config dir、
+    /// paths の規則の順。accounts が空なら None (窓の env のまま起こす)。
+    pub fn claude_account_to_launch(
+        &self,
+        chosen: Option<&str>,
+        ran_in: Option<&Path>,
+        dir: &Path,
+    ) -> Option<&ClaudeAccount> {
+        let accounts = &self.claude.accounts;
+        chosen
+            .and_then(|name| accounts.iter().find(|account| account.name == name))
+            .or_else(|| ran_in.and_then(|dir| self.account_of(&dir.join("sessions"))))
+            .or_else(|| account_for(accounts, dir))
     }
 
     /// 起動時に知らせる accounts の書き損じ。重なりは先に書いた方が使われる。
@@ -142,6 +158,22 @@ impl Config {
         }
         problems
     }
+}
+
+/// dir を含む paths のうち一番深いものの持ち主。どれにも入らなければ先頭のアカウント。
+fn account_for<'a>(accounts: &'a [ClaudeAccount], dir: &Path) -> Option<&'a ClaudeAccount> {
+    let dir = canonical(dir);
+    let mut best: Option<(&ClaudeAccount, usize)> = None;
+    for account in accounts {
+        for path in &account.paths {
+            let path = canonical(path);
+            let depth = path.components().count();
+            if dir.starts_with(&path) && best.is_none_or(|(_, deepest)| depth > deepest) {
+                best = Some((account, depth));
+            }
+        }
+    }
+    best.map(|(account, _)| account).or(accounts.first())
 }
 
 fn account_dir(account: &ClaudeAccount, home: Option<&Path>) -> Option<PathBuf> {

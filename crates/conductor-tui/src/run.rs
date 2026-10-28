@@ -631,7 +631,10 @@ fn on_mouse(
                     .rect(region)
                     .map(crate::panels::terminal::render::tab_area)
                 && tabs.contains(Position::new(mouse.column, mouse.row))
-                && let Some(effects) = ws.panels.terminal.tab_click(focus, mouse.column, tabs)
+                && let Some(effects) =
+                    ws.panels
+                        .terminal
+                        .tab_click(focus, mouse.column, tabs, &ws.config)
             {
                 apply(ws, svc, effects);
                 return;
@@ -702,7 +705,7 @@ fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Ve
         button: render::button_hit(&composed, x, y),
         in_button_columns: render::in_button_columns(&composed, x),
     };
-    ws.panels.fleet.click_list((x, y), press)
+    ws.panels.fleet.click_list((x, y), press, &ws.config)
 }
 
 /// Viewer の region のときだけ code_columns で桁を絞る。
@@ -791,9 +794,15 @@ fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Opt
 fn listings() -> crate::modal::popup::Choices {
     use crate::command::CommandId;
     vec![
-        ("Changes", Effect::Command(CommandId::ShowDiffList)),
-        ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
-        ("Comments", Effect::Command(CommandId::ShowCommentList)),
+        ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
+        (
+            "Commit Log".into(),
+            Effect::Command(CommandId::ShowCommitLog),
+        ),
+        (
+            "Comments".into(),
+            Effect::Command(CommandId::ShowCommentList),
+        ),
     ]
 }
 
@@ -3189,6 +3198,7 @@ needle here
                 button: None,
                 in_button_columns: false,
             },
+            &ws.config,
         );
         let rect = l.rect(Region::FleetList).unwrap();
         let composed = crate::panels::fleet::render::compose(&ws, rect).unwrap();
@@ -3351,7 +3361,7 @@ needle here
         );
         assert!(matches!(
             one.last(),
-            Some(Effect::NewClaudeIn { dir, chrome: false }) if dir == &PathBuf::from("/r/app-b")
+            Some(Effect::NewClaudeIn { dir, chrome: false, .. }) if dir == &PathBuf::from("/r/app-b")
         ));
         assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
     }

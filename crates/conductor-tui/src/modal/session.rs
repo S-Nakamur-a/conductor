@@ -1,5 +1,9 @@
 //! Claude セッションの再開。一覧はディスクを走るので svc が取ってくる。
 
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
+
 use conductor_core::claude_sessions::ResumableSession;
 use conductor_core::text_input::TextInput;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -57,15 +61,12 @@ impl ResumePicker {
         match key.code {
             KeyCode::Esc => return vec![Effect::PopModal],
             KeyCode::Enter => {
-                let id = self
+                let chosen = self
                     .matching()
                     .get(self.cursor.selected)
-                    .map(|s| s.session_id.clone());
-                return match id {
-                    Some(id) => vec![
-                        Effect::PopModal,
-                        Effect::PushModal(Modal::Popup(launch_choice(id))),
-                    ],
+                    .map(|s| launch_choice(s.session_id.clone(), s.config_dir.clone(), ctx.config));
+                return match chosen {
+                    Some(popup) => vec![Effect::PopModal, Effect::PushModal(Modal::Popup(popup))],
                     None => Vec::new(),
                 };
             }
@@ -87,16 +88,23 @@ impl ResumePicker {
     }
 }
 
-fn launch_choice(id: String) -> Popup {
-    let resume = |id, chrome| Effect::ResumeSession {
-        id,
+/// 既定の行は会話を最後に走らせたアカウントで開き直す。
+fn launch_choice(id: String, ran_in: PathBuf, config: &conductor_core::config::Config) -> Popup {
+    let resume = |chrome, account: Option<&str>| Effect::ResumeSession {
+        id: id.clone(),
         worktree: None,
         chrome,
+        account: account.map(str::to_string),
+        ran_in: Some(ran_in.clone()),
     };
-    let choices = vec![
-        ("Resume", resume(id.clone(), false)),
-        ("Resume + Chrome", resume(id, true)),
+    let mut choices = vec![
+        ("Resume".into(), resume(false, None)),
+        ("Resume + Chrome".into(), resume(true, None)),
     ];
+    choices.extend(
+        crate::panels::fleet::account_names(config)
+            .map(|name| (format!("Resume as {name}"), resume(false, Some(name)))),
+    );
     Popup::new("Resume", choices, None, 0)
 }
 
@@ -172,6 +180,7 @@ mod tests {
             display: display.into(),
             project_name: project.into(),
             time_ago: "3h ago".into(),
+            config_dir: PathBuf::from("/c"),
         }
     }
 
@@ -201,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn 選ぶとchromeで開き直すかを聞いてからそのidで開き直す() {
+    fn 選ぶとchromeで開き直すかを聞いてからそのidを走らせたアカウントで開き直す() {
         let (mut picker, ws) = picker();
         picker.update(key(KeyCode::Down), &ws.ctx());
         let mut effects = picker.update(key(KeyCode::Enter), &ws.ctx());
@@ -214,13 +223,55 @@ mod tests {
         let [
             Effect::PopModal,
             Effect::ResumeSession {
-                id, chrome: true, ..
+                id,
+                chrome: true,
+                account: None,
+                ran_in,
+                ..
             },
         ] = effects.as_slice()
         else {
             panic!("{effects:?}");
         };
         assert_eq!(id, "s2");
+        assert_eq!(
+            ran_in.as_deref(),
+            Some(Path::new("/c")),
+            "会話を走らせたアカウントで開き直す"
+        );
+    }
+
+    #[test]
+    fn アカウントが2つ以上なら選んだアカウントで開き直す行がchromeの後に並ぶ() {
+        let (mut picker, mut ws) = picker();
+        ws.config.claude.accounts = ["work", "personal"]
+            .map(|name| conductor_core::config::ClaudeAccount {
+                name: name.into(),
+                ..Default::default()
+            })
+            .to_vec();
+        let mut effects = picker.update(key(KeyCode::Enter), &ws.ctx());
+        let [Effect::PopModal, Effect::PushModal(Modal::Popup(popup))] = effects.as_mut_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        for _ in 0..3 {
+            popup.update(key(KeyCode::Down), &ws.ctx());
+        }
+        let effects = popup.update(key(KeyCode::Enter), &ws.ctx());
+        let [
+            Effect::PopModal,
+            Effect::ResumeSession {
+                id,
+                chrome: false,
+                account: Some(account),
+                ..
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!((id.as_str(), account.as_str()), ("s1", "personal"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ use std::time::SystemTime;
 use conductor_core::cc_hook::statusline::Usage;
 use conductor_core::claude_log::summary::{Summary, Title};
 use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Waiting};
+use conductor_core::config::Config;
 use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
 
@@ -419,11 +420,16 @@ impl FleetPanel {
     }
 
     /// 一覧の [+] / [✧] を押した。行き先は押した行から取り、選択は動かさない。
-    fn click_button(&mut self, slot: &render::Slot, at: (u16, u16)) -> Vec<Effect> {
+    fn click_button(
+        &mut self,
+        slot: &render::Slot,
+        at: (u16, u16),
+        config: &Config,
+    ) -> Vec<Effect> {
         match slot {
             render::Slot::Worktree(w) => vec![Effect::PushModal(Modal::Popup(Popup::numbered(
                 "New session",
-                launch_choices(&w.path, None),
+                launch_choices(&w.path, None, config),
                 Some(at),
             )))],
             render::Slot::Repo(Some(root)) => vec![Effect::FleetSmartPrompt(root.clone())],
@@ -433,7 +439,7 @@ impl FleetPanel {
 
     /// 一覧は選んだ行に合わせて送られるので、二度目は同じ画面の行に別の行やボタンが来ている。
     /// 二度目はボタンも含めて引き直さず、一度目に選んだ行がまだ選ばれていればそこへ入る。
-    pub fn click_list(&mut self, at: (u16, u16), press: ListPress) -> Vec<Effect> {
+    pub fn click_list(&mut self, at: (u16, u16), press: ListPress, config: &Config) -> Vec<Effect> {
         let key = (at.1, press.in_button_columns, self.selected.clone());
         if self.row_clicks.is_double(key) {
             return match self.selected {
@@ -443,7 +449,7 @@ impl FleetPanel {
         }
         if let Some(button) = press.button {
             self.row_clicks = ClickTracker::default();
-            return self.click_button(button, at);
+            return self.click_button(button, at, config);
         }
         let item = match press.hit {
             Some(render::Slot::Worktree(w)) => Item::Worktree(w.clone()),
@@ -913,7 +919,7 @@ impl FleetPanel {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
                     "New session",
-                    launch_choices(&dir, root),
+                    launch_choices(&dir, root, ctx.config),
                     None,
                 )))]);
             }
@@ -1001,26 +1007,32 @@ impl FleetPanel {
     }
 }
 
-/// Smart Worktree は repo の root が分かるときだけ並べる。
-pub fn launch_choices(dir: &Path, smart: Option<PathBuf>) -> Choices {
+/// Smart Worktree は repo の root が分かるときだけ並べる。アカウントを選ぶ行は数字が変わらないよう末尾に置く。
+pub fn launch_choices(dir: &Path, smart: Option<PathBuf>, config: &Config) -> Choices {
+    let claude = |chrome, account: Option<&str>| Effect::NewClaudeIn {
+        dir: dir.to_path_buf(),
+        chrome,
+        account: account.map(str::to_string),
+    };
     let mut choices: Choices = vec![
-        (
-            "Claude Code",
-            Effect::NewClaudeIn {
-                dir: dir.to_path_buf(),
-                chrome: false,
-            },
-        ),
-        (
-            "Claude Code + Chrome",
-            Effect::NewClaudeIn {
-                dir: dir.to_path_buf(),
-                chrome: true,
-            },
-        ),
+        ("Claude Code".into(), claude(false, None)),
+        ("Claude Code + Chrome".into(), claude(true, None)),
     ];
-    choices.extend(smart.map(|root| ("Smart Worktree…", Effect::FleetSmartPrompt(root))));
+    choices.extend(smart.map(|root| ("Smart Worktree…".into(), Effect::FleetSmartPrompt(root))));
+    choices.extend(
+        account_names(config)
+            .map(|name| (format!("Claude Code as {name}"), claude(false, Some(name)))),
+    );
     choices
+}
+
+/// 手で選べるアカウント。1 つしか無ければ規則で決まるので選ばせない。
+pub fn account_names(config: &Config) -> impl Iterator<Item = &str> {
+    let accounts = &config.claude.accounts;
+    accounts
+        .iter()
+        .filter(move |_| accounts.len() > 1)
+        .map(|account| account.name.as_str())
 }
 
 /// HEAD のブランチ名で gh に PR を聞いた答え。

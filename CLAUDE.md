@@ -467,9 +467,13 @@ the other account's Claudes, its own panels included, with no state at all (meas
 two isolated windows). Each `LiveSession` keeps the `sessions_dir` it came from: stopping
 re-checks `<pid>.json` there, the row's account label is looked up from it, and
 `read_live`'s one-row-per-conversation-per-dir dedup is for display only — stopping and deleting
-read `read_every`, so an older process on the same conversation is not hidden. Resume offers
-only conversations the account conductor was started with can open (`ClaudeHome::opening_in`),
-because the launch is still that account's. A row of this window is
+read `read_every`, so an older process on the same conversation is not hidden. A Claude starts as
+the account whose `paths` hold its directory (`config::account_for`, else the first one), set
+on the child alone (`spawn.rs`'s `use_account`): the default account gets `CLAUDE_CONFIG_DIR`
+*removed*, because spelling out `~/.claude` reads as logged out. A resume starts as the
+account whose `history.jsonl` last ran the conversation (`ResumableSession::config_dir`,
+counting only rows whose log is in that config dir) unless one is chosen by hand, so a
+conversation moved to another account stays there. A row of this window is
 keyed by its panel id, not the conversation id, because `/clear` changes the
 latter. Rows hang under repository → worktree. The same worker lists the worktrees
 (`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under

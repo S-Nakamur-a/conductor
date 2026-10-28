@@ -45,17 +45,11 @@ pub struct TaskEnv {
     pub branch: String,
     /// 読む Claude Code の config dir ([Config::claude_dirs](conductor_core::config::Config::claude_dirs))。
     pub claude_dirs: Vec<PathBuf>,
-    /// この窓が起こす Claude の config dir。自分で選んで resume する会話はここで開けるものに限る。
-    pub launch_dir: PathBuf,
 }
 
 impl TaskEnv {
     fn claude_home(&self) -> ClaudeHome {
         ClaudeHome::of(self.claude_dirs.clone())
-    }
-
-    fn resumable_home(&self) -> ClaudeHome {
-        self.claude_home().opening_in(self.launch_dir.clone())
     }
 }
 
@@ -314,8 +308,8 @@ pub enum UpdateStage {
 pub struct GrabDone {
     pub message: String,
     pub state: Option<GrabState>,
-    /// 移行した Claude セッションと、それを開き直す worktree。
-    pub resume: Option<(String, PathBuf)>,
+    /// 移行した Claude セッションと、それを開き直す worktree と、会話を走らせた config dir。
+    pub resume: Option<(String, PathBuf, PathBuf)>,
 }
 
 /// 設定ファイルに書き戻す 1 項目。
@@ -435,7 +429,7 @@ pub enum TaskResult {
     /// 使う grab 済みのセッション id。
     Resumable {
         sessions: HashMap<PathBuf, ResumableSession>,
-        main_grabbed: Option<String>,
+        main_grabbed: Option<(String, PathBuf)>,
     },
     /// `session_id` は照合用。読んでいる間に /clear でローテーションしていたら捨てる。
     Transcript {
@@ -1023,8 +1017,9 @@ fn load_grab_state(env: &TaskEnv) -> Result<Option<GrabState>, String> {
 }
 
 fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, String> {
-    let home = env.resumable_home();
-    let session = home
+    let main = git(env, |git| git.main_worktree_path())?;
+    let session = env
+        .claude_home()
         .find_latest_sessions_for_paths(std::slice::from_ref(&source.to_path_buf()))
         .ok()
         .and_then(|mut found| {
@@ -1035,7 +1030,6 @@ fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, Str
             )
         });
 
-    let main = git(env, |git| git.main_worktree_path())?;
     git(env, |git| {
         git.grab_branch(
             &main,
@@ -1048,11 +1042,17 @@ fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, Str
     // 移行に失敗しても grab そのものは済んでいる。セッションが main から
     // 見えないだけなので、報告はログに留めて先へ進む。
     let resume = session.filter(|session| {
-        home.migrate_session(&session.session_id, source, &main, &session.display)
-            .unwrap_or_else(|e| {
-                log::warn!("grab: session migration failed: {e:#}");
-                false
-            })
+        ClaudeHome::migrate_session(
+            &session.config_dir,
+            &session.session_id,
+            source,
+            &main,
+            &session.display,
+        )
+        .unwrap_or_else(|e| {
+            log::warn!("grab: session migration failed: {e:#}");
+            false
+        })
     });
     let message = match &resume {
         Some(session) => format!(
@@ -1065,7 +1065,7 @@ fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, Str
     Ok(Box::new(GrabDone {
         message,
         state,
-        resume: resume.map(|s| (s.session_id, main)),
+        resume: resume.map(|s| (s.session_id, main, s.config_dir)),
     }))
 }
 
@@ -1461,7 +1461,7 @@ fn read_transcript(
 }
 
 fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, String> {
-    env.resumable_home()
+    env.claude_home()
         .load_resumable_sessions((!all).then_some(env.root.as_path()))
         .map_err(|e| e.to_string())
 }
@@ -1470,7 +1470,7 @@ fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, Stri
 /// Task::LoadGrabState が先に着いている保証が無いため。どちらが欠けても
 /// 残りは復帰できるので、失敗は警告に落として空で返す。
 fn find_resumable(env: &TaskEnv, paths: &[PathBuf]) -> TaskResult {
-    let home = env.resumable_home();
+    let home = env.claude_home();
     let sessions = home
         .find_latest_sessions_for_paths(paths)
         .inspect_err(|e| log::warn!("could not look for resumable sessions: {e:#}"))
@@ -1482,7 +1482,14 @@ fn find_resumable(env: &TaskEnv, paths: &[PathBuf]) -> TaskResult {
             None
         })
         .and_then(|state| state.claude_session_id)
-        .filter(|id| main.as_deref().is_some_and(|main| home.can_open(main, id)));
+        .zip(main)
+        .and_then(|(id, main)| {
+            let ran_in = home
+                .config_dir_of(&main, &id)
+                .inspect_err(|e| log::warn!("could not look for the grabbed session: {e:#}"))
+                .ok()??;
+            Some((id, ran_in))
+        });
     TaskResult::Resumable {
         sessions,
         main_grabbed,
@@ -2517,5 +2524,108 @@ mod branch_changes_tests {
         let (diff, _) = branch_changes(dir.path(), 4);
         assert!(diff.files.is_empty());
         assert!(diff.error.unwrap().contains("not in a git working tree"));
+    }
+}
+
+#[cfg(test)]
+mod resumable_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    use super::{TaskEnv, TaskResult, find_resumable, list_sessions};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+    }
+
+    /// config_dir の projects に会話のログを置き、history.jsonl に 1 行足す。
+    fn conversation(config_dir: &Path, project: &Path, id: &str, timestamp: u64) {
+        use std::io::Write;
+        let encoded = project.to_string_lossy().replace(['/', '.'], "-");
+        let logs = config_dir.join("projects").join(encoded);
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join(format!("{id}.jsonl")), "").unwrap();
+        let mut history = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(config_dir.join("history.jsonl"))
+            .unwrap();
+        writeln!(
+            history,
+            r#"{{"display":"d","timestamp":{timestamp},"project":"{}","sessionId":"{id}"}}"#,
+            project.display()
+        )
+        .unwrap();
+    }
+
+    fn env_at(root: PathBuf, claude_dirs: Vec<PathBuf>) -> TaskEnv {
+        TaskEnv {
+            root,
+            version: "0",
+            main_branch: "main".into(),
+            worktree_dir: None,
+            word_diff: false,
+            tab_width: 4,
+            branch: "main".into(),
+            claude_dirs,
+        }
+    }
+
+    #[test]
+    fn 起動時の復帰は会話を最後に走らせたアカウントで_grab済みのmainも同じ() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let main = root.join("main");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "main"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&main, &["worktree", "add", "-q", "-b", "wt", "../wt"]);
+        let wt = root.join("wt");
+        let (work, personal) = (root.join("work"), root.join("personal"));
+        // projects を共有した設定: ログは両方に、一時的に personal で続けた行は personal に。
+        for config_dir in [&work, &personal] {
+            conversation(config_dir, &wt, "switched", 1000);
+            conversation(config_dir, &main, "grabbed", 1000);
+        }
+        conversation(&personal, &wt, "switched", 2000);
+        conversation(&personal, &main, "grabbed", 2000);
+        let env = env_at(main.clone(), vec![work, personal.clone()]);
+
+        let TaskResult::Resumable { sessions, .. } =
+            find_resumable(&env, &[main.clone(), wt.clone()])
+        else {
+            panic!("Resumable が返らない");
+        };
+
+        assert_eq!(sessions[&wt].config_dir, personal);
+        assert_eq!(
+            env.claude_home().config_dir_of(&main, "grabbed").unwrap(),
+            Some(personal)
+        );
+    }
+
+    #[test]
+    fn resumeの一覧は全アカウントの会話を出す() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (work, personal) = (root.join("work"), root.join("personal"));
+        conversation(&work, &root.join("a"), "in-work", 1000);
+        conversation(&personal, &root.join("b"), "in-personal", 2000);
+        let env = env_at(root.clone(), vec![work, personal]);
+
+        let mut ids: Vec<String> = list_sessions(&env, true)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.session_id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["in-personal", "in-work"]);
     }
 }

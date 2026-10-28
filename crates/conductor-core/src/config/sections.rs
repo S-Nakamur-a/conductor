@@ -146,6 +146,8 @@ pub struct ClaudeAccount {
     pub color: Option<String>,
     /// None は Claude Code の既定 (~/.claude)。綴りは keychain の鍵になるので `~` の展開しかしない。
     pub config_dir: Option<PathBuf>,
+    /// この下で起こす Claude はこのアカウントで起きる。
+    pub paths: Vec<PathBuf>,
 }
 
 impl ClaudeAccount {

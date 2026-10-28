@@ -707,6 +707,7 @@ fn press(fleet: &mut FleetPanel, y: u16, hit: Option<&render::Slot>) -> Vec<Effe
             button: None,
             in_button_columns: false,
         },
+        &conductor_core::config::Config::default(),
     )
 }
 
@@ -2681,7 +2682,7 @@ mod launch {
         effects
             .iter()
             .filter_map(|e| match e {
-                Effect::NewClaudeIn { dir, chrome } => Some((dir.clone(), *chrome)),
+                Effect::NewClaudeIn { dir, chrome, .. } => Some((dir.clone(), *chrome)),
                 _ => None,
             })
             .collect()
@@ -2780,6 +2781,47 @@ mod launch {
     }
 
     #[test]
+    fn アカウントが2つ以上なら起動の選択肢の末尾にアカウントごとの行が並び_1つなら並ばない() {
+        let mut config = conductor_core::config::Config::default();
+        config.claude.accounts = ["work", "personal"]
+            .map(|name| conductor_core::config::ClaudeAccount {
+                name: name.into(),
+                ..Default::default()
+            })
+            .to_vec();
+        let rows = |config: &conductor_core::config::Config| {
+            launch_choices(Path::new("/r/a"), Some(PathBuf::from("/r")), config)
+                .into_iter()
+                .map(|(label, effect)| match effect {
+                    Effect::NewClaudeIn {
+                        chrome, account, ..
+                    } => (label, Some((chrome, account))),
+                    _ => (label, None),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            rows(&config),
+            [
+                ("Claude Code".to_string(), Some((false, None))),
+                ("Claude Code + Chrome".into(), Some((true, None))),
+                ("Smart Worktree…".into(), None),
+                (
+                    "Claude Code as work".into(),
+                    Some((false, Some("work".into())))
+                ),
+                (
+                    "Claude Code as personal".into(),
+                    Some((false, Some("personal".into())))
+                ),
+            ]
+        );
+        config.claude.accounts.truncate(1);
+        assert_eq!(rows(&config).len(), 3);
+    }
+
+    #[test]
     fn worktree_の_plus_は押した行の_worktree_で_2_択_repo_の印はその_repo_の_smart_worktree() {
         let mut fleet = tree_with_sessions(Vec::new(), &[]);
         let worktree = render::Slot::Worktree(Worktree {
@@ -2787,7 +2829,8 @@ mod launch {
             label: "feature/b".into(),
         });
         let [Effect::PushModal(Modal::Popup(mut popup))] =
-            <[Effect; 1]>::try_from(fleet.click_button(&worktree, (10, 3))).unwrap()
+            <[Effect; 1]>::try_from(fleet.click_button(&worktree, (10, 3), &Default::default()))
+                .unwrap()
         else {
             panic!()
         };
@@ -2800,12 +2843,12 @@ mod launch {
 
         let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
         assert_eq!(
-            smart(&fleet.click_button(&repo, (10, 2))),
+            smart(&fleet.click_button(&repo, (10, 2), &Default::default())),
             [PathBuf::from("/r/app")]
         );
         assert!(
             fleet
-                .click_button(&render::Slot::Repo(None), (10, 2))
+                .click_button(&render::Slot::Repo(None), (10, 2), &Default::default())
                 .is_empty()
         );
     }
@@ -3123,6 +3166,7 @@ mod usage {
                 name: name.into(),
                 color: Some(color.into()),
                 config_dir: Some(PathBuf::from(dir)),
+                paths: Vec::new(),
             })
             .to_vec();
         ws.panels.fleet = fleet_with(

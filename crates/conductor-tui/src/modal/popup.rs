@@ -13,7 +13,7 @@ use ratatui::text::{Line, Span};
 use crate::effect::Effect;
 use crate::workspace::Ctx;
 
-pub type Choices = Vec<(&'static str, Effect)>;
+pub type Choices = Vec<(String, Effect)>;
 
 #[derive(Debug)]
 pub struct Popup {
@@ -165,8 +165,11 @@ mod tests {
 
     fn at(x: u16, y: u16) -> Popup {
         let choices = vec![
-            ("Changes", Effect::Command(CommandId::ShowDiffList)),
-            ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
+            ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
+            (
+                "Commit Log".into(),
+                Effect::Command(CommandId::ShowCommitLog),
+            ),
         ];
         Popup::new("Show", choices, Some((x, y)), 0)
     }
@@ -210,8 +213,11 @@ mod tests {
             Popup::numbered(
                 "New",
                 vec![
-                    ("Changes", Effect::Command(CommandId::ShowDiffList)),
-                    ("Commit Log", Effect::Command(CommandId::ShowCommitLog)),
+                    ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
+                    (
+                        "Commit Log".into(),
+                        Effect::Command(CommandId::ShowCommitLog),
+                    ),
                 ],
                 None,
             )
