@@ -11,6 +11,21 @@ fn measured_at() -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_942_000)
 }
 
+const TRANSCRIPT: &str =
+    "/tmp/claude/projects/-tmp-repo/b5d5b659-ff4e-4a5c-af98-2a7e885c8729.jsonl";
+
+fn copies(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+fn all(dir: &Path, now: SystemTime) -> Limits {
+    read(dir, &[], now).limits[0]
+}
+
 fn with(session: &str, json: &str) -> String {
     let mut value: Value = serde_json::from_str(json).unwrap();
     value["session_id"] = Value::from(session);
@@ -18,21 +33,30 @@ fn with(session: &str, json: &str) -> String {
 }
 
 #[test]
-fn 写しはセッションの_id_の名前で置き_読むと文脈の使用率と_5h_7d_が出る() {
+fn 写しはセッションの_id_と_transcript_の名前で置き_読むと文脈の使用率と_5h_7d_が出る() {
     let dir = tempfile::tempdir().unwrap();
     let place = dir.path().join("statusline");
     record(&place, MEASURED.as_bytes()).unwrap();
-    assert!(place.join(format!("{SESSION}.json")).is_file());
-    let usage = read(&place, measured_at());
+    assert_eq!(
+        copies(&place),
+        [format!(
+            "{SESSION}.{}.json",
+            crate::cc_hook::settings::fnv1a(TRANSCRIPT.as_bytes())
+        )]
+    );
+    let usage = read(&place, &[], measured_at());
     assert_eq!(usage.context.get(SESSION), Some(&7.0));
     assert_eq!(
-        usage.five_hour,
+        usage.limits[0].five_hour,
         Some(Limit {
             used_percentage: 3.0,
             resets_at: 1_792_955_400
         })
     );
-    assert_eq!(usage.seven_day.map(|l| l.used_percentage), Some(39.0));
+    assert_eq!(
+        usage.limits[0].seven_day.map(|l| l.used_percentage),
+        Some(39.0)
+    );
 }
 
 #[test]
@@ -59,9 +83,9 @@ fn リセット時刻を過ぎた枠は出さず_時刻ちょうども出さな�
     let dir = tempfile::tempdir().unwrap();
     record(dir.path(), MEASURED.as_bytes()).unwrap();
     let at = |secs| SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
-    assert!(read(dir.path(), at(1_792_955_399)).five_hour.is_some());
-    assert!(read(dir.path(), at(1_792_955_400)).five_hour.is_none());
-    let later = read(dir.path(), at(1_792_955_401));
+    assert!(all(dir.path(), at(1_792_955_399)).five_hour.is_some());
+    assert!(all(dir.path(), at(1_792_955_400)).five_hour.is_none());
+    let later = all(dir.path(), at(1_792_955_401));
     assert!(later.five_hour.is_none());
     assert!(later.seven_day.is_some());
 }
@@ -83,10 +107,13 @@ fn 枠ごとに_その枠を持つ写しのうち一番新しいものを読む(
     record(dir.path(), newer.to_string().as_bytes()).unwrap();
     std::fs::write(dir.path().join("broken.json"), b"{").unwrap();
 
-    let usage = read(dir.path(), measured_at());
-    assert_eq!(usage.five_hour.map(|l| l.used_percentage), Some(50.0));
+    let usage = read(dir.path(), &[], measured_at());
     assert_eq!(
-        usage.seven_day.map(|l| l.used_percentage),
+        usage.limits[0].five_hour.map(|l| l.used_percentage),
+        Some(50.0)
+    );
+    assert_eq!(
+        usage.limits[0].seven_day.map(|l| l.used_percentage),
         Some(39.0),
         "7d を持つのは古い方だけ"
     );
@@ -95,6 +122,84 @@ fn 枠ごとに_その枠を持つ写しのうち一番新しいものを読む(
         None,
         "null の使用率は 0 % にしない"
     );
+}
+
+#[test]
+fn config_dirを渡すと_transcriptの置き場ごとに5h_7dを分ける() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = |session: &str, transcript: &str, five: i64| {
+        let mut value: Value = serde_json::from_str(&with(session, MEASURED)).unwrap();
+        value["transcript_path"] = Value::from(transcript);
+        value["rate_limits"]["five_hour"]["used_percentage"] = Value::from(five);
+        record(dir.path(), value.to_string().as_bytes()).unwrap();
+    };
+    copy(
+        "00000000-0000-0000-0000-000000000001",
+        "/h/.claude/projects/-r/1.jsonl",
+        10,
+    );
+    copy(
+        "00000000-0000-0000-0000-000000000002",
+        "/h/.claude-personal/projects/-r/2.jsonl",
+        80,
+    );
+    copy(
+        "00000000-0000-0000-0000-000000000003",
+        "/elsewhere/projects/-r/3.jsonl",
+        99,
+    );
+
+    let dirs = [
+        Some(PathBuf::from("/h/.claude")),
+        Some(PathBuf::from("/h/.claude-personal/")),
+        None,
+    ];
+    let usage = read(dir.path(), &dirs, measured_at());
+    let five = |i: usize| usage.limits[i].five_hour.map(|l| l.used_percentage);
+    assert_eq!(five(0), Some(10.0));
+    assert_eq!(five(1), Some(80.0), "末尾の / があっても成分で比べる");
+    assert_eq!(
+        usage.limits[2],
+        Limits::default(),
+        "dir の分からないアカウントには何も入れない"
+    );
+    assert_eq!(
+        usage.context.len(),
+        3,
+        "文脈の使用率はアカウントを問わず全部"
+    );
+}
+
+#[test]
+fn 同じ会話を別のアカウントで開き直しても_前のアカウントの写しは残り_文脈は新しい方() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = |transcript: &str, five: i64, context: i64, age: u64| {
+        let mut value: Value = serde_json::from_str(MEASURED).unwrap();
+        value["transcript_path"] = Value::from(transcript);
+        value["rate_limits"]["five_hour"]["used_percentage"] = Value::from(five);
+        value["context_window"]["used_percentage"] = Value::from(context);
+        record(dir.path(), value.to_string().as_bytes()).unwrap();
+        let newest = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .max_by_key(|p| std::fs::metadata(p).unwrap().modified().unwrap())
+            .unwrap();
+        let file = std::fs::File::options().write(true).open(newest).unwrap();
+        file.set_modified(measured_at() - Duration::from_secs(age))
+            .unwrap();
+    };
+    copy("/h/.claude/projects/-r/s.jsonl", 100, 30, 60);
+    copy("/h/.claude-personal/projects/-r/s.jsonl", 10, 4, 0);
+
+    let dirs = [
+        Some(PathBuf::from("/h/.claude")),
+        Some(PathBuf::from("/h/.claude-personal")),
+    ];
+    let usage = read(dir.path(), &dirs, measured_at());
+    let five = |i: usize| usage.limits[i].five_hour.map(|l| l.used_percentage);
+    assert_eq!((five(0), five(1)), (Some(100.0), Some(10.0)));
+    assert_eq!(usage.context.get(SESSION), Some(&4.0));
 }
 
 #[test]
@@ -158,7 +263,7 @@ fn 中継の印があれば写すだけでユーザのコマンドは走らせ�
         0
     );
     assert!(!ran.exists());
-    assert!(dir.path().join(format!("{SESSION}.json")).is_file());
+    assert_eq!(copies(dir.path()).len(), 1);
 }
 
 #[test]
@@ -168,7 +273,7 @@ fn ユーザの_statusline_が無ければ何も走らせず_写しは作る() {
         forward(MEASURED.as_bytes(), Some(dir.path()), None, false).unwrap(),
         0
     );
-    assert!(dir.path().join(format!("{SESSION}.json")).is_file());
+    assert_eq!(copies(dir.path()).len(), 1);
 }
 
 #[test]

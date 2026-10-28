@@ -92,7 +92,9 @@ listed, those with no session too, and a repository stays listed until the windo
 closes once a session has run in it, or once this window opened it. Sessions in a plain
 terminal are listed together last. The line above the list counts the sessions in each
 state, and at its right end shows the 5h and 7d usage limits with the time left until
-each resets. A line shows the state (waiting / working / finished and not yet looked at
+each resets — one pair per `[[claude.accounts]]` that has one, after its name in its
+color; a Claude running under a config dir not listed there is left out, when accounts
+are listed. A line shows the state (waiting / working / finished and not yet looked at
 / idle), how long it has been in it, the session's title and how much context it
 holds — as a bar and a percentage for sessions conductor started, as a token count for
 the rest. Both come from Claude Code's statusLine: sessions conductor starts run

@@ -354,6 +354,9 @@ impl Workspace {
             tab_width: self.config.viewer.tab_width,
             branch: self.branch().to_string(),
             claude_dirs: self.config.claude_dirs(),
+            account_dirs: (self.config.claude.accounts.iter())
+                .map(|account| self.config.claude_dir_of(account))
+                .collect(),
         }
     }
 

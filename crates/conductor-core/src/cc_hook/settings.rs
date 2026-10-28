@@ -147,10 +147,14 @@ const SOCKET_NAME_MAX: usize = 1 + 16 + 9;
 
 // 鍵は conductor_dir 越しに採る。linked worktree もメイン側と同じ 1 本を指す必要があり、
 // フックへパスを渡す spawn.rs も同じ解決をしないと行き違う。
-// 自前の FNV-1a なのは、失敗しうるハッシュだと失敗時に全リポジトリが同じ名前へ落ちるため。
 fn repo_key(repo_root: &Path) -> String {
+    fnv1a(conductor_dir(repo_root).as_os_str().as_encoded_bytes())
+}
+
+/// 16 桁の 16 進。自前の FNV-1a なのは、失敗しうるハッシュだと失敗時に全部が同じ名前へ落ちるため。
+pub(super) fn fnv1a(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in conductor_dir(repo_root).as_os_str().as_encoded_bytes() {
+    for byte in bytes {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }

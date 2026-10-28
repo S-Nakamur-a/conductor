@@ -45,6 +45,8 @@ pub struct TaskEnv {
     pub branch: String,
     /// 読む Claude Code の config dir ([Config::claude_dirs](conductor_core::config::Config::claude_dirs))。
     pub claude_dirs: Vec<PathBuf>,
+    /// `[[claude.accounts]]` と同じ並びの config dir。5h / 7d をアカウントごとに分ける。
+    pub account_dirs: Vec<Option<PathBuf>>,
 }
 
 impl TaskEnv {
@@ -488,7 +490,7 @@ impl Task {
                 roots,
             } => {
                 svc.spawn(
-                    move || Box::new(fleet_status(&known, own, dirs, &roots, &env.claude_dirs)),
+                    move || Box::new(fleet_status(&known, own, dirs, &roots, &env)),
                     TaskResult::FleetStatus,
                 );
             }
@@ -1261,16 +1263,16 @@ fn fleet_status(
     own: Vec<(PathBuf, String)>,
     mut dirs: Vec<PathBuf>,
     roots: &[PathBuf],
-    claude_dirs: &[PathBuf],
+    env: &TaskEnv,
 ) -> crate::panels::fleet::FleetStatus {
     use conductor_core::claude_log::summary;
     use conductor_core::claude_sessions::registry;
 
     let live = registry::read_live(
-        &registry::sessions_dirs(claude_dirs),
+        &registry::sessions_dirs(&env.claude_dirs),
         &registry::SystemProcesses,
     );
-    let home = ClaudeHome::of(claude_dirs.to_vec());
+    let home = env.claude_home();
     let mut asked = std::collections::HashSet::new();
     let summaries = live
         .iter()
@@ -1300,7 +1302,11 @@ fn fleet_status(
         summaries,
         trees,
         placement,
-        usage: statusline::read(&statusline::dir(), std::time::SystemTime::now()),
+        usage: statusline::read(
+            &statusline::dir(),
+            &env.account_dirs,
+            std::time::SystemTime::now(),
+        ),
     }
 }
 
@@ -2598,6 +2604,7 @@ mod resumable_tests {
             tab_width: 4,
             branch: "main".into(),
             claude_dirs,
+            account_dirs: Vec::new(),
         }
     }
 

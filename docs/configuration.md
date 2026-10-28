@@ -61,7 +61,9 @@ immediately on save; everything else needs a restart.
 # Sessions list reads the state files of every account listed here (plus the
 # config dir conductor itself was started with), and labels each session with
 # its account's name in its color. The Resume list and the transcript view look
-# in all of those config dirs too.
+# in all of those config dirs too. The 5h / 7d usage above the list is shown per
+# account: a usage copy belongs to the account whose config dir holds its
+# transcript, and copies from any other config dir are left out of it.
 #
 # A Claude conductor starts runs as the account whose `paths` contain its
 # directory (the deepest one wins, a tie goes to the earlier account), or as the

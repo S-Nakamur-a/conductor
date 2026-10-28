@@ -80,6 +80,8 @@ fn relay(command: &str, input: &[u8]) -> anyhow::Result<i32> {
 }
 
 /// 同じセッションの statusLine が 2 本重なっても、読み手が書きかけを見ないよう rename で置く。
+/// 名前に transcript を混ぜるのは、同じ会話を別のアカウントで開き直したときに前のアカウントの写しを
+/// 上書きしないため。
 pub fn record(dir: &Path, input: &[u8]) -> anyhow::Result<()> {
     let value: Value = serde_json::from_slice(input)?;
     let session = value
@@ -94,9 +96,16 @@ pub fn record(dir: &Path, input: &[u8]) -> anyhow::Result<()> {
             .mode(0o700)
             .create(dir)?;
     }
+    let name = match value.get("transcript_path").and_then(Value::as_str) {
+        Some(transcript) => format!(
+            "{session}.{}.json",
+            super::settings::fnv1a(transcript.as_bytes())
+        ),
+        None => format!("{session}.json"),
+    };
     let tmp = dir.join(format!(".{session}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, input)?;
-    std::fs::rename(&tmp, dir.join(format!("{session}.json")))?;
+    std::fs::rename(&tmp, dir.join(name))?;
     Ok(())
 }
 
@@ -147,18 +156,32 @@ impl Limit {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct Usage {
-    /// 会話の id → 文脈の使用率 (%)。
-    pub context: HashMap<String, f64>,
+/// 1 アカウント分の 5h / 7d。
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Limits {
     pub five_hour: Option<Limit>,
     pub seven_day: Option<Limit>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Usage {
+    /// 会話の id → 文脈の使用率 (%)。
+    pub context: HashMap<String, f64>,
+    /// read に渡した config dir と同じ並び。渡さなければ全部の写しから 1 つ。
+    pub limits: Vec<Limits>,
+}
+
 /// 写しを読む。5h と 7d は別々に、その枠を持つ写しのうち一番新しいもの。リセット時刻を過ぎた枠は出さない。
-pub fn read(dir: &Path, now: SystemTime) -> Usage {
-    let mut usage = Usage::default();
-    let mut newest: [Option<(SystemTime, Limit)>; 2] = [None, None];
+/// config_dirs を渡すと、写しの transcript_path がその下にあるものごとに分ける (Claude は transcript を
+/// 起きた config dir の綴りのまま書く)。
+pub fn read(dir: &Path, config_dirs: &[Option<PathBuf>], now: SystemTime) -> Usage {
+    let slots = config_dirs.len().max(1);
+    let mut usage = Usage {
+        limits: vec![Limits::default(); slots],
+        ..Usage::default()
+    };
+    let mut newest: Vec<[Option<(SystemTime, Limit)>; 2]> = vec![[None, None]; slots];
+    let mut context: HashMap<String, (SystemTime, f64)> = HashMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return usage;
     };
@@ -180,10 +203,14 @@ pub fn read(dir: &Path, now: SystemTime) -> Usage {
             value
                 .pointer("/context_window/used_percentage")
                 .and_then(Value::as_f64),
-        ) {
-            usage.context.insert(id.to_string(), pct);
+        ) && context.get(id).is_none_or(|(seen, _)| mtime > *seen)
+        {
+            context.insert(id.to_string(), (mtime, pct));
         }
-        for (slot, key) in newest.iter_mut().zip(["five_hour", "seven_day"]) {
+        let Some(owner) = slot_of(&value, config_dirs) else {
+            continue;
+        };
+        for (slot, key) in newest[owner].iter_mut().zip(["five_hour", "seven_day"]) {
             let Some(limit) = limit_at(&value, key).filter(|l| l.secs_left(now) > 0) else {
                 continue;
             };
@@ -192,10 +219,27 @@ pub fn read(dir: &Path, now: SystemTime) -> Usage {
             }
         }
     }
-    let [five_hour, seven_day] = newest.map(|slot| slot.map(|(_, limit)| limit));
-    usage.five_hour = five_hour;
-    usage.seven_day = seven_day;
+    usage.context = (context.into_iter())
+        .map(|(id, (_, pct))| (id, pct))
+        .collect();
+    for (limits, newest) in usage.limits.iter_mut().zip(newest) {
+        let [five_hour, seven_day] = newest.map(|slot| slot.map(|(_, limit)| limit));
+        *limits = Limits {
+            five_hour,
+            seven_day,
+        };
+    }
     usage
+}
+
+fn slot_of(value: &Value, config_dirs: &[Option<PathBuf>]) -> Option<usize> {
+    if config_dirs.is_empty() {
+        return Some(0);
+    }
+    let transcript = Path::new(value.get("transcript_path")?.as_str()?);
+    config_dirs
+        .iter()
+        .position(|dir| dir.as_ref().is_some_and(|dir| transcript.starts_with(dir)))
 }
 
 fn limit_at(value: &Value, key: &str) -> Option<Limit> {

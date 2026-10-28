@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use conductor_core::cc_hook::statusline::{Limit, Usage};
+use conductor_core::config::ClaudeAccount;
 use conductor_core::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -28,12 +29,13 @@ pub const LIST_TITLE: &str = " Sessions ";
 pub fn summary_line(
     fleet: &FleetPanel,
     theme: &Theme,
+    accounts: &[ClaudeAccount],
     now: SystemTime,
     width: usize,
 ) -> Line<'static> {
     let all = state_spans(fleet, theme, false);
     let nonzero = state_spans(fleet, theme, true);
-    let usage = usage_options(fleet.usage(), theme, now);
+    let usage = usage_options(fleet.usage(), accounts, theme, now);
     let mut candidates: Vec<(&[Span], &[Span])> = usage
         .iter()
         .map(|u| (all.as_slice(), u.as_slice()))
@@ -237,6 +239,7 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         let line = summary_line(
             &ws.panels.fleet,
             &ws.theme,
+            &ws.config.claude.accounts,
             SystemTime::now(),
             usize::from(summary_rect.width),
         );
@@ -607,39 +610,96 @@ fn inner(rect: Rect) -> Rect {
     )
 }
 
-/// 5h / 7d の表し方を、広いものから順に。
-fn usage_options(usage: &Usage, theme: &Theme, now: SystemTime) -> Vec<Vec<Span<'static>>> {
-    let limits: Vec<(&str, Limit)> = [("5h", usage.five_hour), ("7d", usage.seven_day)]
-        .into_iter()
-        .filter_map(|(label, limit)| Some((label, limit?)))
-        .collect();
-    let compose = |count: usize, countdown: bool| -> Vec<Span<'static>> {
+type LimitsSpans<'a> = dyn Fn(&[(&str, Limit)]) -> Vec<Span<'static>> + 'a;
+
+/// 5h / 7d の表し方を、広いものから順に。アカウントがあれば、アカウントごとに名前をその色で前に置き、
+/// 一番狭い形は名前と 5h の % だけ (5h が無ければ 7d と書いて) にする。2 つ並ぶとバーつきでは一覧の幅に
+/// 収まらない。
+fn usage_options(
+    usage: &Usage,
+    accounts: &[ClaudeAccount],
+    theme: &Theme,
+    now: SystemTime,
+) -> Vec<Vec<Span<'static>>> {
+    let groups = (usage.limits.iter())
+        .enumerate()
+        .map(|(i, limits)| {
+            let shown = [("5h", limits.five_hour), ("7d", limits.seven_day)]
+                .into_iter()
+                .filter_map(|(label, limit)| Some((label, limit?)))
+                .collect::<Vec<_>>();
+            (accounts.get(i), shown)
+        })
+        .filter(|(_, shown)| !shown.is_empty())
+        .collect::<Vec<_>>();
+    let compose = |each: &LimitsSpans<'_>| {
         let mut spans = Vec::new();
-        for (i, (label, limit)) in limits.iter().take(count).enumerate() {
-            if i > 0 {
-                spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
+        for (g, (account, limits)) in groups.iter().enumerate() {
+            if g > 0 {
+                spans.push(Span::styled(" │ ", Style::default().fg(theme.hint)));
             }
-            let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
-            spans.push(Span::styled(
-                format!("{label} "),
-                Style::default().fg(theme.hint),
-            ));
-            spans.extend(bar(pct, 8, theme));
-            let mut text = format!(" {pct}%");
-            if countdown {
-                text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
+            if let Some(account) = account {
+                spans.push(Span::styled(
+                    format!("{} ", account.name),
+                    Style::default().fg(account.color().unwrap_or(theme.info)),
+                ));
             }
-            spans.push(Span::styled(text, Style::default().fg(theme.hint)));
+            spans.extend(each(limits));
         }
         spans
     };
-    if limits.is_empty() {
+    if groups.is_empty() {
         return Vec::new();
     }
-    [(2, true), (2, false), (1, false)]
+    let mut options: Vec<_> = [(2, true), (2, false), (1, false)]
         .into_iter()
-        .map(|(count, countdown)| compose(count, countdown))
-        .collect()
+        .map(|(count, countdown)| {
+            compose(&|limits| limit_spans(limits, count, countdown, theme, now))
+        })
+        .collect();
+    if !accounts.is_empty() {
+        options.push(compose(&|limits| {
+            let (label, limit) = limits[0];
+            let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
+            let label = if label == "5h" {
+                String::new()
+            } else {
+                format!("{label} ")
+            };
+            vec![Span::styled(
+                format!("{label}{pct}%"),
+                Style::default().fg(level(theme, pct)),
+            )]
+        }));
+    }
+    options
+}
+
+fn limit_spans(
+    limits: &[(&str, Limit)],
+    count: usize,
+    countdown: bool,
+    theme: &Theme,
+    now: SystemTime,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, (label, limit)) in limits.iter().take(count).enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
+        }
+        let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
+        spans.push(Span::styled(
+            format!("{label} "),
+            Style::default().fg(theme.hint),
+        ));
+        spans.extend(bar(pct, 8, theme));
+        let mut text = format!(" {pct}%");
+        if countdown {
+            text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
+        }
+        spans.push(Span::styled(text, Style::default().fg(theme.hint)));
+    }
+    spans
 }
 
 /// 空きは網かけでなく地を敷いたマスで描く。網かけは暗いテーマで地に沈み、
