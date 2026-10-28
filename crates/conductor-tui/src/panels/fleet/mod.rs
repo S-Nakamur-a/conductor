@@ -1147,22 +1147,27 @@ pub struct Reopen {
     pub account: String,
 }
 
-/// Smart Worktree は repo の root が分かるときだけ並べる。アカウントを選ぶ行は数字が変わらないよう末尾に置く。
+/// 選べるアカウントがあれば、アカウントごとに Chrome なし / ありを並べる。Smart Worktree は repo の root が分かるときだけ。
 pub fn launch_choices(dir: &Path, smart: Option<PathBuf>, config: &Config) -> Choices {
-    let claude = |chrome, account: Option<&str>| Effect::NewClaudeIn {
-        dir: dir.to_path_buf(),
-        chrome,
-        account: account.map(str::to_string),
-    };
-    let mut choices: Choices = vec![
-        ("Claude Code".into(), claude(false, None)),
-        ("Claude Code + Chrome".into(), claude(true, None)),
-    ];
+    let mut accounts: Vec<Option<&str>> = account_names(config).map(Some).collect();
+    if accounts.is_empty() {
+        accounts.push(None);
+    }
+    let mut choices: Choices = accounts
+        .into_iter()
+        .flat_map(|account| {
+            let name = account.map(|n| format!(" as {n}")).unwrap_or_default();
+            [(false, ""), (true, " + Chrome")].map(|(chrome, suffix)| {
+                let effect = Effect::NewClaudeIn {
+                    dir: dir.to_path_buf(),
+                    chrome,
+                    account: account.map(str::to_string),
+                };
+                (format!("Claude Code{name}{suffix}"), effect)
+            })
+        })
+        .collect();
     choices.extend(smart.map(|root| ("Smart Worktree…".into(), Effect::FleetSmartPrompt(root))));
-    choices.extend(
-        account_names(config)
-            .map(|name| (format!("Claude Code as {name}"), claude(false, Some(name)))),
-    );
     choices
 }
 

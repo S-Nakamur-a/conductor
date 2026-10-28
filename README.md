@@ -144,15 +144,16 @@ Claude Code writes under `~/.claude/sessions/`. With more than one Claude Code a
 each line shows its account's name in that account's color.
 
 **Ctrl+n** starts a new session in the selected worktree — or, on a session's line, in the
-worktree that session runs in. It asks first, and answers only to a digit: **1** Claude
+worktree that session runs in. It asks first, and answers to a digit, ↑/↓ with Enter, or a click: **1** Claude
 Code, **2** Claude Code with Chrome, **3** Smart Worktree (in a git repository: it asks
 for the task, creates a worktree and a branch for it, and starts Claude there). Any
 other key closes the question. Ctrl+n is never part of typed text, so typing into the
 list does not open this menu. The new session is selected
 and the keyboard goes into it on the right. The `[+]` at the right end of a worktree's
-line does the same as 1 and 2, and the `[✧]` beside a repository's name starts Smart
-Worktree there. With two `[[claude.accounts]]` or more, the menu goes on with one
-"Claude Code as <name>" per account, and a session otherwise starts as the account whose
+line offers the same rows without Smart Worktree, and the `[✧]` beside a repository's name starts Smart
+Worktree there. With two `[[claude.accounts]]` or more, rows 1 and 2 are replaced by each
+account's pair ("Claude Code as <name>", "Claude Code as <name> + Chrome"), so Smart
+Worktree moves down after them, and a session otherwise starts as the account whose
 `paths` contain its directory. The result of a Smart Worktree started before switching to another
 repository still arrives.
 
@@ -173,7 +174,8 @@ Yes and → highlights No, and Enter answers the one highlighted, which starts o
 other key cancels, `h` and `l` included. Keys the list does not use
 are dropped, so a sentence typed into the list by mistake stops nothing unless a
 capital D is followed by a y somewhere in it ("Dynamic", "READY"), or by arrow keys
-ending in ← and then Enter; it then stops
+ending in ← and then Enter, or a capital A is followed by ↑/↓ and then Enter (it then
+reopens the session as another account); it then stops
 whichever line is selected at that moment, which any j, k or G earlier in the
 sentence has moved. A session elsewhere gets SIGTERM, and SIGKILL if it is still there
 3s later, and only while it is still the process the list showed. On Linux, Claude Code
@@ -182,7 +184,7 @@ session elsewhere there: it reports the session as already ended and leaves it r
 
 **A** (Shift+a) moves one of this window's sessions to another of the
 `[[claude.accounts]]`, for when one account's usage has run out. It offers each other
-account whose config dir has the conversation's log, answers to a digit or a click, and
+account whose config dir has the conversation's log, answers to a digit, ↑/↓ with Enter, or a click, and
 asks again first unless the list last read the session as idle (it reads once a second).
 It then stops the session, waits up to 5s for it to end, and resumes the same
 conversation in the same directory as the account chosen. The reopened session does not
@@ -230,7 +232,7 @@ command by name.
 
 To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code
 Session (Chrome)* (or "New Claude Code (Chrome)" in the palette), pick
-"Claude Code + Chrome" from the `[+]` on the Claude Code tab row, or choose 2 in the
+"Claude Code + Chrome" from the `[+]` on the Claude Code tab row, or choose the "+ Chrome" row in the
 Sessions list's new-session menu (Ctrl+n, or the `[+]` on a worktree). It launches
 `claude --chrome`. Every other start runs without it: Ctrl+n outside the Sessions list, a double click on
 an empty pane, a smart session, the startup auto-resume and the resume after

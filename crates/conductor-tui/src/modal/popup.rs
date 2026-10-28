@@ -22,8 +22,10 @@ pub struct Popup {
     /// 枠の左上。None は画面の中央。
     at: Option<(u16, u16)>,
     selected: usize,
-    /// 数字でだけ答え、ほかのキーでは何もせずに閉じる。
+    /// 数字か、矢印の後の Enter でだけ答え、ほかのキーでは何もせずに閉じる。
     numbered: bool,
+    /// 一覧に誤って打った文は矢印を含まないので、その改行では選ばせない。
+    moved: bool,
 }
 
 impl Popup {
@@ -41,6 +43,7 @@ impl Popup {
             at,
             selected,
             numbered: false,
+            moved: false,
         }
     }
 
@@ -52,24 +55,23 @@ impl Popup {
     }
 
     pub fn update(&mut self, key: KeyEvent, _ctx: &Ctx) -> Vec<Effect> {
-        if self.numbered {
-            return match key.code {
-                KeyCode::Char(c @ '1'..='9') => self.choose(usize::from(c as u8 - b'1')),
-                _ => vec![Effect::PopModal],
-            };
-        }
         let last = self.choices.len() - 1;
         match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.selected = (self.selected + 1) % self.choices.len();
-                Vec::new()
+            KeyCode::Down => self.select((self.selected + 1) % self.choices.len()),
+            KeyCode::Up => self.select(self.selected.checked_sub(1).unwrap_or(last)),
+            KeyCode::Char('j') if !self.numbered => {
+                self.select((self.selected + 1) % self.choices.len())
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(last);
-                Vec::new()
+            KeyCode::Char('k') if !self.numbered => {
+                self.select(self.selected.checked_sub(1).unwrap_or(last))
             }
+            KeyCode::Enter if self.numbered && !self.moved => vec![Effect::PopModal],
             KeyCode::Enter => self.choose(self.selected),
+            KeyCode::Char(c @ '1'..='9') if self.numbered => {
+                self.choose(usize::from(c as u8 - b'1'))
+            }
             KeyCode::Esc => vec![Effect::PopModal],
+            _ if self.numbered => vec![Effect::PopModal],
             _ => Vec::new(),
         }
     }
@@ -85,6 +87,12 @@ impl Popup {
             Some(row) if row < self.choices.len() => self.choose(row),
             _ => vec![Effect::PopModal],
         }
+    }
+
+    fn select(&mut self, row: usize) -> Vec<Effect> {
+        self.selected = row;
+        self.moved = true;
+        Vec::new()
     }
 
     /// 選んだら閉じるので、行き先は取り出してしまってよい。
@@ -106,7 +114,7 @@ pub fn lines(popup: &Popup, theme: &Theme) -> Vec<Line<'static>> {
         .iter()
         .enumerate()
         .map(|(i, (label, _))| {
-            let chosen = i == popup.selected && !popup.numbered;
+            let chosen = i == popup.selected && (!popup.numbered || popup.moved);
             let style = Style::default().fg(if chosen { theme.accent } else { theme.fg });
             let mark = match (popup.numbered, chosen) {
                 (true, _) => format!(" {} ", i + 1),
@@ -206,7 +214,33 @@ mod tests {
     }
 
     #[test]
-    fn 数字の_popup_は数字でだけ選び_ほかのキーでは何もせずに閉じる() {
+    fn 数字の_popup_は矢印を押すまで選択行を強調しない() {
+        use crossterm::event::KeyModifiers;
+        let ws = crate::workspace::Workspace::for_test();
+        let mut popup = Popup::numbered(
+            "New",
+            vec![
+                ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
+                (
+                    "Commit Log".into(),
+                    Effect::Command(CommandId::ShowCommitLog),
+                ),
+            ],
+            None,
+        );
+        let label_fg = |popup: &Popup| {
+            lines(popup, &ws.theme)
+                .iter()
+                .map(|line| line.spans[1].style.fg)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(label_fg(&popup), [Some(ws.theme.fg), Some(ws.theme.fg)]);
+        popup.update(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &ws.ctx());
+        assert_eq!(label_fg(&popup), [Some(ws.theme.fg), Some(ws.theme.accent)]);
+    }
+
+    #[test]
+    fn 数字の_popup_は数字か矢印の後の_enter_でだけ選び_ほかのキーでは何もせずに閉じる() {
         use crossterm::event::KeyModifiers;
         let ws = crate::workspace::Workspace::for_test();
         let numbered = || {
@@ -218,25 +252,44 @@ mod tests {
                         "Commit Log".into(),
                         Effect::Command(CommandId::ShowCommitLog),
                     ),
+                    ("Claude".into(), Effect::Command(CommandId::NewClaudeCode)),
                 ],
                 None,
             )
         };
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
-        assert!(matches!(
-            numbered()
-                .update(key(KeyCode::Char('2')), &ws.ctx())
-                .as_slice(),
-            [Effect::PopModal, Effect::Command(CommandId::ShowCommitLog)]
-        ));
+        let chosen = |codes: &[KeyCode]| {
+            let mut popup = numbered();
+            let (last, moves) = codes.split_last().unwrap();
+            for code in moves {
+                assert!(popup.update(key(*code), &ws.ctx()).is_empty(), "{code:?}");
+            }
+            match popup.update(key(*last), &ws.ctx()).as_slice() {
+                [Effect::PopModal, Effect::Command(id)] => Some(*id),
+                [Effect::PopModal] => None,
+                other => panic!("{other:?}"),
+            }
+        };
+        use KeyCode::{Char, Down, Enter, Up};
+        assert_eq!(chosen(&[Char('2')]), Some(CommandId::ShowCommitLog));
+        assert_eq!(chosen(&[Down, Down, Enter]), Some(CommandId::NewClaudeCode));
+        assert_eq!(chosen(&[Up, Enter]), Some(CommandId::NewClaudeCode));
+        assert_eq!(
+            chosen(&[Down, Down, Down, Enter]),
+            Some(CommandId::ShowDiffList)
+        );
+        assert_eq!(
+            chosen(&[Enter]),
+            None,
+            "誤って一覧に打った文の改行で選ばない"
+        );
         for code in [
-            KeyCode::Enter,
             KeyCode::Char('n'),
             KeyCode::Char('o'),
             KeyCode::Char('j'),
-            KeyCode::Down,
+            KeyCode::Char('k'),
             KeyCode::Esc,
-            KeyCode::Char('3'),
+            KeyCode::Char('4'),
             KeyCode::Char('0'),
         ] {
             assert!(
