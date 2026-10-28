@@ -3064,6 +3064,12 @@ mod launch {
             opens_menu(&press_at(&mut ws, 1, 3)),
             "[+] の押し直しは、閉じたメニューを開き直す"
         );
+        let asks_smart = |effects: &[Effect]| matches!(effects, [Effect::FleetSmartPrompt(_)]);
+        assert!(asks_smart(&press_at(&mut ws, 1, 0)));
+        assert!(
+            asks_smart(&press_at(&mut ws, 1, 0)),
+            "[✧] の押し直しも、閉じた説明を聞き直す"
+        );
     }
 
     #[test]

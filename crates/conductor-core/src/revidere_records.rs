@@ -211,7 +211,8 @@ mod tests {
     }
 
     #[test]
-    fn 同名のtagがあるときのheads付きの綴りもブランチとして比べる() {
+    fn 同名のrefがあるときのheads付きとrefs_heads付きの綴りもブランチとして比べ_別の接頭辞は比べない()
+     {
         let repo = TestRepo::with_base_commit();
         let worktree = repo.path.canonicalize().unwrap();
         let head = repo.repo.head().unwrap().target().unwrap().to_string();
