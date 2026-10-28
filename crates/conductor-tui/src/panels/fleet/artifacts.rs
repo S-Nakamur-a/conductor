@@ -89,6 +89,11 @@ impl SessionArtifacts {
         Some(url)
     }
 
+    /// 一覧の印から開く。開き終わるまでは false。
+    pub fn start_opening(&mut self) -> bool {
+        !std::mem::replace(&mut self.opening, true)
+    }
+
     pub fn note_opened(&mut self) {
         self.opening = false;
     }

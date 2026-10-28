@@ -13,7 +13,7 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::icons::{self, IconSet};
 use conductor_core::keymap::Action;
-use conductor_core::revidere_records::Mark;
+use conductor_core::revidere_records::{Mark, Review};
 
 use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
@@ -198,7 +198,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                         theme,
                         ws.config.ui.icon_set(),
                         worktree,
-                        fleet.review_of(&worktree.path),
+                        fleet.review_of(&worktree.path).map(|r: &Review| r.mark),
                         inner.width,
                         selected,
                         focused,
@@ -807,13 +807,15 @@ pub enum Button {
     New,
     Smart,
     Revidere,
+    /// revidere の印。印がある行でだけ押せる。
+    Mark,
 }
 
 /// 行のボタンを右端から順に。
 pub fn buttons(slot: &Slot) -> &'static [Button] {
     match slot {
         Slot::Repo(Some(_)) => &[Button::Smart],
-        Slot::Worktree(w) if w.in_tree => &[Button::New, Button::Revidere],
+        Slot::Worktree(w) if w.in_tree => &[Button::New, Button::Revidere, Button::Mark],
         Slot::Worktree(_) => &[Button::New],
         Slot::Repo(None) | Slot::Session(_) | Slot::Other => &[],
     }
@@ -825,7 +827,7 @@ pub fn button_column(composed: &Composed, x: u16) -> Option<usize> {
     (from_right < MOST_BUTTONS).then_some(from_right)
 }
 
-const MOST_BUTTONS: usize = 2;
+const MOST_BUTTONS: usize = 3;
 
 pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<(Button, &Slot)> {
     let slot = slot_at(composed, x, y)?;
@@ -929,7 +931,7 @@ fn worktree_line(
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(badge, Style::default().fg(badge_fg)),
         Span::raw(" "),
-        Span::styled(revidere, Style::default().fg(theme.accent)),
+        Span::styled(revidere, Style::default().fg(theme.fg)),
         Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
     ];
     crate::list::row_line(spans, theme, selected, focused)

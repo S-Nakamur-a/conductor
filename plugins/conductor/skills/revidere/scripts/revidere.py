@@ -4,6 +4,7 @@
     revidere.py prepare [--base REF]   作業 dir を作り、差分と変更位置の台帳を置く
     revidere.py check DIR [--retry]    DIR/review.json が台帳を漏れなく説明しているか
     revidere.py render DIR             DIR/review.html を書く
+    revidere.py published DIR URL      publish した Artifact の URL を DIR/meta.json に書き足す
 
 標準ライブラリだけで Python 3.9 から動く。
 """
@@ -1078,6 +1079,24 @@ def cmd_render(args) -> int:
     return 0
 
 
+ARTIFACT_URL = "https://claude.ai/"
+
+
+def cmd_published(args) -> int:
+    if not args.url.startswith(ARTIFACT_URL):
+        raise Failure(f"Artifact の URL ではない ({ARTIFACT_URL} で始まらない): {args.url}")
+    path = os.path.join(args.dir, "meta.json")
+    try:
+        meta = read_json(path)
+    except (OSError, ValueError) as e:
+        raise Failure(f"{path} を読めない: {e}")
+    meta["artifact_url"] = args.url
+    # conductor が毎秒読むので、書きかけの meta.json を見せない。
+    write_json(path + ".tmp", meta)
+    os.replace(path + ".tmp", path)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="revidere.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1091,6 +1110,10 @@ def main(argv=None) -> int:
     r = sub.add_parser("render")
     r.add_argument("dir")
     r.set_defaults(run=cmd_render)
+    u = sub.add_parser("published")
+    u.add_argument("dir")
+    u.add_argument("url")
+    u.set_defaults(run=cmd_published)
     args = ap.parse_args(argv)
     try:
         return args.run(args)

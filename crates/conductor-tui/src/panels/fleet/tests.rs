@@ -2923,7 +2923,11 @@ mod launch {
                 Some((render::Button::Revidere, render::Slot::Worktree(_)))
             ));
         }
-        assert_eq!(render::button_hit(&composed, right - 7, y(2)), None);
+        assert!(matches!(
+            render::button_hit(&composed, right - 7, y(2)),
+            Some((render::Button::Mark, render::Slot::Worktree(_)))
+        ));
+        assert_eq!(render::button_hit(&composed, right - 10, y(2)), None);
         assert_eq!(render::button_hit(&composed, right, y(2)), None);
 
         let mut ws = many_worktrees(30);
@@ -2999,8 +3003,35 @@ mod launch {
         }
     }
 
+    fn reviewed(
+        reviews: &[(&str, conductor_core::revidere_records::Mark, Option<&str>)],
+    ) -> Workspace {
+        let mut ws = many_worktrees(3);
+        let status = FleetStatus {
+            trees: ws.panels.fleet.trees.clone(),
+            reviews: reviews
+                .iter()
+                .map(|(path, mark, url)| {
+                    let review = conductor_core::revidere_records::Review {
+                        mark: *mark,
+                        url: url.map(str::to_string),
+                    };
+                    (PathBuf::from(path), review)
+                })
+                .collect(),
+            ..Default::default()
+        };
+        ws.apply_fleet(status, Vec::new());
+        ws
+    }
+
+    /// [R] は確認を挟む。Yes で起こすものを返す。
     fn revidere_launches(effects: &[Effect]) -> Vec<PathBuf> {
-        effects
+        let [Effect::PushModal(Modal::Confirm(confirm))] = effects else {
+            return Vec::new();
+        };
+        confirm
+            .on_yes
             .iter()
             .filter_map(|e| match e {
                 Effect::NewClaudeIn {
@@ -3037,26 +3068,20 @@ mod launch {
     }
 
     #[test]
-    fn revidere_ボタンの二度押しは_2_本目を起こさない() {
+    fn revidere_ボタンは押すたびに確認を出し_押しただけでは起こさない() {
         let mut ws = many_worktrees(3);
-        assert_eq!(revidere_launches(&press_at(&mut ws, 5, 2)).len(), 1);
-        let own = vec![OwnSession {
-            panel_id: "p1".into(),
-            working_dir: PathBuf::from("/r/app-01"),
-            claude_session_id: None,
-        }];
-        ws.panels.fleet.note_launched("p1".into(), own);
-        let second = press_at(&mut ws, 5, 2);
-        assert!(revidere_launches(&second).is_empty());
-        assert!(
-            matches!(second[..], [Effect::Focus(Focus::FleetSession)]),
-            "二度目は起こしたセッションへ入り直す: {second:?}"
-        );
-        assert_eq!(
-            revidere_launches(&press_at(&mut ws, 5, 3)),
-            [PathBuf::from("/r/app-02")],
-            "別の行の [R] は二度押しではない"
-        );
+        for _ in 0..2 {
+            let effects = press_at(&mut ws, 5, 2);
+            assert_eq!(revidere_launches(&effects), [PathBuf::from("/r/app-01")]);
+            let [Effect::PushModal(Modal::Confirm(confirm))] = effects.as_slice() else {
+                panic!("{effects:?}");
+            };
+            let text: String = crate::modal::confirm::lines(confirm, &ws.theme)
+                .iter()
+                .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+                .collect();
+            assert!(text.contains("/r/app-01"), "どの worktree かを出す: {text}");
+        }
         let opens_menu =
             |effects: &[Effect]| matches!(effects, [Effect::PushModal(Modal::Popup(_))]);
         assert!(opens_menu(&press_at(&mut ws, 1, 3)));
@@ -3073,13 +3098,93 @@ mod launch {
     }
 
     #[test]
-    fn 行を押した直後に同じ行の_revidere_ボタンを押しても起こす() {
+    fn 行を押した直後に同じ行の_revidere_ボタンを押しても確認を出す() {
         let mut ws = many_worktrees(3);
         assert!(revidere_launches(&press_at(&mut ws, 30, 2)).is_empty());
         assert_eq!(
             revidere_launches(&press_at(&mut ws, 5, 2)),
             [PathBuf::from("/r/app-01")]
         );
+    }
+
+    fn opened(effects: &[Effect]) -> Option<&str> {
+        match effects {
+            [Effect::Spawn(crate::task::Task::OpenArtifact { url })] => Some(url),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn 印を押すとそのレビューのartifactを開き_連打と開いている間の押下は捨てる() {
+        use conductor_core::revidere_records::Mark;
+        let mut ws = reviewed(&[
+            (
+                "/r/app-01",
+                Mark::Current,
+                Some("https://claude.ai/artifact/one"),
+            ),
+            (
+                "/r/app-02",
+                Mark::Stale,
+                Some("https://claude.ai/artifact/two"),
+            ),
+        ]);
+        for x in [7, 8, 9] {
+            assert_eq!(
+                opened(&press_at(&mut ws, x, 2)),
+                Some("https://claude.ai/artifact/one"),
+                "右から {x} 桁目"
+            );
+            assert!(press_at(&mut ws, x, 2).is_empty(), "二度押しは捨てる");
+            ws.panels.fleet.artifacts.note_opened();
+            ws.panels.fleet.mark_clicks = crate::click::ClickTracker::default();
+        }
+        assert!(opened(&press_at(&mut ws, 8, 2)).is_some());
+        assert!(
+            press_at(&mut ws, 8, 3).is_empty(),
+            "開き終わるまでは別の行の印も開かない"
+        );
+        ws.panels.fleet.artifacts.note_opened();
+        ws.panels.fleet.mark_clicks = crate::click::ClickTracker::default();
+        assert_eq!(
+            opened(&press_at(&mut ws, 8, 3)),
+            Some("https://claude.ai/artifact/two")
+        );
+    }
+
+    #[test]
+    fn リンクの無い印は開かずに伝え_印の無い行の印の桁は行を選ぶ() {
+        use conductor_core::revidere_records::Mark;
+        let mut ws = reviewed(&[("/r/app-01", Mark::Current, None)]);
+        let effects = press_at(&mut ws, 8, 2);
+        assert!(
+            matches!(effects.as_slice(), [Effect::Status(crate::workspace::StatusLevel::Warning, text)] if text.contains("no artifact link")),
+            "{effects:?}"
+        );
+        assert!(press_at(&mut ws, 8, 3).is_empty());
+        assert_eq!(
+            ws.panels.fleet.selected_dir(),
+            Some(PathBuf::from("/r/app-02"))
+        );
+    }
+
+    #[test]
+    fn revidere_ボタンは_plus_と別の色で描く() {
+        let ws = many_worktrees(3);
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 95, 12)).unwrap();
+        let line = &composed.lines[2];
+        let fg_of = |text: &str| {
+            line.spans
+                .iter()
+                .find(|s| s.content == text)
+                .and_then(|s| s.style.fg)
+        };
+        let revidere = format!(
+            "[{}]",
+            conductor_core::icons::REVIDERE.get(ws.config.ui.icon_set())
+        );
+        assert_eq!(fg_of(&revidere), Some(ws.theme.fg));
+        assert_eq!(fg_of(render::NEW_BUTTON), Some(ws.theme.accent));
     }
 
     #[test]
@@ -3096,16 +3201,10 @@ mod launch {
     fn revidere_の印は今の_commit_なら_success_前の_commit_だけなら_warning_で描く() {
         use conductor_core::icons;
         use conductor_core::revidere_records::Mark;
-        let mut ws = many_worktrees(3);
-        let mut status = FleetStatus {
-            trees: ws.panels.fleet.trees.clone(),
-            ..Default::default()
-        };
-        status.reviews = HashMap::from([
-            (PathBuf::from("/r/app-01"), Mark::Current),
-            (PathBuf::from("/r/app-02"), Mark::Stale),
+        let ws = reviewed(&[
+            ("/r/app-01", Mark::Current, None),
+            ("/r/app-02", Mark::Stale, None),
         ]);
-        ws.apply_fleet(status, Vec::new());
         let set = ws.config.ui.icon_set();
         let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 60, 12)).unwrap();
         let badge = |label: &str| {

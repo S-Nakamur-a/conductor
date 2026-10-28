@@ -18,7 +18,7 @@ use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Wait
 use conductor_core::config::Config;
 use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
-use conductor_core::revidere_records::Mark;
+use conductor_core::revidere_records::Review;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
@@ -202,7 +202,7 @@ pub struct FleetStatus {
     /// セッションの working_dir → それを含む worktree のパス。
     pub placement: HashMap<PathBuf, PathBuf>,
     pub usage: Usage,
-    pub reviews: HashMap<PathBuf, Mark>,
+    pub reviews: HashMap<PathBuf, Review>,
 }
 
 const OUTSIDE_GROUP: &str = "外の端末";
@@ -228,7 +228,7 @@ pub struct FleetPanel {
     trees: Vec<RepoTree>,
     placement: HashMap<PathBuf, PathBuf>,
     usage: Usage,
-    reviews: HashMap<PathBuf, Mark>,
+    reviews: HashMap<PathBuf, Review>,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
     /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
@@ -243,7 +243,7 @@ pub struct FleetPanel {
     opening_page: bool,
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, Option<usize>, Option<Selected>)>,
-    revidere_clicks: ClickTracker<u16>,
+    mark_clicks: ClickTracker<u16>,
     pub changes: changes::BranchChanges,
     pub artifacts: artifacts::SessionArtifacts,
     lower: Lower,
@@ -397,8 +397,8 @@ impl FleetPanel {
         &self.usage
     }
 
-    pub fn review_of(&self, worktree: &Path) -> Option<Mark> {
-        self.reviews.get(worktree).copied()
+    pub fn review_of(&self, worktree: &Path) -> Option<&Review> {
+        self.reviews.get(worktree)
     }
 
     pub fn came_from(&self) -> Focus {
@@ -496,12 +496,20 @@ impl FleetPanel {
                     Some(at),
                 )))]
             }
-            (render::Button::Revidere, render::Slot::Worktree(w)) => vec![Effect::NewClaudeIn {
-                dir: w.path.clone(),
-                chrome: false,
-                account: None,
-                startup_prompt: Some(REVIDERE_COMMAND.to_string()),
-            }],
+            (render::Button::Revidere, render::Slot::Worktree(w)) => {
+                let launch = Effect::NewClaudeIn {
+                    dir: w.path.clone(),
+                    chrome: false,
+                    account: None,
+                    startup_prompt: Some(REVIDERE_COMMAND.to_string()),
+                };
+                vec![Effect::PushModal(Modal::Confirm(
+                    Confirm::ask(format!("Run {REVIDERE_COMMAND} here?"), vec![launch])
+                        .title("Run revidere")
+                        .detail(w.path.display().to_string()),
+                ))]
+            }
+            (render::Button::Mark, render::Slot::Worktree(w)) => self.open_review(&w.path, at),
             (render::Button::Smart, render::Slot::Repo(Some(root))) => {
                 vec![Effect::FleetSmartPrompt(root.clone())]
             }
@@ -516,13 +524,12 @@ impl FleetPanel {
         if self.row_clicks.is_double(key) {
             return self.enter_selected();
         }
-        if let Some((button, slot)) = press.button {
+        let button = press.button.filter(|(button, slot)| match (button, slot) {
+            (render::Button::Mark, render::Slot::Worktree(w)) => self.reviews.contains_key(&w.path),
+            _ => true,
+        });
+        if let Some((button, slot)) = button {
             self.row_clicks = ClickTracker::default();
-            // [R] はモーダルを挟まずに起こし、起こした行へ選択が移るので、選択を鍵に含めない。
-            // [+] と [✧] の二度目は、一度目に開いたモーダルが先に取る。
-            if button == render::Button::Revidere && self.revidere_clicks.is_double(at.1) {
-                return self.enter_selected();
-            }
             return self.click_button(button, slot, at, config);
         }
         let item = match press.hit {
@@ -537,6 +544,26 @@ impl FleetPanel {
         self.row_clicks
             .arm((at.1, press.button_column, self.selected.clone()));
         Vec::new()
+    }
+
+    /// 下区画の Artifact と同じく、連打で何枚も開かないようにする。
+    fn open_review(&mut self, worktree: &Path, at: (u16, u16)) -> Vec<Effect> {
+        if self.mark_clicks.is_double(at.1) {
+            return Vec::new();
+        }
+        let Some(review) = self.reviews.get(worktree) else {
+            return Vec::new();
+        };
+        let Some(url) = review.url.clone() else {
+            return vec![Effect::Status(
+                StatusLevel::Warning,
+                "This review has no artifact link recorded.".into(),
+            )];
+        };
+        if !self.artifacts.start_opening() {
+            return Vec::new();
+        }
+        vec![Effect::Spawn(crate::task::Task::OpenArtifact { url })]
     }
 
     pub fn defer_focus(&mut self, focus: Focus) {

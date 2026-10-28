@@ -194,7 +194,8 @@ The session list still reads what the skill leaves behind, so the script's work
 directory is a contract: `conductor_core::revidere_records` counts a
 `$TMPDIR/revidere-*` that holds both `meta.json` (its `root`, `branch` and `head_oid`)
 and `review.html`, and marks a worktree current when `head_oid` is its HEAD on the same
-branch, stale when only other commits of that branch were read. Renaming either file or
+branch, stale when only other commits of that branch were read. Clicking a mark opens the
+`artifact_url` that `revidere.py published` adds to `meta.json`. Renaming either file or
 those keys in `revidere.py` makes the marks disappear without an error, and a window
 whose `$TMPDIR` differs from the Claude that ran the skill never sees them — on macOS
 that includes a window with no `$TMPDIR` at all, since Rust then reads the per-user
