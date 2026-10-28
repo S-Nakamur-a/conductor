@@ -2781,7 +2781,7 @@ mod launch {
     }
 
     #[test]
-    fn アカウントが2つ以上なら起動の選択肢の末尾にアカウントごとの行が並び_1つなら並ばない() {
+    fn アカウントが2つ以上ならアカウントごとに_chrome_なしとありが並び_1つなら素の2行() {
         let mut config = conductor_core::config::Config::default();
         config.claude.accounts = ["work", "personal"]
             .map(|name| conductor_core::config::ClaudeAccount {
@@ -2804,21 +2804,34 @@ mod launch {
         assert_eq!(
             rows(&config),
             [
-                ("Claude Code".to_string(), Some((false, None))),
-                ("Claude Code + Chrome".into(), Some((true, None))),
-                ("Smart Worktree…".into(), None),
                 (
-                    "Claude Code as work".into(),
+                    "Claude Code as work".to_string(),
                     Some((false, Some("work".into())))
+                ),
+                (
+                    "Claude Code as work + Chrome".into(),
+                    Some((true, Some("work".into())))
                 ),
                 (
                     "Claude Code as personal".into(),
                     Some((false, Some("personal".into())))
                 ),
+                (
+                    "Claude Code as personal + Chrome".into(),
+                    Some((true, Some("personal".into())))
+                ),
+                ("Smart Worktree…".into(), None),
             ]
         );
         config.claude.accounts.truncate(1);
-        assert_eq!(rows(&config).len(), 3);
+        assert_eq!(
+            rows(&config),
+            [
+                ("Claude Code".to_string(), Some((false, None))),
+                ("Claude Code + Chrome".into(), Some((true, None))),
+                ("Smart Worktree…".into(), None),
+            ]
+        );
     }
 
     #[test]
@@ -3803,6 +3816,33 @@ mod reopen {
             matches!(effects.last(), Some(Effect::PushModal(Modal::Confirm(_)))),
             "{effects:?}"
         );
+    }
+
+    #[test]
+    fn 一覧に誤って打った_ls_dash_a_の改行では開き直さず_矢印の後の改行で開き直す() {
+        let (_dirs, fleet, mut ws) = setup(Status::Idle, true);
+        let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
+        ws.focus = Focus::Viewer;
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        ws.panels.fleet = fleet;
+        let mut press = |code, modifiers| {
+            crate::run::on_key(&mut ws, &mut svc, KeyEvent::new(code, modifiers));
+        };
+        for c in "ls -".chars() {
+            press(KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        press(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        press(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(ws.panels.fleet.reopening.is_empty());
+        assert!(ws.modals.is_empty());
+
+        let mut press = |code, modifiers| {
+            crate::run::on_key(&mut ws, &mut svc, KeyEvent::new(code, modifiers));
+        };
+        press(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        press(KeyCode::Down, KeyModifiers::NONE);
+        press(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(ws.panels.fleet.reopening.contains("s1"));
     }
 
     #[test]
