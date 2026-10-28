@@ -11,7 +11,8 @@ use super::discovery::now_ms;
 impl ClaudeHome {
     /// <session_id>.jsonl と、あればサブエージェントの <session_id>/ を dest 側へリンクし、
     /// dest の resume 一覧に出るよう history.jsonl にも追記する。
-    /// 移行元にログが無ければ何もせず Ok(false)。
+    /// 移行は resume する Claude の config dir ([Self::opening_in]) の中で済ませる。そこにログが
+    /// 無ければ何もせず Ok(false)。
     pub fn migrate_session(
         &self,
         session_id: &str,
@@ -19,22 +20,26 @@ impl ClaudeHome {
         dest_working_dir: &Path,
         display_hint: &str,
     ) -> Result<bool> {
-        let src_dir = self.projects_dir_for(source_working_dir);
-        let dst_dir = self.projects_dir_for(dest_working_dir);
         let log_name = format!("{session_id}.jsonl");
-        if !src_dir.join(&log_name).exists() {
+        let Some(root) = self.opens_in.iter().find(|root| {
+            Self::projects_dir_in(root, source_working_dir)
+                .join(&log_name)
+                .exists()
+        }) else {
             log::warn!(
-                "migrate_session: source file not found: {}",
-                src_dir.join(&log_name).display()
+                "migrate_session: no {log_name} for {}",
+                source_working_dir.display()
             );
             return Ok(false);
-        }
+        };
+        let src_dir = Self::projects_dir_in(root, source_working_dir);
+        let dst_dir = Self::projects_dir_in(root, dest_working_dir);
         std::fs::create_dir_all(&dst_dir)?;
         link(&src_dir.join(&log_name), &dst_dir.join(&log_name))?;
         if src_dir.join(session_id).is_dir() {
             link(&src_dir.join(session_id), &dst_dir.join(session_id))?;
         }
-        self.append_history_entry(session_id, dest_working_dir, display_hint)?;
+        append_history_entry(root, session_id, dest_working_dir, display_hint)?;
         Ok(true)
     }
 
@@ -49,33 +54,36 @@ impl ClaudeHome {
         source_working_dir: &Path,
         dest_working_dir: &Path,
     ) -> Result<()> {
-        let src_dir = self.projects_dir_for(source_working_dir);
-        let dst_dir = self.projects_dir_for(dest_working_dir);
         let log_name = format!("{session_id}.jsonl");
-        take_back(&dst_dir.join(&log_name), &src_dir.join(&log_name))?;
-        take_back(&dst_dir.join(session_id), &src_dir.join(session_id))
-    }
-
-    fn append_history_entry(
-        &self,
-        session_id: &str,
-        project_path: &Path,
-        display: &str,
-    ) -> Result<()> {
-        use std::io::Write;
-        let entry = serde_json::json!({
-            "display": display,
-            "sessionId": session_id,
-            "timestamp": now_ms(),
-            "project": project_path.to_string_lossy(),
-        });
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.history_file())?;
-        writeln!(file, "{entry}")?;
+        for root in &self.roots {
+            let src_dir = Self::projects_dir_in(root, source_working_dir);
+            let dst_dir = Self::projects_dir_in(root, dest_working_dir);
+            take_back(&dst_dir.join(&log_name), &src_dir.join(&log_name))?;
+            take_back(&dst_dir.join(session_id), &src_dir.join(session_id))?;
+        }
         Ok(())
     }
+}
+
+fn append_history_entry(
+    root: &Path,
+    session_id: &str,
+    project_path: &Path,
+    display: &str,
+) -> Result<()> {
+    use std::io::Write;
+    let entry = serde_json::json!({
+        "display": display,
+        "sessionId": session_id,
+        "timestamp": now_ms(),
+        "project": project_path.to_string_lossy(),
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("history.jsonl"))?;
+    writeln!(file, "{entry}")?;
+    Ok(())
 }
 
 fn link(src: &Path, dst: &Path) -> Result<()> {

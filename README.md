@@ -131,7 +131,10 @@ uses; scrolling down past the end or **Esc** goes back to it live, and so does
 the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
 a plain terminal runs, or that a window of an older version still holds, are listed with
 their state, but cannot be opened or typed into from here. The states come from the files
-Claude Code writes under `~/.claude/sessions/`.
+Claude Code writes under `~/.claude/sessions/`. With more than one Claude Code account
+(one `CLAUDE_CONFIG_DIR` each), list them as `[[claude.accounts]]`
+([docs/configuration.md](docs/configuration.md)): every account's sessions are read, and
+each line shows its account's name in that account's color.
 
 **Ctrl+n** starts a new session in the selected worktree — or, on a session's line, in the
 worktree that session runs in. It asks first, and answers only to a digit: **1** Claude

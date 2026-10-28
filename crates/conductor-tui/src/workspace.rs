@@ -353,6 +353,9 @@ impl Workspace {
             word_diff: self.config.diff.word_diff,
             tab_width: self.config.viewer.tab_width,
             branch: self.branch().to_string(),
+            claude_dirs: self.config.claude_dirs(),
+            launch_dir: conductor_core::cc_hook::statusline::claude_config_dir()
+                .unwrap_or_default(),
         }
     }
 

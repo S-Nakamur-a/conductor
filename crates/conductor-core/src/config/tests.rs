@@ -83,7 +83,126 @@ fn non_default() -> Config {
         review: ReviewConfig {
             auto_review_repos: vec![PathBuf::from("/r")],
         },
+        claude: ClaudeConfig {
+            accounts: vec![ClaudeAccount {
+                name: String::from("personal"),
+                color: Some(String::from("magenta")),
+                config_dir: Some(PathBuf::from("/c")),
+            }],
+        },
     }
+}
+
+fn account(name: &str, config_dir: Option<&Path>) -> ClaudeAccount {
+    ClaudeAccount {
+        name: name.to_string(),
+        color: None,
+        config_dir: config_dir.map(Path::to_path_buf),
+    }
+}
+
+#[test]
+fn accountsのconfig_dirはチルダだけ展開し末尾のスラッシュを残す() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[[claude.accounts]]\nname = \"personal\"\nconfig_dir = \"~/.claude-personal/\"\n",
+    )
+    .unwrap();
+
+    let cfg = Config::load_from(&path).unwrap();
+
+    assert_eq!(
+        cfg.claude.accounts[0]
+            .config_dir
+            .as_deref()
+            .map(Path::to_string_lossy),
+        Some(format!("{}/.claude-personal/", home().display()).into())
+    );
+}
+
+#[test]
+fn accountsが空なら読むのは窓のconfig_dirだけ() {
+    let window = PathBuf::from("/w/.claude-personal");
+
+    assert_eq!(
+        claude_dirs_from(&[], Some(window.clone()), Some(PathBuf::from("/h"))),
+        vec![window]
+    );
+}
+
+#[test]
+fn accountsの後に窓のconfig_dirを足し同じ実体は先の綴りだけ残す() {
+    let home = tempfile::tempdir().unwrap();
+    let personal = home.path().join(".claude-personal");
+    std::fs::create_dir_all(&personal).unwrap();
+    let accounts = [account("work", None), account("personal", Some(&personal))];
+
+    let same_as_personal = claude_dirs_from(
+        &accounts,
+        Some(personal.join(".")),
+        Some(home.path().to_path_buf()),
+    );
+    let elsewhere = claude_dirs_from(
+        &accounts,
+        Some(PathBuf::from("/other")),
+        Some(home.path().to_path_buf()),
+    );
+
+    assert_eq!(
+        same_as_personal,
+        vec![home.path().join(".claude"), personal.clone()]
+    );
+    assert_eq!(
+        elsewhere,
+        vec![
+            home.path().join(".claude"),
+            personal,
+            PathBuf::from("/other")
+        ]
+    );
+}
+
+#[test]
+fn 読んだsessions_dirの綴りからアカウントを引く() {
+    let mut cfg = Config::default();
+    cfg.claude.accounts = vec![
+        account("work", None),
+        account("personal", Some(Path::new("/p"))),
+    ];
+
+    let name = |dir: &Path| cfg.account_of(dir).map(|a| a.name.clone());
+
+    assert_eq!(name(Path::new("/p/sessions")).as_deref(), Some("personal"));
+    assert_eq!(
+        name(&home().join(".claude/sessions")).as_deref(),
+        Some("work")
+    );
+    assert_eq!(name(Path::new("/other/sessions")), None);
+}
+
+#[test]
+fn accountsの重なりと色の書き損じを知らせる() {
+    let mut cfg = Config::default();
+    let mut bad_color = account("c", Some(Path::new("/c")));
+    bad_color.color = Some(String::from("not-a-color"));
+    cfg.claude.accounts = vec![
+        account("work", None),
+        account("work", Some(Path::new("/b"))),
+        account("explicit-default", Some(&home().join(".claude"))),
+        bad_color,
+    ];
+
+    assert_eq!(
+        cfg.claude_account_problems(),
+        vec![
+            "Claude account \"work\" is listed twice".to_string(),
+            "Claude account \"explicit-default\" uses the same config dir as an earlier one"
+                .to_string(),
+            "Claude account \"c\" has an unknown color".to_string(),
+        ]
+    );
 }
 
 #[test]

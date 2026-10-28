@@ -57,7 +57,7 @@ fn history_line(display: &str, session_id: &str, timestamp: u64, project: &Path)
 }
 
 fn write_history(home: &ClaudeHome, lines: &[String]) {
-    fs::write(home.history_file(), lines.join("\n") + "\n").unwrap();
+    fs::write(home.roots[0].join("history.jsonl"), lines.join("\n") + "\n").unwrap();
 }
 
 /// project の projects ディレクトリに空のセッションログを置く。
@@ -217,6 +217,70 @@ fn resume一覧は新しい順で重複とログの消えたものを除く() {
 }
 
 #[test]
+fn 二つのconfig_dirのhistoryは各ファイルの順を保って時刻で縫い合わせる() {
+    let (_w, work) = home();
+    let (_p, personal) = home();
+    let p = canonical(tempfile::tempdir().unwrap().path());
+    touch_session(&work, &p, "w1");
+    touch_session(&work, &p, "w2");
+    touch_session(&personal, &p, "p1");
+    write_history(
+        &work,
+        &[
+            history_line("w1", "w1", 1000, &p),
+            history_line("w2", "w2", 3000, &p),
+        ],
+    );
+    write_history(&personal, &[history_line("p1", "p1", 2000, &p)]);
+    let both = ClaudeHome::of(vec![work.roots[0].clone(), personal.roots[0].clone()]);
+    let personal_first = ClaudeHome::of(vec![personal.roots[0].clone(), work.roots[0].clone()]);
+
+    assert_eq!(
+        ids(&both.load_resumable_sessions(None).unwrap()),
+        ["w2", "p1", "w1"]
+    );
+    assert_eq!(
+        ids(&personal_first.load_resumable_sessions(None).unwrap()),
+        ["w2", "p1", "w1"],
+        "先に読み切るのが前のファイルでも残りを縫い合わせる"
+    );
+    assert_eq!(
+        both.session_log(&p, "p1"),
+        Some(personal.projects_dir_for(&p).join("p1.jsonl"))
+    );
+}
+
+#[test]
+fn 自分で選ぶresumeは起こすconfig_dirで開ける会話だけを候補にする() {
+    let (_w, work) = home();
+    let (_p, personal) = home();
+    let p = canonical(tempfile::tempdir().unwrap().path());
+    let q = canonical(tempfile::tempdir().unwrap().path());
+    touch_session(&work, &p, "older-work");
+    touch_session(&personal, &p, "newer-personal");
+    touch_session(&personal, &q, "only-personal");
+    write_history(&work, &[history_line("w", "older-work", 1000, &p)]);
+    write_history(
+        &personal,
+        &[
+            history_line("p", "newer-personal", 2000, &p),
+            history_line("q", "only-personal", 3000, &q),
+        ],
+    );
+    let in_work = ClaudeHome::of(vec![work.roots[0].clone(), personal.roots[0].clone()])
+        .opening_in(work.roots[0].clone());
+
+    let found = in_work
+        .find_latest_sessions_for_paths(&[p.clone(), q.clone()])
+        .unwrap();
+
+    assert_eq!(found[&p].session_id, "older-work");
+    assert!(!found.contains_key(&q));
+    assert!(in_work.can_open(&p, "older-work"));
+    assert!(!in_work.can_open(&p, "newer-personal"));
+}
+
+#[test]
 fn ワークツリーごとの最新セッションはログの消えたものに隠されない() {
     let (_h, home) = home();
     let p = canonical(tempfile::tempdir().unwrap().path());
@@ -322,6 +386,25 @@ fn 移行はログとサブエージェントをリンクしhistoryに追記す�
     assert_eq!(latest[&m.dest].display, "hint");
 
     assert!(m.migrate(), "2 回目もリンクがあるので何もせず成功");
+}
+
+#[test]
+fn 移行はresumeするconfig_dirの中で済ませ他のconfig_dirには書かない() {
+    let m = Migration::new();
+    let (_other_dir, other) = home();
+    let both = ClaudeHome::of(vec![other.roots[0].clone(), m.home.roots[0].clone()])
+        .opening_in(m.home.roots[0].clone());
+
+    assert!(
+        both.migrate_session("sess", &m.source, &m.dest, "hint")
+            .unwrap()
+    );
+
+    assert!(m.dst("sess.jsonl").symlink_metadata().unwrap().is_symlink());
+    assert!(!other.projects_dir_for(&m.dest).exists());
+    assert!(!other.roots[0].join("history.jsonl").exists());
+    both.unmigrate_session("sess", &m.source, &m.dest).unwrap();
+    assert!(m.dst("sess.jsonl").symlink_metadata().is_err());
 }
 
 #[test]

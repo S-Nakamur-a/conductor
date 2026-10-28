@@ -36,51 +36,80 @@ pub struct ResumableSession {
     pub time_ago: String,
 }
 
-/// ~/.claude。
+/// Claude Code の config dir (~/.claude など) の組。アカウントごとに 1 つ。
 #[derive(Debug, Clone)]
 pub struct ClaudeHome {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
+    /// resume の候補として数える会話のログを探す root。projects を共有していないと、
+    /// 起こすアカウントの root にログの無い会話は開けない。
+    opens_in: Vec<PathBuf>,
 }
 
 impl ClaudeHome {
-    pub fn detect() -> Option<Self> {
-        dirs::home_dir().map(|home| Self::at(home.join(".claude")))
+    #[cfg(test)]
+    fn at(root: PathBuf) -> Self {
+        Self::of(vec![root])
     }
 
-    pub fn at(root: PathBuf) -> Self {
-        Self { root }
+    pub fn of(roots: Vec<PathBuf>) -> Self {
+        Self {
+            opens_in: roots.clone(),
+            roots,
+        }
     }
 
-    fn history_file(&self) -> PathBuf {
-        self.root.join("history.jsonl")
+    /// conductor が自分で選んで resume する会話を、root で起こす Claude が開けるものに絞る。
+    pub fn opening_in(self, root: PathBuf) -> Self {
+        Self {
+            opens_in: vec![root],
+            ..self
+        }
     }
 
-    pub fn projects_dir_for(&self, working_dir: &Path) -> PathBuf {
-        self.root
-            .join("projects")
+    /// root で起こす Claude がその会話を resume できるか。
+    pub fn can_open(&self, working_dir: &Path, session_id: &str) -> bool {
+        self.opens_in
+            .iter()
+            .any(|root| log_in_root(root, working_dir, session_id).is_some())
+    }
+
+    fn projects_dir_in(root: &Path, working_dir: &Path) -> PathBuf {
+        root.join("projects")
             .join(encode_project_path(&working_dir.to_string_lossy()))
     }
 
-    fn session_file_exists(&self, entry: &HistoryEntry) -> bool {
-        session_log_in_dir(
-            &self.projects_dir_for(Path::new(&entry.project)),
-            &entry.session_id,
-        )
-        .is_some()
+    #[cfg(test)]
+    fn projects_dir_for(&self, working_dir: &Path) -> PathBuf {
+        Self::projects_dir_in(&self.roots[0], working_dir)
     }
 
-    /// パネルが書き込んでいるセッションログ。無ければ None。
-    ///
-    /// Claude Code は解決後の cwd でディレクトリ名を作るので canonicalize してから探し、
-    /// 解決できなくなったワークツリー (削除・アンマウント) のために生のパスも試す。
-    /// 広がるのは「どこを探すか」だけで、どの id を見せるかは変わらない。
-    pub fn session_log(&self, working_dir: &Path, session_id: &str) -> Option<PathBuf> {
-        let canonical =
-            std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
-        [canonical.as_path(), working_dir]
-            .into_iter()
-            .find_map(|dir| session_log_in_dir(&self.projects_dir_for(dir), session_id))
+    fn session_file_exists(&self, entry: &HistoryEntry) -> bool {
+        self.opens_in.iter().any(|root| {
+            session_log_in_dir(
+                &Self::projects_dir_in(root, Path::new(&entry.project)),
+                &entry.session_id,
+            )
+            .is_some()
+        })
     }
+
+    /// パネルが書き込んでいるセッションログ。どの root にあってもよい。無ければ None。
+    pub fn session_log(&self, working_dir: &Path, session_id: &str) -> Option<PathBuf> {
+        self.roots
+            .iter()
+            .find_map(|root| log_in_root(root, working_dir, session_id))
+    }
+}
+
+/// Claude Code は解決後の cwd でディレクトリ名を作るので canonicalize してから探し、
+/// 解決できなくなったワークツリー (削除・アンマウント) のために生のパスも試す。
+/// 広がるのは「どこを探すか」だけで、どの id を見せるかは変わらない。
+fn log_in_root(root: &Path, working_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    let canonical =
+        std::fs::canonicalize(working_dir).unwrap_or_else(|_| working_dir.to_path_buf());
+    [canonical.as_path(), working_dir]
+        .into_iter()
+        .find_map(|dir| session_log_in_dir(&ClaudeHome::projects_dir_in(root, dir), session_id))
 }
 
 /// project_dir の中の、ちょうど session_id のログ。

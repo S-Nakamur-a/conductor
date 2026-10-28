@@ -206,9 +206,10 @@ fn workspace(root: PathBuf, version: &'static str) -> Workspace {
     let (keymap, keybind_warnings) = KeyMap::with_warnings(&config.keybinds);
     let theme = Theme::from_name(config.theme_name());
     let repo = repo_state(root, &config);
+    let account_problems = config.claude_account_problems();
 
     let mut ws = Workspace::new(repo, config, keymap, theme, version);
-    let warning = config_warning.into_iter().chain(
+    let warning = config_warning.into_iter().chain(account_problems).chain(
         keybind_warnings
             .iter()
             .map(std::string::ToString::to_string),

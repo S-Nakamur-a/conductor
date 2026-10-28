@@ -460,7 +460,16 @@ files Claude Code writes itself (`~/.claude/sessions/<pid>.json`, read by
 `claude_sessions::registry` once a second on a worker) joined with this window's
 PtyStore by conversation id. The hooks' waiting/active cannot be the source: they
 stay "waiting" after a permission is approved until the tool finishes, and after an
-Esc refusal until the next prompt (measured on 2.1.309). A row of this window is
+Esc refusal until the next prompt (measured on 2.1.309). **Every account's state
+files are read** (`Config::claude_dirs`: each `[[claude.accounts]]` config dir, then the
+window's own `CLAUDE_CONFIG_DIR`), because a window reading only its own env's dir showed
+the other account's Claudes, its own panels included, with no state at all (measured with
+two isolated windows). Each `LiveSession` keeps the `sessions_dir` it came from: stopping
+re-checks `<pid>.json` there, the row's account label is looked up from it, and
+`read_live`'s one-row-per-conversation-per-dir dedup is for display only — stopping and deleting
+read `read_every`, so an older process on the same conversation is not hidden. Resume offers
+only conversations the account conductor was started with can open (`ClaudeHome::opening_in`),
+because the launch is still that account's. A row of this window is
 keyed by its panel id, not the conversation id, because `/clear` changes the
 latter. Rows hang under repository → worktree. The same worker lists the worktrees
 (`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under

@@ -367,8 +367,16 @@ fn enter_session(
 fn stop_fleet_session(ws: &mut Workspace, target: crate::panels::fleet::StopTarget) -> Vec<Effect> {
     use crate::panels::fleet::StopTarget;
     let id = match target {
-        StopTarget::Process { pid, started } => {
-            return vec![Effect::Spawn(Task::StopSession { pid, started })];
+        StopTarget::Process {
+            pid,
+            started,
+            sessions_dir,
+        } => {
+            return vec![Effect::Spawn(Task::StopSession {
+                pid,
+                started,
+                sessions_dir,
+            })];
         }
         StopTarget::Panel(id) => id,
     };
@@ -713,11 +721,19 @@ mod tests {
     fn 外のプロセスを止める指示は一覧に載せたときの起動時刻のまま裏の仕事になる() {
         let mut ws = Workspace::for_test();
         let started = SystemTime::UNIX_EPOCH + Duration::from_secs(5);
-        let effects = stop_fleet_session(&mut ws, StopTarget::Process { pid: 9, started });
+        let sessions_dir = std::path::PathBuf::from("/c/sessions");
+        let effects = stop_fleet_session(
+            &mut ws,
+            StopTarget::Process {
+                pid: 9,
+                started,
+                sessions_dir: sessions_dir.clone(),
+            },
+        );
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::Spawn(Task::StopSession { pid: 9, started: s })] if *s == started
+                [Effect::Spawn(Task::StopSession { pid: 9, started: s, sessions_dir: d })] if *s == started && *d == sessions_dir
             ),
             "{effects:?}"
         );
