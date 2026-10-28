@@ -2703,9 +2703,13 @@ needle here
             row: body.y,
             modifiers: KeyModifiers::NONE,
         };
+        // on_mouse は本物の svc で開くので、開き中にしてから押す。退行してもブラウザは開かない。
+        press_artifacts(&mut ws, &l, 0);
+        press_artifacts(&mut ws, &l, 0);
         on_mouse(&mut ws, &mut svc, &l, click);
         assert_eq!(ws.focus, Focus::Fleet);
-        assert_eq!(svc.in_flight(), 0, "一度目で開いた");
+        assert_eq!(svc.in_flight(), 0);
+        ws.panels.fleet.artifacts.note_opened();
         assert!(
             matches!(
                 press_artifacts(&mut ws, &l, 0).as_slice(),

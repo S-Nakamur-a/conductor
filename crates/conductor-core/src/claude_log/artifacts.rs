@@ -136,6 +136,28 @@ mod tests {
     }
 
     #[test]
+    fn list_や_quickstart_の結果は拾わない() {
+        let list = r#"{"type":"user","toolUseResult":{"artifacts":[{"title":"ブレッドボードを Rust へ","url":"https://claude.ai/artifact/HLa3vn6EjeRBE7zHyryw41","updatedAt":"2026-10-13T05:09:45Z"}],"total":1,"pins_enabled":true}}"#;
+        let quickstart = r#"{"type":"user","toolUseResult":{"quickstart":{"intent":"other","types_note":"a PreToolUse hook may cover Artifact calls — list the types and the design systems with their own calls, so the hook sees them","types_hooked":true,"design_guidance":true}}}"#;
+        let file = log_of(&format!("{list}\n{quickstart}\n"));
+
+        assert!(scan(file.path(), Scan::default()).unwrap().list.is_empty());
+    }
+
+    #[test]
+    fn 続きの中で前からある_url_をもう一度_publish_すると先頭へ動き題が替わる() {
+        let a = "https://claude.ai/artifact/a";
+        let b = "https://claude.ai/artifact/b";
+        let mut file = log_of(&format!("{}\n{}\n", publish(a, "old"), publish(b, "b")));
+        let first = scan(file.path(), Scan::default()).unwrap();
+        assert_eq!(titles(&first), ["b", "old"]);
+
+        append(&mut file, &format!("{}\n", publish(a, "new")));
+
+        assert_eq!(titles(&scan(file.path(), first).unwrap()), ["new", "b"]);
+    }
+
+    #[test]
     fn claude_ai_でない_url_は拾わない() {
         let file = log_of(&format!("{}\n", publish("file:///etc/passwd", "x")));
 
