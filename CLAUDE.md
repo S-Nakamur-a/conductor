@@ -91,9 +91,12 @@ spawn-time session id.
 **The same settings file also declares `statusLine`**, as `conductor cc-statusline`
 (`cc_hook/statusline.rs`), because the 5h / 7d usage reaches nothing on disk — only a
 statusLine's stdin (measured on 2.1.310, grepped `~/.claude` for it). It writes the JSON
-to `<runtime dir>/statusline/<session id>.json` for the session list, then runs the
-user's own statusLine with the same stdin. A `--settings` statusLine replaces the
-user's (measured), so cc-statusline looks the user's up on every run
+to `<runtime dir>/statusline/<session id>.<transcript hash>.json` for the session list,
+then runs the user's own statusLine with the same stdin. The 5h / 7d are split per
+account by the copy's `transcript_path`, which Claude writes under the config dir it
+runs with (seen on real copies of both accounts). The transcript is in the name so a
+conversation reopened as another account does not overwrite the first account's copy.
+A `--settings` statusLine replaces the user's (measured), so cc-statusline looks the user's up on every run
 (`.claude/settings.local.json`, `.claude/settings.json` in the stdin's
 `workspace.project_dir`, then `$CLAUDE_CONFIG_DIR` or `~/.claude`): fixing it at spawn
 would hide a later edit from conductor's panels only, while plain Claude picks it up.
@@ -564,7 +567,7 @@ Nothing else may follow it out: the rest of git stays on `git2`.
 - **Per-repo DB:** `<repo-root>/.conductor/conductor.db` (gitignored)
 - **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **PTY host log:** `<main worktree>/.conductor/pty-host.log` — the host's stderr; its socket sits beside the cc-notify one
-- **statusLine copies:** `<runtime dir>/statusline/<session id>.json` — the last statusLine input of each Claude conductor started; the session list reads context use and 5h / 7d from them. Never cleaned up (about 2KB each, under `$TMPDIR`)
+- **statusLine copies:** `<runtime dir>/statusline/<session id>.<transcript hash>.json` (an older conductor wrote `<session id>.json`) — the last statusLine input of each Claude conductor started, per account; the session list reads context use and 5h / 7d from them. Never cleaned up (about 2KB each, under `$TMPDIR`)
 - **Unknown tools:** `<repo-root>/.conductor/unknown-tools.log` — one line per tool name `claude_log::classify` did not recognise, so a transcript that renders thin is traceable to the tool the table is missing (`mcp__*` names are excluded)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 

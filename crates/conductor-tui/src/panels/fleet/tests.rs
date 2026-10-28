@@ -2591,7 +2591,7 @@ mod tree {
             at(200),
         );
         let theme = Theme::from_name("catppuccin-mocha");
-        let line = render::summary_line(&fleet, &theme, std::time::SystemTime::now(), 60);
+        let line = render::summary_line(&fleet, &theme, &[], std::time::SystemTime::now(), 60);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text.trim_end(), "入力待ち 1 · 作業中 1 · 完了 0 · 待機 0");
         let color_of = |word: &str| {
@@ -2613,7 +2613,7 @@ mod tree {
             at(200),
         );
         fleet.update(Action::GoToBottom, &Workspace::for_test().ctx());
-        let line = render::summary_line(&fleet, &theme, std::time::SystemTime::now(), 60);
+        let line = render::summary_line(&fleet, &theme, &[], std::time::SystemTime::now(), 60);
         let idle = line.spans.iter().find(|s| s.content.starts_with("待機"));
         assert_eq!(
             idle.and_then(|s| s.style.fg),
@@ -2964,7 +2964,7 @@ mod launch {
 }
 
 mod usage {
-    use conductor_core::cc_hook::statusline::{Limit, Usage};
+    use conductor_core::cc_hook::statusline::{Limit, Limits, Usage};
     use conductor_core::theme::Theme;
     use ratatui::text::Line;
     use unicode_width::UnicodeWidthStr;
@@ -2973,8 +2973,8 @@ mod usage {
 
     const NOW: u64 = 1_792_942_000;
 
-    fn limits(five: f64, seven: f64) -> Usage {
-        Usage {
+    fn pair(five: f64, seven: f64) -> Limits {
+        Limits {
             five_hour: Some(Limit {
                 used_percentage: five,
                 resets_at: (NOW + 2 * 3600 + 13 * 60) as i64,
@@ -2983,6 +2983,12 @@ mod usage {
                 used_percentage: seven,
                 resets_at: (NOW + 3 * 86_400 + 4 * 3600) as i64,
             }),
+        }
+    }
+
+    fn limits(five: f64, seven: f64) -> Usage {
+        Usage {
+            limits: vec![pair(five, seven)],
             ..Default::default()
         }
     }
@@ -3022,7 +3028,15 @@ mod usage {
             limits(42.0, 61.0),
             vec![live(7, "/r/a", "s7", Status::Working, Owner::Conductor)],
         );
-        let line = |width| squeeze(&text(&render::summary_line(&fleet, &theme, now(), width)));
+        let line = |width| {
+            squeeze(&text(&render::summary_line(
+                &fleet,
+                &theme,
+                &[],
+                now(),
+                width,
+            )))
+        };
         let stages = [
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h",
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% · 7d ████▉ 61%",
@@ -3038,7 +3052,7 @@ mod usage {
             }
         }
         assert_eq!(seen, stages);
-        let full = render::summary_line(&fleet, &theme, now(), 120);
+        let full = render::summary_line(&fleet, &theme, &[], now(), 120);
         assert_eq!(text(&full).width(), 120, "右端まで埋める");
     }
 
@@ -3046,7 +3060,7 @@ mod usage {
     fn 全部_0_本なら狭くても状態項目を省かず使用量を落とす() {
         let theme = Theme::from_name("catppuccin-mocha");
         let fleet = fleet_with(limits(42.0, 61.0), Vec::new());
-        let narrow = squeeze(&text(&render::summary_line(&fleet, &theme, now(), 45)));
+        let narrow = squeeze(&text(&render::summary_line(&fleet, &theme, &[], now(), 45)));
         assert_eq!(narrow, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
     }
 
@@ -3054,8 +3068,97 @@ mod usage {
     fn 使用量が無ければ状態項目だけ() {
         let theme = Theme::from_name("catppuccin-mocha");
         let fleet = fleet_with(Usage::default(), Vec::new());
-        let line = squeeze(&text(&render::summary_line(&fleet, &theme, now(), 200)));
+        let line = squeeze(&text(&render::summary_line(
+            &fleet,
+            &theme,
+            &[],
+            now(),
+            200,
+        )));
         assert_eq!(line, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
+    }
+
+    #[test]
+    fn アカウントがあれば名前をその色で前に置いて5h_7dを並べ_枠の無いアカウントは出さない() {
+        use conductor_core::config::ClaudeAccount;
+        let theme = Theme::from_name("catppuccin-mocha");
+        let accounts = [
+            ("work", "cyan"),
+            ("spare", "green"),
+            ("personal", "magenta"),
+        ]
+        .map(|(name, color)| ClaudeAccount {
+            name: name.into(),
+            color: Some(color.into()),
+            ..Default::default()
+        });
+        let usage = Usage {
+            limits: vec![pair(42.0, 61.0), Limits::default(), pair(90.0, 10.0)],
+            ..Default::default()
+        };
+        let fleet = fleet_with(usage, Vec::new());
+        let line = |width| render::summary_line(&fleet, &theme, &accounts, now(), width);
+        assert_eq!(
+            squeeze(&text(&line(200))),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h │ personal 5h ███████▏ 90% 2h13m · 7d ▊ 10% 3d4h"
+        );
+        assert_eq!(
+            squeeze(&text(&line(90))),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% │ personal 5h ███████▏ 90%"
+        );
+        assert_eq!(
+            squeeze(&text(&line(68))),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 42% │ personal 90%",
+            "バーつきでは収まらない幅でも、名前と % は残す"
+        );
+        let full = line(200);
+        let color_of = |name: &str| {
+            full.spans
+                .iter()
+                .find(|s| s.content == format!("{name} "))
+                .and_then(|s| s.style.fg)
+        };
+        assert_eq!(color_of("work"), accounts[0].color());
+        assert_eq!(color_of("personal"), accounts[2].color());
+    }
+
+    #[test]
+    fn 一番狭い形は5hの百分率で_5hが無いアカウントだけ7dと書く() {
+        use conductor_core::config::ClaudeAccount;
+        let theme = Theme::from_name("catppuccin-mocha");
+        let accounts = ["work", "personal"].map(|name| ClaudeAccount {
+            name: name.into(),
+            ..Default::default()
+        });
+        let week_only = Limits {
+            five_hour: None,
+            ..pair(0.0, 99.0)
+        };
+        let line = |limits: Vec<Limits>, accounts: &[ClaudeAccount]| {
+            let fleet = fleet_with(
+                Usage {
+                    limits,
+                    ..Default::default()
+                },
+                Vec::new(),
+            );
+            squeeze(&text(&render::summary_line(
+                &fleet,
+                &theme,
+                accounts,
+                now(),
+                68,
+            )))
+        };
+        assert_eq!(
+            line(vec![week_only, pair(25.0, 9.0)], &accounts),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 7d 99% │ personal 25%"
+        );
+        assert_eq!(
+            line(vec![pair(42.0, 61.0)], &accounts[..1]),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42%",
+            "1 アカウントならバーつきが収まる"
+        );
     }
 
     #[test]
@@ -3063,7 +3166,7 @@ mod usage {
         let theme = Theme::from_name("catppuccin-mocha");
         let bar_color = |pct: f64| {
             let fleet = fleet_with(limits(pct, 0.0), Vec::new());
-            let line = render::summary_line(&fleet, &theme, now(), 200);
+            let line = render::summary_line(&fleet, &theme, &[], now(), 200);
             line.spans
                 .iter()
                 .find(|s| s.content.contains('█'))
