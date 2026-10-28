@@ -513,6 +513,12 @@ live. Host notifications (Claude's
 state, session ids) are sent with `send_watch_unscoped` so a repository switch does
 not drop them; every other watch event keeps its generation.
 
+The list is `min(main × 45%, 100)` columns wide (`layout.rs`'s `FLEET_LIST_PCT` /
+`FLEET_LIST_MAX`), so a line drawn inside it never gets more than 98 — about 68 on a
+160-column terminal. A width test for anything in the list takes its widths from that;
+one at 200 columns pins a screen nobody can open (#441 passed at 200 and 90 while two
+accounts' 5h / 7d vanished at every real width).
+
 Under the list, `Region::FleetChanges` shows the Git Changes of the
 selected line's worktree (`FleetPanel::selected_dir`, derived from the selection every time, like the right side), read on a
 worker against *that* repository's default branch — another repository's base is not
@@ -598,6 +604,9 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   any file that fits on screen. Deliberately excluded: side-by-side diff (two gutters
   cannot be one range) and banner / thread rows (`Origin::Other`).
 - **Status messages:** `Effect::Status(level, text)`
+- **`Effect`'s `==` compares the variant only** (`effect.rs`'s `impl PartialEq`), so
+  `assert_eq!(effects, vec![Effect::X { .. }])` passes whatever the fields hold. When a
+  field is the claim, destructure it: `matches!(effects.as_slice(), [Effect::X(v)] if v == &want)`.
 - **Doc comments:** `//!` at module level, `///` on public items
 - **A regression test is not done until you have seen it fail.** Back the fix out (keep a
   copy, restore it right away), run the one test, and confirm the panic — a green test can
