@@ -3142,17 +3142,22 @@ mod usage {
             },
             Vec::new(),
         );
-        let line = render::summary_line(
-            &fleet,
-            &theme,
-            &accounts,
-            now(),
-            usize::from(list.width - 2),
-        );
+        let line = |width| {
+            squeeze(&text(&render::summary_line(
+                &fleet,
+                &theme,
+                &accounts,
+                now(),
+                width,
+            )))
+        };
         assert_eq!(
-            squeeze(&text(&line)),
+            line(usize::from(list.width - 2)),
             "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% · 7d ████▉ 61% │ personal 5h ███████▏ 90% · 7d ▊ 10%"
         );
+        assert!(line(123).contains("7d"));
+        assert!(!line(122).contains("7d"), "123 が下限");
+        assert!(!line(95).contains("7d"), "160 桁の窓の一覧には入らない");
     }
 
     #[test]
