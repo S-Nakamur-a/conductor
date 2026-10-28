@@ -36,14 +36,16 @@ pub enum Launch<'a> {
     },
 }
 
-/// Resume は既存の id を `--resume` で保つ。New は新しい id を `--session-id` で強制し、
-/// 最初のプロンプトは位置引数で渡す。起動後に流し込むと、未信頼の dir では既定が
-/// 「No, exit」の trust ダイアログに Enter が当たって Claude が終わる。
+/// 最初のプロンプトを起動後に流し込むと、未信頼の dir では既定が「No, exit」の trust
+/// ダイアログに Enter が当たって Claude が終わるので、位置引数で渡す。
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Conversation<'a> {
+    /// 新しい id を `--session-id` で強制する。
     #[default]
     New,
+    /// New に、最初のプロンプトを最後の位置引数として足す。
     NewWith(&'a str),
+    /// 既存の id を `--resume` で保つ。
     Resume(&'a str),
 }
 

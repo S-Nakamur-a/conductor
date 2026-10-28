@@ -18,7 +18,7 @@ pub struct Record {
 pub enum Mark {
     /// 今の commit を読んだレビューがある。
     Current,
-    /// 同じブランチの、前の commit を読んだレビューだけがある。
+    /// 同じブランチの、HEAD と違う commit を読んだレビューだけがある。
     Stale,
 }
 
@@ -54,7 +54,7 @@ fn record_in(dir: &Path) -> Option<Record> {
 }
 
 /// worktree は canonical なパスで渡す。detached なら branch は git の `--abbrev-ref` と同じ "HEAD"。
-/// `--abbrev-ref` は同名の tag があると `heads/<branch>` と書くので、その印は落として比べる。
+/// `--abbrev-ref` は同名の ref があると `heads/<branch>` や `refs/heads/<branch>` と書く。
 pub fn mark_of(records: &[Record], worktree: &Path) -> Option<Mark> {
     let mine: Vec<&Record> = records.iter().filter(|r| r.root == worktree).collect();
     if mine.is_empty() {
@@ -68,9 +68,12 @@ pub fn mark_of(records: &[Record], worktree: &Path) -> Option<Mark> {
     } else {
         "HEAD".to_string()
     };
-    let same_branch = mine
-        .iter()
-        .filter(|r| r.branch.strip_prefix("heads/").unwrap_or(&r.branch) == branch);
+    let spellings = [
+        branch.clone(),
+        format!("heads/{branch}"),
+        format!("refs/heads/{branch}"),
+    ];
+    let same_branch = mine.iter().filter(|r| spellings.contains(&r.branch));
     let mut mark = None;
     for record in same_branch {
         if record.head_oid == oid {
@@ -217,6 +220,38 @@ mod tests {
             tmp.path(),
             "revidere-a",
             &meta(&worktree, "heads/main", &head),
+            true,
+        );
+        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        let tmp = tempfile::tempdir().unwrap();
+        workdir(
+            tmp.path(),
+            "revidere-a",
+            &meta(&worktree, "refs/heads/main", &head),
+            true,
+        );
+        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        let tmp = tempfile::tempdir().unwrap();
+        workdir(
+            tmp.path(),
+            "revidere-a",
+            &meta(&worktree, "a/main", &head),
+            true,
+        );
+        assert_eq!(mark_of(&read(tmp.path()), &worktree), None);
+    }
+
+    #[test]
+    fn heads_で始まる名前のブランチもその名前のまま比べる() {
+        let repo = TestRepo::with_base_commit();
+        repo.branch("heads/foo").checkout("heads/foo");
+        let worktree = repo.path.canonicalize().unwrap();
+        let head = repo.repo.head().unwrap().target().unwrap().to_string();
+        let tmp = tempfile::tempdir().unwrap();
+        workdir(
+            tmp.path(),
+            "revidere-a",
+            &meta(&worktree, "heads/foo", &head),
             true,
         );
         assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));

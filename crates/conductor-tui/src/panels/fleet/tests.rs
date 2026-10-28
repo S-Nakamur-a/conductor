@@ -3040,11 +3040,29 @@ mod launch {
     fn revidere_ボタンの二度押しは_2_本目を起こさない() {
         let mut ws = many_worktrees(3);
         assert_eq!(revidere_launches(&press_at(&mut ws, 5, 2)).len(), 1);
-        assert!(press_at(&mut ws, 5, 2).is_empty());
+        let own = vec![OwnSession {
+            panel_id: "p1".into(),
+            working_dir: PathBuf::from("/r/app-01"),
+            claude_session_id: None,
+        }];
+        ws.panels.fleet.note_launched("p1".into(), own);
+        let second = press_at(&mut ws, 5, 2);
+        assert!(revidere_launches(&second).is_empty());
+        assert!(
+            matches!(second[..], [Effect::Focus(Focus::FleetSession)]),
+            "二度目は起こしたセッションへ入り直す: {second:?}"
+        );
         assert_eq!(
             revidere_launches(&press_at(&mut ws, 5, 3)),
             [PathBuf::from("/r/app-02")],
             "別の行の [R] は二度押しではない"
+        );
+        let opens_menu =
+            |effects: &[Effect]| matches!(effects, [Effect::PushModal(Modal::Popup(_))]);
+        assert!(opens_menu(&press_at(&mut ws, 1, 3)));
+        assert!(
+            opens_menu(&press_at(&mut ws, 1, 3)),
+            "[+] の押し直しは、閉じたメニューを開き直す"
         );
     }
 

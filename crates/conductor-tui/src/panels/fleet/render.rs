@@ -796,7 +796,8 @@ fn countdown_text(secs: i64) -> String {
     }
 }
 
-/// 本文の右端に右から並ぶボタン。描画も当たり判定も [buttons] の並びを読む。
+/// 本文の右端に右から並ぶボタン。当たり判定は [buttons] を読み、描画 (worktree_line /
+/// repo_header) は同じ並びで直書きしている。
 pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
 const BUTTON_WIDTH: u16 = 3;

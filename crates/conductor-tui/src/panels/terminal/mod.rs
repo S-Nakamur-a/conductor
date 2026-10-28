@@ -1472,6 +1472,28 @@ mod tests {
     use crate::workspace::Workspace;
     use ratatui::layout::Rect;
 
+    #[test]
+    fn 最初のプロンプトは新しい会話にだけ付き_resume_と一緒なら使わない() {
+        let args = |resume, startup_prompt| ClaudeArgs {
+            resume,
+            startup_prompt,
+            ..ClaudeArgs::default()
+        };
+        assert!(matches!(args(None, None).conversation(), Conversation::New));
+        assert!(matches!(
+            args(None, Some("/x")).conversation(),
+            Conversation::NewWith("/x")
+        ));
+        assert!(matches!(
+            args(Some("id"), None).conversation(),
+            Conversation::Resume("id")
+        ));
+        assert!(matches!(
+            args(Some("id"), Some("/x")).conversation(),
+            Conversation::Resume("id")
+        ));
+    }
+
     /// 本物のシェルを起動して、出力が画面に載るまで待つ。
     fn spawn_shell(ws: &mut Workspace, script: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();

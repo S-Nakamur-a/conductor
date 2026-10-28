@@ -243,7 +243,7 @@ pub struct FleetPanel {
     opening_page: bool,
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, Option<usize>, Option<Selected>)>,
-    button_clicks: ClickTracker<(u16, render::Button)>,
+    revidere_clicks: ClickTracker<u16>,
     pub changes: changes::BranchChanges,
     pub artifacts: artifacts::SessionArtifacts,
     lower: Lower,
@@ -473,7 +473,14 @@ impl FleetPanel {
         self.trees.iter().any(|t| t.root == root)
     }
 
-    /// 一覧のボタンを押した。行き先は押した行から取る。[R] だけは起こしたセッションを選ぶ。
+    fn enter_selected(&self) -> Vec<Effect> {
+        match self.selected {
+            Some(Selected::Session(..)) => vec![Effect::Focus(Focus::FleetSession)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// 一覧のボタンを押した。行き先は押した行から取る。
     fn click_button(
         &mut self,
         button: render::Button,
@@ -507,16 +514,14 @@ impl FleetPanel {
     pub fn click_list(&mut self, at: (u16, u16), press: ListPress, config: &Config) -> Vec<Effect> {
         let key = (at.1, press.button_column, self.selected.clone());
         if self.row_clicks.is_double(key) {
-            return match self.selected {
-                Some(Selected::Session(..)) => vec![Effect::Focus(Focus::FleetSession)],
-                _ => Vec::new(),
-            };
+            return self.enter_selected();
         }
         if let Some((button, slot)) = press.button {
             self.row_clicks = ClickTracker::default();
             // [R] はモーダルを挟まずに起こし、起こした行へ選択が移るので、選択を鍵に含めない。
-            if self.button_clicks.is_double((at.1, button)) {
-                return Vec::new();
+            // [+] と [✧] の二度目は、一度目に開いたモーダルが先に取る。
+            if button == render::Button::Revidere && self.revidere_clicks.is_double(at.1) {
+                return self.enter_selected();
             }
             return self.click_button(button, slot, at, config);
         }

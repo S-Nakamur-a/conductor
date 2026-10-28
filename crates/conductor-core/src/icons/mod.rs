@@ -269,7 +269,7 @@ pub const REVIDERE: Glyph = Glyph::new("\u{eab3}", "R");
 /// 今の commit を読んだ revidere がある。
 pub const REVIDERE_CURRENT: Glyph = Glyph::new("\u{eba4}", "\u{2713}");
 
-/// 同じブランチの前の commit を読んだ revidere だけがある。
+/// 同じブランチの、HEAD と違う commit を読んだ revidere だけがある。
 pub const REVIDERE_STALE: Glyph = Glyph::new("\u{ea82}", "\u{21bb}");
 
 /// 別プロセスに grab されていて操作できないパネル。
