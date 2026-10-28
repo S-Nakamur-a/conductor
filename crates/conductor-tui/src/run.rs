@@ -716,7 +716,7 @@ fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Ve
     let press = ListPress {
         hit: render::slot_at(&composed, x, y),
         button: render::button_hit(&composed, x, y),
-        in_button_columns: render::in_button_columns(&composed, x),
+        button_column: render::button_column(&composed, x),
     };
     ws.panels.fleet.click_list((x, y), press, &ws.config)
 }
@@ -3472,7 +3472,7 @@ needle here
             crate::panels::fleet::ListPress {
                 hit: Some(&Slot::Session(bottom)),
                 button: None,
-                in_button_columns: false,
+                button_column: None,
             },
             &ws.config,
         );
@@ -3637,7 +3637,7 @@ needle here
         );
         assert!(matches!(
             one.last(),
-            Some(Effect::NewClaudeIn { dir, chrome: false, .. }) if dir == &PathBuf::from("/r/app-b")
+            Some(Effect::NewClaudeIn { dir, chrome: false, startup_prompt: None, .. }) if dir == &PathBuf::from("/r/app-b")
         ));
         assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
     }

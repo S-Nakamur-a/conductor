@@ -1300,6 +1300,7 @@ fn fleet_status(
 ) -> crate::panels::fleet::FleetStatus {
     use conductor_core::claude_log::summary;
     use conductor_core::claude_sessions::registry;
+    use conductor_core::revidere_records;
 
     let live = registry::read_live(
         &registry::sessions_dirs(&env.claude_dirs),
@@ -1330,6 +1331,17 @@ fn fleet_status(
             .map(|l| l.cwd.clone()),
     );
     let (trees, placement) = fleet_trees(&dirs, roots);
+    let records = revidere_records::read(&std::env::temp_dir());
+    let reviews = trees
+        .iter()
+        .flat_map(|t| &t.worktrees)
+        .filter_map(|w| {
+            Some((
+                w.path.clone(),
+                revidere_records::mark_of(&records, &w.path)?,
+            ))
+        })
+        .collect();
     crate::panels::fleet::FleetStatus {
         live,
         summaries,
@@ -1340,6 +1352,7 @@ fn fleet_status(
             &env.account_dirs,
             std::time::SystemTime::now(),
         ),
+        reviews,
     }
 }
 

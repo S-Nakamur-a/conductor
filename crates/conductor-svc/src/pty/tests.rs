@@ -7,7 +7,7 @@ use super::io::{encode_mouse_wheel, sanitize_pasted_text, scroll_arrow_sequence}
 use super::locale::{utf8_chunks, utf8_locale_overrides};
 use super::reader::{note_shown_cursor, trim_raw_history};
 use super::screen::rebuild_parser;
-use super::spawn::{Launch, build_command, relay_statusline, use_account};
+use super::spawn::{Conversation, Launch, build_command, relay_statusline, use_account};
 
 #[test]
 fn 隠している間のカーソル位置は取り込まない() {
@@ -253,7 +253,7 @@ fn フックを降りたセッションはsettingsを渡さず書きもしない
     let settings = repo.path().join(".conductor/claude-hooks.json");
     let claude = |session_hooks| Launch::ClaudeCode {
         repo_root: repo.path(),
-        resume_session_id: None,
+        conversation: Conversation::New,
         session_name: None,
         session_hooks,
         chrome: false,
@@ -281,7 +281,7 @@ fn chromeを頼んだセッションだけがchromeフラグを渡す() {
     let passes_chrome = |chrome| {
         let launch = Launch::ClaudeCode {
             repo_root: repo.path(),
-            resume_session_id: None,
+            conversation: Conversation::New,
             session_name: None,
             session_hooks: false,
             chrome,
@@ -293,6 +293,39 @@ fn chromeを頼んだセッションだけがchromeフラグを渡す() {
 
     assert!(passes_chrome(true));
     assert!(!passes_chrome(false));
+}
+
+#[test]
+fn 最初のプロンプトは新しい会話の最後の位置引数で渡し_再開では渡さない() {
+    let repo = tempfile::tempdir().unwrap();
+    let argv = |conversation| {
+        let launch = Launch::ClaudeCode {
+            repo_root: repo.path(),
+            conversation,
+            session_name: Some("name"),
+            session_hooks: true,
+            chrome: false,
+            account: None,
+        };
+        let (cmd, _) = build_command(&launch, "panel");
+        cmd.get_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    };
+
+    let with = argv(Conversation::NewWith("/conductor:revidere"));
+    assert_eq!(with.last().unwrap(), "/conductor:revidere");
+    assert!(with.iter().any(|a| a == "--session-id"));
+    assert!(with.iter().any(|a| a == "--settings"));
+
+    let plain = argv(Conversation::New);
+    assert_eq!(plain.len(), with.len() - 1);
+    assert!(!plain.iter().any(|a| a == "/conductor:revidere"));
+
+    let resumed = argv(Conversation::Resume("abc"));
+    assert!(resumed.windows(2).any(|w| w == ["--resume", "abc"]));
+    assert!(!resumed.iter().any(|a| a == "--session-id"));
 }
 
 #[test]
@@ -328,7 +361,7 @@ fn フックを降りてもpanel_idは渡しソケットは渡さない() {
     let (cmd, _) = build_command(
         &Launch::ClaudeCode {
             repo_root: repo.path(),
-            resume_session_id: None,
+            conversation: Conversation::New,
             session_name: None,
             session_hooks: false,
             chrome: false,

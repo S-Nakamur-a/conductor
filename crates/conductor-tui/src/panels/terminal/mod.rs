@@ -17,7 +17,7 @@ use conductor_core::claude_log::LogEntry;
 use conductor_core::config::Config;
 use conductor_core::keymap::Action;
 use conductor_core::theme::Theme;
-use conductor_svc::pty::{Attached, Launch, PtyStore, SessionKind, Spawn};
+use conductor_svc::pty::{Attached, Conversation, Launch, PtyStore, SessionKind, Spawn};
 use conductor_svc::watch::{CcState, WatchEvent};
 use crossterm::event::KeyEvent;
 
@@ -105,6 +105,18 @@ pub struct ClaudeArgs<'a> {
     pub account: Option<&'a str>,
     /// resume する会話を走らせた config dir。手で選んでいなければこのアカウントで起こす。
     pub ran_in: Option<&'a Path>,
+    /// 新しい会話の最初のプロンプト。resume と一緒に渡すと使われない。
+    pub startup_prompt: Option<&'a str>,
+}
+
+impl ClaudeArgs<'_> {
+    fn conversation(&self) -> Conversation<'_> {
+        match (self.resume, self.startup_prompt) {
+            (Some(id), _) => Conversation::Resume(id),
+            (None, Some(prompt)) => Conversation::NewWith(prompt),
+            (None, None) => Conversation::New,
+        }
+    }
 }
 
 struct PendingTranscript {
@@ -976,7 +988,7 @@ impl TerminalPanel {
             },
             _ => Launch::ClaudeCode {
                 repo_root,
-                resume_session_id: claude.resume,
+                conversation: claude.conversation(),
                 session_name: claude.name,
                 session_hooks: self.session_hooks,
                 chrome: claude.chrome,

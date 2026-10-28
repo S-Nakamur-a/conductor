@@ -190,6 +190,17 @@ Artifact. It used to be a crate driven by the window; it left because the review
 needs an agentic model reading the repository, which a session already is. The
 procedure and the review rules live in its `SKILL.md`.
 
+The session list still reads what the skill leaves behind, so the script's work
+directory is a contract: `conductor_core::revidere_records` counts a
+`$TMPDIR/revidere-*` that holds both `meta.json` (its `root`, `branch` and `head_oid`)
+and `review.html`, and marks a worktree current when `head_oid` is its HEAD on the same
+branch, stale when only an earlier commit was read. Renaming either file or those keys
+in `revidere.py` makes the marks disappear without an error, and a window whose
+`$TMPDIR` differs from the Claude that ran the skill never sees them. The list's
+revidere button starts Claude with `/conductor:revidere` as its first argument rather
+than typing it in after start: an untrusted directory opens on a trust dialog whose
+default is "No, exit", and a typed Enter would land there (measured on 2.1.x).
+
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 
 sheaf-core holds a SCIP index split per file, keyed by content hash, and answers

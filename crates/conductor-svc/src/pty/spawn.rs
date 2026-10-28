@@ -18,8 +18,7 @@ pub enum Launch<'a> {
     ClaudeCode {
         /// MCP へ渡す DB とフック設定の置き場所を決めるリポジトリの根。
         repo_root: &'a Path,
-        /// 与えると `--resume`。無ければ新しい id を `--session-id` で強制する。
-        resume_session_id: Option<&'a str>,
+        conversation: Conversation<'a>,
         session_name: Option<&'a str>,
         session_hooks: bool,
         chrome: bool,
@@ -35,6 +34,17 @@ pub enum Launch<'a> {
         args: &'a [String],
         file: &'a Path,
     },
+}
+
+/// Resume は既存の id を `--resume` で保つ。New は新しい id を `--session-id` で強制し、
+/// 最初のプロンプトは位置引数で渡す。起動後に流し込むと、未信頼の dir では既定が
+/// 「No, exit」の trust ダイアログに Enter が当たって Claude が終わる。
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Conversation<'a> {
+    #[default]
+    New,
+    NewWith(&'a str),
+    Resume(&'a str),
 }
 
 impl Launch<'_> {
@@ -140,7 +150,7 @@ pub(super) fn build_command(
     match launch {
         Launch::ClaudeCode {
             repo_root,
-            resume_session_id,
+            conversation,
             session_name,
             session_hooks,
             chrome,
@@ -151,15 +161,15 @@ pub(super) fn build_command(
                 cmd.arg("--chrome");
             }
             use_account(&mut cmd, *account);
-            // resume は既存の id を保つ。新規は id を先に決めて渡すので、「worktree の
-            // 最新セッション」を推測せずにログのファイル名が事前にわかる。
-            let session_id = match resume_session_id {
-                Some(id) => {
+            // 新規は id を先に決めて渡すので、「worktree の最新セッション」を推測せずに
+            // ログのファイル名が事前にわかる。
+            let session_id = match conversation {
+                Conversation::Resume(id) => {
                     cmd.arg("--resume");
                     cmd.arg(id);
                     (*id).to_string()
                 }
-                None => {
+                Conversation::New | Conversation::NewWith(_) => {
                     let id = Uuid::new_v4().to_string();
                     cmd.arg("--session-id");
                     cmd.arg(&id);
@@ -197,6 +207,9 @@ pub(super) fn build_command(
                 // 書けなくてもパネルは動かす。ローテーション追跡はログからの推測に落ちる。
                 Some(Err(e)) => log::warn!("could not install the Claude session hook: {e}"),
                 None => {}
+            }
+            if let Conversation::NewWith(prompt) = conversation {
+                cmd.arg(prompt);
             }
             (cmd, Some(session_id))
         }

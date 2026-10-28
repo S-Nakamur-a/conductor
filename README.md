@@ -157,6 +157,13 @@ Worktree moves down after them, and a session otherwise starts as the account wh
 `paths` contain its directory. The result of a Smart Worktree started before switching to another
 repository still arrives.
 
+The checklist button left of `[+]` (`[R]` without a Nerd Font) starts Claude in that
+worktree running `/conductor:revidere`. The mark left of it says whether a revidere page
+exists for the worktree: a green check when one read the commit checked out now, a yellow
+clock when the only ones read an earlier commit of the same branch. The marks come from
+the work directories revidere leaves under `$TMPDIR`, so a page made elsewhere, or one
+whose directory has been cleaned away, is not counted.
+
 **g** opens the selected line's pull request in the browser: one whose head is the branch
 checked out in that worktree (on a session's line, the worktree it runs in), as
 `gh pr list --head` finds it — an open one first, otherwise a merged or closed one.
