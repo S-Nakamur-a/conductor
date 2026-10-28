@@ -164,8 +164,10 @@ only ones read another commit of the same branch. Without a Nerd Font they are `
 `✓` and `↻`. The marks come from
 the work directories revidere leaves under `$TMPDIR`, so a page made elsewhere, or one
 whose directory has been cleaned away, is not counted. Clicking the mark opens the newest
-of those pages as published. Only a revidere that recorded the published link opens
-(plugin 0.11.0 and later); an older mark says it has no link.
+published page of the kind it shows: one that read the commit checked out now if there is
+any, otherwise one that read an older commit. A link is recorded only by a revidere run from
+plugin 0.11.0 on, once it has published the page; when the kind shown has no recorded link,
+the mark says so instead.
 
 **g** opens the selected line's pull request in the browser: one whose head is the branch
 checked out in that worktree (on a session's line, the worktree it runs in), as

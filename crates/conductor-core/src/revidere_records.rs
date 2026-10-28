@@ -15,7 +15,7 @@ pub struct Record {
     pub branch: String,
     pub head_oid: String,
     pub url: Option<String>,
-    /// review.html の mtime。同じ印の記録のうち url のあるものが複数あれば、新しいものを開く。
+    /// review.html の mtime。
     pub rendered: SystemTime,
 }
 

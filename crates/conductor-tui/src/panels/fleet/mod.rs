@@ -504,9 +504,12 @@ impl FleetPanel {
                     startup_prompt: Some(REVIDERE_COMMAND.to_string()),
                 };
                 vec![Effect::PushModal(Modal::Confirm(
-                    Confirm::ask(format!("Run {REVIDERE_COMMAND} here?"), vec![launch])
-                        .title("Run revidere")
-                        .detail(w.path.display().to_string()),
+                    Confirm::ask(
+                        format!("Run {REVIDERE_COMMAND} on {}?", w.label),
+                        vec![launch],
+                    )
+                    .title("Run revidere")
+                    .detail(w.path.display().to_string()),
                 ))]
             }
             (render::Button::Mark, render::Slot::Worktree(w)) => self.open_review(&w.path, at),

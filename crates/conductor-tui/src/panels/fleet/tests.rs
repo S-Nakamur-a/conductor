@@ -2911,6 +2911,7 @@ mod launch {
             ))
         );
         assert_eq!(render::button_hit(&composed, right - 4, y(0)), None);
+        assert_eq!(render::button_hit(&composed, right - 7, y(0)), None);
         let Some((render::Button::New, render::Slot::Worktree(w))) =
             render::button_hit(&composed, right - 3, y(2))
         else {
@@ -3025,7 +3026,6 @@ mod launch {
         ws
     }
 
-    /// [R] は確認を挟む。Yes で起こすものを返す。
     fn revidere_launches(effects: &[Effect]) -> Vec<PathBuf> {
         let [Effect::PushModal(Modal::Confirm(confirm))] = effects else {
             return Vec::new();
@@ -3076,6 +3076,10 @@ mod launch {
             let [Effect::PushModal(Modal::Confirm(confirm))] = effects.as_slice() else {
                 panic!("{effects:?}");
             };
+            assert_eq!(
+                confirm.question, "Run /conductor:revidere on b01?",
+                "パスは狭い窓で末尾が切れるので、質問の行で行の名前を出す"
+            );
             let text: String = crate::modal::confirm::lines(confirm, &ws.theme)
                 .iter()
                 .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
@@ -3135,7 +3139,11 @@ mod launch {
                 Some("https://claude.ai/artifact/one"),
                 "右から {x} 桁目"
             );
-            assert!(press_at(&mut ws, x, 2).is_empty(), "二度押しは捨てる");
+            ws.panels.fleet.artifacts.note_opened();
+            assert!(
+                press_at(&mut ws, x, 2).is_empty(),
+                "開き終わった後でも、ダブルクリックの二度目は捨てる"
+            );
             ws.panels.fleet.artifacts.note_opened();
             ws.panels.fleet.mark_clicks = crate::click::ClickTracker::default();
         }

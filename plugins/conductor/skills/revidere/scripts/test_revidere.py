@@ -536,6 +536,7 @@ class PublishedCommand(RepoTest):
         after = rv.read_json(self.meta)
         self.assertEqual(after.pop("artifact_url"), "https://claude.ai/artifact/b")
         self.assertEqual(after, before)
+        self.assertFalse(os.path.exists(self.meta + ".tmp"), "一時ファイルは置き換えで消える")
 
     def test_ArtifactでないURLと読めないmetaはexit2で何も書かない(self):
         before = read_bytes(self.meta)
