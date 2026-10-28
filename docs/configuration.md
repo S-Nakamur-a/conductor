@@ -57,6 +57,27 @@ immediately on save; everything else needs a restart.
                                         # back here automatically. Maximizing a panel
                                         # (Ctrl+Alt+Z) overrides them temporarily.
 
+# One [[claude.accounts]] per Claude Code account, that is, per config dir. The
+# Sessions list reads the state files of every account listed here (plus the
+# config dir conductor itself was started with), and labels each session with
+# its account's name in its color. The transcript view looks in all of those
+# config dirs too; Resume, automatic resume and grab offer only the conversations
+# the account conductor was started with can open. With no accounts, only the
+# config dir conductor was started with is read (CLAUDE_CONFIG_DIR, or ~/.claude
+# without it).
+#
+# [[claude.accounts]]
+# name = "work"
+# color = "cyan"                        # a color name or "#rrggbb"
+# # config_dir not written: Claude Code's default, ~/.claude. Do not write
+# # config_dir = "~/.claude" for it: Claude Code keys the login by the exact spelling of
+# # CLAUDE_CONFIG_DIR, so the spelled-out default reads as logged out.
+#
+# [[claude.accounts]]
+# name = "personal"
+# color = "magenta"
+# config_dir = "~/.claude-personal"     # used as written after ~ expansion, trailing / included
+
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup
 # check_interval_secs = 3600            # minimum interval between checks; also the cache lifetime

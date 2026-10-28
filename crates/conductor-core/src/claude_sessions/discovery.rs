@@ -8,18 +8,36 @@ use anyhow::Result;
 use super::{ClaudeHome, HistoryEntry, ResumableSession, format_time_ago};
 
 impl ClaudeHome {
-    /// history.jsonl の有効なエントリを、ファイルの順 (時系列) で返す。ファイルが無ければ空。
+    /// history.jsonl の有効なエントリを時系列で返す。ファイルが無い root は飛ばす。
+    /// 1 つのファイルの中はファイルの順のまま、root をまたぐ所だけ timestamp で縫い合わせる。
     fn read_history(&self) -> Result<Vec<HistoryEntry>> {
-        let path = self.history_file();
-        if !path.exists() {
-            return Ok(Vec::new());
+        let mut files = Vec::new();
+        for path in self.roots.iter().map(|root| root.join("history.jsonl")) {
+            if !path.exists() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path)?;
+            files.push(
+                content
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<HistoryEntry>(line).ok())
+                    .filter(|e| !e.session_id.is_empty())
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .peekable(),
+            );
         }
-        let content = std::fs::read_to_string(&path)?;
-        Ok(content
-            .lines()
-            .filter_map(|line| serde_json::from_str::<HistoryEntry>(line).ok())
-            .filter(|e| !e.session_id.is_empty())
-            .collect())
+        let mut merged = Vec::new();
+        while let Some(next) = files
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, file)| file.peek().map(|e| (i, e.timestamp)))
+            .min_by_key(|(_, timestamp)| *timestamp)
+            .map(|(i, _)| i)
+        {
+            merged.extend(files[next].next());
+        }
+        Ok(merged)
     }
 
     /// resume 可能なセッションを新しい順に返す。filter_project は history の project との完全一致。

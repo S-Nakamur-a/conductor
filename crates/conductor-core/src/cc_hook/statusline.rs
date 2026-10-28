@@ -102,7 +102,7 @@ fn is_session_id(id: &str) -> bool {
     id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// Claude Code の user settings の置き場。registry の sessions_dir と同じく CLAUDE_CONFIG_DIR を先に見る。
+/// Claude Code の user settings の置き場。CLAUDE_CONFIG_DIR を先に見て、無ければ ~/.claude。
 pub fn claude_config_dir() -> Option<PathBuf> {
     config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
 }

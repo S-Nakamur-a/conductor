@@ -43,6 +43,7 @@ fn live(pid: u32, cwd: &str, session: &str, status: Status, owner: Owner) -> Liv
         status_since: Some(at(100)),
         owner,
         started: at(u64::from(pid)),
+        sessions_dir: PathBuf::from("/c/sessions"),
     }
 }
 
@@ -457,7 +458,7 @@ fn この窓の外の行は一覧に載せたときの起動時刻ごと止め�
     assert!(
         matches!(
             confirm.on_yes.as_slice(),
-            [Effect::StopFleetSession(StopTarget::Process { pid: 9, started })] if *started == at(9)
+            [Effect::StopFleetSession(StopTarget::Process { pid: 9, started, sessions_dir })] if *started == at(9) && sessions_dir == std::path::Path::new("/c/sessions")
         ),
         "{:?}",
         confirm.on_yes
@@ -518,7 +519,7 @@ fn 入力待ちの欄の行でも止める相手は同じセッション() {
     let confirm = ask_stop(&mut fleet);
     assert!(matches!(
         confirm.on_yes.as_slice(),
-        [Effect::StopFleetSession(StopTarget::Process { pid: 7, started })] if *started == at(7)
+        [Effect::StopFleetSession(StopTarget::Process { pid: 7, started, .. })] if *started == at(7)
     ));
 }
 
@@ -604,6 +605,42 @@ fn 止めたこの窓の行は組んでいた写しごとすぐ消え_選択は�
         fleet.selected_row().unwrap().key,
         RowKey::Panel("CC:2".into())
     );
+}
+
+#[test]
+fn 同じ会話を外の端末で別のアカウントで開いてもこの窓の行は自分の_claude_と組み外の行は別に出て残る()
+ {
+    let mut fleet = FleetPanel::default();
+    let mut mine = live(7, "/r/a", "s1", Status::Idle, Owner::Conductor);
+    mine.sessions_dir = PathBuf::from("/p/sessions");
+    let mut outside = live(6, "/r/a", "s1", Status::Working, Owner::Elsewhere);
+    outside.sessions_dir = PathBuf::from("/w/sessions");
+    fleet.apply(
+        status(vec![outside, mine]),
+        vec![own("CC:1", "/r/a", Some("s1"))],
+        None,
+        false,
+        at(200),
+    );
+
+    let rows: Vec<(RowKey, Option<PathBuf>)> = fleet
+        .visual_rows()
+        .into_iter()
+        .map(|r| (r.key, r.sessions_dir))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                RowKey::Panel("CC:1".into()),
+                Some(PathBuf::from("/p/sessions"))
+            ),
+            (RowKey::Pid(6), Some(PathBuf::from("/w/sessions"))),
+        ]
+    );
+
+    fleet.forget_stopped("CC:1", Vec::new());
+    assert_eq!(keys(&fleet), [(RowKey::Pid(6), false)]);
 }
 
 #[test]
@@ -2400,11 +2437,13 @@ mod tree {
                 pid: 1,
                 started: at(0),
                 own: true,
+                sessions_dir: PathBuf::new(),
             },
             Doomed {
                 pid: 2,
                 started: at(0),
                 own: false,
+                sessions_dir: PathBuf::new(),
             },
         ];
         lossy.own_claudes = 1;
@@ -3068,6 +3107,66 @@ mod usage {
             .find(|t| t.contains('%'))
             .expect("使用率の行");
         assert!(text.ends_with("▍     12%"), "{text}");
+    }
+
+    #[test]
+    fn 行と入力待ちの箱にはアカウント名をその色で出し_accounts_に無い_dir_の行には出さない() {
+        use conductor_core::config::ClaudeAccount;
+        use ratatui::style::Color;
+        let in_dir = |mut l: LiveSession, dir: &str| {
+            l.sessions_dir = PathBuf::from(dir);
+            l
+        };
+        let mut ws = Workspace::for_test();
+        ws.config.claude.accounts = [("work", "cyan", "/w"), ("personal", "magenta", "/p")]
+            .map(|(name, color, dir)| ClaudeAccount {
+                name: name.into(),
+                color: Some(color.into()),
+                config_dir: Some(PathBuf::from(dir)),
+            })
+            .to_vec();
+        ws.panels.fleet = fleet_with(
+            Usage::default(),
+            vec![
+                in_dir(
+                    live(7, "/r/a", "s7", Status::Working, Owner::Conductor),
+                    "/w/sessions",
+                ),
+                in_dir(
+                    live(
+                        8,
+                        "/r/b",
+                        "s8",
+                        Status::Waiting(Waiting::Question),
+                        Owner::Conductor,
+                    ),
+                    "/p/sessions",
+                ),
+                in_dir(
+                    live(9, "/r/c", "s9", Status::Working, Owner::Conductor),
+                    "/x/sessions",
+                ),
+            ],
+        );
+
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 20)).unwrap();
+        let marks: Vec<(String, Option<Color>)> = composed
+            .lines
+            .iter()
+            .flat_map(|l| &l.spans)
+            .filter(|s| ["work ", "personal "].contains(&s.content.as_ref()))
+            .map(|s| (s.content.to_string(), s.style.fg))
+            .collect();
+
+        assert_eq!(
+            marks,
+            [
+                ("personal ".to_string(), Some(Color::Magenta)),
+                ("work ".to_string(), Some(Color::Cyan)),
+                ("personal ".to_string(), Some(Color::Magenta)),
+            ],
+            "入力待ちの箱、/r/a の行、/r/b の行の順。/x の行には名前が無い"
+        );
     }
 
     #[test]

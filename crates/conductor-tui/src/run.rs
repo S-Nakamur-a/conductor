@@ -2889,6 +2889,7 @@ needle here
                     status_since: None,
                     owner: Owner::Elsewhere,
                     started: std::time::SystemTime::UNIX_EPOCH,
+                    sessions_dir: PathBuf::new(),
                 }],
                 ..Default::default()
             },
@@ -3059,6 +3060,7 @@ needle here
             status_since: None,
             owner: Owner::Conductor,
             started: std::time::SystemTime::UNIX_EPOCH,
+            sessions_dir: PathBuf::new(),
         };
         let mut live = vec![session(7, Status::Waiting(Waiting::Question))];
         live.extend((8..20).map(|pid| session(pid, Status::Working)));

@@ -43,6 +43,20 @@ pub struct TaskEnv {
     pub tab_width: usize,
     /// レビュー DB の行を引くキー。
     pub branch: String,
+    /// 読む Claude Code の config dir ([Config::claude_dirs](conductor_core::config::Config::claude_dirs))。
+    pub claude_dirs: Vec<PathBuf>,
+    /// この窓が起こす Claude の config dir。自分で選んで resume する会話はここで開けるものに限る。
+    pub launch_dir: PathBuf,
+}
+
+impl TaskEnv {
+    fn claude_home(&self) -> ClaudeHome {
+        ClaudeHome::of(self.claude_dirs.clone())
+    }
+
+    fn resumable_home(&self) -> ClaudeHome {
+        self.claude_home().opening_in(self.launch_dir.clone())
+    }
 }
 
 #[derive(Debug)]
@@ -57,10 +71,12 @@ pub enum Task {
         dirs: Vec<PathBuf>,
         roots: Vec<PathBuf>,
     },
-    /// この窓の外の Claude を止める。`started` は一覧に載せたときの起動時刻。
+    /// この窓の外の Claude を止める。`started` は一覧に載せたときの起動時刻、`sessions_dir` は
+    /// その写しを読んだ dir。
     StopSession {
         pid: u32,
         started: std::time::SystemTime,
+        sessions_dir: PathBuf,
     },
     /// 1 つの worktree の変更件数。一覧とは別に走らせる (理由は WorktreeInfo::counts)。
     WorktreeCounts {
@@ -471,16 +487,20 @@ impl Task {
                 roots,
             } => {
                 svc.spawn(
-                    move || Box::new(fleet_status(&known, own, dirs, &roots)),
+                    move || Box::new(fleet_status(&known, own, dirs, &roots, &env.claude_dirs)),
                     TaskResult::FleetStatus,
                 );
             }
-            Task::StopSession { pid, started } => {
+            Task::StopSession {
+                pid,
+                started,
+                sessions_dir,
+            } => {
                 use conductor_core::claude_sessions::registry;
                 svc.spawn(
                     move || {
                         registry::stop(
-                            &registry::sessions_dir(),
+                            &sessions_dir,
                             pid,
                             started,
                             &registry::SystemProcesses,
@@ -535,8 +555,8 @@ impl Task {
                 svc.spawn(
                     move || {
                         use conductor_core::claude_sessions::registry;
-                        let live = registry::read_live(
-                            &registry::sessions_dir(),
+                        let live = registry::read_every(
+                            &registry::sessions_dirs(&env.claude_dirs),
                             &registry::SystemProcesses,
                         );
                         let outcome =
@@ -555,7 +575,7 @@ impl Task {
                         use conductor_core::claude_sessions::registry;
                         let outcome = fleet_delete::run(
                             &inspection,
-                            &registry::sessions_dir(),
+                            &registry::sessions_dirs(&env.claude_dirs),
                             &registry::SystemProcesses,
                             STOP_GRACE,
                         );
@@ -639,7 +659,7 @@ impl Task {
             } => {
                 svc.spawn(
                     move || {
-                        let entries = read_transcript(&working_dir, &session_id);
+                        let entries = read_transcript(&env, &working_dir, &session_id);
                         (session_id, entries)
                     },
                     |(session_id, entries)| TaskResult::Transcript {
@@ -1003,16 +1023,17 @@ fn load_grab_state(env: &TaskEnv) -> Result<Option<GrabState>, String> {
 }
 
 fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, String> {
-    let home = ClaudeHome::detect();
-    let session = home.as_ref().and_then(|home| {
-        home.find_latest_sessions_for_paths(std::slice::from_ref(&source.to_path_buf()))
-            .ok()?
-            .remove(
+    let home = env.resumable_home();
+    let session = home
+        .find_latest_sessions_for_paths(std::slice::from_ref(&source.to_path_buf()))
+        .ok()
+        .and_then(|mut found| {
+            found.remove(
                 &source
                     .canonicalize()
                     .unwrap_or_else(|_| source.to_path_buf()),
             )
-    });
+        });
 
     let main = git(env, |git| git.main_worktree_path())?;
     git(env, |git| {
@@ -1026,17 +1047,12 @@ fn grab(env: &TaskEnv, branch: &str, source: &Path) -> Result<Box<GrabDone>, Str
 
     // 移行に失敗しても grab そのものは済んでいる。セッションが main から
     // 見えないだけなので、報告はログに留めて先へ進む。
-    let resume = session.filter(|session| match &home {
-        Some(home) => {
-            match home.migrate_session(&session.session_id, source, &main, &session.display) {
-                Ok(migrated) => migrated,
-                Err(e) => {
-                    log::warn!("grab: session migration failed: {e:#}");
-                    false
-                }
-            }
-        }
-        None => false,
+    let resume = session.filter(|session| {
+        home.migrate_session(&session.session_id, source, &main, &session.display)
+            .unwrap_or_else(|e| {
+                log::warn!("grab: session migration failed: {e:#}");
+                false
+            })
     });
     let message = match &resume {
         Some(session) => format!(
@@ -1066,8 +1082,10 @@ fn ungrab(env: &TaskEnv) -> Result<Box<GrabDone>, String> {
             &env.main_branch,
         )
     })?;
-    if let (Some(id), Some(home)) = (&grabbed.claude_session_id, ClaudeHome::detect())
-        && let Err(e) = home.unmigrate_session(id, &grabbed.source_worktree, &main)
+    if let Some(id) = &grabbed.claude_session_id
+        && let Err(e) = env
+            .claude_home()
+            .unmigrate_session(id, &grabbed.source_worktree, &main)
     {
         log::warn!("ungrab: session unmigration failed: {e:#}");
     }
@@ -1220,15 +1238,16 @@ fn fleet_status(
     own: Vec<(PathBuf, String)>,
     mut dirs: Vec<PathBuf>,
     roots: &[PathBuf],
+    claude_dirs: &[PathBuf],
 ) -> crate::panels::fleet::FleetStatus {
     use conductor_core::claude_log::summary;
     use conductor_core::claude_sessions::registry;
 
-    let sessions = registry::sessions_dir();
-    let live = registry::read_live(&sessions, &registry::SystemProcesses);
-    let home = conductor_core::claude_sessions::ClaudeHome::at(
-        sessions.parent().unwrap_or(&sessions).to_path_buf(),
+    let live = registry::read_live(
+        &registry::sessions_dirs(claude_dirs),
+        &registry::SystemProcesses,
     );
+    let home = ClaudeHome::of(claude_dirs.to_vec());
     let mut asked = std::collections::HashSet::new();
     let summaries = live
         .iter()
@@ -1236,7 +1255,7 @@ fn fleet_status(
         .chain(own)
         .filter(|(_, id)| asked.insert(id.clone()))
         .filter_map(|(cwd, id)| {
-            let path = home.projects_dir_for(&cwd).join(format!("{id}.jsonl"));
+            let path = home.session_log(&cwd, &id)?;
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
             if known.get(&id) == Some(&mtime) {
                 return None;
@@ -1427,9 +1446,13 @@ fn persist(what: &Persist) -> Result<(), String> {
 
 /// pin した session id のログだけを開く。兄弟の .jsonl は同じワークツリーで走った
 /// 別の会話なので、mtime などで選び直すと他人の履歴を見せることになる。
-fn read_transcript(working_dir: &Path, session_id: &str) -> Result<Vec<LogEntry>, String> {
-    let home = ClaudeHome::detect().ok_or("could not find ~/.claude")?;
-    let path = home
+fn read_transcript(
+    env: &TaskEnv,
+    working_dir: &Path,
+    session_id: &str,
+) -> Result<Vec<LogEntry>, String> {
+    let path = env
+        .claude_home()
         .session_log(working_dir, session_id)
         .ok_or_else(|| format!("no session log on disk for {session_id}"))?;
     let entries = claude_log::load_session(&path);
@@ -1438,8 +1461,8 @@ fn read_transcript(working_dir: &Path, session_id: &str) -> Result<Vec<LogEntry>
 }
 
 fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, String> {
-    let home = ClaudeHome::detect().ok_or("could not find ~/.claude")?;
-    home.load_resumable_sessions((!all).then_some(env.root.as_path()))
+    env.resumable_home()
+        .load_resumable_sessions((!all).then_some(env.root.as_path()))
         .map_err(|e| e.to_string())
 }
 
@@ -1447,19 +1470,19 @@ fn list_sessions(env: &TaskEnv, all: bool) -> Result<Vec<ResumableSession>, Stri
 /// Task::LoadGrabState が先に着いている保証が無いため。どちらが欠けても
 /// 残りは復帰できるので、失敗は警告に落として空で返す。
 fn find_resumable(env: &TaskEnv, paths: &[PathBuf]) -> TaskResult {
-    let sessions = ClaudeHome::detect()
-        .and_then(|home| {
-            home.find_latest_sessions_for_paths(paths)
-                .inspect_err(|e| log::warn!("could not look for resumable sessions: {e:#}"))
-                .ok()
-        })
+    let home = env.resumable_home();
+    let sessions = home
+        .find_latest_sessions_for_paths(paths)
+        .inspect_err(|e| log::warn!("could not look for resumable sessions: {e:#}"))
         .unwrap_or_default();
+    let main = git(env, |git| git.main_worktree_path()).ok();
     let main_grabbed = git(env, |git| git.load_grab_state())
         .unwrap_or_else(|e| {
             log::warn!("could not read the grab state: {e}");
             None
         })
-        .and_then(|state| state.claude_session_id);
+        .and_then(|state| state.claude_session_id)
+        .filter(|id| main.as_deref().is_some_and(|main| home.can_open(main, id)));
     TaskResult::Resumable {
         sessions,
         main_grabbed,
@@ -1682,6 +1705,7 @@ pub(crate) mod fleet_delete {
             .map(|l| Doomed {
                 pid: l.pid,
                 started: l.started,
+                sessions_dir: l.sessions_dir.clone(),
                 own: own.iter().any(|p| {
                     p.kind == SessionKind::ClaudeCode
                         && p.claude_session_id.as_deref() == Some(l.session_id.as_str())
@@ -1714,7 +1738,7 @@ pub(crate) mod fleet_delete {
     /// この窓のタブは呼ぶ前に閉じてある。
     pub fn run(
         inspection: &Inspection,
-        sessions: &Path,
+        sessions: &[PathBuf],
         procs: &dyn Processes,
         grace: Duration,
     ) -> Result<String, String> {
@@ -1724,9 +1748,13 @@ pub(crate) mod fleet_delete {
                 registry::ended_within(doomed.pid, doomed.started, procs, OWN_WAIT)
             } else {
                 // 照合できないだけでも AlreadyGone が返るので、終わったかは別に見る。
-                if let Stopped::Failed(why) =
-                    registry::stop(sessions, doomed.pid, doomed.started, procs, grace)
-                {
+                if let Stopped::Failed(why) = registry::stop(
+                    &doomed.sessions_dir,
+                    doomed.pid,
+                    doomed.started,
+                    procs,
+                    grace,
+                ) {
                     return Err(format!(
                         "Could not stop pid {}: {why}. {label} was not deleted.",
                         doomed.pid
@@ -1763,7 +1791,7 @@ pub(crate) mod fleet_delete {
                 "{label} has more uncommitted changes than the check showed. Nothing was deleted."
             ));
         }
-        if registry::read_live(sessions, procs)
+        if registry::read_every(sessions, procs)
             .iter()
             .any(|l| canonical(&l.cwd).starts_with(&inspection.path))
         {
@@ -2060,6 +2088,7 @@ mod fleet_delete_tests {
             status: Status::Idle,
             status_since: None,
             owner: Owner::Conductor,
+            sessions_dir: PathBuf::from("/c/sessions"),
         }
     }
 
@@ -2158,9 +2187,15 @@ mod fleet_delete_tests {
             pid: 9,
             started: started(),
             own: false,
+            sessions_dir: dir.path().join("sessions"),
         }];
         let sessions = dir.path().join("sessions");
-        let outcome = run(&inspection, &sessions, &procs(&[(9, true)]), Duration::ZERO);
+        let outcome = run(
+            &inspection,
+            std::slice::from_ref(&sessions),
+            &procs(&[(9, true)]),
+            Duration::ZERO,
+        );
         assert!(
             outcome.as_ref().is_err_and(|e| e.contains("still running")),
             "{outcome:?}"
@@ -2176,9 +2211,15 @@ mod fleet_delete_tests {
             pid: 7,
             started: started(),
             own: true,
+            sessions_dir: dir.path().join("sessions"),
         }];
         let sessions = dir.path().join("sessions");
-        let outcome = run(&inspection, &sessions, &procs(&[]), Duration::ZERO);
+        let outcome = run(
+            &inspection,
+            std::slice::from_ref(&sessions),
+            &procs(&[]),
+            Duration::ZERO,
+        );
         assert_eq!(outcome, Ok("Deleted wt.".to_string()));
         assert!(!wt.exists());
         let branches = Command::new("git")
@@ -2200,7 +2241,7 @@ mod fleet_delete_tests {
             }
             let outcome = run(
                 &inspection,
-                &dir.path().join("sessions"),
+                &[dir.path().join("sessions")],
                 &procs(&[]),
                 Duration::ZERO,
             );
@@ -2219,7 +2260,7 @@ mod fleet_delete_tests {
         assert!(inspection.check.keeps_branch);
         run(
             &inspection,
-            &dir.path().join("sessions"),
+            &[dir.path().join("sessions")],
             &procs(&[]),
             Duration::ZERO,
         )
@@ -2245,7 +2286,7 @@ mod fleet_delete_tests {
         std::fs::write(sessions.join("11.json"), record.to_string()).unwrap();
         let outcome = run(
             &inspection,
-            &sessions,
+            std::slice::from_ref(&sessions),
             &procs(&[(11, true)]),
             Duration::ZERO,
         );
@@ -2264,6 +2305,7 @@ mod fleet_delete_tests {
             pid: 9,
             started: started(),
             own: false,
+            sessions_dir: dir.path().join("sessions"),
         }];
         let sessions = dir.path().join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
@@ -2277,10 +2319,72 @@ mod fleet_delete_tests {
         });
         std::fs::write(sessions.join("9.json"), record.to_string()).unwrap();
         let procs = procs(&[(9, false)]);
-        let outcome = run(&inspection, &sessions, &procs, Duration::ZERO);
+        let outcome = run(
+            &inspection,
+            std::slice::from_ref(&sessions),
+            &procs,
+            Duration::ZERO,
+        );
         assert_eq!(outcome, Ok("Deleted wt.".to_string()));
         assert!(procs.info(9).is_none(), "SIGTERM が届いている");
         assert!(!wt.exists());
+    }
+
+    #[test]
+    fn 同じ会話の古いプロセスも点検で止める相手に入る() {
+        let (dir, main, wt) = repo();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        for (pid, started_at) in [(9, 1_792_634_755_219u64), (10, 1_792_634_999_999u64)] {
+            let record = serde_json::json!({
+                "pid": pid,
+                "sessionId": "same",
+                "cwd": wt,
+                "startedAt": started_at,
+                "procStart": "Thu Oct 22 02:05:54 2026",
+                "status": "busy",
+            });
+            std::fs::write(sessions.join(format!("{pid}.json")), record.to_string()).unwrap();
+        }
+        let procs = procs(&[(9, false), (10, false)]);
+        let live = conductor_core::claude_sessions::registry::read_every(
+            std::slice::from_ref(&sessions),
+            &procs,
+        );
+
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &live));
+
+        let mut pids: Vec<u32> = inspection.claudes.iter().map(|c| c.pid).collect();
+        pids.sort();
+        assert_eq!(pids, [9, 10]);
+    }
+
+    #[test]
+    fn 別のアカウントの外の_claude_はその写しの_dir_で照合して止めてから消す() {
+        let (dir, main, wt) = repo();
+        let work = dir.path().join("work/sessions");
+        let personal = dir.path().join("personal/sessions");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&personal).unwrap();
+        let record = serde_json::json!({
+            "pid": 9,
+            "sessionId": "outside",
+            "cwd": wt,
+            "startedAt": 1_792_634_755_219u64,
+            "procStart": "Thu Oct 22 02:05:54 2026",
+            "status": "busy",
+        });
+        std::fs::write(personal.join("9.json"), record.to_string()).unwrap();
+        let procs = procs(&[(9, false)]);
+        let dirs = [work, personal.clone()];
+        let live = conductor_core::claude_sessions::registry::read_every(&dirs, &procs);
+        let inspection = ready(inspect(&main, &wt, "wt".into(), &[], &main, &live));
+        assert_eq!(inspection.claudes[0].sessions_dir, personal);
+
+        let outcome = run(&inspection, &dirs, &procs, Duration::ZERO);
+
+        assert_eq!(outcome, Ok("Deleted wt.".to_string()));
+        assert!(procs.info(9).is_none(), "SIGTERM が届いている");
     }
 
     #[test]
@@ -2293,7 +2397,7 @@ mod fleet_delete_tests {
         assert_eq!(inspection.check.dirty, Some(0));
         let outcome = run(
             &inspection,
-            &dir.path().join("sessions"),
+            &[dir.path().join("sessions")],
             &procs(&[]),
             Duration::ZERO,
         );
@@ -2312,7 +2416,7 @@ mod fleet_delete_tests {
         let begun = std::time::Instant::now();
         let outcome = run(
             &inspection,
-            &dir.path().join("sessions"),
+            &[dir.path().join("sessions")],
             &procs(&[]),
             Duration::ZERO,
         );

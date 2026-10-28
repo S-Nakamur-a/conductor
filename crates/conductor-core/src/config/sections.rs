@@ -130,6 +130,30 @@ pub struct ReviewConfig {
     pub auto_review_repos: Vec<PathBuf>,
 }
 
+/// [claude] セクション。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClaudeConfig {
+    pub accounts: Vec<ClaudeAccount>,
+}
+
+/// [[claude.accounts]] の 1 つ。アカウントは Claude Code の config dir で分かれる。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClaudeAccount {
+    pub name: String,
+    /// ratatui の色の綴り ("cyan"、"#5fafff")。
+    pub color: Option<String>,
+    /// None は Claude Code の既定 (~/.claude)。綴りは keychain の鍵になるので `~` の展開しかしない。
+    pub config_dir: Option<PathBuf>,
+}
+
+impl ClaudeAccount {
+    pub fn color(&self) -> Option<ratatui::style::Color> {
+        self.color.as_deref()?.parse().ok()
+    }
+}
+
 /// [updates] セクション。GitHub Releases との照合。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

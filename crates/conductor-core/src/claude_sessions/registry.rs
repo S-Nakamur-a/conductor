@@ -5,7 +5,6 @@
 //! 同じ照合を通してから信号を送る。
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,6 +26,8 @@ pub struct LiveSession {
     pub status: Status,
     pub status_since: Option<SystemTime>,
     pub owner: Owner,
+    /// 写しを読んだ sessions dir。止めるときはこの dir の写しで照合する。
+    pub sessions_dir: PathBuf,
 }
 
 /// busy / idle / waiting 以外 (観測では shell) は意味が未確認なので生の文字列で残す。
@@ -242,42 +243,44 @@ fn parse_btime(proc_stat: &str) -> Option<u64> {
         .ok()
 }
 
-pub fn sessions_dir() -> PathBuf {
-    sessions_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+pub fn sessions_dirs(config_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    config_dirs.iter().map(|dir| dir.join("sessions")).collect()
 }
 
-fn sessions_dir_from(config_dir: Option<OsString>, home: Option<PathBuf>) -> PathBuf {
-    match config_dir.filter(|dir| !dir.is_empty()) {
-        Some(dir) => PathBuf::from(dir).join("sessions"),
-        None => home
-            .map(|home| home.join(".claude").join("sessions"))
-            .unwrap_or_default(),
-    }
-}
-
-/// 写しのうち、いま動いているプロセスのものを pid の昇順で返す。
-pub fn read_live(dir: &Path, procs: &dyn Processes) -> Vec<LiveSession> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut newest: HashMap<String, (u64, LiveSession)> = HashMap::new();
-    for path in entries.flatten().map(|entry| entry.path()) {
-        if path.extension().is_none_or(|ext| ext != "json") {
-            continue;
-        }
-        let Some((started_at, session)) = read_one(&path, procs) else {
-            continue;
-        };
-        let keep = newest
-            .get(&session.session_id)
-            .is_none_or(|(seen, _)| started_at > *seen);
+/// 一覧に出す写し。同じ dir で同じ会話が 2 つ動いていれば後から起きた方だけ。別の
+/// アカウント (dir) で同じ会話を開いているのは別の Claude なので両方残す。pid の昇順。
+pub fn read_live(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<LiveSession> {
+    let mut newest: HashMap<(PathBuf, String), (u64, LiveSession)> = HashMap::new();
+    for (started_at, session) in read_all(dirs, procs) {
+        let key = (session.sessions_dir.clone(), session.session_id.clone());
+        let keep = newest.get(&key).is_none_or(|(seen, _)| started_at > *seen);
         if keep {
-            newest.insert(session.session_id.clone(), (started_at, session));
+            newest.insert(key, (started_at, session));
         }
     }
     let mut sessions: Vec<LiveSession> = newest.into_values().map(|(_, s)| s).collect();
-    sessions.sort_by_key(|s| s.pid);
+    sessions.sort_by(|a, b| {
+        a.pid
+            .cmp(&b.pid)
+            .then_with(|| a.sessions_dir.cmp(&b.sessions_dir))
+    });
+    // sessions だけを symlink で共有した dir は同じ写しを二度読むので、pid で重ねる。
+    sessions.dedup_by_key(|s| s.pid);
     sessions
+}
+
+/// 止める・消すの判定に使う写し。同じ会話でも隠さない。
+pub fn read_every(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<LiveSession> {
+    read_all(dirs, procs).into_iter().map(|(_, s)| s).collect()
+}
+
+fn read_all(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<(u64, LiveSession)> {
+    dirs.iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|path| read_one(&path, procs))
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -413,6 +416,7 @@ fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<(u
         } else {
             Owner::Elsewhere
         },
+        sessions_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
     };
     Some((record.started_at.unwrap_or(0), session))
 }
@@ -556,7 +560,7 @@ mod tests {
     }
 
     fn live(dir: &Path, procs: &Fake) -> Vec<LiveSession> {
-        read_live(dir, procs)
+        read_live(&[dir.to_path_buf()], procs)
     }
 
     #[test]
@@ -805,26 +809,93 @@ mod tests {
     }
 
     #[test]
-    fn 設定ディレクトリの指定が優先される() {
-        let home = Some(PathBuf::from("/home/me"));
+    fn 二つのディレクトリの写しはそれぞれ読んだディレクトリを持つ() {
+        let (work, personal) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write(work.path(), "10.json", &record(10, "a", "idle", None));
+        write(personal.path(), "11.json", &record(11, "b", "busy", None));
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()));
+
+        let dirs: Vec<(String, PathBuf)> = read_live(
+            &[work.path().to_path_buf(), personal.path().to_path_buf()],
+            &procs,
+        )
+        .into_iter()
+        .map(|s| (s.session_id, s.sessions_dir))
+        .collect();
 
         assert_eq!(
-            sessions_dir_from(Some("/cfg".into()), home.clone()),
-            PathBuf::from("/cfg/sessions")
-        );
-        assert_eq!(
-            sessions_dir_from(Some("".into()), home.clone()),
-            PathBuf::from("/home/me/.claude/sessions")
-        );
-        assert_eq!(
-            sessions_dir_from(None, home),
-            PathBuf::from("/home/me/.claude/sessions")
+            dirs,
+            vec![
+                ("a".to_string(), work.path().to_path_buf()),
+                ("b".to_string(), personal.path().to_path_buf()),
+            ]
         );
     }
 
+    fn started_later(pid: u32, session_id: &str) -> String {
+        let mut value: serde_json::Value =
+            serde_json::from_str(&record(pid, session_id, "busy", None)).unwrap();
+        value["startedAt"] = json!(1792634999999u64);
+        value.to_string()
+    }
+
     #[test]
-    fn 設定ディレクトリもホームも無ければ空のパス() {
-        assert_eq!(sessions_dir_from(None, None), PathBuf::new());
+    fn 同じディレクトリで同じ会話が二つ動いていれば一覧は後の方だけで判定用は両方() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "same", "idle", None));
+        write(dir.path(), "11.json", &started_later(11, "same"));
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()));
+        let dirs = [dir.path().to_path_buf()];
+
+        let listed: Vec<u32> = read_live(&dirs, &procs).iter().map(|s| s.pid).collect();
+        let mut every: Vec<u32> = read_every(&dirs, &procs).iter().map(|s| s.pid).collect();
+        every.sort();
+
+        assert_eq!(listed, vec![11]);
+        assert_eq!(every, vec![10, 11]);
+    }
+
+    #[test]
+    fn 別のディレクトリで同じ会話を開いている二つは一覧に両方出る() {
+        let (work, personal) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        write(work.path(), "10.json", &record(10, "same", "idle", None));
+        write(personal.path(), "11.json", &started_later(11, "same"));
+        let procs = Fake::new()
+            .with(10, alive(started_utc()))
+            .with(11, alive(started_utc()));
+
+        let listed: Vec<u32> = read_live(
+            &[work.path().to_path_buf(), personal.path().to_path_buf()],
+            &procs,
+        )
+        .iter()
+        .map(|s| s.pid)
+        .collect();
+
+        assert_eq!(listed, vec![10, 11]);
+    }
+
+    #[test]
+    fn sessionsだけを共有した二つのディレクトリでも同じpidは一行() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("a/sessions");
+        let linked = root.path().join("b/sessions");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(linked.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        write(&real, "10.json", &record(10, "a", "idle", None));
+        let procs = Fake::new().with(10, alive(started_utc()));
+
+        let listed: Vec<u32> = read_live(&[real, linked], &procs)
+            .iter()
+            .map(|s| s.pid)
+            .collect();
+
+        assert_eq!(listed, vec![10]);
     }
 
     #[test]

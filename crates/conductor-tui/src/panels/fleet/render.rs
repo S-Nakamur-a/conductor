@@ -164,6 +164,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
             lines.extend(pinned_box(
                 theme,
                 row,
+                account(ws, row),
                 inner.width,
                 fleet.is_selected(row),
                 focused,
@@ -206,7 +207,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     selected_line = lines.len();
                 }
                 lines.push(row_line(
-                    theme,
+                    ws,
                     row,
                     inner.width,
                     indent,
@@ -258,14 +259,21 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
 pub fn session_title(ws: &Workspace) -> String {
     let context = ws.key_context();
     let chord = |action| crate::render::representative_chord(&ws.keymap, context, action);
+    let account = ws
+        .panels
+        .fleet
+        .selected_row()
+        .and_then(|row| account(ws, &row))
+        .map(|(name, _)| format!(" {name} ·"))
+        .unwrap_or_default();
     if ws.focus == Focus::FleetSession {
         return match chord(Action::LeaveTerminal) {
-            Some(key) => format!(" 入力中 · {key} で一覧へ "),
-            None => " 入力中 ".to_string(),
+            Some(key) => format!("{account} 入力中 · {key} で一覧へ "),
+            None => format!("{account} 入力中 "),
         };
     }
     match (ws.fleet_session(), chord(Action::ExpandOrRight)) {
-        (Some(_), Some(key)) => format!(" {key} で入る "),
+        (Some(_), Some(key)) => format!("{account} {key} で入る "),
         _ => String::new(),
     }
 }
@@ -436,11 +444,18 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         return;
     };
     let (_, color) = look(theme, &row.state);
+    let mut title = vec![Span::styled(
+        row.title.clone().unwrap_or_else(|| UNTITLED.to_string()),
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+    )];
+    if let Some((name, color)) = account(ws, &row) {
+        title.insert(
+            0,
+            Span::styled(format!("{name} "), Style::default().fg(color)),
+        );
+    }
     let mut lines = vec![
-        Line::styled(
-            row.title.clone().unwrap_or_else(|| UNTITLED.to_string()),
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
+        Line::from(title),
         Line::styled(
             row.working_dir.display().to_string(),
             Style::default().fg(theme.dir_fg),
@@ -767,8 +782,17 @@ fn worktree_line(
     crate::list::row_line(spans, theme, selected, focused)
 }
 
+/// 行の Claude のアカウントの名前と色。accounts に無い dir の行は None。
+fn account(ws: &Workspace, row: &Row) -> Option<(String, Color)> {
+    let account = ws.config.account_of(row.sessions_dir.as_deref()?)?;
+    Some((
+        account.name.clone(),
+        account.color().unwrap_or(ws.theme.info),
+    ))
+}
+
 fn row_line(
-    theme: &Theme,
+    ws: &Workspace,
     row: &Row,
     width: u16,
     indent: usize,
@@ -776,6 +800,8 @@ fn row_line(
     focused: bool,
     now: SystemTime,
 ) -> Line<'static> {
+    let theme = &ws.theme;
+    let account = account(ws, row);
     let (glyph, color) = look(theme, &row.state);
     // 選択は地の色だけだと薄く、地を明るくすると hint の文字とバーの空きが沈むので印で示す。
     let (edge, edge_fg) = if selected {
@@ -807,8 +833,16 @@ fn row_line(
         (None, None) => Vec::new(),
     };
     let right_width: usize = right.iter().map(|s| s.content.width()).sum();
+    let account = account.map(|(name, color)| {
+        Span::styled(
+            format!("{name} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )
+    });
+    let account_width = account.as_ref().map_or(0, |s| s.content.width());
     let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
-    let room = (width as usize).saturating_sub(indent + 2 + left.width() + right_width + 2);
+    let room = (width as usize)
+        .saturating_sub(indent + 2 + left.width() + account_width + right_width + 2);
     let title = clip(&title, room);
     let pad = room.saturating_sub(title.width());
     let title_fg = if row.title.is_some() {
@@ -827,9 +861,12 @@ fn row_line(
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(left, Style::default().fg(theme.hint)),
+    ];
+    spans.extend(account);
+    spans.extend([
         Span::styled(title, Style::default().fg(title_fg)),
         Span::raw(" ".repeat(pad + 2)),
-    ];
+    ]);
     spans.extend(right);
     crate::list::row_line(spans, theme, selected, focused)
 }
@@ -837,6 +874,7 @@ fn row_line(
 fn pinned_box(
     theme: &Theme,
     row: &Row,
+    account: Option<(String, Color)>,
     width: u16,
     selected: bool,
     focused: bool,
@@ -850,30 +888,37 @@ fn pinned_box(
         State::Waiting(Ask::Permission) => "許可を待っています".to_string(),
         other => state_text(other),
     };
-    let first = format!(
-        "! {} {}{}",
+    let lead = format!(
+        "! {} {}",
         row.since.map(|s| elapsed(s, now)).unwrap_or_default(),
         tag(row.place),
-        row.title.clone().unwrap_or_else(|| UNTITLED.to_string()),
     );
+    let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
     let base = if selected {
         crate::list::selection(theme, focused)
     } else {
         Style::default()
     };
-    let body = |text: String, style: Style| {
-        let text = clip(&text, inner_w);
-        let pad = inner_w.saturating_sub(text.width());
-        Line::from(vec![
-            Span::styled("│", border),
-            Span::styled(format!("{text}{}", " ".repeat(pad)), base.patch(style)),
-            Span::styled("│", border),
-        ])
+    let body = |parts: Vec<(String, Style)>| {
+        let mut room = inner_w;
+        let mut spans = vec![Span::styled("│", border)];
+        for (text, style) in parts {
+            let text = clip(&text, room);
+            room = room.saturating_sub(text.width());
+            spans.push(Span::styled(text, base.patch(style)));
+        }
+        spans.push(Span::styled(" ".repeat(room), base));
+        spans.push(Span::styled("│", border));
+        Line::from(spans)
     };
+    let fg = Style::default().fg(theme.fg);
+    let mut first = vec![(lead, fg)];
+    first.extend(account.map(|(name, color)| (format!("{name} "), Style::default().fg(color))));
+    first.push((title, fg));
     vec![
         Line::styled(format!("┌{}┐", "─".repeat(inner_w)), border),
-        body(first, Style::default().fg(theme.fg)),
-        body(format!("  {ask}"), Style::default().fg(color)),
+        body(first),
+        body(vec![(format!("  {ask}"), Style::default().fg(color))]),
         Line::styled(format!("└{}┘", "─".repeat(inner_w)), border),
     ]
 }

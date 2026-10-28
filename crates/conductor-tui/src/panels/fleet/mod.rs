@@ -32,7 +32,11 @@ pub enum RowKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopTarget {
     Panel(String),
-    Process { pid: u32, started: SystemTime },
+    Process {
+        pid: u32,
+        started: SystemTime,
+        sessions_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +78,8 @@ pub struct Row {
     pub working_dir: PathBuf,
     /// 入力待ちの欄に重ねた方の行。
     pub pinned: bool,
+    /// 写しを読んだ sessions dir。アカウントはここから引く。写しの無い行は None。
+    pub sessions_dir: Option<PathBuf>,
 }
 
 /// repo の見出し 1 つ分。外の端末は root が無く、worktree の段も無い。
@@ -154,6 +160,8 @@ pub struct Doomed {
     pub pid: u32,
     pub started: SystemTime,
     pub own: bool,
+    /// 写しを読んだ dir。止める前の照合もこの dir の写しで行う。
+    pub sessions_dir: PathBuf,
 }
 
 /// worktree を消す前の点検の結果。確認文はこれから作り、消す直前の数え直しもこれと比べる。
@@ -350,9 +358,9 @@ impl FleetPanel {
             .iter()
             .zip(self.pairing())
             .find(|(own, _)| own.panel_id == panel_id)
-            .and_then(|(_, live)| live.map(|l| l.session_id.clone()));
-        if let Some(session) = paired {
-            self.live.retain(|l| l.session_id != session);
+            .and_then(|(_, live)| live.map(|l| l.pid));
+        if let Some(pid) = paired {
+            self.live.retain(|l| l.pid != pid);
         }
         self.set_own(own);
         self.reselect_if_gone();
@@ -695,15 +703,18 @@ impl FleetPanel {
             .collect()
     }
 
-    /// own と同じ並びで、それぞれと組になった状態ファイルの写し。
+    /// own と同じ並びで、それぞれと組になった状態ファイルの写し。この窓の区画の Claude は
+    /// conductor の子なので、同じ会話を外の端末 (別のアカウントなど) で開いたものとは組まない。
     fn pairing(&self) -> Vec<Option<&LiveSession>> {
         let by_id: Vec<Option<&LiveSession>> = self
             .own
             .iter()
             .map(|own| {
-                own.claude_session_id
-                    .as_deref()
-                    .and_then(|id| self.live.iter().find(|l| l.session_id == id))
+                own.claude_session_id.as_deref().and_then(|id| {
+                    self.live
+                        .iter()
+                        .find(|l| l.session_id == id && l.owner == Owner::Conductor)
+                })
             })
             .collect();
         self.own
@@ -715,11 +726,7 @@ impl FleetPanel {
 
     fn rows(&self) -> Vec<Row> {
         let paired = self.pairing();
-        let matched: Vec<&str> = paired
-            .iter()
-            .flatten()
-            .map(|l| l.session_id.as_str())
-            .collect();
+        let matched: Vec<u32> = paired.iter().flatten().map(|l| l.pid).collect();
         let mut rows: Vec<Row> = self
             .own
             .iter()
@@ -738,7 +745,7 @@ impl FleetPanel {
         rows.extend(
             self.live
                 .iter()
-                .filter(|l| !matched.contains(&l.session_id.as_str()))
+                .filter(|l| !matched.contains(&l.pid))
                 .map(|live| {
                     let place = match live.owner {
                         Owner::Conductor => Place::OtherConductor,
@@ -832,6 +839,7 @@ impl FleetPanel {
             place,
             working_dir: working_dir.to_path_buf(),
             pinned: false,
+            sessions_dir: live.map(|l| l.sessions_dir.clone()),
         }
     }
 
@@ -972,10 +980,14 @@ impl FleetPanel {
         let row = self.selected_row()?;
         let target = match &row.key {
             RowKey::Panel(id) => StopTarget::Panel(id.clone()),
-            RowKey::Pid(pid) => StopTarget::Process {
-                pid: *pid,
-                started: self.live.iter().find(|l| l.pid == *pid)?.started,
-            },
+            RowKey::Pid(pid) => {
+                let live = self.live.iter().find(|l| l.pid == *pid)?;
+                StopTarget::Process {
+                    pid: *pid,
+                    started: live.started,
+                    sessions_dir: live.sessions_dir.clone(),
+                }
+            }
         };
         let confirm = render::stop_detail(&row).into_iter().fold(
             Confirm::yes_only(
