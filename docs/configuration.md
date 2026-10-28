@@ -78,6 +78,8 @@ immediately on save; everything else needs a restart.
 # that an account chosen with "as <name>" can open the conversation. The Resume
 # menu refuses a conversation whose Claude is open in this window; automatic
 # resume skips a worktree that already has a Claude, and grab does not check.
+# A (Shift+a) in the Sessions list stops one of this window's sessions and
+# resumes it as another account whose config dir has the conversation's log.
 # Shells keep conductor's own
 # environment, so `claude` typed in one runs as the account conductor was started
 # with.

@@ -113,6 +113,11 @@ impl Config {
         })
     }
 
+    /// そのアカウントの Claude が読み書きする config dir。
+    pub fn claude_dir_of(&self, account: &ClaudeAccount) -> Option<PathBuf> {
+        account_dir(account, dirs::home_dir().as_deref())
+    }
+
     /// dir で Claude を起こすアカウント。手で選んだ名前、resume する会話を走らせた config dir、
     /// paths の規則の順。accounts が空なら None (窓の env のまま起こす)。
     pub fn claude_account_to_launch(

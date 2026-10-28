@@ -1085,14 +1085,8 @@ impl TerminalPanel {
         &mut self,
         dir: &Path,
         config: &Config,
-        chrome: bool,
-        account: Option<&str>,
+        claude: ClaudeArgs<'_>,
     ) -> Result<String> {
-        let claude = ClaudeArgs {
-            chrome,
-            account,
-            ..ClaudeArgs::default()
-        };
         self.launch(SessionKind::ClaudeCode, claude, dir, dir, config)
     }
 
