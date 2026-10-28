@@ -1338,7 +1338,7 @@ fn fleet_status(
         .filter_map(|w| {
             Some((
                 w.path.clone(),
-                revidere_records::mark_of(&records, &w.path)?,
+                revidere_records::review_of(&records, &w.path)?,
             ))
         })
         .collect();

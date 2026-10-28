@@ -2,8 +2,10 @@
 //!
 //! 作業 dir は `revidere.py prepare` が `revidere-*` の名前で作り、meta.json を書く。
 //! review.html は render まで進んだものにしか無いので、両方ある dir だけを数える。
+//! publish したページの URL は `revidere.py published` が meta.json の artifact_url に書き足す。
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::Deserialize;
 
@@ -12,6 +14,15 @@ pub struct Record {
     pub root: PathBuf,
     pub branch: String,
     pub head_oid: String,
+    pub url: Option<String>,
+    /// review.html の mtime。
+    pub rendered: SystemTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Review {
+    pub mark: Mark,
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +38,10 @@ struct Meta {
     root: PathBuf,
     branch: String,
     head_oid: String,
+    artifact_url: Option<String>,
 }
+
+const ARTIFACT_URL: &str = "https://claude.ai/";
 
 pub fn read(tmp: &Path) -> Vec<Record> {
     let Ok(entries) = std::fs::read_dir(tmp) else {
@@ -41,7 +55,8 @@ pub fn read(tmp: &Path) -> Vec<Record> {
 }
 
 fn record_in(dir: &Path) -> Option<Record> {
-    if !dir.join("review.html").is_file() {
+    let page = std::fs::metadata(dir.join("review.html")).ok()?;
+    if !page.is_file() {
         return None;
     }
     let text = std::fs::read_to_string(dir.join("meta.json")).ok()?;
@@ -50,12 +65,16 @@ fn record_in(dir: &Path) -> Option<Record> {
         root: meta.root.canonicalize().unwrap_or(meta.root),
         branch: meta.branch,
         head_oid: meta.head_oid,
+        url: meta
+            .artifact_url
+            .filter(|url| url.starts_with(ARTIFACT_URL)),
+        rendered: page.modified().unwrap_or(SystemTime::UNIX_EPOCH),
     })
 }
 
 /// worktree は canonical なパスで渡す。detached なら branch は git の `--abbrev-ref` と同じ "HEAD"。
 /// `--abbrev-ref` は同名の ref があると `heads/<branch>` や `refs/heads/<branch>` と書く。
-pub fn mark_of(records: &[Record], worktree: &Path) -> Option<Mark> {
+pub fn review_of(records: &[Record], worktree: &Path) -> Option<Review> {
     let mine: Vec<&Record> = records.iter().filter(|r| r.root == worktree).collect();
     if mine.is_empty() {
         return None;
@@ -73,15 +92,21 @@ pub fn mark_of(records: &[Record], worktree: &Path) -> Option<Mark> {
         format!("heads/{branch}"),
         format!("refs/heads/{branch}"),
     ];
-    let same_branch = mine.iter().filter(|r| spellings.contains(&r.branch));
-    let mut mark = None;
-    for record in same_branch {
-        if record.head_oid == oid {
-            return Some(Mark::Current);
-        }
-        mark = Some(Mark::Stale);
-    }
-    mark
+    let (current, stale): (Vec<&Record>, Vec<&Record>) = mine
+        .into_iter()
+        .filter(|r| spellings.contains(&r.branch))
+        .partition(|r| r.head_oid == oid);
+    let (mark, group) = match (current.is_empty(), stale.is_empty()) {
+        (false, _) => (Mark::Current, current),
+        (true, false) => (Mark::Stale, stale),
+        (true, true) => return None,
+    };
+    let url = group
+        .into_iter()
+        .filter(|r| r.url.is_some())
+        .max_by_key(|r| r.rendered)
+        .and_then(|r| r.url.clone());
+    Some(Review { mark, url })
 }
 
 #[cfg(test)]
@@ -120,6 +145,10 @@ mod tests {
         }
     }
 
+    fn mark(tmp: &Path, worktree: &Path) -> Option<Mark> {
+        review_of(&read(tmp), worktree).map(|r| r.mark)
+    }
+
     fn meta(root: &Path, branch: &str, head: &str) -> String {
         serde_json::json!({
             "root": root, "branch": branch, "base_ref": "origin/main", "base_oid": head,
@@ -133,16 +162,16 @@ mod tests {
     fn 実物のmeta_jsonから根とブランチとheadを読む() {
         let tmp = tempfile::tempdir().unwrap();
         workdir(tmp.path(), "revidere-p553jsm0", REAL_META, true);
+        let [record] = <[Record; 1]>::try_from(read(tmp.path())).unwrap();
         assert_eq!(
-            read(tmp.path()),
-            [Record {
-                root: PathBuf::from(
-                    "/Users/shunnaka/ghq/github.com/S-Nakamur-a/conductor-worktrees/revidere-as-claude-skill"
-                ),
-                branch: "feature/revidere-as-claude-skill".into(),
-                head_oid: "2917a623ceba5261db1216c46ad85c65cc4b9f19".into(),
-            }]
+            record.root,
+            PathBuf::from(
+                "/Users/shunnaka/ghq/github.com/S-Nakamur-a/conductor-worktrees/revidere-as-claude-skill"
+            )
         );
+        assert_eq!(record.branch, "feature/revidere-as-claude-skill");
+        assert_eq!(record.head_oid, "2917a623ceba5261db1216c46ad85c65cc4b9f19");
+        assert_eq!(record.url, None);
     }
 
     #[test]
@@ -174,10 +203,10 @@ mod tests {
             &meta(&worktree, "main", &first),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
 
         repo.file("b.txt", "b").add("b.txt").commit("second");
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Stale));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Stale));
 
         let second = repo.repo.head().unwrap().target().unwrap().to_string();
         workdir(
@@ -186,7 +215,7 @@ mod tests {
             &meta(&worktree, "main", &second),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
     }
 
     #[test]
@@ -207,7 +236,7 @@ mod tests {
             &meta(Path::new("/r/elsewhere"), "main", &head),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), None);
+        assert_eq!(mark(tmp.path(), &worktree), None);
     }
 
     #[test]
@@ -223,7 +252,7 @@ mod tests {
             &meta(&worktree, "heads/main", &head),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
         let tmp = tempfile::tempdir().unwrap();
         workdir(
             tmp.path(),
@@ -231,7 +260,7 @@ mod tests {
             &meta(&worktree, "refs/heads/main", &head),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
         let tmp = tempfile::tempdir().unwrap();
         workdir(
             tmp.path(),
@@ -239,7 +268,7 @@ mod tests {
             &meta(&worktree, "a/main", &head),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), None);
+        assert_eq!(mark(tmp.path(), &worktree), None);
     }
 
     #[test]
@@ -255,7 +284,7 @@ mod tests {
             &meta(&worktree, "heads/foo", &head),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
     }
 
     #[test]
@@ -271,14 +300,14 @@ mod tests {
             &meta(&worktree, "main", &oid.to_string()),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), None);
+        assert_eq!(mark(tmp.path(), &worktree), None);
         workdir(
             tmp.path(),
             "revidere-b",
             &meta(&worktree, "HEAD", &oid.to_string()),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
     }
 
     #[test]
@@ -291,7 +320,110 @@ mod tests {
         let head = repo.repo.head().unwrap().target().unwrap().to_string();
         let tmp = tempfile::tempdir().unwrap();
         workdir(tmp.path(), "revidere-a", &meta(&link, "main", &head), true);
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), Some(Mark::Current));
+        assert_eq!(mark(tmp.path(), &worktree), Some(Mark::Current));
+    }
+
+    fn published(tmp: &Path, name: &str, meta: &str, url: Option<&str>, age_secs: u64) {
+        let mut meta: serde_json::Value = serde_json::from_str(meta).unwrap();
+        if let Some(url) = url {
+            meta["artifact_url"] = url.into();
+        }
+        workdir(tmp, name, &meta.to_string(), true);
+        let at = SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        std::fs::File::options()
+            .write(true)
+            .open(tmp.join(name).join("review.html"))
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    #[test]
+    fn 開くのは印を決めた記録のうちurlのある新しいページ_claude_ai以外は採らない() {
+        let repo = TestRepo::with_base_commit();
+        let worktree = repo.path.canonicalize().unwrap();
+        let old = repo.repo.head().unwrap().target().unwrap().to_string();
+        repo.file("b.txt", "b").add("b.txt").commit("second");
+        let head = repo.repo.head().unwrap().target().unwrap().to_string();
+        let url = |tmp: &Path| review_of(&read(tmp), &worktree).and_then(|r| r.url);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let stale = meta(&worktree, "main", &old);
+        published(
+            tmp.path(),
+            "revidere-a",
+            &stale,
+            Some("https://claude.ai/artifact/old"),
+            60,
+        );
+        published(
+            tmp.path(),
+            "revidere-b",
+            &stale,
+            Some("https://claude.ai/artifact/new"),
+            10,
+        );
+        assert_eq!(
+            url(tmp.path()).as_deref(),
+            Some("https://claude.ai/artifact/new")
+        );
+
+        let current = meta(&worktree, "main", &head);
+        published(
+            tmp.path(),
+            "revidere-c",
+            &current,
+            Some("https://claude.ai/artifact/cur"),
+            300,
+        );
+        assert_eq!(
+            url(tmp.path()).as_deref(),
+            Some("https://claude.ai/artifact/cur")
+        );
+
+        published(tmp.path(), "revidere-d", &current, None, 5);
+        assert_eq!(
+            url(tmp.path()).as_deref(),
+            Some("https://claude.ai/artifact/cur"),
+            "publish 前の新しいページがあっても、公開済みのページを開く"
+        );
+        let other_branch = meta(&worktree, "other", &head);
+        published(
+            tmp.path(),
+            "revidere-e",
+            &other_branch,
+            Some("https://claude.ai/artifact/other"),
+            0,
+        );
+        assert_eq!(
+            url(tmp.path()).as_deref(),
+            Some("https://claude.ai/artifact/cur")
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        published(tmp.path(), "revidere-a", &current, None, 0);
+        published(
+            tmp.path(),
+            "revidere-b",
+            &stale,
+            Some("https://claude.ai/artifact/old"),
+            0,
+        );
+        published(
+            tmp.path(),
+            "revidere-c",
+            &current,
+            Some("https://example.com/x"),
+            0,
+        );
+        assert_eq!(
+            review_of(&read(tmp.path()), &worktree),
+            Some(Review {
+                mark: Mark::Current,
+                url: None
+            }),
+            "前の commit のページでは代えない"
+        );
     }
 
     #[test]
@@ -305,6 +437,6 @@ mod tests {
             &meta(&worktree, "main", "0000"),
             true,
         );
-        assert_eq!(mark_of(&read(tmp.path()), &worktree), None);
+        assert_eq!(mark(tmp.path(), &worktree), None);
     }
 }

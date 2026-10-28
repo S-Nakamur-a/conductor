@@ -198,7 +198,9 @@ branch, stale when only other commits of that branch were read. Renaming either 
 those keys in `revidere.py` makes the marks disappear without an error, and a window
 whose `$TMPDIR` differs from the Claude that ran the skill never sees them — on macOS
 that includes a window with no `$TMPDIR` at all, since Rust then reads the per-user
-`/var/folders` directory while Python writes to `/tmp`. The list's revidere button
+`/var/folders` directory while Python writes to `/tmp`. Clicking a mark opens the
+`artifact_url` that `revidere.py published` adds to `meta.json`; renaming that key keeps
+the marks but makes every one say it has no link. The list's revidere button
 starts Claude with `/conductor:revidere` as its first argument rather than typing it in
 (the reason is on `Conversation`).
 

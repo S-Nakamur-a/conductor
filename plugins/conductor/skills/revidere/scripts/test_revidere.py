@@ -522,6 +522,34 @@ class CheckCommand(RepoTest):
         self.assertIn("最初の答えのまま", out)
 
 
+class PublishedCommand(RepoTest):
+    def setUp(self):
+        super().setUp()
+        self.r.write("a.txt", "1\n")
+        self.d, _ = self.r.prepare()
+        self.meta = os.path.join(self.d, "meta.json")
+
+    def test_URLをmeta_jsonに書き足し_出し直しは上書きし_ほかの欄は残す(self):
+        before = rv.read_json(self.meta)
+        inode = os.stat(self.meta).st_ino
+        self.assertEqual(self.r.run("published", self.d, "https://claude.ai/artifact/a")[:2], (0, ""))
+        self.assertNotEqual(os.stat(self.meta).st_ino, inode, "書きかけを見せないよう、別のファイルで置き換える")
+        self.assertEqual(self.r.run("published", self.d, "https://claude.ai/artifact/b")[0], 0)
+        after = rv.read_json(self.meta)
+        self.assertEqual(after.pop("artifact_url"), "https://claude.ai/artifact/b")
+        self.assertEqual(after, before)
+
+    def test_ArtifactでないURLと読めないmetaはexit2で何も書かない(self):
+        before = read_bytes(self.meta)
+        code, _, err = self.r.run("published", self.d, "https://example.com/x")
+        self.assertEqual(code, 2)
+        self.assertIn("Artifact の URL ではない", err)
+        self.assertEqual(read_bytes(self.meta), before)
+        code, _, err = self.r.run("published", os.path.join(self.d, "missing"), "https://claude.ai/artifact/a")
+        self.assertEqual(code, 2)
+        self.assertIn("を読めない", err)
+
+
 # ---- render ----
 
 

@@ -36,7 +36,10 @@ $ARGUMENTS
      2 回直しても通らなければ、出た文を利用者に伝えて終える。
 5. **ページにする。** `revidere.py render <作業dir>` が `<作業dir>/review.html` を書いてパスを出す。
 6. **出す。** ページには**変更したコードの抜粋がそのまま載る**。そのことを利用者に 1 行で伝えてから、
-   Artifact ツールで review.html を publish し、リンクを返す。Artifact ツールが無いセッションなら、
+   Artifact ツールで review.html を publish し、その publish の結果の URL を
+   `revidere.py published <作業dir> <URL>` で残してから、リンクを返す (conductor のセッション一覧が
+   レビューの印からこのページを開く)。出し直したときも走らせる。published が失敗しても
+   ページは出ているので、出た文を 1 行添えてリンクを返す。Artifact ツールが無いセッションなら、
    使えないと伝えて review.html のパスを返す。
    同じ会話で別のページ (積んだ PR の他の段など) を出していたら、その後のコミットや動作確認の
    たびに全ページと積んだ PR の本文を並べ、事実が変わるかを 1 行ずつ書き、変わるものは出し直す。
