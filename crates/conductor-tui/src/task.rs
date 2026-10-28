@@ -228,6 +228,14 @@ pub enum Task {
     FleetChanges {
         dir: PathBuf,
     },
+    /// 一覧で選んだセッションが publish した Artifact。from の続きから読む。
+    FleetArtifacts {
+        conversation: crate::panels::fleet::artifacts::Conversation,
+        from: conductor_core::claude_log::artifacts::Scan,
+    },
+    OpenArtifact {
+        url: String,
+    },
     /// PR 番号か URL を worktree にする。取り込めたら PR のメタデータも書く。
     IntakePr {
         input: String,
@@ -368,6 +376,12 @@ pub enum TaskResult {
     FleetStatus(Box<crate::panels::fleet::FleetStatus>),
     SessionStopped(conductor_core::claude_sessions::registry::Stopped),
     BranchPageOpened(Result<String, String>),
+    ArtifactOpened(Result<String, String>),
+    /// 読めなかったときの scan は None。
+    FleetArtifacts {
+        session: String,
+        scan: Option<conductor_core::claude_log::artifacts::Scan>,
+    },
     FleetChanges {
         dir: PathBuf,
         diff: Box<DiffState>,
@@ -858,6 +872,21 @@ impl Task {
                     |(dir, diff, status)| TaskResult::FleetChanges { dir, diff, status },
                 );
             }
+            Task::FleetArtifacts { conversation, from } => {
+                svc.spawn(
+                    move || {
+                        let scan = session_artifacts(&env.claude_home(), &conversation, from);
+                        (conversation.id, scan)
+                    },
+                    |(session, scan)| TaskResult::FleetArtifacts { session, scan },
+                );
+            }
+            Task::OpenArtifact { url } => {
+                svc.spawn(
+                    move || open_in_browser(&url).map(|()| "Opened the artifact.".to_string()),
+                    TaskResult::ArtifactOpened,
+                );
+            }
             Task::IntakePr { input } => {
                 svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
             }
@@ -1137,8 +1166,12 @@ fn prune(env: &TaskEnv, names: &[String]) -> Result<String, String> {
 fn open_pull_request(env: &TaskEnv, branch: &str) -> Result<String, String> {
     let url = git(env, |git| Ok(git.pr_url_for_branch(branch)))?
         .ok_or("could not determine the remote URL")?;
-    open::that(&url).map_err(|e| format!("failed to open the browser: {e}"))?;
+    open_in_browser(&url)?;
     Ok(format!("Opened the pull request for '{branch}'"))
+}
+
+fn open_in_browser(url: &str) -> Result<(), String> {
+    open::that(url).map_err(|e| format!("failed to open the browser: {e}"))
 }
 
 fn open_branch_page(dir: &Path) -> Result<String, String> {
@@ -1155,7 +1188,7 @@ fn open_branch_page(dir: &Path) -> Result<String, String> {
         Head::Detached(_) | Head::Unborn(_) => None,
     };
     let (url, message) = branch_page(&head, pr, git.repo_web_url())?;
-    open::that(&url).map_err(|e| format!("failed to open the browser: {e}"))?;
+    open_in_browser(&url)?;
     Ok(message)
 }
 
@@ -1308,6 +1341,21 @@ fn fleet_status(
             std::time::SystemTime::now(),
         ),
     }
+}
+
+/// ログがまだ無いのは Artifact が無いのと同じ。
+fn session_artifacts(
+    home: &ClaudeHome,
+    conversation: &crate::panels::fleet::artifacts::Conversation,
+    from: conductor_core::claude_log::artifacts::Scan,
+) -> Option<conductor_core::claude_log::artifacts::Scan> {
+    use conductor_core::claude_log::artifacts;
+    let Some(path) = home.session_log(&conversation.cwd, &conversation.id) else {
+        return Some(artifacts::Scan::default());
+    };
+    artifacts::scan(&path, from)
+        .inspect_err(|e| log::warn!("could not read {}: {e}", path.display()))
+        .ok()
 }
 
 /// dirs と roots が属する repo の worktree の木と、dirs それぞれを含む worktree。

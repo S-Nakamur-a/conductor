@@ -432,8 +432,8 @@ than results return piles up one thread per second — measured 476 threads at 3
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
 under one guard), the per-worktree change counts, the Sessions list's
-`poll_fleet_changes`, and the review-request poll (`Workspace::ask_review_requests`);
-each one grew this same hole independently.
+`poll_fleet_changes` and `poll_fleet_artifacts`, and the review-request poll
+(`Workspace::ask_review_requests`); each one grew this same hole independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event
 channel, so `PtyStore` (the mirror of the PTY host's screens) lives in svc and the
@@ -541,6 +541,14 @@ derivation**: `pty_session` answers only while they agree, and `sync_layout` ret
 keyboard to the list the frame they part (the shell exits, the selection moves, the region
 disappears), so keys never land in a shell nobody chose. FleetShell is dispatched to the
 list alone — the terminal panel's transcript and scroll logic belong to the right side.
+
+**Ctrl+a** shows the selected session's published artifacts there instead
+(`claude_log::artifacts`). While the same session stays selected, each read starts from the
+byte offset the last one stopped at (`Scan::offset`); selecting another session and coming
+back reads from the top again. The log is looked up by the same `(cwd, id)` as the titles,
+the state file's cwd first, so it follows a Claude that entered a worktree mid-session only
+as far as the state file does. Artifacts from before a `/clear` or from a subagent are not
+listed.
 
 ### Key modules
 

@@ -19,6 +19,7 @@ keymap_suite::actions! {
         ReopenAsAccount => "reopen_as_account",
         OpenBranchPage => "open_branch_page",
         ShowFleetChanges => "show_fleet_changes",
+        ShowFleetArtifacts => "show_fleet_artifacts",
         NextRepo => "next_repo",
         PrevRepo => "prev_repo",
         GoToWaiting => "go_to_waiting",
@@ -158,6 +159,9 @@ impl Action {
             Action::ReopenAsAccount => "Reopen the selected session as another Claude account",
             Action::OpenBranchPage => "Open the selected worktree's pull request in the browser",
             Action::ShowFleetChanges => "Show Git Changes under the session list",
+            Action::ShowFleetArtifacts => {
+                "Show the selected session's artifacts under the session list"
+            }
             Action::NextRepo => "Next repository",
             Action::PrevRepo => "Previous repository",
             Action::GoToWaiting => "Select the first session waiting for input",

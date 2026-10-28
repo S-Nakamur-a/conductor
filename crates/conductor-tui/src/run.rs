@@ -220,6 +220,7 @@ pub fn run(
             apply(ws, svc, vec![Effect::Spawn(task)]);
         }
         poll_fleet_changes(ws, svc, Instant::now());
+        poll_fleet_artifacts(ws, svc, Instant::now());
         dirty |= ws.fx.tick();
 
         if ws.should_quit {
@@ -401,6 +402,17 @@ fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: I
     let fleet = &ws.panels.fleet;
     if let Some(dir) = fleet.changes.wanted(fleet.selected_dir(), now) {
         apply(ws, svc, vec![Effect::Spawn(Task::FleetChanges { dir })]);
+    }
+}
+
+fn poll_fleet_artifacts(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: Instant) {
+    let fleet = &ws.panels.fleet;
+    if !ws.chrome.fleet_open || !fleet.shows_artifacts() {
+        return;
+    }
+    if let Some((conversation, from)) = fleet.artifacts.wanted(fleet.selected_conversation(), now) {
+        let task = Task::FleetArtifacts { conversation, from };
+        apply(ws, svc, vec![Effect::Spawn(task)]);
     }
 }
 
@@ -680,6 +692,7 @@ fn on_mouse(
                 }
                 Focus::TerminalClaude | Focus::TerminalShell => ws.panels.terminal.click(focus),
                 Focus::Fleet => fleet_row_click(ws, layout, mouse),
+                Focus::FleetShell => fleet_artifact_click(ws, layout, mouse),
                 _ => Vec::new(),
             };
             apply(ws, svc, effects);
@@ -706,6 +719,29 @@ fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Ve
         in_button_columns: render::in_button_columns(&composed, x),
     };
     ws.panels.fleet.click_list((x, y), press, &ws.config)
+}
+
+fn fleet_artifact_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Vec<Effect> {
+    let fleet = &mut ws.panels.fleet;
+    if !ws.modals.is_empty() || !fleet.shows_artifacts() {
+        return Vec::new();
+    }
+    let Some(body) = layout
+        .rect(Region::FleetChanges)
+        .map(crate::panels::fleet::render::inner)
+    else {
+        return Vec::new();
+    };
+    if !body.contains(Position::new(mouse.column, mouse.row)) {
+        return Vec::new();
+    }
+    let target = fleet.selected_conversation().map(|c| c.id);
+    fleet
+        .artifacts
+        .click(mouse.row - body.y, target.as_deref())
+        .map(|url| Effect::Spawn(Task::OpenArtifact { url }))
+        .into_iter()
+        .collect()
 }
 
 /// Viewer の region のときだけ code_columns で桁を絞る。
@@ -2513,6 +2549,241 @@ needle here
         assert_eq!(svc.in_flight(), 1, "投げ中に 2 本目を投げた");
     }
 
+    fn one_live_session() -> conductor_core::claude_sessions::registry::LiveSession {
+        use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status};
+        LiveSession {
+            pid: 1,
+            cwd: PathBuf::from("/r/app"),
+            session_id: "s1".into(),
+            status: Status::Working,
+            status_since: None,
+            owner: Owner::Elsewhere,
+            started: std::time::SystemTime::UNIX_EPOCH,
+            sessions_dir: PathBuf::new(),
+        }
+    }
+
+    fn fleet_with_one_session() -> (Workspace, Services<TaskResult>, Layout) {
+        fleet_listing(vec![one_live_session()], 40)
+    }
+
+    fn ctrl_a() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
+    }
+
+    fn land_artifacts(ws: &mut Workspace, session: &str, urls: &[(&str, &str)]) {
+        use conductor_core::claude_log::artifacts::{Artifact, Scan};
+        let list = urls
+            .iter()
+            .map(|(title, url)| Artifact {
+                url: url.to_string(),
+                title: title.to_string(),
+            })
+            .collect();
+        ws.accept(TaskResult::FleetArtifacts {
+            session: session.into(),
+            scan: Some(Scan { offset: 1, list }),
+        });
+    }
+
+    fn press_artifacts(ws: &mut Workspace, l: &Layout, line: u16) -> Vec<Effect> {
+        ws.sync_layout(l);
+        let body = crate::panels::fleet::render::inner(l.rect(Region::FleetChanges).unwrap());
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: body.x + 2,
+            row: body.y + line,
+            modifiers: KeyModifiers::NONE,
+        };
+        fleet_artifact_click(ws, l, click)
+    }
+
+    #[test]
+    fn ctrl_a_で左下が_artifacts_になりキーボードは一覧のまま() {
+        let (mut ws, mut svc, _) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        assert_eq!(
+            ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Artifacts
+        );
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(ws.modals.is_empty());
+    }
+
+    #[test]
+    fn artifacts_を映している間だけ選んだセッションのログを1本ずつ読む() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        ws.sync_layout(&l);
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 0, "Git Changes のときに読んだ");
+        on_key(&mut ws, &mut svc, ctrl_a());
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 1);
+    }
+
+    #[test]
+    fn worktree_の行を選んでいる間は読まず_選ぶよう案内する() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateUp);
+        assert!(ws.panels.fleet.selected_worktree().is_some());
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 0);
+        assert!(drawn_changes(&mut ws, &l).contains("セッションを選ぶと出ます"));
+    }
+
+    #[test]
+    fn 届いた_artifact_が区画と題に出る() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        land_artifacts(
+            &mut ws,
+            "s1",
+            &[
+                ("plan", "https://claude.ai/artifact/p"),
+                ("old", "https://claude.ai/artifact/o"),
+            ],
+        );
+        let drawn = drawn_changes(&mut ws, &l);
+        assert!(drawn.contains("plan"), "{drawn}");
+        assert!(drawn.contains("https://claude.ai/artifact/p"), "{drawn}");
+        assert_eq!(
+            crate::panels::fleet::render::lower_title(&ws),
+            " Artifacts (2) · ctrl+g で Git Changes · ctrl+t でシェル "
+        );
+    }
+
+    #[test]
+    fn artifact_が無いセッションは無いと出し題も0件() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        land_artifacts(&mut ws, "s1", &[]);
+        assert!(drawn_changes(&mut ws, &l).contains("Artifact はまだありません"));
+        assert!(
+            crate::panels::fleet::render::lower_title(&ws).starts_with(" Artifacts (0) "),
+            "{}",
+            crate::panels::fleet::render::lower_title(&ws)
+        );
+    }
+
+    #[test]
+    fn artifact_の行を二度押すとその_url_を開く() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        land_artifacts(
+            &mut ws,
+            "s1",
+            &[
+                ("plan", "https://claude.ai/artifact/p"),
+                ("old", "https://claude.ai/artifact/o"),
+            ],
+        );
+        assert!(press_artifacts(&mut ws, &l, 1).is_empty(), "一度目で開いた");
+        let effects = press_artifacts(&mut ws, &l, 1);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Spawn(Task::OpenArtifact { url })] if url == "https://claude.ai/artifact/o"
+            ),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn artifacts_の区画への押下は一覧のキーボードを動かさず_二度目で開く押下として数える() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        land_artifacts(&mut ws, "s1", &[("plan", "https://claude.ai/artifact/p")]);
+        ws.sync_layout(&l);
+        let body = crate::panels::fleet::render::inner(l.rect(Region::FleetChanges).unwrap());
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: body.x + 2,
+            row: body.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, click);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert_eq!(svc.in_flight(), 0, "一度目で開いた");
+        assert!(
+            matches!(
+                press_artifacts(&mut ws, &l, 0).as_slice(),
+                [Effect::Spawn(Task::OpenArtifact { .. })]
+            ),
+            "一度目の押下が区画に届いていない"
+        );
+    }
+
+    #[test]
+    fn モーダルが出ている間は_artifact_を二度押しても開かない() {
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        land_artifacts(&mut ws, "s1", &[("plan", "https://claude.ai/artifact/p")]);
+        ws.modals
+            .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
+        press_artifacts(&mut ws, &l, 0);
+        assert!(press_artifacts(&mut ws, &l, 0).is_empty());
+    }
+
+    #[test]
+    fn artifacts_から_ctrl_g_で_git_changes_に戻る() {
+        let (mut ws, mut svc, _) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        on_key(&mut ws, &mut svc, ctrl_g());
+        assert_eq!(
+            ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Changes
+        );
+    }
+
+    #[test]
+    fn artifacts_から_ctrl_t_でシェルに入る() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_a());
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(
+            f.ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Shell
+        );
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+    }
+
+    #[test]
+    fn 窓が低く左下が無いときと一覧を閉じている間は_artifact_を読まない() {
+        let (mut ws, mut svc, low) = fleet_listing(vec![one_live_session()], 22);
+        ws.sync_layout(&low);
+        on_key(&mut ws, &mut svc, ctrl_a());
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 0, "左下の無い窓で読んだ");
+
+        let (mut ws, mut svc, l) = fleet_with_one_session();
+        ws.sync_layout(&l);
+        on_key(&mut ws, &mut svc, ctrl_a());
+        ws.chrome.fleet_open = false;
+        poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
+        assert_eq!(svc.in_flight(), 0, "一覧を閉じている間に読んだ");
+    }
+
+    #[test]
+    fn 割り当てを外したキーは_artifacts_の題に案内しない() {
+        let (mut ws, mut svc, _) = fleet_with_one_session();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        let user: toml::Table = toml::from_str("[layers.fleet]\n\"ctrl+g\" = false").unwrap();
+        ws.keymap = conductor_core::keymap::KeyMap::with_warnings(&user).0;
+        let title = crate::panels::fleet::render::lower_title(&ws);
+        assert!(!title.contains("Git Changes"), "{title}");
+        assert!(title.contains("ctrl+t でシェル"), "{title}");
+    }
+
+    #[test]
+    fn git_changes_を映している間は左下を二度押しても開かない() {
+        let (mut ws, _svc, l) = fleet_with_one_session();
+        land_artifacts(&mut ws, "s1", &[("plan", "https://claude.ai/artifact/p")]);
+        press_artifacts(&mut ws, &l, 0);
+        assert!(press_artifacts(&mut ws, &l, 0).is_empty());
+    }
+
     #[test]
     fn 据えた結果のファイルと増減が区画と題に出る() {
         use conductor_core::diff_state::{DiffSource, DiffState, FileDiff, FileStatus};
@@ -2672,7 +2943,7 @@ needle here
     }
 
     #[test]
-    fn シェルの中の文字とctrl_tはシェルへ届く() {
+    fn シェルの中の文字と_ctrl_t_と_ctrl_a_はシェルへ届く() {
         let mut f = shell_fleet(40);
         on_key(&mut f.ws, &mut f.svc, ctrl_t());
         for k in [
@@ -2680,6 +2951,7 @@ needle here
             key(KeyCode::Esc),
             key(KeyCode::Tab),
             ctrl_t(),
+            chord(KeyCode::Char('a'), KeyModifiers::CONTROL),
         ] {
             assert!(
                 matches!(route(&mut f.ws, k), Routed::ForwardToPty(_)),

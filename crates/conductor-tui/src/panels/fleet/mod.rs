@@ -3,6 +3,7 @@
 //! 状態は Claude Code が自分で書く状態ファイルから取り、この窓のセッションとは会話の id で
 //! 突き合わせる。この窓のセッションの行はパネルの id で持つ — 会話の id は `/clear` で変わる。
 
+pub mod artifacts;
 pub mod changes;
 pub mod render;
 
@@ -208,6 +209,7 @@ pub enum Lower {
     #[default]
     Changes,
     Shell,
+    Artifacts,
 }
 
 #[derive(Debug, Default)]
@@ -235,6 +237,7 @@ pub struct FleetPanel {
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, bool, Option<Selected>)>,
     pub changes: changes::BranchChanges,
+    pub artifacts: artifacts::SessionArtifacts,
     lower: Lower,
     /// 窓が低いと左下の区画ごと無い。レイアウトから毎フレーム写す。
     lower_shown: bool,
@@ -253,6 +256,7 @@ impl FleetPanel {
         match task {
             crate::task::Task::FleetStatus { .. } => self.polling = true,
             crate::task::Task::FleetChanges { .. } => self.changes.note_fetching(),
+            crate::task::Task::FleetArtifacts { .. } => self.artifacts.note_fetching(),
             _ => {}
         }
     }
@@ -263,6 +267,7 @@ impl FleetPanel {
         self.inspecting = None;
         self.opening_page = false;
         self.changes.forget_in_flight();
+        self.artifacts.forget_in_flight();
     }
 
     /// 会話ログを読み直さなくていいもの。会話の id → 前に読んだときの mtime。
@@ -300,6 +305,40 @@ impl FleetPanel {
     fn show_changes(&mut self) -> Vec<Effect> {
         self.lower = Lower::Changes;
         vec![Effect::Focus(Focus::Fleet)]
+    }
+
+    pub fn shows_artifacts(&self) -> bool {
+        self.lower == Lower::Artifacts && self.lower_shown
+    }
+
+    /// 選んだセッションの会話。ログは題と同じく、状態ファイルの cwd を先に見て引く —
+    /// Claude が途中で worktree に入ると、ログもその dir の側へ移る。
+    pub fn selected_conversation(&self) -> Option<artifacts::Conversation> {
+        let Some(Selected::Session(key, _)) = &self.selected else {
+            return None;
+        };
+        let (live, fallback) = match key {
+            RowKey::Pid(pid) => (self.live.iter().find(|l| l.pid == *pid), None),
+            RowKey::Panel(id) => {
+                let (own, live) = self
+                    .own
+                    .iter()
+                    .zip(self.pairing())
+                    .find(|(own, _)| own.panel_id == *id)?;
+                (live, Some(own))
+            }
+        };
+        match (live, fallback) {
+            (Some(live), _) => Some(artifacts::Conversation {
+                id: live.session_id.clone(),
+                cwd: live.cwd.clone(),
+            }),
+            (None, Some(own)) => Some(artifacts::Conversation {
+                id: own.claude_session_id.clone()?,
+                cwd: own.working_dir.clone(),
+            }),
+            (None, None) => None,
+        }
     }
 
     /// 左下にシェルを起こしてよい dir。木に載らない dir に起こすと、元の行が消えた後に辿れなくなる。
@@ -919,6 +958,10 @@ impl FleetPanel {
             Action::OpenBranchPage => return Some(self.open_page().into_iter().collect()),
             Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
             Action::ShowFleetChanges => return Some(self.show_changes()),
+            Action::ShowFleetArtifacts => {
+                self.lower = Lower::Artifacts;
+                return Some(Vec::new());
+            }
             Action::NewSessionMenu => {
                 let (dir, root) = self.launch_target(&ctx.repo.root);
                 return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
