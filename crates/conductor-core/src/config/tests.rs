@@ -88,6 +88,7 @@ fn non_default() -> Config {
                 name: String::from("personal"),
                 color: Some(String::from("magenta")),
                 config_dir: Some(PathBuf::from("/c")),
+                paths: vec![PathBuf::from("/src/me")],
             }],
         },
     }
@@ -98,6 +99,7 @@ fn account(name: &str, config_dir: Option<&Path>) -> ClaudeAccount {
         name: name.to_string(),
         color: None,
         config_dir: config_dir.map(Path::to_path_buf),
+        paths: Vec::new(),
     }
 }
 
@@ -120,6 +122,87 @@ fn accountsのconfig_dirはチルダだけ展開し末尾のスラッシュを�
             .map(Path::to_string_lossy),
         Some(format!("{}/.claude-personal/", home().display()).into())
     );
+}
+
+#[test]
+fn 起こすアカウントはdirを含む一番深いpathsの持ち主で_どれにも入らなければ先頭() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    for dir in ["src/me/nested", "src/me2", "elsewhere"] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::os::unix::fs::symlink(root.join("src/me"), root.join("link")).unwrap();
+    let with_paths = |name: &str, paths: &[&str]| ClaudeAccount {
+        paths: paths.iter().map(|p| root.join(p)).collect(),
+        ..account(name, None)
+    };
+    let accounts = [
+        with_paths("work", &["src"]),
+        with_paths("personal", &["src/me"]),
+        with_paths("same", &["src/me"]),
+    ];
+    let owner = |dir: &str| account_for(&accounts, &root.join(dir)).map(|a| a.name.as_str());
+
+    assert_eq!(owner("elsewhere"), Some("work"));
+    assert_eq!(owner("src/me2"), Some("work"));
+    assert_eq!(owner("src/me/nested"), Some("personal"));
+    assert_eq!(owner("link/nested"), Some("personal"));
+    assert_eq!(account_for(&[], &root), None);
+}
+
+#[test]
+fn 起こすアカウントは手で選んだ名前_会話を走らせたdir_規則の順で_知らないものは規則に戻る() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.claude.accounts = vec![
+        account("work", None),
+        ClaudeAccount {
+            paths: vec![root.path().to_path_buf()],
+            ..account("personal", Some(Path::new("/p")))
+        },
+    ];
+    let work_dir = home().join(".claude");
+    let launched = |chosen, ran_in: Option<&Path>| {
+        config
+            .claude_account_to_launch(chosen, ran_in, root.path())
+            .map(|a| a.name.as_str())
+    };
+
+    assert_eq!(launched(None, None), Some("personal"));
+    assert_eq!(launched(Some("work"), None), Some("work"));
+    assert_eq!(launched(Some("gone"), None), Some("personal"));
+    assert_eq!(launched(None, Some(&work_dir)), Some("work"));
+    assert_eq!(
+        launched(Some("personal"), Some(&work_dir)),
+        Some("personal")
+    );
+    assert_eq!(
+        launched(None, Some(Path::new("/elsewhere"))),
+        Some("personal")
+    );
+    assert_eq!(
+        Config::default().claude_account_to_launch(
+            Some("work"),
+            Some(Path::new("/p")),
+            root.path()
+        ),
+        None
+    );
+}
+
+#[test]
+fn accountsのpathsもチルダを展開する() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "[[claude.accounts]]\nname = \"personal\"\npaths = [\"~/src/me\"]\n",
+    )
+    .unwrap();
+
+    let cfg = Config::load_from(&path).unwrap();
+
+    assert_eq!(cfg.claude.accounts[0].paths, [home().join("src/me")]);
 }
 
 #[test]

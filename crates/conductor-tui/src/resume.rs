@@ -9,27 +9,27 @@ use conductor_core::git_engine::WorktreeInfo;
 use crate::effect::Effect;
 use crate::workspace::{StatusLevel, Workspace};
 
-/// どの worktree でどのセッション id を開き直すか。
+/// どの worktree でどのセッション id を、どの config dir のアカウントで開き直すか。
 ///
 /// main を既定で外すのは、寿命が長くセッションが積み重なるため。grab したものだけは
 /// 例外で、元の worktree で作られたセッションなので一覧から引いたものより優先する。
 pub fn plan(
     worktrees: &[WorktreeInfo],
     sessions: &HashMap<PathBuf, ResumableSession>,
-    main_grabbed: Option<&str>,
+    main_grabbed: Option<&(String, PathBuf)>,
     resume_main: bool,
-) -> Vec<(PathBuf, String)> {
+) -> Vec<(PathBuf, String, PathBuf)> {
     let mut plan = Vec::new();
     for worktree in worktrees {
-        let id = match (worktree.is_main, main_grabbed) {
-            (true, Some(grabbed)) => grabbed.to_string(),
+        let (id, ran_in) = match (worktree.is_main, main_grabbed) {
+            (true, Some(grabbed)) => grabbed.clone(),
             (true, None) if !resume_main => continue,
             _ => match sessions.get(&canonical(&worktree.path)) {
-                Some(session) => session.session_id.clone(),
+                Some(session) => (session.session_id.clone(), session.config_dir.clone()),
                 None => continue,
             },
         };
-        plan.push((worktree.path.clone(), id));
+        plan.push((worktree.path.clone(), id, ran_in));
     }
     plan
 }
@@ -38,26 +38,27 @@ pub fn plan(
 pub fn accept(
     ws: &mut Workspace,
     sessions: HashMap<PathBuf, ResumableSession>,
-    main_grabbed: Option<String>,
+    main_grabbed: Option<(String, PathBuf)>,
 ) -> Vec<Effect> {
     let plan = plan(
         ws.panels.worktree.list(),
         &sessions,
-        main_grabbed.as_deref(),
+        main_grabbed.as_ref(),
         ws.config.general.auto_resume_main,
     );
     // ホストに生き残っているセッションの横に、同じ会話をもう 1 本開かない。
     let plan: Vec<_> = plan
         .into_iter()
-        .filter(|(worktree, _)| !ws.panels.terminal.has_claude_session(worktree))
+        .filter(|(worktree, ..)| !ws.panels.terminal.has_claude_session(worktree))
         .collect();
     let mut resumed = 0;
-    for (worktree, session_id) in plan {
-        match ws
-            .panels
-            .terminal
-            .resume(&session_id, &worktree, &ws.repo.root, &ws.config)
-        {
+    for (worktree, session_id, ran_in) in plan {
+        match ws.panels.terminal.resume(
+            (&session_id, &ran_in),
+            &worktree,
+            &ws.repo.root,
+            &ws.config,
+        ) {
             Ok(()) => resumed += 1,
             Err(e) => log::warn!(
                 "could not resume the session in '{}': {e:#}",
@@ -104,6 +105,7 @@ mod tests {
             display: "prompt".into(),
             project_name: "repo".into(),
             time_ago: "1h ago".into(),
+            config_dir: PathBuf::from(format!("/c/{id}")),
         }
     }
 
@@ -125,7 +127,11 @@ mod tests {
 
         assert_eq!(
             plan(&worktrees, &found, None, false),
-            [(PathBuf::from("/wt/feature"), "feature-session".to_string())]
+            [(
+                PathBuf::from("/wt/feature"),
+                "feature-session".to_string(),
+                PathBuf::from("/c/feature-session")
+            )]
         );
         assert_eq!(
             plan(&worktrees, &found, None, true).len(),
@@ -140,8 +146,17 @@ mod tests {
         let found = sessions(&[("/repo", "main-session")]);
 
         assert_eq!(
-            plan(&worktrees, &found, Some("grabbed"), false),
-            [(PathBuf::from("/repo"), "grabbed".to_string())]
+            plan(
+                &worktrees,
+                &found,
+                Some(&("grabbed".to_string(), PathBuf::from("/personal"))),
+                false
+            ),
+            [(
+                PathBuf::from("/repo"),
+                "grabbed".to_string(),
+                PathBuf::from("/personal")
+            )]
         );
     }
 
@@ -178,7 +193,11 @@ mod tests {
 
         assert_eq!(
             plan(&worktrees, &found, None, false),
-            [(PathBuf::from("/wt/b"), "b-session".to_string())]
+            [(
+                PathBuf::from("/wt/b"),
+                "b-session".to_string(),
+                PathBuf::from("/c/b-session")
+            )]
         );
         assert!(plan(&worktrees, &HashMap::new(), None, false).is_empty());
     }

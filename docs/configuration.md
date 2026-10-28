@@ -60,15 +60,35 @@ immediately on save; everything else needs a restart.
 # One [[claude.accounts]] per Claude Code account, that is, per config dir. The
 # Sessions list reads the state files of every account listed here (plus the
 # config dir conductor itself was started with), and labels each session with
-# its account's name in its color. The transcript view looks in all of those
-# config dirs too; Resume, automatic resume and grab offer only the conversations
-# the account conductor was started with can open. With no accounts, only the
-# config dir conductor was started with is read (CLAUDE_CONFIG_DIR, or ~/.claude
-# without it).
+# its account's name in its color. The Resume list and the transcript view look
+# in all of those config dirs too.
+#
+# A Claude conductor starts runs as the account whose `paths` contain its
+# directory (the deepest one wins, a tie goes to the earlier account), or as the
+# first account when none does. Worktrees are made outside the repository (by
+# default beside it in <repo>-worktrees/, or under worktree_dir), so a path that
+# lists only the repository does not match them: list the directory that holds
+# them as well. With two accounts or more, the
+# new-session menus (Ctrl+n and [+] in the Sessions list, [+] on the Claude panel)
+# and the Resume menu also offer "as <name>" for each account. Resuming
+# (automatic resume, grab, and Resume / Resume + Chrome in the Resume menu) starts
+# as the account whose history.jsonl last ran the conversation, so a conversation
+# moved to another account for a while stays there; a conversation from a config
+# dir that is not one of the accounts follows `paths`. conductor does not check
+# that an account chosen with "as <name>" can open the conversation. The Resume
+# menu refuses a conversation whose Claude is open in this window; automatic
+# resume skips a worktree that already has a Claude, and grab does not check.
+# Shells keep conductor's own
+# environment, so `claude` typed in one runs as the account conductor was started
+# with.
+#
+# With no accounts, only the config dir conductor was started with is read
+# (CLAUDE_CONFIG_DIR, or ~/.claude without it), and Claude starts with it.
 #
 # [[claude.accounts]]
 # name = "work"
 # color = "cyan"                        # a color name or "#rrggbb"
+# paths = ["~/src/work"]                 # directories whose Claudes run as this account
 # # config_dir not written: Claude Code's default, ~/.claude. Do not write
 # # config_dir = "~/.claude" for it: Claude Code keys the login by the exact spelling of
 # # CLAUDE_CONFIG_DIR, so the spelled-out default reads as logged out.
@@ -77,6 +97,7 @@ immediately on save; everything else needs a restart.
 # name = "personal"
 # color = "magenta"
 # config_dir = "~/.claude-personal"     # used as written after ~ expansion, trailing / included
+# paths = ["~/src/me"]
 
 [updates]
 # check_on_startup = true               # look for a newer release on GitHub at startup

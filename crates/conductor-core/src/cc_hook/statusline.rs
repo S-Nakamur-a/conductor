@@ -15,6 +15,8 @@ use serde_json::Value;
 pub const DIR_ENV: &str = "CONDUCTOR_STATUSLINE_DIR";
 /// 中継した子に付ける印。ユーザのコマンドが conductor を呼び返しても二重に中継しない。
 pub const RELAYING_ENV: &str = "CONDUCTOR_IN_STATUSLINE";
+/// Claude Code が config dir を読む環境変数。spawn が子に渡す、または外す。
+pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 /// ユーザのコマンドの終了コード。無ければ 0。
 pub fn run() -> anyhow::Result<i32> {
@@ -104,7 +106,7 @@ fn is_session_id(id: &str) -> bool {
 
 /// Claude Code の user settings の置き場。CLAUDE_CONFIG_DIR を先に見て、無ければ ~/.claude。
 pub fn claude_config_dir() -> Option<PathBuf> {
-    config_dir_from(std::env::var_os("CLAUDE_CONFIG_DIR"), dirs::home_dir())
+    config_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::home_dir())
 }
 
 fn config_dir_from(var: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {

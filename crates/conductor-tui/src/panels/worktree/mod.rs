@@ -304,11 +304,13 @@ impl WorktreePanel {
             Effect::Status(StatusLevel::Success, done.message),
             Effect::Spawn(Task::ListWorktrees),
         ];
-        if let Some((id, worktree)) = done.resume {
+        if let Some((id, worktree, ran_in)) = done.resume {
             effects.push(Effect::ResumeSession {
                 id,
                 worktree: Some(worktree),
                 chrome: false,
+                account: None,
+                ran_in: Some(ran_in),
             });
         }
         effects

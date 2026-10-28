@@ -12,7 +12,8 @@ impl ClaudeHome {
     /// 1 つのファイルの中はファイルの順のまま、root をまたぐ所だけ timestamp で縫い合わせる。
     fn read_history(&self) -> Result<Vec<HistoryEntry>> {
         let mut files = Vec::new();
-        for path in self.roots.iter().map(|root| root.join("history.jsonl")) {
+        for root in &self.roots {
+            let path = root.join("history.jsonl");
             if !path.exists() {
                 continue;
             }
@@ -22,6 +23,10 @@ impl ClaudeHome {
                     .lines()
                     .filter_map(|line| serde_json::from_str::<HistoryEntry>(line).ok())
                     .filter(|e| !e.session_id.is_empty())
+                    .map(|e| HistoryEntry {
+                        config_dir: root.clone(),
+                        ..e
+                    })
                     .collect::<Vec<_>>()
                     .into_iter()
                     .peekable(),
@@ -54,8 +59,8 @@ impl ClaudeHome {
             .into_iter()
             .rev()
             .filter(|e| filter.as_ref().is_none_or(|p| &e.project == p))
+            .filter(Self::session_file_exists)
             .filter(|e| seen.insert(e.session_id.clone()))
-            .filter(|e| self.session_file_exists(e))
             .map(|e| ResumableSession::from_entry(e, now))
             .collect();
         Ok(sessions)
@@ -74,7 +79,7 @@ impl ClaudeHome {
         let mut best: HashMap<PathBuf, HistoryEntry> = HashMap::new();
         for entry in self.read_history()? {
             let key = canonical(Path::new(&entry.project));
-            if !wanted.contains(&key) || !self.session_file_exists(&entry) {
+            if !wanted.contains(&key) || !Self::session_file_exists(&entry) {
                 continue;
             }
             if best
@@ -94,6 +99,22 @@ impl ClaudeHome {
             .map(|(key, entry)| (key, ResumableSession::from_entry(entry, now)))
             .collect())
     }
+
+    /// project で走った session_id の会話を最後に走らせた config dir。grab 済みの main を
+    /// 開き直すアカウント。ログのある行だけを数える。
+    pub fn config_dir_of(&self, project: &Path, session_id: &str) -> Result<Option<PathBuf>> {
+        let project = canonical(project);
+        Ok(self
+            .read_history()?
+            .into_iter()
+            .rev()
+            .find(|e| {
+                e.session_id == session_id
+                    && canonical(Path::new(&e.project)) == project
+                    && Self::session_file_exists(e)
+            })
+            .map(|e| e.config_dir))
+    }
 }
 
 impl ResumableSession {
@@ -107,6 +128,7 @@ impl ResumableSession {
             display: entry.display,
             project_name,
             time_ago: format_time_ago(now_ms, entry.timestamp),
+            config_dir: entry.config_dir,
         }
     }
 }

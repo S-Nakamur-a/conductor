@@ -8,6 +8,7 @@ use conductor_svc::pty::SessionKind;
 
 use crate::command::CommandId;
 use crate::modal::Modal;
+use crate::panels::terminal::ClaudeArgs;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{Focus, RepoState, StatusLevel, StatusMessage, Workspace};
 
@@ -66,6 +67,8 @@ pub enum Effect {
     DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
     NewSession(SessionKind),
     NewClaudeWithChrome,
+    /// 区画の [+] で選んだアカウントで Claude を起こす。
+    NewClaudeAs(String),
     /// 自由記述のタスクを Smart Worktree に渡す (窓の repo に作る)。Prompt の on_submit は関数
     /// ポインタで設定もリポジトリも掴めないので、Task を組むのは apply の側。
     SmartWorktree(String),
@@ -73,6 +76,7 @@ pub enum Effect {
     NewClaudeIn {
         dir: PathBuf,
         chrome: bool,
+        account: Option<String>,
     },
     /// その repo で Smart Worktree の説明を聞く。
     FleetSmartPrompt(PathBuf),
@@ -95,6 +99,9 @@ pub enum Effect {
         id: String,
         worktree: Option<PathBuf>,
         chrome: bool,
+        account: Option<String>,
+        /// 会話を走らせた config dir。account が無ければこのアカウントで起こす。
+        ran_in: Option<PathBuf>,
     },
     /// 開いているファイルを埋め込みエディタで開く。パスは絶対。
     OpenInEditor(PathBuf),
@@ -186,10 +193,25 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 }
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
-            Effect::NewSession(kind) => new_session(ws, kind, None, None, false),
-            Effect::NewClaudeWithChrome => {
-                new_session(ws, SessionKind::ClaudeCode, None, None, true)
-            }
+            Effect::NewSession(kind) => new_session(ws, kind, None, ClaudeArgs::default()),
+            Effect::NewClaudeWithChrome => new_session(
+                ws,
+                SessionKind::ClaudeCode,
+                None,
+                ClaudeArgs {
+                    chrome: true,
+                    ..ClaudeArgs::default()
+                },
+            ),
+            Effect::NewClaudeAs(account) => new_session(
+                ws,
+                SessionKind::ClaudeCode,
+                None,
+                ClaudeArgs {
+                    account: Some(&account),
+                    ..ClaudeArgs::default()
+                },
+            ),
             Effect::SmartWorktree(description) => {
                 let repo = ws.repo.root.clone();
                 queue.extend(smart_worktree(ws, repo, description));
@@ -214,7 +236,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     "Smart worktree: no repository to create it in".into(),
                 )),
             },
-            Effect::NewClaudeIn { dir, chrome } => queue.extend(new_claude_in(ws, &dir, chrome)),
+            Effect::NewClaudeIn {
+                dir,
+                chrome,
+                account,
+            } => queue.extend(new_claude_in(ws, &dir, chrome, account.as_deref())),
             Effect::SmartSession {
                 worktree,
                 name,
@@ -231,11 +257,37 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     )
                 })
             }
+            // 一覧で選んだ会話がこの窓で動いていれば断る。2 つ目のプロセスは一覧の行を取り違える。
+            // worktree を名指す grab は、source の区画を残したまま main で開き直すのが今の流れ。
+            Effect::ResumeSession { id, worktree, .. }
+                if worktree.is_none() && open_here(ws, &id) =>
+            {
+                queue.push_back(Effect::Status(
+                    StatusLevel::Warning,
+                    format!(
+                        "Session {} is open in this window: close its tab first",
+                        short_id(&id)
+                    ),
+                ));
+            }
             Effect::ResumeSession {
                 id,
                 worktree,
                 chrome,
-            } => new_session(ws, SessionKind::ClaudeCode, Some(&id), worktree, chrome),
+                account,
+                ran_in,
+            } => new_session(
+                ws,
+                SessionKind::ClaudeCode,
+                worktree,
+                ClaudeArgs {
+                    resume: Some(&id),
+                    chrome,
+                    account: account.as_deref(),
+                    ran_in: ran_in.as_deref(),
+                    ..ClaudeArgs::default()
+                },
+            ),
             Effect::OpenInEditor(path) => queue.extend(open_in_editor(ws, &path)),
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
@@ -458,7 +510,7 @@ pub(crate) fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
 /// テストを走らせたいのであって、先にシェルを開けと言われたいわけではない。
 fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
     if !ws.panels.terminal.has_shell() {
-        new_session(ws, SessionKind::Shell, None, None, false);
+        new_session(ws, SessionKind::Shell, None, ClaudeArgs::default());
     }
     match ws.panels.terminal.send_line(command) {
         Ok(()) => vec![Effect::Focus(Focus::TerminalShell)],
@@ -517,8 +569,28 @@ fn open_fleet_shell(ws: &mut Workspace) -> Vec<Effect> {
     vec![Effect::Focus(Focus::FleetShell)]
 }
 
-fn new_claude_in(ws: &mut Workspace, dir: &std::path::Path, chrome: bool) -> Vec<Effect> {
-    let launched = ws.panels.terminal.launch_claude_in(dir, &ws.config, chrome);
+fn open_here(ws: &Workspace, session_id: &str) -> bool {
+    ws.panels
+        .terminal
+        .own_claude_sessions()
+        .iter()
+        .any(|own| own.claude_session_id.as_deref() == Some(session_id))
+}
+
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+fn new_claude_in(
+    ws: &mut Workspace,
+    dir: &std::path::Path,
+    chrome: bool,
+    account: Option<&str>,
+) -> Vec<Effect> {
+    let launched = ws
+        .panels
+        .terminal
+        .launch_claude_in(dir, &ws.config, chrome, account);
     let own = ws.panels.terminal.own_claude_sessions();
     after_launch(ws, launched, own)
 }
@@ -557,23 +629,17 @@ fn smart_session(
     }
 }
 
-fn new_session(
-    ws: &mut Workspace,
-    kind: SessionKind,
-    resume: Option<&str>,
-    at: Option<PathBuf>,
-    chrome: bool,
-) {
+fn new_session(ws: &mut Workspace, kind: SessionKind, at: Option<PathBuf>, claude: ClaudeArgs<'_>) {
     let worktree = at.unwrap_or_else(|| {
         ws.panels
             .worktree
             .selected()
             .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone())
     });
-    let result =
-        ws.panels
-            .terminal
-            .spawn(kind, resume, &worktree, &ws.repo.root, &ws.config, chrome);
+    let result = ws
+        .panels
+        .terminal
+        .spawn(kind, claude, &worktree, &ws.repo.root, &ws.config);
     match result {
         Ok(()) => ws.set_screen_focus(match kind {
             SessionKind::Shell => Focus::TerminalShell,

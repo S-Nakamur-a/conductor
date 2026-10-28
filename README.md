@@ -144,7 +144,9 @@ other key closes the question. Ctrl+n is never part of typed text, so typing int
 list does not open this menu. The new session is selected
 and the keyboard goes into it on the right. The `[+]` at the right end of a worktree's
 line does the same as 1 and 2, and the `[✧]` beside a repository's name starts Smart
-Worktree there. The result of a Smart Worktree started before switching to another
+Worktree there. With two `[[claude.accounts]]` or more, the menu goes on with one
+"Claude Code as <name>" per account, and a session otherwise starts as the account whose
+`paths` contain its directory. The result of a Smart Worktree started before switching to another
 repository still arrives.
 
 **g** opens the selected line's pull request in the browser: one whose head is the branch

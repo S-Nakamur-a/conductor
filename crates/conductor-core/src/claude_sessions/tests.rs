@@ -251,33 +251,56 @@ fn 二つのconfig_dirのhistoryは各ファイルの順を保って時刻で縫
 }
 
 #[test]
-fn 自分で選ぶresumeは起こすconfig_dirで開ける会話だけを候補にする() {
+fn 会話は最後に走らせたconfig_dirで_そこにログがある行から選ぶ() {
     let (_w, work) = home();
     let (_p, personal) = home();
     let p = canonical(tempfile::tempdir().unwrap().path());
     let q = canonical(tempfile::tempdir().unwrap().path());
-    touch_session(&work, &p, "older-work");
-    touch_session(&personal, &p, "newer-personal");
-    touch_session(&personal, &q, "only-personal");
-    write_history(&work, &[history_line("w", "older-work", 1000, &p)]);
+    // p の会話は両方から見える (projects の共有)。q の会話は personal の history に新しい行が
+    // あるが、ログは work にしか無い。
+    touch_session(&work, &p, "switched");
+    touch_session(&personal, &p, "switched");
+    touch_session(&work, &q, "stays");
+    write_history(
+        &work,
+        &[
+            history_line("w", "switched", 1000, &p),
+            history_line("w", "stays", 1500, &q),
+        ],
+    );
     write_history(
         &personal,
         &[
-            history_line("p", "newer-personal", 2000, &p),
-            history_line("q", "only-personal", 3000, &q),
+            history_line("p", "switched", 2000, &p),
+            history_line("p", "stays", 3000, &q),
         ],
     );
-    let in_work = ClaudeHome::of(vec![work.roots[0].clone(), personal.roots[0].clone()])
-        .opening_in(work.roots[0].clone());
+    let both = ClaudeHome::of(vec![work.roots[0].clone(), personal.roots[0].clone()]);
 
-    let found = in_work
+    let found = both
         .find_latest_sessions_for_paths(&[p.clone(), q.clone()])
         .unwrap();
+    assert_eq!(found[&p].config_dir, personal.roots[0]);
+    assert_eq!(found[&q].config_dir, work.roots[0]);
 
-    assert_eq!(found[&p].session_id, "older-work");
-    assert!(!found.contains_key(&q));
-    assert!(in_work.can_open(&p, "older-work"));
-    assert!(!in_work.can_open(&p, "newer-personal"));
+    let listed: Vec<(String, PathBuf)> = both
+        .load_resumable_sessions(None)
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.session_id, s.config_dir))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("switched".to_string(), personal.roots[0].clone()),
+            ("stays".to_string(), work.roots[0].clone()),
+        ]
+    );
+    assert_eq!(
+        both.config_dir_of(&p, "switched").unwrap(),
+        Some(personal.roots[0].clone())
+    );
+    assert_eq!(both.config_dir_of(&p, "stays").unwrap(), None);
 }
 
 #[test]
@@ -357,9 +380,14 @@ impl Migration {
     }
 
     fn migrate(&self) -> bool {
-        self.home
-            .migrate_session("sess", &self.source, &self.dest, "hint")
-            .unwrap()
+        ClaudeHome::migrate_session(
+            &self.home.roots[0],
+            "sess",
+            &self.source,
+            &self.dest,
+            "hint",
+        )
+        .unwrap()
     }
 
     fn unmigrate(&self) {
@@ -389,16 +417,12 @@ fn 移行はログとサブエージェントをリンクしhistoryに追記す�
 }
 
 #[test]
-fn 移行はresumeするconfig_dirの中で済ませ他のconfig_dirには書かない() {
+fn 移行は会話を走らせたconfig_dirの中で済ませ他のconfig_dirには書かない() {
     let m = Migration::new();
     let (_other_dir, other) = home();
-    let both = ClaudeHome::of(vec![other.roots[0].clone(), m.home.roots[0].clone()])
-        .opening_in(m.home.roots[0].clone());
+    let both = ClaudeHome::of(vec![other.roots[0].clone(), m.home.roots[0].clone()]);
 
-    assert!(
-        both.migrate_session("sess", &m.source, &m.dest, "hint")
-            .unwrap()
-    );
+    assert!(m.migrate());
 
     assert!(m.dst("sess.jsonl").symlink_metadata().unwrap().is_symlink());
     assert!(!other.projects_dir_for(&m.dest).exists());
@@ -411,9 +435,7 @@ fn 移行はresumeするconfig_dirの中で済ませ他のconfig_dirには書か
 fn 移行元にログが無ければ何もしない() {
     let m = Migration::new();
     assert!(
-        !m.home
-            .migrate_session("nope", &m.source, &m.dest, "hint")
-            .unwrap()
+        !ClaudeHome::migrate_session(&m.home.roots[0], "nope", &m.source, &m.dest, "hint").unwrap()
     );
     assert!(!m.dst("").exists());
 }
