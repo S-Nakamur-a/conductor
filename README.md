@@ -107,6 +107,8 @@ started has drawn its status line.
 **j** / **k** move one line; **J** / **K** (or **Shift+↓** / **Shift+↑**) jump to the
 next repository, or back to the top of the current one. Clicking a worktree's or a
 session's line selects it, and a double click on a session does what **Tab** does.
+The mouse wheel over the list scrolls it without moving the selection, so the session on
+the right stays put; the next key that moves the selection brings it back into view.
 
 Below the list, **Git Changes** shows the files the selected line's branch changed and
 by how much, the same way the main screen's Git Changes does: from where it left the
