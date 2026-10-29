@@ -123,6 +123,18 @@ pub struct Composed {
     pub lines: Vec<Line<'static>>,
     pub slots: Vec<Slot>,
     pub offset: usize,
+    /// 入力待ちの欄の後ろ、木が始まる行。
+    pub tree_start: usize,
+}
+
+impl Composed {
+    pub fn max_offset(&self) -> usize {
+        max_offset(self.lines.len(), self.body)
+    }
+}
+
+fn max_offset(lines: usize, body: Rect) -> usize {
+    lines.saturating_sub(usize::from(body.height))
 }
 
 pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
@@ -178,6 +190,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
         }
     }
     slots.resize(lines.len(), Slot::Other);
+    let tree_start = lines.len();
     for group in &groups {
         let smart = group.root.clone().filter(|root| fleet.is_tree_root(root));
         lines.push(repo_header(
@@ -225,13 +238,19 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
             }
         }
     }
+    let max = max_offset(lines.len(), body);
+    let offset = match fleet.wheel_top() {
+        Some(top) => tree_start.saturating_add_signed(top).min(max),
+        None => selected_line
+            .saturating_sub(usize::from(body.height).saturating_sub(2))
+            .min(max),
+    };
     Some(Composed {
         summary: (inner.height >= 2).then_some(Rect { height: 1, ..inner }),
         body,
         footer,
-        offset: selected_line
-            .saturating_sub(usize::from(body.height).saturating_sub(2))
-            .min(lines.len().saturating_sub(usize::from(body.height))),
+        offset,
+        tree_start,
         lines,
         slots,
     })

@@ -253,6 +253,9 @@ pub struct FleetPanel {
     typing_shell: Option<String>,
     /// 止まるのを待って開き直す会話。待っている間は同じ会話を受けない。
     reopening: BTreeSet<String>,
+    /// ホイールで動かした表示の先頭。None なら選択行を追う。入力待ちの欄は毎秒伸び縮みするので、
+    /// その後ろの木の先頭から数えて、見ている木をずらさない。
+    wheel_top: Option<isize>,
 }
 
 impl FleetPanel {
@@ -390,6 +393,21 @@ impl FleetPanel {
         self.set_own(own);
         self.reselect_if_gone();
         self.mark_selected(SystemTime::now());
+        self.wheel_top = None;
+    }
+
+    pub fn wheel_top(&self) -> Option<isize> {
+        self.wheel_top
+    }
+
+    pub fn scroll_list(&mut self, composed: &render::Composed, delta: isize) {
+        let max = composed.max_offset();
+        if max == 0 {
+            return;
+        }
+        let top = composed.offset.saturating_add_signed(delta).min(max);
+        self.wheel_top = Some(top as isize - composed.tree_start as isize);
+        self.row_clicks = ClickTracker::default();
     }
 
     /// セッションが無くても木を引き続ける repo。
@@ -429,6 +447,7 @@ impl FleetPanel {
     pub fn note_launched(&mut self, panel_id: String, own: Vec<OwnSession>) {
         self.set_own(own);
         self.selected = Some(Selected::Session(RowKey::Panel(panel_id), false));
+        self.wheel_top = None;
     }
 
     pub fn set_smart_target(&mut self, repo: PathBuf) {
@@ -1044,6 +1063,7 @@ impl FleetPanel {
         if let Some(item) = items.get(target) {
             self.select(item, SystemTime::now());
         }
+        self.wheel_top = None;
         Some(Vec::new())
     }
 

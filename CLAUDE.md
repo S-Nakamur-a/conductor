@@ -517,7 +517,18 @@ go through `command::by_hand`, which turns them into `LeaveFleet`. The right sid
 one of this window's sessions live (`Focus::FleetSession`). Which one is derived from
 the list's selection every time (`Workspace::fleet_session`), never stored, and
 when the row being typed into disappears the keyboard goes back to the list rather
-than to whatever got selected instead. That right side gives a PTY a second shape,
+than to whatever got selected instead. The list's scroll position is the one thing
+stored (`FleetPanel::wheel_top`): the wheel moves the view and never the selection, since
+moving it would switch the right side. It counts from the first line after the waiting
+box, which grows and shrinks every second, so while the view is below the box its size
+does not move the tree being read (rows added inside the tree above the view still shift
+it by as many lines). Moving the
+selection by key, starting a session with ctrl+n or [+] (not [✧], which selects nothing)
+and reopening the list go back to following the selection; a click, a reselect and a
+background move do not. A wheel scroll also forgets the last click on a row, or the next
+click at the same spot would count as a double click on the row that was there. With a modal open
+the wheel does nothing there — the [+] popup points at the row it was opened on.
+That right side gives a PTY a second shape,
 so `sync_sizes` compares each session's own grid with its region, not the region's
 remembered size. That resize is also why the right side scrolls through the transcript
 view rather than vt100's scrollback: `set_size` drops the scrollback, and Claude Code does

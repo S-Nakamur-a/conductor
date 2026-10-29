@@ -874,6 +874,16 @@ fn scroll_region(
             panels.explorer.scroll(region, delta, review)
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
+        // [+] のポップアップは押した行の位置に出ているので、下だけ動かすと指す行がずれる。
+        Region::FleetList if ws.modals.is_empty() => {
+            let Some(composed) = layout
+                .rect(region)
+                .and_then(|rect| crate::panels::fleet::render::compose(ws, rect))
+            else {
+                return;
+            };
+            ws.panels.fleet.scroll_list(&composed, delta);
+        }
         // 端末はホイールの行き先が中身次第 (子プロセス / トランスクリプト /
         // スクロールバック) なので、判断はパネルが持つ。
         Region::TerminalClaude | Region::TerminalShell | Region::Editor | Region::FleetSession => {
@@ -2432,6 +2442,83 @@ needle here
         );
         let l = layout(&ws, Rect::new(0, 0, 160, height));
         (ws, svc, l)
+    }
+
+    fn long_fleet_listing() -> (Workspace, Services<TaskResult>, Layout) {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        let (mut ws, svc, _) = fleet_listing(Vec::new(), 24);
+        let worktrees = (0..30)
+            .map(|i| WorktreeHead {
+                path: PathBuf::from(format!("/r/app-{i:02}")),
+                head: Head::Branch(format!("b{i:02}")),
+            })
+            .collect();
+        ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: PathBuf::from("/r/app-00"),
+                    name: "app".into(),
+                    worktrees,
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        let l = layout(&ws, Rect::new(0, 0, 160, 24));
+        (ws, svc, l)
+    }
+
+    fn wheel_down_on_list(ws: &mut Workspace, svc: &mut Services<TaskResult>, l: &Layout) {
+        let list = l.rect(Region::FleetList).unwrap();
+        let wheel = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: list.x + 5,
+            row: list.y + 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(ws, svc, l, wheel);
+    }
+
+    #[test]
+    fn 一覧の上のホイールは表示を送り_送った先で押した行が選ばれる() {
+        let (mut ws, mut svc, l) = long_fleet_listing();
+        let rect = l.rect(Region::FleetList).unwrap();
+        let selected = ws.panels.fleet.selected_dir();
+        let focus = ws.focus;
+
+        wheel_down_on_list(&mut ws, &mut svc, &l);
+        let composed = crate::panels::fleet::render::compose(&ws, rect).unwrap();
+        assert_eq!(composed.offset, 3);
+        assert_eq!(ws.panels.fleet.selected_dir(), selected);
+        assert_eq!(ws.focus, focus);
+
+        let crate::panels::fleet::render::Slot::Worktree(top) = &composed.slots[composed.offset]
+        else {
+            panic!("{:?}", composed.slots[composed.offset]);
+        };
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: composed.body.x + 2,
+            row: composed.body.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, click);
+        assert_eq!(ws.panels.fleet.selected_dir(), Some(top.path.clone()));
+        let after = crate::panels::fleet::render::compose(&ws, rect).unwrap();
+        assert_eq!(after.offset, 3, "押しても表示は動かない");
+    }
+
+    #[test]
+    fn ポップアップが開いている間は一覧の上のホイールで表示が動かない() {
+        let (mut ws, mut svc, l) = long_fleet_listing();
+        let effects = ws
+            .dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NewSessionMenu)
+            .unwrap();
+        apply(&mut ws, &mut svc, effects);
+        assert_eq!(ws.modals.len(), 1);
+
+        wheel_down_on_list(&mut ws, &mut svc, &l);
+        assert_eq!(ws.panels.fleet.wheel_top(), None);
     }
 
     fn click_line(

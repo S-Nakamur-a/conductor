@@ -4232,3 +4232,178 @@ mod reopen {
         );
     }
 }
+
+mod wheel {
+    use conductor_core::git_engine::{Head, WorktreeHead};
+    use ratatui::layout::Rect;
+
+    use super::*;
+
+    const RECT: Rect = Rect::new(0, 0, 60, 12);
+
+    fn status_of(count: usize, waiting: bool) -> FleetStatus {
+        FleetStatus {
+            live: if waiting {
+                vec![live(
+                    7,
+                    "/r/app-20",
+                    "s7",
+                    Status::Waiting(Waiting::Question),
+                    Owner::Elsewhere,
+                )]
+            } else {
+                Vec::new()
+            },
+            trees: vec![RepoTree {
+                root: PathBuf::from("/r/app-00"),
+                name: "app".into(),
+                worktrees: (0..count)
+                    .map(|i| WorktreeHead {
+                        path: PathBuf::from(format!("/r/app-{i:02}")),
+                        head: Head::Branch(format!("b{i:02}")),
+                    })
+                    .collect(),
+            }],
+            placement: [(PathBuf::from("/r/app-20"), PathBuf::from("/r/app-20"))].into(),
+            ..Default::default()
+        }
+    }
+
+    fn listing(count: usize) -> Workspace {
+        let mut ws = Workspace::for_test();
+        let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        ws.apply_fleet(status_of(count, false), Vec::new());
+        ws
+    }
+
+    fn composed(ws: &Workspace) -> render::Composed {
+        render::compose(ws, RECT).unwrap()
+    }
+
+    fn wheel(ws: &mut Workspace, delta: isize) {
+        let composed = composed(ws);
+        ws.panels.fleet.scroll_list(&composed, delta);
+    }
+
+    fn top_slot(ws: &Workspace) -> render::Slot {
+        let composed = composed(ws);
+        composed.slots[composed.offset].clone()
+    }
+
+    #[test]
+    fn ホイールは表示だけを送り_選択は動かさず_両端で止まる() {
+        let mut ws = listing(30);
+        let selected = ws.panels.fleet.selected_dir();
+        assert_eq!(composed(&ws).offset, 0);
+
+        wheel(&mut ws, 3);
+        assert_eq!(composed(&ws).offset, 3);
+        assert_eq!(ws.panels.fleet.selected_dir(), selected);
+
+        wheel(&mut ws, 100);
+        let max = composed(&ws).max_offset();
+        assert!(max > 3);
+        assert_eq!(composed(&ws).offset, max);
+
+        wheel(&mut ws, -100);
+        assert_eq!(composed(&ws).offset, 0);
+        assert_eq!(ws.panels.fleet.selected_dir(), selected);
+    }
+
+    #[test]
+    fn 選択が下の方にあれば上へのホイールは今見えている位置から戻る() {
+        let mut ws = listing(30);
+        let ctx = Workspace::for_test();
+        ws.panels.fleet.update(Action::GoToBottom, &ctx.ctx());
+        let followed = composed(&ws).offset;
+        assert!(followed > 3);
+
+        wheel(&mut ws, -3);
+        assert_eq!(composed(&ws).offset, followed - 3);
+    }
+
+    #[test]
+    fn キー移動と起動と開き直しで選択行を追う表示に戻る() {
+        let ctx = Workspace::for_test();
+        let mut ws = listing(30);
+        ws.panels.fleet.update(Action::GoToBottom, &ctx.ctx());
+        let followed = composed(&ws).offset;
+
+        wheel(&mut ws, -6);
+        ws.panels.fleet.update(Action::GoToBottom, &ctx.ctx());
+        assert_eq!(composed(&ws).offset, followed, "キー移動");
+
+        wheel(&mut ws, -6);
+        ws.panels.fleet.note_launched("CC:1".into(), Vec::new());
+        assert_eq!(ws.panels.fleet.wheel_top(), None, "起動");
+
+        wheel(&mut ws, -6);
+        ws.panels.fleet.open(Focus::Viewer, Vec::new());
+        assert_eq!(ws.panels.fleet.wheel_top(), None, "開き直し");
+    }
+
+    #[test]
+    fn 押した後にホイールで送ってから同じ所を押すと二度目にならず下に来た行を選ぶ() {
+        let mut fleet = FleetPanel::default();
+        let pids: Vec<u32> = (1..=30).collect();
+        fleet.apply(working_sessions(&pids), Vec::new(), None, false, at(200));
+        let (first, second) = (session_slot(&fleet, 3), session_slot(&fleet, 6));
+        press(&mut fleet, 3, Some(&first));
+        let composed = render::Composed {
+            summary: None,
+            body: Rect::new(0, 1, 60, 8),
+            footer: Rect::new(0, 9, 60, 1),
+            lines: vec![ratatui::text::Line::default(); 31],
+            slots: vec![render::Slot::Other; 31],
+            offset: 0,
+            tree_start: 0,
+        };
+        fleet.scroll_list(&composed, 3);
+
+        assert!(press(&mut fleet, 3, Some(&second)).is_empty());
+        assert_eq!(fleet.selected_row().unwrap().key, RowKey::Pid(6));
+    }
+
+    #[test]
+    fn 一覧が区画に収まっていればホイールは追う表示のまま() {
+        let mut ws = listing(2);
+        assert_eq!(composed(&ws).max_offset(), 0);
+        wheel(&mut ws, 3);
+        assert_eq!(ws.panels.fleet.wheel_top(), None);
+    }
+
+    #[test]
+    fn 入力待ちの欄が出ても消えても見ている木はずれない() {
+        for waiting_at_wheel in [false, true] {
+            let mut ws = listing(30);
+            ws.apply_fleet(status_of(30, waiting_at_wheel), Vec::new());
+            let before = composed(&ws).offset;
+            wheel(&mut ws, 9);
+            assert_eq!(composed(&ws).offset, before + 9, "{waiting_at_wheel}");
+            let seen = top_slot(&ws);
+            assert!(matches!(seen, render::Slot::Worktree(_)), "{seen:?}");
+
+            ws.apply_fleet(status_of(30, !waiting_at_wheel), Vec::new());
+            assert_eq!(composed(&ws).tree_start > 0, !waiting_at_wheel);
+            assert_eq!(top_slot(&ws), seen, "{waiting_at_wheel}");
+
+            ws.apply_fleet(status_of(30, waiting_at_wheel), Vec::new());
+            assert_eq!(top_slot(&ws), seen, "{waiting_at_wheel}");
+        }
+    }
+
+    #[test]
+    fn 行が減れば区画に詰め_また増えれば元の位置に戻る() {
+        let mut ws = listing(30);
+        wheel(&mut ws, 15);
+        let seen = top_slot(&ws);
+
+        ws.apply_fleet(status_of(12, false), Vec::new());
+        let shrunk = composed(&ws);
+        assert_eq!(shrunk.offset, shrunk.max_offset());
+
+        ws.apply_fleet(status_of(30, false), Vec::new());
+        assert_eq!(top_slot(&ws), seen);
+    }
+}
