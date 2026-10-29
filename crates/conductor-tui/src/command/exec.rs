@@ -380,10 +380,14 @@ enum Resize {
 /// 1 回で動かす割合と、どの区画も消えないための上下限。
 const STEP: i32 = 5;
 const MIN_PCT: i32 = 10;
-const SPLIT_MIN: i32 = 20;
-const SPLIT_MAX: i32 = 80;
+const SPLIT_MIN: i32 = crate::layout::SPLIT_MIN as i32;
+const SPLIT_MAX: i32 = crate::layout::SPLIT_MAX as i32;
 
 fn resize(ws: &mut Workspace, dir: Resize) -> Vec<Effect> {
+    // Sessions の画面に詳細の列は出ていない。動かすと見えない幅が config に書かれる。
+    if ws.chrome.fleet_open {
+        return Vec::new();
+    }
     let step = if matches!(dir, Resize::Right | Resize::Down) {
         STEP
     } else {
@@ -418,22 +422,38 @@ pub fn drag_divider(ws: &mut Workspace, divider: Divider, main: Rect, x: u16, y:
         }
         i32::from(pos.saturating_sub(origin)) * 100 / i32::from(extent)
     };
-    let layout = &ws.config.layout;
-    let target = match divider {
-        Divider::ExplorerViewer => pct(x, main.x, main.width),
+    let clamped = |target: i32| target.clamp(SPLIT_MIN, SPLIT_MAX) as u16;
+    let layout = &mut ws.config.layout;
+    let (target, current) = match divider {
+        Divider::ExplorerViewer => (pct(x, main.x, main.width), layout.explorer_width_pct),
         // 境界は Explorer と Viewer の合計の右端にある。
-        Divider::ViewerTerminal => {
-            pct(x, main.x, main.width) - i32::from(layout.explorer_width_pct)
+        Divider::ViewerTerminal => (
+            pct(x, main.x, main.width) - i32::from(layout.explorer_width_pct),
+            layout.viewer_width_pct,
+        ),
+        Divider::ExplorerSplit => (pct(y, main.y, main.height), layout.explorer_split_pct),
+        Divider::TerminalSplit => (pct(y, main.y, main.height), layout.terminal_split_pct),
+        Divider::FleetWidth => {
+            let next = Some(clamped(pct(x, main.x, main.width)));
+            return set_if_changed(&mut layout.fleet_list_width_pct, next);
         }
-        Divider::ExplorerSplit | Divider::TerminalSplit => pct(y, main.y, main.height),
-    };
-    let current = match divider {
-        Divider::ExplorerViewer => layout.explorer_width_pct,
-        Divider::ViewerTerminal => layout.viewer_width_pct,
-        Divider::ExplorerSplit => layout.explorer_split_pct,
-        Divider::TerminalSplit => layout.terminal_split_pct,
+        // 持っているのは境界より下の区画の高さ。
+        Divider::FleetSplit => {
+            let next = clamped(100 - pct(y, main.y, main.height));
+            return set_if_changed(&mut layout.fleet_changes_pct, next);
+        }
+        Divider::FleetStack => {
+            let next = clamped(pct(y, main.y, main.height));
+            return set_if_changed(&mut layout.fleet_stack_pct, next);
+        }
     };
     move_divider(ws, divider, target - i32::from(current))
+}
+
+fn set_if_changed<T: PartialEq>(slot: &mut T, next: T) -> bool {
+    let moved = *slot != next;
+    *slot = next;
+    moved
 }
 
 pub fn persist_layout(ws: &Workspace) -> Effect {

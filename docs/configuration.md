@@ -56,6 +56,13 @@ immediately on save; everything else needs a restart.
                                         # tmux-style with Ctrl+Alt+Arrow writes the new ratios
                                         # back here automatically. Maximizing a panel
                                         # (Ctrl+Alt+Z) overrides them temporarily.
+# fleet_list_width_pct = 61             # Sessions list width %. Unset: 61%, at most 125
+                                        # columns; a written value has no column cap
+# fleet_changes_pct = 40                # height % of the area under the Sessions list
+# fleet_stack_pct = 50                  # Sessions list height % when the window is taller
+                                        # than wide; the session below gets the rest.
+                                        # Dragging the borders on the Sessions screen
+                                        # writes these. All are clamped to 20-80.
 
 # One [[claude.accounts]] per Claude Code account, that is, per config dir. The
 # Sessions list reads the state files of every account listed here (plus the

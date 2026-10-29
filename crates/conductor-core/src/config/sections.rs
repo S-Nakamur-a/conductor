@@ -184,6 +184,12 @@ pub struct LayoutConfig {
     pub terminal_split_pct: u16,
     /// explorer 列のうちファイルツリーの高さ。残りが変更ファイル一覧。
     pub explorer_split_pct: u16,
+    /// Sessions 一覧の幅。None なら 61% で 125 桁を上限にし、書いた値には上限を掛けない。
+    pub fleet_list_width_pct: Option<u16>,
+    /// Sessions 一覧の下の区画の高さ。
+    pub fleet_changes_pct: u16,
+    /// 縦長の窓で Sessions 一覧が取る高さ。残りが下のセッション。
+    pub fleet_stack_pct: u16,
 }
 
 impl Default for LayoutConfig {
@@ -193,6 +199,9 @@ impl Default for LayoutConfig {
             viewer_width_pct: 38,
             terminal_split_pct: 80,
             explorer_split_pct: 50,
+            fleet_list_width_pct: None,
+            fleet_changes_pct: 40,
+            fleet_stack_pct: 50,
         }
     }
 }

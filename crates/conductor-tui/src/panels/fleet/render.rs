@@ -229,7 +229,9 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
         summary: (inner.height >= 2).then_some(Rect { height: 1, ..inner }),
         body,
         footer,
-        offset: selected_line.saturating_sub(usize::from(body.height).saturating_sub(2)),
+        offset: selected_line
+            .saturating_sub(usize::from(body.height).saturating_sub(2))
+            .min(lines.len().saturating_sub(usize::from(body.height))),
         lines,
         slots,
     })
@@ -255,6 +257,13 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
             Style::default().fg(ws.theme.hint),
         )),
         composed.footer,
+    );
+    crate::render::border_scrollbar(
+        frame,
+        rect,
+        composed.body,
+        composed.lines.len(),
+        composed.offset,
     );
     frame.render_widget(
         Paragraph::new(composed.lines).scroll((composed.offset as u16, 0)),
@@ -283,6 +292,14 @@ pub fn session_title(ws: &Workspace) -> String {
         (Some(_), Some(key)) => format!("{account} {key} で入る "),
         _ => String::new(),
     }
+}
+
+/// 一覧の下の区画に何かを出すキー。区画が無い窓では押しても何も出ないので案内しない。
+pub fn needs_lower(action: Action) -> bool {
+    matches!(
+        action,
+        Action::NewShell | Action::ShowFleetChanges | Action::ShowFleetArtifacts
+    )
 }
 
 /// 一覧の最下行。今のフォーカスと選んだ行で効くキーを、keymap の割り当てどおりに出す。
@@ -334,6 +351,7 @@ pub fn hint(ws: &Workspace) -> String {
     };
     items
         .iter()
+        .filter(|(action, _)| !needs_lower(*action) || fleet.lower_shown())
         .filter_map(|(action, label)| chord(*action).map(|key| format!("{key} {label}")))
         .collect::<Vec<_>>()
         .join(" · ")

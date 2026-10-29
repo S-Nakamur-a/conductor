@@ -470,7 +470,9 @@ The middle row is a three-column accordion with focus-driven widths: Explorer
 over shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
 persist), `Focus::Editor` merges Explorer+Viewer into one PTY region. Menu rows
 carry a `CommandId` and run through the same `command::exec` as the palette and
-every keybinding.
+every keybinding. On the Sessions screen the keys do nothing: the detail screen's
+columns are not drawn there, and moving them would write a width nobody can see. The
+Sessions borders are dragged with the mouse only.
 
 **Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is
 the screen conductor opens on: every Claude on the machine, built from the state
@@ -534,6 +536,23 @@ accounts' 5h and 7d with bars (no countdowns) beside the four state counts, for 
 like `work` / `personal`; a longer name needs more. A width test for anything in the list takes its widths
 from that range: one that hands the list's renderer 200 pins a screen nobody can open
 (#441's tests passed at 200 and 90, while at the real width two accounts' 5h / 7d were gone).
+That cap holds only while `[layout] fleet_list_width_pct` is unset: dragging the list's
+right border writes it, and a written width is the person's choice, so it gets no cap —
+deleting the line brings the cap back. Every Sessions ratio is clamped to 20–80% where
+`layout` reads it, so a hand-written 0 or 150 cannot zero a region.
+
+**A window whose middle area (between the menu and the status bar) is narrower than
+twice its height stacks instead** (`layout.rs`'s `is_portrait`:
+a cell is about twice as tall as wide, so that is a window that *looks* tall): the list
+on top at `fleet_stack_pct`, the session below at full width, and no `FleetChanges`. It
+reuses the short-window path — `set_lower_shown(false)` turns Ctrl+t down, drops the
+keys that fill that region (`fleet::render::needs_lower`) from the list's footer and the
+status bar, and a `FleetShell` focus falls back to the list. The three Sessions
+borders (`Divider::FleetWidth` / `FleetSplit` / `FleetStack`) drag like the detail
+screen's, and no border is grabbed while a modal is open: the [+] popup opens over the
+list's right border, and a press there must pick the item. The list and the right side's
+transcript draw their scrollbar on the right border (`render::border_scrollbar`), not over
+the text: the list's last columns are its row buttons.
 
 Under the list, `Region::FleetChanges` shows the Git Changes of the
 selected line's worktree (`FleetPanel::selected_dir`, derived from the selection every time, like the right side), read on a

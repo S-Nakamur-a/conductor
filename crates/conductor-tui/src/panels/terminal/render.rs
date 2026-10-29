@@ -220,7 +220,10 @@ pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
 /// 一覧の右に映す、この窓のセッション。
 pub fn fleet(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
     if let Some(reflow) = ws.panels.terminal.transcript_of(Some(session)) {
-        super::reflow::render(frame, editor_area(rect), reflow);
+        let body = editor_area(rect);
+        super::reflow::render(frame, body, reflow);
+        let (total, at) = reflow.extent();
+        crate::render::border_scrollbar(frame, rect, body, total, at);
         return;
     }
     grid(
