@@ -796,8 +796,10 @@ fn drag_divider(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Optio
             _ => Vec::new(),
         });
     }
+    // 開いたポップアップが枠線の上に重なっていても、押したのはポップアップの方。
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         && ws.chrome.menu.open_index().is_none()
+        && ws.modals.is_empty()
     {
         ws.chrome.drag = layout.divider_at(mouse.column, mouse.row);
         return ws.chrome.drag.map(|_| Vec::new());
@@ -2464,6 +2466,171 @@ needle here
     }
 
     #[test]
+    fn 縦長になるとシェルから一覧へ戻り_ctrl_t_でもシェルを起こさない() {
+        let mut f = shell_fleet(40);
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(f.ws.focus, Focus::FleetShell);
+        let shell = f.ws.fleet_shell();
+        assert!(shell.is_some());
+
+        let tall = layout(&f.ws, Rect::new(0, 0, 80, 60));
+        f.ws.sync_layout(&tall);
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        f.ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+        assert!(!crate::panels::fleet::render::hint(&f.ws).contains("シェル"));
+        let status = crate::render::status_line(&f.ws).to_string();
+        for label in ["shell", "changes", "artifacts"] {
+            assert!(!status.contains(label), "{status}");
+        }
+
+        on_key(&mut f.ws, &mut f.svc, ctrl_t());
+        assert_eq!(f.ws.focus, Focus::Fleet);
+        assert_eq!(
+            f.ws.fleet_shell(),
+            None,
+            "選び直した worktree にシェルが起きた"
+        );
+    }
+
+    #[test]
+    fn 一覧の画面の3本の境界はドラッグで比率が追従し離したときに書き出す() {
+        // 帯 3 行を除いた高さが 50 と 60 になり、割合が割り切れる。
+        let wide = Rect::new(0, 0, 160, 53);
+        let tall = Rect::new(0, 0, 80, 63);
+        type Pick = fn(&Layout) -> (u16, u16, u16, u16);
+        type Ratio = fn(&conductor_core::config::LayoutConfig) -> u16;
+        let cases: [(Rect, Pick, Ratio, u16); 3] = [
+            (
+                wide,
+                |l| {
+                    let s = l.rect(Region::FleetSession).unwrap();
+                    (s.x, s.y + 3, l.main.x + l.main.width / 2, s.y + 3)
+                },
+                |c| c.fleet_list_width_pct.unwrap(),
+                50,
+            ),
+            (
+                wide,
+                |l| {
+                    let c = l.rect(Region::FleetChanges).unwrap();
+                    (c.x + 2, c.y, c.x + 2, l.main.y + l.main.height * 7 / 10)
+                },
+                |c| c.fleet_changes_pct,
+                30,
+            ),
+            (
+                tall,
+                |l| {
+                    let s = l.rect(Region::FleetSession).unwrap();
+                    (s.x + 4, s.y, s.x + 4, l.main.y + l.main.height * 3 / 10)
+                },
+                |c| c.fleet_stack_pct,
+                30,
+            ),
+        ];
+        for (area, pick, read, want) in cases {
+            let (mut ws, mut svc, _) = fleet_with_tree();
+            let l = layout(&ws, area);
+            let (x, y, to_x, to_y) = pick(&l);
+            let at = |kind, column, row| MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            };
+            on_mouse(
+                &mut ws,
+                &mut svc,
+                &l,
+                at(MouseEventKind::Down(MouseButton::Left), x, y),
+            );
+            assert!(ws.chrome.drag.is_some(), "({x},{y}) を掴めない");
+            assert_eq!(ws.focus, Focus::Fleet, "枠線を掴んでもフォーカスは動かない");
+            on_mouse(
+                &mut ws,
+                &mut svc,
+                &l,
+                at(MouseEventKind::Drag(MouseButton::Left), to_x, to_y),
+            );
+            assert_eq!(read(&ws.config.layout), want, "({x},{y})");
+            let released = drag_divider(
+                &mut ws,
+                &l,
+                at(MouseEventKind::Up(MouseButton::Left), to_x, to_y),
+            );
+            assert!(
+                matches!(
+                    released.as_deref(),
+                    Some([Effect::Spawn(Task::PersistConfig(_))])
+                ),
+                "{released:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 一覧の幅の境界を押して動かさずに離しても上限は外れない() {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        let s = l.rect(Region::FleetSession).unwrap();
+        let at = |kind| MouseEvent {
+            kind,
+            column: s.x,
+            row: s.y + 3,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::Down(MouseButton::Left)),
+        );
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::Up(MouseButton::Left)),
+        );
+        assert_eq!(ws.config.layout.fleet_list_width_pct, None);
+    }
+
+    #[test]
+    fn ポップアップが枠線に重なっていても押したのはポップアップの方() {
+        use crate::panels::fleet::render::Slot;
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        click_button(
+            &mut ws,
+            &mut svc,
+            &l,
+            |slot| matches!(slot, Slot::Worktree(w) if w.label == "feature/b"),
+        );
+        assert!(matches!(ws.modals.last(), Some(Modal::Popup(_))));
+        let s = l.rect(Region::FleetSession).unwrap();
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: s.x,
+            row: s.y + 3,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, press);
+        assert_eq!(ws.chrome.drag, None);
+    }
+
+    #[test]
+    fn 一覧の画面で_ctrl_alt_矢印を押しても見えない列の幅は書かない() {
+        let (mut ws, mut svc, _) = fleet_with_tree();
+        let before = ws.config.layout.clone();
+        for key in [KeyCode::Left, KeyCode::Right, KeyCode::Up, KeyCode::Down] {
+            on_key(
+                &mut ws,
+                &mut svc,
+                chord(key, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            );
+        }
+        assert_eq!(ws.config.layout, before);
+        assert_eq!(svc.in_flight(), 0);
+    }
+
+    #[test]
     fn 変更の区画で縮んだ一覧でも_plus_は押した行の起動メニューを開く() {
         use crate::panels::fleet::render::Slot;
         let (mut ws, mut svc, l) = fleet_listing(Vec::new(), 24);
@@ -3350,6 +3517,60 @@ needle here
         let mut live = vec![session(7, Status::Waiting(Waiting::Question))];
         live.extend((8..20).map(|pid| session(pid, Status::Working)));
         fleet_listing(live, height)
+    }
+
+    /// 一覧を描き、枠の右辺と本文の右端の桁にある字を本文の行の範囲で返す。
+    fn list_edges(ws: &Workspace, l: &Layout) -> (String, String) {
+        let rect = l.rect(Region::FleetList).unwrap();
+        let body = crate::panels::fleet::render::compose(ws, rect)
+            .unwrap()
+            .body;
+        let mut terminal = Terminal::new(TestBackend::new(l.area.width, l.area.height)).unwrap();
+        terminal
+            .draw(|frame| crate::panels::fleet::render::list(frame, rect, ws))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let column = |x| {
+            (body.y..body.bottom())
+                .map(|y| buffer[(x, y)].symbol().to_string())
+                .collect()
+        };
+        (column(rect.right() - 1), column(body.right() - 1))
+    }
+
+    #[test]
+    fn 一覧がはみ出すときだけ枠の右辺にスクロールバーを出し本文の右端は潰さない() {
+        let (ws, _svc, l) = fleet_with_sessions(22);
+        let (border, text) = list_edges(&ws, &l);
+        assert!(border.contains('█'), "{border:?}");
+        assert!(!text.contains('█'), "{text:?}");
+
+        let (ws, _svc, l) = fleet_with_tree();
+        let (border, _) = list_edges(&ws, &l);
+        assert!(!border.contains('█'), "{border:?}");
+    }
+
+    #[test]
+    fn 一覧の末尾まで下りても本文に収まる分しか送らず_送ったならスクロールバーを出す() {
+        for height in [40, 43, 44, 45, 60] {
+            let (mut ws, _svc, l) = fleet_with_sessions(height);
+            for _ in 0..30 {
+                ws.dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown);
+            }
+            let rect = l.rect(Region::FleetList).unwrap();
+            let composed = crate::panels::fleet::render::compose(&ws, rect).unwrap();
+            let room = composed
+                .lines
+                .len()
+                .saturating_sub(usize::from(composed.body.height));
+            assert!(
+                composed.offset <= room,
+                "高さ {height}: {} > {room}",
+                composed.offset
+            );
+            let (border, _) = list_edges(&ws, &l);
+            assert_eq!(border.contains('█'), room > 0, "高さ {height}: {border:?}");
+        }
     }
 
     fn selected_key(ws: &Workspace) -> Option<(crate::panels::fleet::RowKey, bool)> {

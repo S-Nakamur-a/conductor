@@ -1848,6 +1848,49 @@ mod tests {
         assert_eq!(panel.claude.scroll, 0);
     }
 
+    fn fleet_transcript_border(turns: usize) -> String {
+        let mut panel = claude_panel_for_test();
+        panel.fleet_size = (5, 40);
+        panel.pending_transcript = Some(PendingTranscript {
+            panel: PANEL.into(),
+            session: "session-a".into(),
+            scroll_back: 0,
+        });
+        let entries = (0..turns)
+            .map(|i| LogEntry {
+                role: conductor_core::claude_log::Role::User,
+                blocks: vec![conductor_core::claude_log::DisplayBlock::Text(format!(
+                    "turn {i}"
+                ))],
+            })
+            .collect();
+        panel.install_transcript("session-a", Ok(entries));
+        panel.prepare(
+            &Theme::default(),
+            &Highlighter::new(&Config::default()),
+            false,
+            Some(PANEL),
+        );
+        let mut ws = crate::workspace::Workspace::for_test();
+        ws.panels.terminal = panel;
+        let rect = Rect::new(0, 0, 42, 7);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(42, 7)).unwrap();
+        terminal
+            .draw(|frame| super::render::fleet(frame, rect, &ws, PANEL))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (1..6)
+            .map(|y| buffer[(41, y)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn 一覧の右のトランスクリプトははみ出すときだけ枠の右辺にスクロールバーを出す() {
+        assert!(fleet_transcript_border(30).contains('█'));
+        assert!(!fleet_transcript_border(1).contains('█'));
+    }
+
     /// /clear のローテーション中に届いた、開いているのとは別のセッションの結果は捨てる。
     #[test]
     fn 別のセッションの結果は捨てる() {

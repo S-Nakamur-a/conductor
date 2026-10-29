@@ -294,6 +294,10 @@ impl FleetPanel {
         self.lower_shown = shown;
     }
 
+    pub fn lower_shown(&self) -> bool {
+        self.lower_shown
+    }
+
     pub fn shows_shell(&self) -> bool {
         self.lower == Lower::Shell && self.lower_shown
     }
@@ -352,7 +356,7 @@ impl FleetPanel {
     /// 左下にシェルを起こしてよい dir。木に載らない dir に起こすと、元の行が消えた後に辿れなくなる。
     pub fn shell_dir(&self) -> Result<PathBuf, &'static str> {
         if !self.lower_shown {
-            return Err("The window is too short to show a shell under the list.");
+            return Err("There is no room for a shell under the list in this window shape.");
         }
         let dir = self.selected_dir().ok_or("Select a worktree first.")?;
         if self.tree_root_of(&dir).is_none() {

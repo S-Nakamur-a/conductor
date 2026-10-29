@@ -6,7 +6,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use unicode_width::UnicodeWidthStr;
 
 use conductor_core::keymap::{Action, KeyContext, KeyMap};
@@ -214,6 +216,41 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         ))
 }
 
+/// 尺が area に収まらないときだけ、area の右端の桁に縦のスクロールバーを描く。
+pub fn scrollbar(frame: &mut Frame, area: Rect, total: usize, at: usize) {
+    draw_scrollbar(
+        frame,
+        area,
+        total,
+        at,
+        Scrollbar::new(ScrollbarOrientation::VerticalRight),
+    );
+}
+
+/// 枠線の右辺の、本文の行の範囲につまみだけを描く。本文の右端にボタンを置く区画でも潰さない。
+pub fn border_scrollbar(frame: &mut Frame, panel: Rect, body: Rect, total: usize, at: usize) {
+    let track = Rect {
+        x: panel.right().saturating_sub(1),
+        width: 1,
+        ..body
+    };
+    draw_scrollbar(
+        frame,
+        track,
+        total,
+        at,
+        Scrollbar::new(ScrollbarOrientation::VerticalRight).track_symbol(None),
+    );
+}
+
+fn draw_scrollbar(frame: &mut Frame, area: Rect, total: usize, at: usize, bar: Scrollbar) {
+    if total <= area.height as usize {
+        return;
+    }
+    let mut state = ScrollbarState::new(total - area.height as usize).position(at);
+    frame.render_stateful_widget(bar.begin_symbol(None).end_symbol(None), area, &mut state);
+}
+
 const FOCUS_TINT: f64 = 0.05;
 
 /// 端末の背景を少し本文の色へ寄せて、フォーカス中の区画に敷く。地を自分で塗ったセル
@@ -275,7 +312,12 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
         ),
         None => {
             let hint = Span::styled(
-                key_hint(ws.focus, ws.key_context(), &ws.keymap),
+                key_hint(
+                    ws.focus,
+                    ws.key_context(),
+                    &ws.keymap,
+                    ws.panels.fleet.lower_shown(),
+                ),
                 Style::default().fg(theme.hint),
             );
             // 一覧は短縮ハッシュしか出せない幅なので、完全なハッシュはフッターが持つ。
@@ -298,7 +340,7 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
 /// フッターのキーヒントを今のキーマップから組み立てる。
 ///
 /// 未割り当てのアクションだけのエントリは落ちるので、発火しないキーを案内しない。
-fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
+fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: bool) -> String {
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Fleet => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
@@ -379,6 +421,13 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap) -> String {
 
     let mut parts: Vec<String> = Vec::new();
     for (label, actions) in entries {
+        if !lower_shown
+            && actions
+                .iter()
+                .all(|a| crate::panels::fleet::render::needs_lower(*a))
+        {
+            continue;
+        }
         let chords: Vec<String> = actions
             .iter()
             .filter_map(|a| representative_chord(keymap, context, *a))

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::persist::{is_section_header, persist_at, upsert_section_kv};
+use super::persist::{is_section_header, layout_entries, persist_at, upsert_section_kv};
 use super::*;
 use crate::diff_state::DiffView;
 use crate::icons::IconSet;
@@ -75,6 +75,9 @@ fn non_default() -> Config {
             viewer_width_pct: 40,
             terminal_split_pct: 70,
             explorer_split_pct: 60,
+            fleet_list_width_pct: Some(70),
+            fleet_changes_pct: 30,
+            fleet_stack_pct: 60,
         },
         updates: UpdatesConfig {
             check_on_startup: false,
@@ -630,6 +633,26 @@ fn 無い設定ファイルには既定を生成してから書く() {
 }
 
 #[test]
+fn 一覧の幅は掴んで動かすまで書き出さず_行を消せば既定に戻る() {
+    let defaults = LayoutConfig::default();
+    let keys: Vec<_> = layout_entries(&defaults).iter().map(|(k, _)| *k).collect();
+    assert!(!keys.contains(&"fleet_list_width_pct"), "{keys:?}");
+    assert!(keys.contains(&"fleet_changes_pct") && keys.contains(&"fleet_stack_pct"));
+
+    let dragged = LayoutConfig {
+        fleet_list_width_pct: Some(70),
+        ..defaults
+    };
+    assert!(layout_entries(&dragged).contains(&("fleet_list_width_pct", "70".into())));
+    assert_eq!(
+        parse("[layout]\nfleet_changes_pct = 40\n")
+            .layout
+            .fleet_list_width_pct,
+        None
+    );
+}
+
+#[test]
 fn ある設定ファイルはコメントを保って書き換える() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -639,17 +662,7 @@ fn ある設定ファイルはコメントを保って書き換える() {
     )
     .unwrap();
     let layout = non_default().layout;
-    persist_at(
-        &path,
-        "layout",
-        &[
-            ("explorer_width_pct", layout.explorer_width_pct.to_string()),
-            ("viewer_width_pct", layout.viewer_width_pct.to_string()),
-            ("terminal_split_pct", layout.terminal_split_pct.to_string()),
-            ("explorer_split_pct", layout.explorer_split_pct.to_string()),
-        ],
-    )
-    .unwrap();
+    persist_at(&path, "layout", &layout_entries(&layout)).unwrap();
 
     let contents = std::fs::read_to_string(&path).unwrap();
     assert!(contents.contains("# explorer_width_pct = 24"), "{contents}");
@@ -784,6 +797,21 @@ fn 全フィールドはliveかrestartのどちらか一方に属する() {
         (
             "layout.explorer_split_pct",
             |c| c.layout.explorer_split_pct = 60,
+            Live,
+        ),
+        (
+            "layout.fleet_list_width_pct",
+            |c| c.layout.fleet_list_width_pct = Some(70),
+            Live,
+        ),
+        (
+            "layout.fleet_changes_pct",
+            |c| c.layout.fleet_changes_pct = 30,
+            Live,
+        ),
+        (
+            "layout.fleet_stack_pct",
+            |c| c.layout.fleet_stack_pct = 60,
             Live,
         ),
     ];

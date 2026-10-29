@@ -10,9 +10,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use super::diff::{Entry, SideRow, side_by_side};
 use super::tabs;
@@ -196,20 +194,9 @@ pub(super) fn scrollbar_covers(panel: &ViewerPanel, height: u16) -> bool {
 }
 
 fn scrollbar(frame: &mut Frame, area: Rect, panel: &ViewerPanel) {
-    let Some((total, at)) = scrollbar_extent(panel) else {
-        return;
-    };
-    if total <= area.height as usize {
-        return;
+    if let Some((total, at)) = scrollbar_extent(panel) {
+        crate::render::scrollbar(frame, area, total, at);
     }
-    let mut state = ScrollbarState::new(total - area.height as usize).position(at);
-    frame.render_stateful_widget(
-        Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None),
-        area,
-        &mut state,
-    );
 }
 
 /// タブ帯。開いていなければ未選択の案内を出す。

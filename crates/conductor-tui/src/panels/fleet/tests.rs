@@ -860,6 +860,7 @@ mod hint {
         ws.focus = Focus::Viewer;
         apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
         ws.apply_fleet(status(live), own);
+        ws.panels.fleet.set_lower_shown(true);
         ws
     }
 

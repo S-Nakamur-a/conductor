@@ -137,6 +137,13 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #                                       # conductor writes the new ratios back here automatically.
 #                                       # These proportions apply in the default layout only;
 #                                       # maximizing a panel (Ctrl+Alt+Z) overrides them temporarily.
+# fleet_list_width_pct = 61            # Sessions list width %. Unset: 61%, at most 125 columns;
+#                                       # a written value has no column cap
+# fleet_changes_pct = 40               # height % of the area under the Sessions list (default: 40)
+# fleet_stack_pct = 50                 # Sessions list height % when the window is taller than wide
+#                                       # (default: 50); the session below gets the rest.
+#                                       # Drag the borders on the Sessions screen to change these;
+#                                       # all are clamped to 20-80.
 "#;
 
 pub(super) fn write_default(path: &Path) -> Result<()> {
@@ -169,16 +176,23 @@ pub fn persist_ui_icons(set: IconSet) -> Result<()> {
 /// リサイズ後のパネル比率を [layout] に書く。この書き込みで config watcher が起きるが、
 /// 実行中の config は同じ値を既に持つので外観の再適用は no-op になる。
 pub fn persist_layout_proportions(layout: &LayoutConfig) -> Result<()> {
-    persist_at(
-        &config_file_path(),
-        "layout",
-        &[
-            ("explorer_width_pct", layout.explorer_width_pct.to_string()),
-            ("viewer_width_pct", layout.viewer_width_pct.to_string()),
-            ("terminal_split_pct", layout.terminal_split_pct.to_string()),
-            ("explorer_split_pct", layout.explorer_split_pct.to_string()),
-        ],
-    )
+    persist_at(&config_file_path(), "layout", &layout_entries(layout))
+}
+
+/// 一覧の幅は書いた時点で上限が外れるので、掴んで動かすまでは書かない。
+pub(super) fn layout_entries(layout: &LayoutConfig) -> Vec<(&'static str, String)> {
+    let mut entries = vec![
+        ("explorer_width_pct", layout.explorer_width_pct.to_string()),
+        ("viewer_width_pct", layout.viewer_width_pct.to_string()),
+        ("terminal_split_pct", layout.terminal_split_pct.to_string()),
+        ("explorer_split_pct", layout.explorer_split_pct.to_string()),
+        ("fleet_changes_pct", layout.fleet_changes_pct.to_string()),
+        ("fleet_stack_pct", layout.fleet_stack_pct.to_string()),
+    ];
+    if let Some(pct) = layout.fleet_list_width_pct {
+        entries.push(("fleet_list_width_pct", pct.to_string()));
+    }
+    entries
 }
 
 fn toml_string(s: &str) -> String {

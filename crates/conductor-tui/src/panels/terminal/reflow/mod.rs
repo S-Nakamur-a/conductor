@@ -77,6 +77,11 @@ impl Reflow {
         self.scroll
     }
 
+    /// 組み直した行の数と、先頭に出ている行。
+    pub(crate) fn extent(&self) -> (usize, usize) {
+        (self.lines.len(), self.scroll)
+    }
+
     pub(crate) fn border_color(&self, theme: &Theme) -> ratatui::style::Color {
         let complement = Theme::complement(theme.accent);
         match self.sweep {
