@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 #[derive(Debug)]
 pub struct ClickTracker<K = usize> {

@@ -490,6 +490,8 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
         frame.render_widget(Paragraph::new(lines).block(block), rect);
         return rect;
     }
+    // 枠線の内側。外寸のまま折り返すと、行末が枠の外に出て切れる。
+    let text_width = (area.width * MODAL_PCT / 100).saturating_sub(2);
     let ctx = ws.ctx();
     let full = |body: Vec<Line<'static>>, title: String| (title, body);
     let (title, body) = match modal {
@@ -543,20 +545,19 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
         ),
         Modal::PrInput(prompt) => (
             crate::modal::pr::title(),
-            crate::modal::pr::lines(prompt, &ctx, area.width * 60 / 100),
+            crate::modal::pr::lines(prompt, &ctx, text_width),
         ),
         Modal::Prompt(prompt) => (
             prompt.title.clone(),
-            crate::modal::prompt_lines(prompt, &ws.theme, area.width as usize * 60 / 100),
+            crate::modal::prompt_lines(prompt, &ws.theme, text_width as usize),
         ),
         Modal::Confirm(confirm) => (
             confirm.title.clone(),
             crate::modal::confirm::lines(confirm, &ws.theme),
         ),
-        Modal::CommentEditor(editor) => (
-            editor.title(),
-            editor_lines(editor, &ws.theme, area.width * 60 / 100),
-        ),
+        Modal::CommentEditor(editor) => {
+            (editor.title(), editor_lines(editor, &ws.theme, text_width))
+        }
         Modal::Popup(popup) => (
             crate::modal::popup::title(popup),
             crate::modal::popup::lines(popup, &ws.theme),
@@ -569,7 +570,7 @@ fn render_modal(frame: &mut Frame, ws: &Workspace, modal: &Modal, area: Rect) ->
     let rect = match modal {
         Modal::Popup(popup) => crate::modal::popup::rect(popup, area),
         _ if wide(modal) => big,
-        _ => centered(area, 60, (body.len() as u16 + 2).min(area.height)),
+        _ => centered(area, MODAL_PCT, (body.len() as u16 + 2).min(area.height)),
     };
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(body).block(modal_block(ws, &title)), rect);
@@ -625,6 +626,8 @@ fn editor_lines(
     lines
 }
 
+const MODAL_PCT: u16 = 60;
+
 fn centered(area: Rect, width_pct: u16, height: u16) -> Rect {
     let width = (area.width * width_pct / 100).max(1).min(area.width);
     Rect::new(
@@ -656,6 +659,31 @@ mod tests {
         (0..buffer.area.width)
             .map(|x| buffer[(x, row)].symbol())
             .collect()
+    }
+
+    #[test]
+    fn 入力欄で折り返した長い入力は枠で切れずに全部見える() {
+        let long = "@".repeat(150);
+        let mut prompt = crate::modal::Prompt::single("t", |_| Vec::new());
+        prompt.input.set_text(&long);
+        let mut pr = crate::modal::pr::PrInput::default();
+        pr.input.set_text(&long);
+        let mut editor = crate::modal::CommentEditor::new_comment("a.rs".into(), 1, None);
+        editor.input.set_text(&long);
+        for modal in [
+            Modal::Prompt(prompt),
+            Modal::PrInput(pr),
+            Modal::CommentEditor(editor),
+        ] {
+            let name = format!("{modal:?}").chars().take(12).collect::<String>();
+            let mut ws = Workspace::for_test();
+            ws.modals.push(modal);
+            let buffer = draw(&ws);
+            let shown: usize = (0..buffer.area.height)
+                .map(|row| text_of(&buffer, row).matches('@').count())
+                .sum();
+            assert_eq!(shown, long.len(), "{name}");
+        }
     }
 
     #[test]

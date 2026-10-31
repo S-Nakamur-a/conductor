@@ -176,13 +176,13 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::EditComment => to_focused(ws, Action::EditComment),
         CommandId::ReplyToComment => to_focused(ws, Action::ReplyToComment),
 
-        CommandId::OpenRepo => vec![Effect::PushModal(Modal::Prompt(Prompt::single(
-            "Open repository (path)",
-            |path| match path.trim() {
+        CommandId::OpenRepo => vec![Effect::PushModal(Modal::Prompt(
+            Prompt::single("Open repository (path)", |path| match path.trim() {
                 "" => Vec::new(),
                 path => vec![Effect::SwitchRepo(repo::expand_home(path))],
-            },
-        )))],
+            })
+            .completing_dirs(),
+        ))],
         CommandId::SwitchRepo => vec![Effect::PushModal(Modal::RepoPicker(
             repo::RepoPicker::open(ws.repo.known_index()),
         ))],

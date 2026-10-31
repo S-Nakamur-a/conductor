@@ -4,12 +4,15 @@
 //! 「どの区画の話か」が消えて、押した手応えが返らない。押した場所の無いキー操作から
 //! 開くときだけ中央に置く。
 
+use std::time::Instant;
+
 use conductor_core::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::click::DOUBLE_CLICK;
 use crate::effect::Effect;
 use crate::workspace::Ctx;
 
@@ -26,6 +29,8 @@ pub struct Popup {
     numbered: bool,
     /// 一覧に誤って打った文は矢印を含まないので、その改行では選ばせない。
     moved: bool,
+    /// ダブルクリックで開いたとき、続けて押された 3 回目で選ばせない。
+    deaf_until: Option<Instant>,
 }
 
 impl Popup {
@@ -44,6 +49,7 @@ impl Popup {
             selected,
             numbered: false,
             moved: false,
+            deaf_until: None,
         }
     }
 
@@ -51,6 +57,13 @@ impl Popup {
         Self {
             numbered: true,
             ..Self::new(title, choices, at, 0)
+        }
+    }
+
+    pub fn opened_by_double_click(self) -> Self {
+        Self {
+            deaf_until: Some(Instant::now() + DOUBLE_CLICK),
+            ..self
         }
     }
 
@@ -78,6 +91,9 @@ impl Popup {
 
     /// 枠の内側の行をクリックして選ぶ。外なら閉じるだけ。
     pub fn click(&mut self, x: u16, y: u16, area: Rect) -> Vec<Effect> {
+        if self.deaf_until.is_some_and(|until| Instant::now() < until) {
+            return Vec::new();
+        }
         let rect = rect(self, area);
         let inner = crate::list::inner(rect);
         if !(inner.x..inner.right()).contains(&x) {
@@ -188,6 +204,21 @@ mod tests {
         let rect = rect(&popup, SCREEN);
         assert!(rect.right() <= SCREEN.right(), "{rect:?}");
         assert!(rect.bottom() <= SCREEN.bottom(), "{rect:?}");
+    }
+
+    #[test]
+    fn ダブルクリックで開いたポップアップも間を置いた後のクリックでは選べる() {
+        let mut popup = at(10, 10).opened_by_double_click();
+        popup.deaf_until = Some(Instant::now() - std::time::Duration::from_millis(1));
+        let inner = crate::list::inner(rect(&popup, SCREEN));
+        let effects = popup.click(inner.x, inner.y + 1, SCREEN);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::PopModal, Effect::Command(CommandId::ShowCommitLog)]
+            ),
+            "{effects:?}"
+        );
     }
 
     #[test]

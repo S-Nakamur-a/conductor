@@ -71,11 +71,18 @@ pub fn title() -> String {
 
 pub fn lines(prompt: &PrInput, ctx: &Ctx, width: u16) -> Vec<Line<'static>> {
     let theme = ctx.theme;
-    let mut lines: Vec<Line<'static>> =
-        crate::modal::input::with_caret(&prompt.input, width as usize)
-            .into_iter()
-            .map(|line| Line::styled(format!("> {line}"), Style::default().fg(theme.fg)))
-            .collect();
+    let mut lines: Vec<Line<'static>> = crate::modal::input::with_caret(
+        &prompt.input,
+        (width as usize).saturating_sub(crate::modal::PROMPT_MARK.len()),
+    )
+    .into_iter()
+    .map(|line| {
+        Line::styled(
+            format!("{}{line}", crate::modal::PROMPT_MARK),
+            Style::default().fg(theme.fg),
+        )
+    })
+    .collect();
     if prompt.loading {
         lines.push(Line::styled(
             "fetching\u{2026}",
