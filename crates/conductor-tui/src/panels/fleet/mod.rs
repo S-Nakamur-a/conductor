@@ -244,6 +244,7 @@ pub struct FleetPanel {
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, Option<usize>, Option<Selected>)>,
     mark_clicks: ClickTracker<u16>,
+    blank_clicks: ClickTracker<PathBuf>,
     pub changes: changes::BranchChanges,
     pub artifacts: artifacts::SessionArtifacts,
     lower: Lower,
@@ -570,6 +571,26 @@ impl FleetPanel {
         self.row_clicks
             .arm((at.1, press.button_column, self.selected.clone()));
         Vec::new()
+    }
+
+    fn new_session_menu(&self, ctx: &Ctx, at: Option<(u16, u16)>) -> Popup {
+        let (dir, root) = self.launch_target(&ctx.repo.root);
+        Popup::numbered("New session", launch_choices(&dir, root, ctx.config), at)
+    }
+
+    /// セッションの映っていない右側のクリック。worktree を選んでいれば、2 回目で ctrl+n と同じ
+    /// 起動の選択肢を押した場所に出す。
+    pub fn click_blank_detail(&mut self, ctx: &Ctx, at: (u16, u16)) -> Vec<Effect> {
+        let Some(worktree) = self.selected_worktree() else {
+            return Vec::new();
+        };
+        if !self.blank_clicks.is_double(worktree.path) {
+            return Vec::new();
+        }
+        let popup = self
+            .new_session_menu(ctx, Some(at))
+            .opened_by_double_click();
+        vec![Effect::PushModal(Modal::Popup(popup))]
     }
 
     /// 下区画の Artifact と同じく、連打で何枚も開かないようにする。
@@ -1051,12 +1072,8 @@ impl FleetPanel {
                 return Some(Vec::new());
             }
             Action::NewSessionMenu => {
-                let (dir, root) = self.launch_target(&ctx.repo.root);
-                return Some(vec![Effect::PushModal(Modal::Popup(Popup::numbered(
-                    "New session",
-                    launch_choices(&dir, root, ctx.config),
-                    None,
-                )))]);
+                let popup = self.new_session_menu(ctx, None);
+                return Some(vec![Effect::PushModal(Modal::Popup(popup))]);
             }
             _ => return None,
         };

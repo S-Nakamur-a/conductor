@@ -692,6 +692,13 @@ fn on_mouse(
                 }
                 Focus::TerminalClaude | Focus::TerminalShell => ws.panels.terminal.click(focus),
                 Focus::Fleet => fleet_row_click(ws, layout, mouse),
+                Focus::FleetSession if ws.modals.is_empty() && ws.fleet_session().is_none() => {
+                    let root = ws.panels.viewer.root().to_path_buf();
+                    let (panels, _, ctx) = ws.split(&root);
+                    panels
+                        .fleet
+                        .click_blank_detail(&ctx, (mouse.column, mouse.row))
+                }
                 Focus::FleetShell => fleet_artifact_click(ws, layout, mouse),
                 _ => Vec::new(),
             };
@@ -2477,6 +2484,63 @@ needle here
             modifiers: KeyModifiers::NONE,
         };
         on_mouse(ws, svc, l, wheel);
+    }
+
+    fn click_blank_detail(ws: &mut Workspace, svc: &mut Services<TaskResult>, l: &Layout) {
+        let right = l.rect(Region::FleetSession).unwrap();
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: right.x + 5,
+            row: right.y + 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(ws, svc, l, click);
+    }
+
+    #[test]
+    fn 空の右側をダブルクリックするとctrl_nと同じ起動の選択肢が出る() {
+        let (mut ws, mut svc, l) = long_fleet_listing();
+        assert!(ws.panels.fleet.selected_worktree().is_some());
+
+        click_blank_detail(&mut ws, &mut svc, &l);
+        assert!(ws.modals.is_empty(), "1 回では出ない");
+        click_blank_detail(&mut ws, &mut svc, &l);
+        assert!(
+            matches!(ws.modals.as_slice(), [crate::modal::Modal::Popup(_)]),
+            "{:?}",
+            ws.modals
+        );
+    }
+
+    #[test]
+    fn 空の右側のダブルクリックに続く三回目は出た選択肢を選ばない() {
+        let (mut ws, mut svc, _) = long_fleet_listing();
+        let l = layout(&ws, Rect::new(0, 0, 260, 40));
+        let right = l.rect(Region::FleetSession).unwrap();
+        let Some(crate::modal::Modal::Popup(popup)) = ({
+            click_blank_detail(&mut ws, &mut svc, &l);
+            click_blank_detail(&mut ws, &mut svc, &l);
+            ws.modals.last_mut()
+        }) else {
+            panic!("選択肢が出ていない");
+        };
+        let inner = crate::list::inner(crate::modal::popup::rect(popup, l.area));
+        let first_choice = Position::new(inner.right() - 1, inner.y);
+        assert!(right.contains(first_choice), "選択肢が右側の上に出ていない");
+        let effects = popup.click(first_choice.x, first_choice.y, l.area);
+        assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    #[test]
+    fn 一回目のあと選択が動いたら空の右側の二回目はダブルクリックにならない() {
+        let (mut ws, mut svc, l) = long_fleet_listing();
+        click_blank_detail(&mut ws, &mut svc, &l);
+        let effects = ws
+            .dispatch_to(Focus::Fleet, conductor_core::keymap::Action::NavigateDown)
+            .unwrap();
+        apply(&mut ws, &mut svc, effects);
+        click_blank_detail(&mut ws, &mut svc, &l);
+        assert!(ws.modals.is_empty(), "{:?}", ws.modals);
     }
 
     #[test]

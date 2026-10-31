@@ -65,6 +65,8 @@ pub struct Prompt {
     /// Tab で巡る宛先。打ちかけの本文は持ち越す。
     modes: Vec<Mode>,
     selected: usize,
+    /// Tab でフォルダ名を補う入力欄だけ Some。中身は前の Tab で絞りきれなかった候補。
+    dir_candidates: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -90,6 +92,24 @@ impl Prompt {
             input: TextInput::new(),
             modes,
             selected: 0,
+            dir_candidates: None,
+        }
+    }
+
+    pub fn completing_dirs(mut self) -> Self {
+        self.dir_candidates = Some(Vec::new());
+        self
+    }
+
+    fn complete_dir(&mut self) {
+        let (text, candidates) = repo::complete_dir(self.input.text());
+        self.input.set_text(&text);
+        self.dir_candidates = Some(candidates);
+    }
+
+    fn forget_candidates(&mut self) {
+        if let Some(candidates) = &mut self.dir_candidates {
+            candidates.clear();
         }
     }
 
@@ -105,6 +125,8 @@ impl Prompt {
         self.selected = (self.selected + 1) % self.modes.len();
     }
 }
+
+pub const PROMPT_MARK: &str = "> ";
 
 /// 宛先の切替タブと入力欄。
 pub fn prompt_lines(prompt: &Prompt, theme: &Theme, width: usize) -> Vec<Line<'static>> {
@@ -131,11 +153,50 @@ pub fn prompt_lines(prompt: &Prompt, theme: &Theme, width: usize) -> Vec<Line<'s
         lines.push(Line::from(""));
     }
     lines.extend(
-        input::with_caret(&prompt.input, width)
+        input::with_caret(&prompt.input, width.saturating_sub(PROMPT_MARK.len()))
             .into_iter()
-            .map(|line| Line::styled(format!("> {line}"), Style::default().fg(theme.fg))),
+            .map(|line| {
+                Line::styled(
+                    format!("{PROMPT_MARK}{line}"),
+                    Style::default().fg(theme.fg),
+                )
+            }),
     );
+    let candidates = prompt.dir_candidates.as_deref().unwrap_or_default();
+    if !candidates.is_empty() {
+        lines.push(Line::from(""));
+        lines.extend(
+            candidate_rows(candidates, width)
+                .into_iter()
+                .map(|row| Line::styled(row, Style::default().fg(theme.hint))),
+        );
+    }
     lines
+}
+
+const CANDIDATE_ROWS: usize = 6;
+
+/// 候補を横に詰めて並べ、入りきらない分は数だけ出す。
+fn candidate_rows(candidates: &[String], width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+    let mut rows: Vec<String> = vec![String::new()];
+    for (shown, name) in candidates.iter().enumerate() {
+        let cell = format!("{name}/");
+        let row = rows.last_mut().expect("空にしない");
+        if row.is_empty() || row.width() + 2 + cell.width() <= width {
+            if !row.is_empty() {
+                row.push_str("  ");
+            }
+            row.push_str(&cell);
+            continue;
+        }
+        if rows.len() == CANDIDATE_ROWS {
+            rows.push(format!("… and {} more", candidates.len() - shown));
+            return rows;
+        }
+        rows.push(cell);
+    }
+    rows
 }
 
 /// 1 つの入力欄が兼ねる 4 つの書き込み先。
@@ -295,7 +356,10 @@ impl Modal {
     /// 黙って貼り付けを捨てるのを防ぐため。
     pub fn paste(&mut self, text: &str) {
         match self {
-            Modal::Prompt(prompt) => prompt.input.insert_str(text),
+            Modal::Prompt(prompt) => {
+                prompt.forget_candidates();
+                prompt.input.insert_str(text);
+            }
             Modal::CommentEditor(editor) => editor.input.insert_str(text),
             Modal::PrInput(prompt) => prompt.paste(text),
             Modal::Grep(grep) => grep.paste(text),
@@ -340,6 +404,10 @@ impl Modal {
             Modal::Popup(popup) => popup.update(key, ctx),
             Modal::Prompt(prompt) => match key.code {
                 KeyCode::Esc => vec![Effect::PopModal],
+                KeyCode::Tab if prompt.dir_candidates.is_some() => {
+                    prompt.complete_dir();
+                    vec![]
+                }
                 KeyCode::Tab if prompt.has_modes() => {
                     prompt.next_mode();
                     vec![Effect::Play(Kind::Flash, Target::Modal)]
@@ -350,6 +418,7 @@ impl Modal {
                     effects
                 }
                 _ => {
+                    prompt.forget_candidates();
                     prompt.input.handle_key(key);
                     vec![]
                 }
@@ -539,6 +608,66 @@ mod tests {
         let mut modal = Modal::Prompt(Prompt::single("t", |_| Vec::new()));
         let effects = modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
         assert!(effects.is_empty(), "{effects:?}");
+    }
+
+    fn dir_prompt(dirs: &[&str], typed: &str) -> (tempfile::TempDir, Modal) {
+        let tmp = tempfile::tempdir().unwrap();
+        for dir in dirs {
+            std::fs::create_dir(tmp.path().join(dir)).unwrap();
+        }
+        let mut prompt = Prompt::single("t", |_| Vec::new()).completing_dirs();
+        prompt
+            .input
+            .set_text(&format!("{}/{typed}", tmp.path().display()));
+        (tmp, Modal::Prompt(prompt))
+    }
+
+    fn prompt_of(modal: &Modal) -> &Prompt {
+        let Modal::Prompt(prompt) = modal else {
+            unreachable!()
+        };
+        prompt
+    }
+
+    #[test]
+    fn フォルダ補完の入力欄ではtabで名前が埋まる() {
+        let ws = Workspace::for_test();
+        let (tmp, mut modal) = dir_prompt(&["conductor"], "con");
+        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        assert_eq!(
+            prompt_of(&modal).input.text(),
+            format!("{}/conductor/", tmp.path().display())
+        );
+    }
+
+    #[test]
+    fn 絞りきれない候補は入力欄の下に出て_打つと消える() {
+        let ws = Workspace::for_test();
+        let theme = Theme::from_name("dracula");
+        let (_tmp, mut modal) = dir_prompt(&["alpha", "beta"], "");
+        let shown = |modal: &Modal| {
+            prompt_lines(prompt_of(modal), &theme, 200)
+                .iter()
+                .any(|line| line.to_string() == "alpha/  beta/")
+        };
+
+        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        assert!(shown(&modal));
+        modal.update(KeyEvent::from(KeyCode::Char('a')), &ws.ctx());
+        assert!(!shown(&modal));
+
+        modal.update(KeyEvent::from(KeyCode::Backspace), &ws.ctx());
+        modal.update(KeyEvent::from(KeyCode::Tab), &ws.ctx());
+        modal.paste("x");
+        assert!(!shown(&modal));
+    }
+
+    #[test]
+    fn 候補は決めた行数で打ち切り_残りは数で出す() {
+        let names: Vec<String> = (0..20).map(|i| format!("dir{i:02}")).collect();
+        let rows = candidate_rows(&names, 6);
+        assert_eq!(rows.len(), CANDIDATE_ROWS + 1);
+        assert_eq!(rows.last().unwrap(), "… and 14 more");
     }
 
     /// 文言が変わるだけでは、どちらにいるか一目で分からない。

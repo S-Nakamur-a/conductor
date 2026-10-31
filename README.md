@@ -151,7 +151,8 @@ Code, **2** Claude Code with Chrome, **3** Smart Worktree (in a git repository: 
 for the task, creates a worktree and a branch for it, and starts Claude there). Any
 other key closes the question. Ctrl+n is never part of typed text, so typing into the
 list does not open this menu. The new session is selected
-and the keyboard goes into it on the right. The `[+]` at the right end of a worktree's
+and the keyboard goes into it on the right. While the right side shows no session, a
+double click on it opens the same question for the selected worktree, where you clicked. The `[+]` at the right end of a worktree's
 line offers the same rows without Smart Worktree, and the `[✧]` beside a repository's name starts Smart
 Worktree there. With two `[[claude.accounts]]` or more, rows 1 and 2 are replaced by each
 account's pair ("Claude Code as <name>", "Claude Code as <name> + Chrome"), so Smart
