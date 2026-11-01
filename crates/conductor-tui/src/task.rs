@@ -1685,10 +1685,20 @@ fn write_review(env: &TaskEnv, write: &ReviewWrite) -> Result<Box<Snapshot>, Str
     load_review(env)
 }
 
+/// git でないディレクトリも開けるので、そこでは worktree が無いだけで失敗ではない。
+/// 一覧は 3 秒ごとに取り直すため、失敗にすると帯がエラーを出し続ける。
 fn list_worktrees(env: &TaskEnv) -> Result<Vec<WorktreeInfo>, String> {
-    GitEngine::open(&env.root)
-        .and_then(|git| git.list_worktrees())
-        .map_err(|e| e.to_string())
+    let git = match GitEngine::open(&env.root) {
+        Ok(git) => git,
+        Err(e) if outside_any_repository(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    git.list_worktrees().map_err(|e| e.to_string())
+}
+
+fn outside_any_repository(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<git2::Error>()
+        .is_some_and(|e| e.code() == git2::ErrorCode::NotFound)
 }
 
 fn create_worktree(env: &TaskEnv, branch: &str) -> Result<Created, String> {
@@ -2667,6 +2677,13 @@ mod resumable_tests {
             claude_dirs,
             account_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn gitでないディレクトリのworktree一覧は失敗でなく空() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env_at(dir.path().to_path_buf(), Vec::new());
+        assert_eq!(super::list_worktrees(&env).map(|list| list.len()), Ok(0));
     }
 
     #[test]
