@@ -2592,7 +2592,8 @@ mod tree {
             at(200),
         );
         let theme = Theme::from_name("catppuccin-mocha");
-        let line = render::summary_line(&fleet, &theme, &[], std::time::SystemTime::now(), 60);
+        let line =
+            render::summary_lines(&fleet, &theme, &[], std::time::SystemTime::now(), 60).remove(0);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(text.trim_end(), "入力待ち 1 · 作業中 1 · 完了 0 · 待機 0");
         let color_of = |word: &str| {
@@ -2614,7 +2615,8 @@ mod tree {
             at(200),
         );
         fleet.update(Action::GoToBottom, &Workspace::for_test().ctx());
-        let line = render::summary_line(&fleet, &theme, &[], std::time::SystemTime::now(), 60);
+        let line =
+            render::summary_lines(&fleet, &theme, &[], std::time::SystemTime::now(), 60).remove(0);
         let idle = line.spans.iter().find(|s| s.content.starts_with("待機"));
         assert_eq!(
             idle.and_then(|s| s.style.fg),
@@ -3308,61 +3310,101 @@ mod usage {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
+    fn summary(
+        fleet: &FleetPanel,
+        theme: &Theme,
+        accounts: &[conductor_core::config::ClaudeAccount],
+        width: usize,
+    ) -> String {
+        render::summary_lines(fleet, theme, accounts, now(), width)
+            .iter()
+            .map(|line| squeeze(&text(line)))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
     #[test]
-    fn 要約行は詰めるほど残り時間_7d_0_本の状態項目_使用量の順に消え_戻らない() {
+    fn 要約は詰めるほど残り時間_バー_0_本の状態項目が消え_使用量は2行目に回り_戻らない() {
         let theme = Theme::from_name("catppuccin-mocha");
         let fleet = fleet_with(
             limits(42.0, 61.0),
             vec![live(7, "/r/a", "s7", Status::Working, Owner::Conductor)],
         );
-        let line = |width| {
-            squeeze(&text(&render::summary_line(
-                &fleet,
-                &theme,
-                &[],
-                now(),
-                width,
-            )))
-        };
         let stages = [
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h",
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42% · 7d ████▉ 61%",
-            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h ███▎ 42%",
-            "作業中 1 5h ███▎ 42%",
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 5h 42% 7d 61%",
+            "作業中 1 5h 42% 7d 61%",
+            "作業中 1 / 5h 42% 7d 61%",
             "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0",
         ];
         let mut seen = Vec::new();
         for width in (1..=120).rev() {
-            let got = line(width);
+            let got = summary(&fleet, &theme, &[], width);
             if seen.last() != Some(&got) {
                 seen.push(got);
             }
         }
         assert_eq!(seen, stages);
-        let full = render::summary_line(&fleet, &theme, &[], now(), 120);
-        assert_eq!(text(&full).width(), 120, "右端まで埋める");
+        for width in [120, 20] {
+            for line in render::summary_lines(&fleet, &theme, &[], now(), width) {
+                assert_eq!(text(&line).width(), width, "右端まで埋め、はみ出さない");
+            }
+        }
     }
 
     #[test]
-    fn 全部_0_本なら狭くても状態項目を省かず使用量を落とす() {
+    fn 全部_0_本なら狭くても状態項目を省かず使用量を2行目に回す() {
         let theme = Theme::from_name("catppuccin-mocha");
         let fleet = fleet_with(limits(42.0, 61.0), Vec::new());
-        let narrow = squeeze(&text(&render::summary_line(&fleet, &theme, &[], now(), 45)));
-        assert_eq!(narrow, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
+        assert_eq!(
+            summary(&fleet, &theme, &[], 45),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 / 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h",
+            "2 行目には入る中で一番広い形を出す"
+        );
     }
 
     #[test]
     fn 使用量が無ければ状態項目だけ() {
         let theme = Theme::from_name("catppuccin-mocha");
         let fleet = fleet_with(Usage::default(), Vec::new());
-        let line = squeeze(&text(&render::summary_line(
-            &fleet,
-            &theme,
-            &[],
-            now(),
-            200,
-        )));
-        assert_eq!(line, "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0");
+        assert_eq!(
+            summary(&fleet, &theme, &[], 200),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0"
+        );
+        assert_eq!(
+            summary(&fleet, &theme, &[], 20),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0",
+            "使用量が無いのに 2 行目を空けない"
+        );
+    }
+
+    #[test]
+    fn 要約が2行になると一覧の本文はその下から始まる() {
+        use conductor_core::config::ClaudeAccount;
+        let mut ws = Workspace::for_test();
+        ws.chrome.fleet_open = true;
+        ws.config.claude.accounts = ["personal", "work"]
+            .map(|name| ClaudeAccount {
+                name: name.into(),
+                ..Default::default()
+            })
+            .to_vec();
+        let body_top = |ws: &Workspace| {
+            let composed = render::compose(ws, ratatui::layout::Rect::new(0, 0, 56, 30)).unwrap();
+            let (summary, lines) = composed.summary.unwrap();
+            assert_eq!(summary.y, 1);
+            (lines.len() as u16, composed.body.y - summary.y)
+        };
+        assert_eq!(body_top(&ws), (1, 1));
+        ws.panels.fleet = fleet_with(
+            Usage {
+                limits: vec![pair(8.0, 23.0), pair(64.0, 91.0)],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(body_top(&ws), (2, 2));
     }
 
     #[test]
@@ -3384,21 +3426,21 @@ mod usage {
             ..Default::default()
         };
         let fleet = fleet_with(usage, Vec::new());
-        let line = |width| render::summary_line(&fleet, &theme, &accounts, now(), width);
         assert_eq!(
-            squeeze(&text(&line(200))),
+            summary(&fleet, &theme, &accounts, 200),
             "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% 2h13m · 7d ████▉ 61% 3d4h │ personal 5h ███████▏ 90% 2h13m · 7d ▊ 10% 3d4h"
         );
         assert_eq!(
-            squeeze(&text(&line(90))),
-            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% │ personal 5h ███████▏ 90%"
+            summary(&fleet, &theme, &accounts, 90),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h 42% 7d 61% │ personal 5h 90% 7d 10%",
+            "バーつきでは収まらない幅でも、名前と 5h / 7d の % は残す"
         );
         assert_eq!(
-            squeeze(&text(&line(68))),
-            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 42% │ personal 90%",
-            "バーつきでは収まらない幅でも、名前と % は残す"
+            summary(&fleet, &theme, &accounts, 54),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 / work 5h 42% 7d 61% │ personal 5h 90% 7d 10%",
+            "1 行に入らなければ 7d も落とさず 2 行目に回す"
         );
-        let full = line(200);
+        let full = render::summary_lines(&fleet, &theme, &accounts, now(), 200).remove(0);
         let color_of = |name: &str| {
             full.spans
                 .iter()
@@ -3407,6 +3449,73 @@ mod usage {
         };
         assert_eq!(color_of("work"), accounts[0].color());
         assert_eq!(color_of("personal"), accounts[2].color());
+    }
+
+    #[test]
+    fn 使用量が2行目にも入らない幅では_0_本でない状態と名前_5hの率を出す() {
+        use conductor_core::config::ClaudeAccount;
+        let theme = Theme::from_name("catppuccin-mocha");
+        let accounts = ["personal", "work"].map(|name| ClaudeAccount {
+            name: name.into(),
+            ..Default::default()
+        });
+        let fleet = fleet_with(
+            Usage {
+                limits: vec![pair(8.0, 23.0), pair(64.0, 91.0)],
+                ..Default::default()
+            },
+            vec![live(7, "/r/a", "s7", Status::Working, Owner::Conductor)],
+        );
+        let line = |width| summary(&fleet, &theme, &accounts, width);
+        assert_eq!(
+            line(42),
+            "入力待ち 0 · 作業中 1 · 完了 0 · 待機 0 / personal 5h 8% 7d 23% │ work 5h 64% 7d 91%"
+        );
+        for width in [31, 36, 41] {
+            assert_eq!(
+                line(width),
+                "作業中 1 personal 8% │ work 64%",
+                "幅 {width}: 7d が入らなくても 5h まで落とさない"
+            );
+        }
+        let idle = fleet_with(
+            Usage {
+                limits: vec![pair(8.0, 23.0), pair(64.0, 91.0)],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            summary(&idle, &theme, &accounts, 31),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0",
+            "全部 0 本なら状態項目を省いてまで 5h を出さない"
+        );
+    }
+
+    #[test]
+    fn 全状態が入らない幅の2行目では_1行目を0_本でない状態に縮めて数を切らない() {
+        use conductor_core::config::ClaudeAccount;
+        let theme = Theme::from_name("catppuccin-mocha");
+        let accounts = [ClaudeAccount {
+            name: "work".into(),
+            ..Default::default()
+        }];
+        let fleet = fleet_with(
+            limits(42.0, 61.0),
+            ["s1", "s2", "s3"]
+                .iter()
+                .enumerate()
+                .map(|(i, id)| live(7 + i as u32, "/r/a", id, Status::Working, Owner::Conductor))
+                .collect(),
+        );
+        let lines = render::summary_lines(&fleet, &theme, &accounts, now(), 20);
+        assert_eq!(
+            lines.iter().map(|l| squeeze(&text(l))).collect::<Vec<_>>(),
+            ["作業中 3", "work 5h 42% 7d 61%"]
+        );
+        for line in &lines {
+            assert_eq!(text(line).width(), 20, "幅をはみ出さない");
+        }
     }
 
     #[test]
@@ -3429,26 +3538,22 @@ mod usage {
             },
             Vec::new(),
         );
-        let line = |width| {
-            squeeze(&text(&render::summary_line(
-                &fleet,
-                &theme,
-                &accounts,
-                now(),
-                width,
-            )))
-        };
+        let line = |width| summary(&fleet, &theme, &accounts, width);
         assert_eq!(
             line(usize::from(list.width - 2)),
             "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% · 7d ████▉ 61% │ personal 5h ███████▏ 90% · 7d ▊ 10%"
         );
-        assert!(line(123).contains("7d"));
-        assert!(!line(122).contains("7d"), "123 が下限");
-        assert!(!line(95).contains("7d"), "160 桁の窓の一覧には入らない");
+        assert!(line(123).contains('█'));
+        assert!(!line(122).contains('█'), "123 が下限");
+        assert_eq!(
+            line(95),
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h 42% 7d 61% │ personal 5h 90% 7d 10%",
+            "160 桁の窓の一覧ではバーを外して 7d まで出す"
+        );
     }
 
     #[test]
-    fn 一番狭い形は5hの百分率で_5hが無いアカウントだけ7dと書く() {
+    fn 一番狭い形も7dを落とさず_枠の無い側は書かない() {
         use conductor_core::config::ClaudeAccount;
         let theme = Theme::from_name("catppuccin-mocha");
         let accounts = ["work", "personal"].map(|name| ClaudeAccount {
@@ -3467,21 +3572,15 @@ mod usage {
                 },
                 Vec::new(),
             );
-            squeeze(&text(&render::summary_line(
-                &fleet,
-                &theme,
-                accounts,
-                now(),
-                68,
-            )))
+            summary(&fleet, &theme, accounts, 80)
         };
         assert_eq!(
             line(vec![week_only, pair(25.0, 9.0)], &accounts),
-            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 7d 99% │ personal 25%"
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 7d 99% │ personal 5h 25% 7d 9%"
         );
         assert_eq!(
             line(vec![pair(42.0, 61.0)], &accounts[..1]),
-            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42%",
+            "入力待ち 0 · 作業中 0 · 完了 0 · 待機 0 work 5h ███▎ 42% · 7d ████▉ 61%",
             "1 アカウントならバーつきが収まる"
         );
     }
@@ -3491,7 +3590,7 @@ mod usage {
         let theme = Theme::from_name("catppuccin-mocha");
         let bar_color = |pct: f64| {
             let fleet = fleet_with(limits(pct, 0.0), Vec::new());
-            let line = render::summary_line(&fleet, &theme, &[], now(), 200);
+            let line = render::summary_lines(&fleet, &theme, &[], now(), 200).remove(0);
             line.spans
                 .iter()
                 .find(|s| s.content.contains('█'))

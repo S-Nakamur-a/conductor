@@ -544,7 +544,13 @@ The list is `min(main × 61%, 125)` columns wide (`layout.rs`'s `FLEET_LIST_PCT`
 `FLEET_LIST_MAX`) and its border takes 2, so a line drawn inside it never gets more than
 123 — 95 on a 160-column terminal. 123 is what the summary line needs to show two
 accounts' 5h and 7d with bars (no countdowns) beside the four state counts, for names
-like `work` / `personal`; a longer name needs more. A width test for anything in the list takes its widths
+like `work` / `personal`; a longer name needs more. Below 123 the bars go first (5h / 7d
+stay as percentages), and when even that does not fit beside the state counts the usage moves
+to a second line under them, which costs the list one body row (render.rs's `summary_lines`);
+the first line then keeps only the nonzero counts if all four do not fit. Where the second line
+cannot hold 5h / 7d either, a window with `[[claude.accounts]]` and a nonzero count falls back
+to each account's name and 5h percentage beside the nonzero counts, if that fits; otherwise the
+usage is dropped. A width test for anything in the list takes its widths
 from that range: one that hands the list's renderer 200 pins a screen nobody can open
 (#441's tests passed at 200 and 90, while at the real width two accounts' 5h / 7d were gone).
 That cap holds only while `[layout] fleet_list_width_pct` is unset: dragging the list's
