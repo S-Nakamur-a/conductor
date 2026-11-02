@@ -73,6 +73,20 @@ pub fn read(root: &Path, relative: &str, tab_width: usize) -> Result<Loaded, Str
     Ok(parse(&text, relative, tab_width))
 }
 
+/// 行だけを読む。折りたたみもマスクも要らない読み手 (Files changed の構文色と展開) 用。
+pub fn read_lines(root: &Path, relative: &str, tab_width: usize) -> Result<Vec<String>, String> {
+    let full = root.join(relative);
+    // 差分が見ているのはリンクの文面で、辿った先の中身ではない。
+    if std::fs::symlink_metadata(&full).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("{relative} is a symbolic link"));
+    }
+    if let Some(reason) = unsupported(&full, relative) {
+        return Err(reason);
+    }
+    let text = std::fs::read_to_string(&full).map_err(|e| e.to_string())?;
+    Ok(text.lines().map(|l| expand_tabs(l, tab_width)).collect())
+}
+
 pub fn read_new_side(
     root: &Path,
     relative: &str,

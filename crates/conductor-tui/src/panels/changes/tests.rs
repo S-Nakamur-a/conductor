@@ -14,7 +14,7 @@ use super::*;
 use crate::effect::Effect;
 use crate::layout::layout;
 use crate::list::Viewport;
-use crate::task::{ReviewWrite, TaskResult};
+use crate::task::{ReviewWrite, Task, TaskResult};
 use crate::workspace::{Focus, Workspace};
 
 fn line(tag: DiffLineTag, old: Option<usize>, new: Option<usize>, text: &str) -> DiffLine {
@@ -1362,4 +1362,473 @@ fn 一覧で畳んだファイルを選んでも開かない() {
     assert!(ws.panels.changes.click_list(5));
     assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
     assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+}
+
+fn sized(files: Vec<FileDiff>) -> Workspace {
+    let mut ws = feat_workspace();
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 160, 40)));
+    let _ = deliver(&mut ws, "/r/feat", files);
+    ws.focus = Focus::Viewer;
+    ws
+}
+
+fn asked(ws: &mut Workspace) -> Vec<(PathBuf, String, u64)> {
+    (ws.prepare().into_iter())
+        .filter_map(|effect| match effect {
+            Effect::Spawn(Task::LoadChangeSource {
+                root,
+                path,
+                generation,
+            }) => Some((root, path, generation)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn answer(ws: &mut Workspace, read: (PathBuf, String, u64), lines: Result<Vec<String>, String>) {
+    let (root, path, generation) = read;
+    let _ = ws.accept(TaskResult::ChangeSource {
+        root,
+        path,
+        generation,
+        lines,
+    });
+}
+
+fn source(n: usize) -> Vec<String> {
+    (1..=n).map(|i| format!("let x{i} = {i};")).collect()
+}
+
+fn hidden(ws: &Workspace, file: usize) -> Vec<(usize, usize)> {
+    (ws.panels.changes.sections()[file].entries.iter())
+        .filter_map(|e| match e {
+            Entry::ExpandableContext {
+                new_line_start,
+                new_line_end,
+                ..
+            } => Some((*new_line_start, *new_line_end)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn 本文は見えているファイルだけを上から_1_本ずつ読む() {
+    let files = (0..300)
+        .map(|i| file(&format!("f{i:03}.rs"), FileStatus::Modified, 1, 50))
+        .collect();
+    let mut ws = sized(files);
+    let first = asked(&mut ws);
+    assert_eq!(
+        first.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
+        ["f000.rs"]
+    );
+    assert!(asked(&mut ws).is_empty(), "読んでいる間は次を投げない");
+    answer(&mut ws, first[0].clone(), Ok(source(60)));
+    assert!(asked(&mut ws).is_empty(), "f001.rs は画面の外");
+}
+
+#[test]
+fn 読んでいる間に差分が届き直したら古い本文は捨てて読み直す() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let old = asked(&mut ws).remove(0);
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 4)],
+    );
+    answer(&mut ws, old, Ok(source(30)));
+    assert!(matches!(
+        ws.panels.changes.sections()[0].source,
+        Source::Unread
+    ));
+    assert_eq!(asked(&mut ws).len(), 1);
+}
+
+#[test]
+fn 削除されたファイルとハンクの無いファイルは読まない() {
+    let mut ws = sized(vec![
+        file("gone.rs", FileStatus::Deleted, 1, 3),
+        binary("logo.png"),
+    ]);
+    assert!(asked(&mut ws).is_empty());
+}
+
+#[test]
+fn 読めなかったファイルは単色のまま読み直さない() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let read = asked(&mut ws).remove(0);
+    answer(&mut ws, read, Err("too large".into()));
+    assert!(asked(&mut ws).is_empty());
+    assert!(ws.panels.changes.sections()[0].highlighted.is_empty());
+}
+
+#[test]
+fn 本文が届くと新しい側の行に色が付く() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let before: Vec<Line> = body_lines(&ws, 100, 10);
+    let read = asked(&mut ws).remove(0);
+    let text = ["a.rs:1", "a.rs:2", "a.rs:3", "added"];
+    answer(&mut ws, read, Ok(text.map(String::from).to_vec()));
+    let _ = asked(&mut ws);
+    assert_eq!(ws.panels.changes.sections()[0].highlighted.len(), 4);
+    let after: Vec<Line> = body_lines(&ws, 100, 10);
+    assert_ne!(before[1], after[1], "文脈の行は色が変わる");
+    assert_eq!(before[4], after[4], "削除行には色を付けない");
+}
+
+#[test]
+fn テーマが変わったら色を付け直す() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let read = asked(&mut ws).remove(0);
+    answer(&mut ws, read, Ok(source(4)));
+    let _ = asked(&mut ws);
+    let first = ws.panels.changes.sections()[0].highlighted.clone();
+    ws.config.ui.theme = Some("dracula".into());
+    let _ = asked(&mut ws);
+    assert_ne!(ws.panels.changes.sections()[0].highlighted, first);
+    assert_eq!(ws.panels.changes.sections()[0].highlighted.len(), 4);
+}
+
+#[test]
+fn 本文が届くと末尾の隠れた行が出て一番上の空行は空行のまま() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let blank = rows(&ws, 0).len() - 1;
+    top_to(&mut ws, 0, blank);
+    let read = asked(&mut ws).remove(0);
+    answer(&mut ws, read, Ok(source(30)));
+    assert_eq!(hidden(&ws, 0), [(5, 30)]);
+    let top = ws.panels.changes.top();
+    assert_eq!(rows(&ws, 0)[top.row], Row::Blank);
+}
+
+#[test]
+fn enter_で見えている最初の塊を開き_shift_enter_で全部開く() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    top_to(&mut ws, 0, 3);
+    let read = asked(&mut ws).remove(0);
+    answer(&mut ws, read, Ok(source(30)));
+    assert_eq!(ws.dispatch(Action::ExpandContext), Some(Vec::new()));
+    assert_eq!(hidden(&ws, 0), [(10, 25)]);
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(3));
+    assert_eq!(ws.dispatch(Action::ExpandAllContext), Some(Vec::new()));
+    assert!(hidden(&ws, 0).is_empty());
+}
+
+#[test]
+fn 左右表示でも同じ塊を開く() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let read = asked(&mut ws).remove(0);
+    answer(&mut ws, read, Ok(source(30)));
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    let _ = ws.dispatch(Action::ExpandContext);
+    assert_eq!(hidden(&ws, 0), [(10, 25)]);
+}
+
+#[test]
+fn 本文が届く前の塊では開かずに読み込み中と言う() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 10, 3)]);
+    let effects = ws.dispatch(Action::ExpandContext).unwrap();
+    assert!(
+        matches!(effects.as_slice(), [Effect::Status(_, text)] if text == "b.rs is still loading"),
+        "{effects:?}"
+    );
+    assert_eq!(hidden(&ws, 0), [(1, 9)]);
+}
+
+#[test]
+fn 見えている範囲に塊が無ければ何もしない() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    assert_eq!(ws.dispatch(Action::ExpandContext), Some(Vec::new()));
+}
+
+#[test]
+fn 差分が同じファイルは本文と開いた塊を持ち越し_変わったファイルは閉じる() {
+    let mut ws = sized(two_files());
+    for _ in 0..2 {
+        let read = asked(&mut ws).remove(0);
+        answer(&mut ws, read, Ok(source(30)));
+    }
+    let _ = ws.dispatch(Action::ExpandAllContext);
+    let opened = hidden(&ws, 0);
+    let _ = deliver(&mut ws, "/r/feat", two_files());
+    assert_eq!(hidden(&ws, 0), opened);
+    assert!(matches!(
+        ws.panels.changes.sections()[0].source,
+        Source::Lines(_)
+    ));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![
+            file("a.rs", FileStatus::Modified, 1, 4),
+            two_files().remove(1),
+        ],
+    );
+    assert!(matches!(
+        ws.panels.changes.sections()[0].source,
+        Source::Unread
+    ));
+    assert!(matches!(
+        ws.panels.changes.sections()[1].source,
+        Source::Lines(_)
+    ));
+}
+
+#[test]
+fn enter_は縦並びで隠れた行を開く() {
+    let ws = sized(two_files());
+    let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(
+        ws.keymap.resolve(&key, KeyContext::Changes),
+        Some(Action::ExpandContext)
+    );
+}
+
+fn read_all(ws: &mut Workspace, lines: usize) {
+    while let Some(read) = asked(ws).pop() {
+        answer(ws, read, Ok(source(lines)));
+    }
+}
+
+#[test]
+fn 別のファイルの本文が届いてもスレッドの途中の一番上は動かない() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    let thread_end = rows(&ws, 0)
+        .iter()
+        .rposition(|r| matches!(r, Row::Thread { .. }))
+        .unwrap();
+    top_to(&mut ws, 0, thread_end);
+    read_all(&mut ws, 4);
+    assert_eq!(
+        ws.panels.changes.top(),
+        Top {
+            file: 0,
+            row: thread_end
+        }
+    );
+}
+
+#[test]
+fn 削除の途中で_enter_を押しても一番上は動かない() {
+    let mut deleted: Vec<DiffLine> = (1..=3)
+        .map(|n| line(DiffLineTag::Equal, Some(n), Some(n), &format!("d.rs:{n}")))
+        .collect();
+    deleted.extend((4..=13).map(|n| line(DiffLineTag::Delete, Some(n), None, "gone")));
+    let d = FileDiff {
+        path: "d.rs".into(),
+        status: FileStatus::Modified,
+        added_lines: 0,
+        deleted_lines: 10,
+        hunks: vec![DiffHunk {
+            lines: deleted,
+            func_header: None,
+        }],
+    };
+    let mut ws = sized(vec![d]);
+    read_all(&mut ws, 30);
+    top_to(&mut ws, 0, 9);
+    let _ = ws.dispatch(Action::ExpandContext);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 9 });
+    assert_eq!(hidden(&ws, 0), [(9, 25)]);
+}
+
+#[test]
+fn 差分が同じでも見えているファイルは読み直し_本文が変わっていれば組み直す() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    read_all(&mut ws, 30);
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 3)],
+    );
+    let reread = asked(&mut ws);
+    assert_eq!(reread.len(), 1, "差分が同じでも読み直す");
+    answer(&mut ws, reread[0].clone(), Ok(source(40)));
+    assert_eq!(hidden(&ws, 0), [(5, 40)]);
+}
+
+#[test]
+fn 読み直した本文が同じなら開いた塊と色は残る() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    read_all(&mut ws, 30);
+    let _ = ws.dispatch(Action::ExpandContext);
+    let opened = hidden(&ws, 0);
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 3)],
+    );
+    assert!(!ws.panels.changes.sections()[0].highlighted.is_empty());
+    read_all(&mut ws, 30);
+    assert_eq!(hidden(&ws, 0), opened);
+    assert!(!ws.panels.changes.sections()[0].highlighted.is_empty());
+}
+
+#[test]
+fn worktree_を移って戻ると開いた塊と一番上の行が戻る() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 20, 3)]);
+    read_all(&mut ws, 40);
+    let _ = ws.dispatch(Action::ExpandAllContext);
+    let twelve = rows(&ws, 0).len();
+    let twelve = (0..twelve)
+        .find(|r| ws.panels.changes.sections()[0].line_of(*r) == Some(12))
+        .unwrap();
+    top_to(&mut ws, 0, twelve);
+    let opened = hidden(&ws, 0);
+    ws.panels.changes.follow(Path::new("/r/other"));
+    ws.panels.changes.follow(Path::new("/r/feat"));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("b.rs", FileStatus::Modified, 20, 3)],
+    );
+    assert_eq!(hidden(&ws, 0), opened);
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(12));
+}
+
+#[test]
+fn 隠れた行を頼まれたら塊の行を一番上に出す() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 20, 3)]);
+    let _ = reveal(&mut ws.panels.changes, "b.rs".into(), Some(12), false);
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(1));
+}
+
+#[test]
+fn 別の_worktree_へ移った後に届いた古い本文は入らず新しい_generation_で読む() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let old = asked(&mut ws).remove(0);
+    ws.panels.changes.follow(Path::new("/r/other"));
+    ws.panels.changes.follow(Path::new("/r/feat"));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 3)],
+    );
+    answer(&mut ws, old.clone(), Ok(source(30)));
+    assert!(matches!(
+        ws.panels.changes.sections()[0].source,
+        Source::Unread
+    ));
+    let new = asked(&mut ws);
+    assert_eq!(new.len(), 1);
+    assert_ne!(new[0].2, old.2);
+}
+
+#[test]
+fn 根の違う本文は入らない() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let (_, path, generation) = asked(&mut ws).remove(0);
+    answer(
+        &mut ws,
+        (PathBuf::from("/r/other"), path, generation),
+        Ok(source(30)),
+    );
+    assert!(matches!(
+        ws.panels.changes.sections()[0].source,
+        Source::Unread
+    ));
+}
+
+fn line_on_top(ws: &Workspace) -> Option<usize> {
+    let top = ws.panels.changes.top();
+    ws.panels.changes.sections()[top.file].line_of(top.row)
+}
+
+fn top_to_line(ws: &mut Workspace, file: usize, line: usize) {
+    let row = (0..rows(ws, file).len())
+        .find(|r| ws.panels.changes.sections()[file].line_of(*r) == Some(line))
+        .unwrap();
+    top_to(ws, file, row);
+}
+
+#[test]
+fn 畳んだファイルの空行が一番上のまま本文が届いても空行のまま() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    top_to(&mut ws, 0, 1);
+    read_all(&mut ws, 30);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 1 });
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+}
+
+#[test]
+fn 開いた行が一番上のまま本文が変わると閉じた塊の行に寄る() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 20, 3)]);
+    read_all(&mut ws, 40);
+    let _ = ws.dispatch(Action::ExpandAllContext);
+    top_to_line(&mut ws, 0, 3);
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("b.rs", FileStatus::Modified, 20, 3)],
+    );
+    read_all(&mut ws, 41);
+    assert_eq!(hidden(&ws, 0), [(1, 19), (24, 41)]);
+    assert_eq!(line_on_top(&ws), Some(1));
+}
+
+#[test]
+fn 左右表示でも隠れた行を頼まれたら塊の行を一番上に出す() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 20, 3)]);
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    let _ = reveal(&mut ws.panels.changes, "b.rs".into(), Some(12), false);
+    assert_eq!(line_on_top(&ws), Some(1));
+}
+
+#[test]
+fn 差分が届く前に移り直しても預けた塊は残る() {
+    let mut ws = sized(vec![file("b.rs", FileStatus::Modified, 20, 3)]);
+    read_all(&mut ws, 40);
+    let _ = ws.dispatch(Action::ExpandAllContext);
+    let opened = hidden(&ws, 0);
+    for root in ["/r/other", "/r/feat", "/r/third", "/r/feat"] {
+        ws.panels.changes.follow(Path::new(root));
+    }
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("b.rs", FileStatus::Modified, 20, 3)],
+    );
+    assert_eq!(hidden(&ws, 0), opened);
+}
+
+#[test]
+fn 預けている間にテーマが変わっても戻ると今のテーマで塗る() {
+    let mut ws = sized(vec![file("a.rs", FileStatus::Modified, 1, 3)]);
+    read_all(&mut ws, 30);
+    let before = ws.panels.changes.sections()[0].highlighted.clone();
+    ws.panels.changes.follow(Path::new("/r/other"));
+    ws.config.ui.theme = Some("dracula".into());
+    let _ = deliver(
+        &mut ws,
+        "/r/other",
+        vec![file("o.rs", FileStatus::Modified, 1, 3)],
+    );
+    read_all(&mut ws, 30);
+    let _ = asked(&mut ws);
+    ws.panels.changes.follow(Path::new("/r/feat"));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 3)],
+    );
+    read_all(&mut ws, 30);
+    let fresh = crate::panels::viewer::syntax::Highlighter::new(&ws.config)
+        .highlight(Some("a.rs"), &source(30));
+    assert_ne!(before, fresh, "テーマを変えて色が変わる状態で確かめる");
+    assert_eq!(ws.panels.changes.sections()[0].highlighted, fresh);
+}
+
+#[test]
+fn シンボリックリンクの本文は読まない() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("CLAUDE.md"), "a\nb\nc\n").unwrap();
+    std::os::unix::fs::symlink("CLAUDE.md", dir.path().join("AGENTS.md")).unwrap();
+    let read = crate::panels::viewer::content::read_lines(dir.path(), "AGENTS.md", 4);
+    assert!(read.is_err(), "{read:?}");
 }

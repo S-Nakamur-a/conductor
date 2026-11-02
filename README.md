@@ -82,6 +82,9 @@ comments work there as in the Viewer's diff, on the line at the top: **c** adds
 one, **space** opens or closes its thread, **R** replies, **r** resolves and
 **}** / **{** jump between threads across files. **v** marks the top file viewed
 and folds it to its header; **space** on a header folds or unfolds any file.
+Files are coloured by syntax once they scroll into view, and **Enter** /
+**Shift+Enter** open the first block of hidden lines on screen, as in the
+Viewer's diff.
 
 Dragging with the mouse selects inside one panel and copies to the clipboard on
 release. In the Viewer the column you press decides what you get: start on the

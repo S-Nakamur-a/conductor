@@ -385,6 +385,7 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: boo
             ("file", &[Action::NextChangedFile, Action::PrevChangedFile]),
             ("comment", &[Action::AddComment]),
             ("viewed", &[Action::ToggleViewed]),
+            ("expand", &[Action::ExpandContext]),
             ("split", &[Action::ToggleDiffView]),
             ("panel", &[Action::CycleFocusForward]),
         ],

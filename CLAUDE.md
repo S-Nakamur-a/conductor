@@ -494,7 +494,16 @@ over the same diff keeps the very row on top (mid-thread, mid-deletion), falling
 unfolded the file; a new diff, and coming back to a worktree, find the top by (path,
 new-side line). A file folds when viewed XOR folded by hand, and open_file(diff) unfolds
 the file it asks for. A comment editor carries the branch it was opened on, so a window
-that switches worktree before Enter still writes to the right one.
+that switches worktree before Enter still writes to the right one. The one thing it reads
+itself is each file's new side (`Task::LoadChangeSource`), for the syntax colours and the
+hidden lines: only files on screen, one at a time, matched by root and a generation that
+every diff bumps. A file whose `FileDiff` is unchanged in the next diff keeps what was read,
+coloured and expanded (the diff arrives again on every save), and is read again while on
+screen: a rebase moves the diff's base, so the same `FileDiff` can stand over a new side
+that changed. Only a changed new side closes its expanded blocks. A rebuild that only adds
+blocks keeps the very row on top; one that closes them finds it by (path, new-side line),
+where a line inside a hidden block means that block. Leaving a worktree parks its diff and
+sections with the folds, so coming back brings the expanded blocks back.
 
 **Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is
 the screen conductor opens on: every Claude on the machine, built from the state

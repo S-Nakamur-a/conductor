@@ -15,7 +15,7 @@ use super::{ChangesPanel, Row, THREAD_INDENT, Tab, Top};
 use crate::panels::explorer::git_changes::render::status_color;
 use crate::panels::viewer::Scroll;
 use crate::panels::viewer::diff::{SideRow, side_by_side};
-use crate::panels::viewer::render::{MARK, side_line, summary_lines, unified_line};
+use crate::panels::viewer::render::{MARK, side_line, summary_lines, syntax_for, unified_line};
 use crate::panels::viewer::thread;
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
@@ -148,10 +148,12 @@ impl<'a> FileDrawer<'a> {
                         section.digits,
                         width as u16,
                         Scroll::default(),
-                        &[],
+                        &section.highlighted,
                     ),
                     None => {
-                        unified_line(&section.entries[i], theme, section.digits, width, 0, None)
+                        let entry = &section.entries[i];
+                        let syntax = syntax_for(&section.highlighted, entry.new_line_no());
+                        unified_line(entry, theme, section.digits, width, 0, syntax)
                     }
                 };
                 if mark == 0 {
