@@ -422,7 +422,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Open a file in the Conductor window's Viewer, as a tab. Use it to show the user the code you are talking about. With diff=true it opens the file's diff against the base branch (only files changed on this branch). If the window is showing another worktree, it switches to this one first."
+        description = "Open a file in the Conductor window's Viewer, as a tab. Use it to show the user the code you are talking about. With diff=true it shows the file's diff against the base branch instead, scrolled to in the Files changed tab, which stacks every changed file's diff (only files changed on this branch). If the window is showing another worktree, it switches to this one first."
     )]
     async fn open_file(
         &self,

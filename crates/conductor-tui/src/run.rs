@@ -562,10 +562,14 @@ fn on_mouse(
     layout: &Layout,
     mouse: MouseEvent,
 ) {
+    // メニューとモーダルは枠の上に重なっているので、開いている間は題を押したことにしない。
+    let covered = ws.chrome.menu.is_active() || !ws.modals.is_empty();
     // 下区画の見出しは境界の行にあるが、文字が並んでいる範囲だけは一覧の切り替えに使う。
     // 残りの桁はそのまま境界のドラッグへ渡す — 枠を掴んで高さを変える操作を潰さない。
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-        && let Some(effects) = bottom_title_click(ws, layout, mouse)
+        && !covered
+        && let Some(effects) =
+            bottom_title_click(ws, layout, mouse).or_else(|| tab_title_click(ws, layout, mouse))
     {
         apply(ws, svc, effects);
         return;
@@ -608,11 +612,15 @@ fn on_mouse(
                 return;
             }
             let columns = viewer_code_columns(ws, region, mouse);
-            ws.chrome.selection = select::area(layout, region).map(|_| {
-                let selection = select::Selection::begin(region, mouse.column, mouse.row);
-                // None (ガター等) はそのまま区画まるごと — 行番号ごと持っていきたい選択もある。
-                columns.map_or(selection, |c| selection.within_columns(c))
-            });
+            // 左右表示の行は 2 つのファイルの断片を 1 行に並べたもので、写しても読めない。
+            let selectable = !(region == Region::Changes && ws.panels.changes.side_by_side());
+            ws.chrome.selection = select::area(layout, region)
+                .filter(|_| selectable)
+                .map(|_| {
+                    let selection = select::Selection::begin(region, mouse.column, mouse.row);
+                    // None (ガター等) はそのまま区画まるごと — 行番号ごと持っていきたい選択もある。
+                    columns.map_or(selection, |c| selection.within_columns(c))
+                });
             // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の
             // 代わりに中央の一覧が開く。
             if region == Region::WorktreeStrip {
@@ -631,6 +639,13 @@ fn on_mouse(
                 return;
             };
             apply(ws, svc, vec![Effect::Focus(focus)]);
+            if region == Region::ChangesList {
+                ws.panels.changes.click_list(mouse.row);
+                return;
+            }
+            if region == Region::Changes {
+                return;
+            }
             if focus == Focus::Viewer
                 && let Some(effects) = viewer_popup_click(ws, mouse)
             {
@@ -815,6 +830,19 @@ fn drag_divider(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Optio
     None
 }
 
+/// 中央の枠の題のタブを押したら切り替える。
+fn tab_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
+    let rect = layout
+        .rect(Region::Viewer)
+        .or_else(|| layout.rect(Region::Changes))?;
+    if mouse.row != rect.y || mouse.column <= rect.x {
+        return None;
+    }
+    let offset = usize::from(mouse.column - rect.x - 1);
+    let tab = crate::panels::changes::render::tab_at(ws, offset)?;
+    Some(vec![Effect::ShowTab(tab)])
+}
+
 /// 下区画の見出しを押したら、何を出すかを選ぶポップアップを開く。見出しの外なら None。
 fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
     let rect = layout.rect(Region::ExplorerChanges)?;
@@ -882,6 +910,8 @@ fn scroll_region(
             panels.explorer.scroll(region, delta, review)
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
+        Region::ChangesList => ws.panels.changes.scroll_list(delta),
+        Region::Changes => ws.panels.changes.wheel(delta),
         // [+] のポップアップは押した行の位置に出ているので、下だけ動かすと指す行がずれる。
         Region::FleetList if ws.modals.is_empty() => {
             let Some(composed) = layout
@@ -916,8 +946,10 @@ fn scroll_region(
 fn focus_for(region: Region) -> Option<Focus> {
     match region {
         Region::WorktreeStrip => Some(Focus::Worktree),
-        Region::ExplorerTree | Region::ExplorerChanges => Some(Focus::Explorer),
-        Region::Viewer => Some(Focus::Viewer),
+        Region::ExplorerTree | Region::ExplorerChanges | Region::ChangesList => {
+            Some(Focus::Explorer)
+        }
+        Region::Viewer | Region::Changes => Some(Focus::Viewer),
         Region::Editor => Some(Focus::Editor),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
@@ -963,6 +995,82 @@ mod tests {
             git: Debounce::new(GIT_DEBOUNCE),
             config: Debounce::new(CONFIG_DEBOUNCE),
         }
+    }
+
+    #[test]
+    fn files_changed_はタブ名の押下で切り替わりホイールで送り左右表示では選択を始めない() {
+        use crate::panels::changes::{Tab, Top, tests as changes};
+        let mut ws = changes::feat_workspace();
+        let mut svc = Services::new();
+        let _ = changes::deliver(&mut ws, "/r/feat", changes::two_files());
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let body = l.rect(Region::Changes).unwrap();
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let left = MouseEventKind::Down(MouseButton::Left);
+
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::ScrollDown, body.x + 5, body.y + 5),
+        );
+        assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 3 });
+
+        on_mouse(&mut ws, &mut svc, &l, at(left, body.x + 5, body.y + 5));
+        assert!(ws.chrome.selection.is_some(), "縦並びはドラッグで写せる");
+        ws.panels
+            .changes
+            .update_body(conductor_core::keymap::Action::ToggleDiffView);
+        on_mouse(&mut ws, &mut svc, &l, at(left, body.x + 5, body.y + 5));
+        assert_eq!(ws.chrome.selection, None);
+
+        on_mouse(&mut ws, &mut svc, &l, at(left, body.x + 3, body.y));
+        assert_eq!(ws.center_tab(), Tab::Code);
+    }
+
+    #[test]
+    fn メニューやモーダルが開いている間は枠の題を押してもタブは動かない() {
+        use crate::panels::changes::{Tab, tests as changes};
+        let mut ws = changes::feat_workspace();
+        let mut svc = Services::new();
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let body = l.rect(Region::Changes).unwrap();
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: body.x + 3,
+            row: body.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        ws.chrome.menu = crate::menu::MenuBar::Open {
+            index: 6,
+            selected: 0,
+        };
+        on_mouse(&mut ws, &mut svc, &l, press);
+        assert_eq!(ws.center_tab(), Tab::Files);
+        ws.chrome.menu = crate::menu::MenuBar::default();
+        ws.modals
+            .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
+        on_mouse(&mut ws, &mut svc, &l, press);
+        assert_eq!(ws.center_tab(), Tab::Files);
+    }
+
+    #[test]
+    fn worktree_を移る前に投げたレビューの読みは捨てる() {
+        let mut ws = crate::panels::changes::tests::feat_workspace();
+        let snapshot = |branch: &str| crate::review::Snapshot {
+            branch: branch.into(),
+            viewed: ["a.rs".to_string()].into(),
+            ..Default::default()
+        };
+        let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot("main")))));
+        assert!(!ws.review.is_viewed("a.rs"));
+        let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot("feat")))));
+        assert!(ws.review.is_viewed("a.rs"));
     }
 
     fn press(ws: &mut Workspace, keys: &[KeyEvent]) {

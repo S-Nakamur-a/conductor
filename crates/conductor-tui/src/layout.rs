@@ -14,6 +14,10 @@ pub enum Region {
     ExplorerTree,
     ExplorerChanges,
     Viewer,
+    /// Files changed タブの変更ファイル一覧。Explorer の列を占める。
+    ChangesList,
+    /// Files changed タブの縦並びの diff。Viewer の列を占める。
+    Changes,
     /// 埋め込み $EDITOR。Explorer と Viewer の列を併合して占める。
     Editor,
     TerminalClaude,
@@ -69,6 +73,7 @@ impl Layout {
         };
         // 縦を先に見る。角では列の幅を動かす方が意図に近い。
         vertical(Region::Viewer, Divider::ExplorerViewer)
+            .or_else(|| vertical(Region::Changes, Divider::ExplorerViewer))
             .or_else(|| vertical(Region::TerminalClaude, Divider::ViewerTerminal))
             .or_else(|| horizontal(Region::ExplorerChanges, Divider::ExplorerSplit))
             .or_else(|| horizontal(Region::TerminalShell, Divider::TerminalSplit))
@@ -168,7 +173,17 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     let cfg = &ws.config.layout;
     // 最大化してもこの分割は残す。変更ファイル一覧ごと消えると、レビュー中に
     // 広げただけで導線が切れる。
+    let files = ws.center_tab() == crate::panels::changes::Tab::Files;
+    let center = if files {
+        Region::Changes
+    } else {
+        Region::Viewer
+    };
     let push_explorer = |regions: &mut Vec<(Region, Rect)>, area: Rect| {
+        if files {
+            regions.push((Region::ChangesList, area));
+            return;
+        }
         let tree_h = area.height * cfg.explorer_split_pct / 100;
         regions.push((
             Region::ExplorerTree,
@@ -195,7 +210,7 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
             | Focus::FleetSession
             | Focus::FleetShell => push_explorer(&mut regions, main),
             Focus::Editor => regions.push((Region::Editor, main)),
-            Focus::Viewer => regions.push((Region::Viewer, main)),
+            Focus::Viewer => regions.push((center, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
             Focus::TerminalShell => regions.push((Region::TerminalShell, main)),
         }
@@ -216,7 +231,7 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
                 Rect::new(main.x, main.y, explorer_w, main.height),
             );
             regions.push((
-                Region::Viewer,
+                center,
                 Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
             ));
         }

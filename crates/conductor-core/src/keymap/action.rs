@@ -90,6 +90,10 @@ keymap_suite::actions! {
         ToggleMarkdownRender => "toggle_markdown_render",
         ToggleDiffView => "toggle_diff_view",
 
+        // 詳細の画面のタブ
+        ShowCodeTab => "show_code_tab",
+        ShowFilesTab => "show_files_tab",
+
         // ターミナルパネル
         LeaveTerminal => "leave_terminal",
         ScrollbackUp => "scrollback_up",
@@ -227,6 +231,8 @@ impl Action {
             Action::PrevViewerTab => "Previous file tab",
             Action::CloseViewerTab => "Close file tab",
             Action::ToggleDiffView => "Toggle unified / side-by-side diff",
+            Action::ShowCodeTab => "Show the Code tab",
+            Action::ShowFilesTab => "Show the Files changed tab",
             Action::ToggleMarkdownRender => "Toggle markdown Raw / Rendered",
             Action::LeaveTerminal => "Leave terminal (keep session)",
             Action::ScrollbackUp => "Scrollback up",

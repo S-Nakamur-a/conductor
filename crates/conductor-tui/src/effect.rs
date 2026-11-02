@@ -8,6 +8,7 @@ use conductor_svc::pty::SessionKind;
 
 use crate::command::CommandId;
 use crate::modal::Modal;
+use crate::panels::changes::Tab;
 use crate::panels::terminal::ClaudeArgs;
 use crate::task::{Task, TaskResult};
 use crate::workspace::{Focus, RepoState, StatusLevel, StatusMessage, Workspace};
@@ -28,6 +29,13 @@ pub enum Effect {
         line: usize,
     },
     FindFile(String),
+    /// 詳細の画面のタブを切り替える。
+    ShowTab(Tab),
+    /// Files changed タブでそのファイルのその行 (新しい側) を一番上に出す。
+    ShowChange {
+        path: String,
+        line: Option<usize>,
+    },
     /// 変更ファイルとして開く (差分表示のまま)。読む順のビューから Viewer へ渡す唯一の口。
     OpenChangedFile {
         path: String,
@@ -153,6 +161,10 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 diff,
                 preview,
             } => {
+                if ws.center_tab() == Tab::Files {
+                    let root = ws.panels.explorer.root().to_path_buf();
+                    ws.panels.changes.choose(&root, Tab::Code);
+                }
                 let follow_up = open_file(ws, &path, line, diff, preview);
                 queue.extend(follow_up);
             }
@@ -182,6 +194,8 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     ),
                 });
             }
+            Effect::ShowTab(tab) => queue.extend(show_tab(ws, tab)),
+            Effect::ShowChange { path, line } => queue.extend(show_change(ws, path, line)),
             Effect::RevealInTree(path) => ws.panels.explorer.reveal_in_tree(&path),
             Effect::SearchInFile(query) => {
                 let follow_up = ws.panels.viewer.search_for(&query);
@@ -547,6 +561,45 @@ fn open_file(
     effects
 }
 
+/// エディタは左と中央の列を併合して占めるので、開いている間はタブを動かさない。
+fn show_tab(ws: &mut Workspace, tab: Tab) -> Vec<Effect> {
+    if let Some(editor) = ws.panels.terminal.editor_name() {
+        return vec![Effect::Status(
+            StatusLevel::Warning,
+            format!("Close {editor} first."),
+        )];
+    }
+    let root = ws.panels.explorer.root().to_path_buf();
+    ws.panels.changes.choose(&root, tab);
+    Vec::new()
+}
+
+/// 写しは Explorer の作業ツリーの diff なので、Explorer がコミットを見ていれば作業ツリーへ戻し、
+/// 読み直している間は届くのを待つ。
+pub(crate) fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Effect> {
+    use crate::panels::changes::Reveal;
+    let mut effects = show_tab(ws, Tab::Files);
+    if !effects.is_empty() {
+        return effects;
+    }
+    let git_changes = &mut ws.panels.explorer.changes;
+    let reload = git_changes.return_to_working_tree();
+    let loading = reload.is_some() || git_changes.is_loading();
+    match ws.panels.changes.reveal(path.clone(), line, loading) {
+        Reveal::Shown => {}
+        // 戻した読み直しが届けば出るので、待っていると言わない。
+        Reveal::Waiting if reload.is_some() => {}
+        Reveal::Waiting => effects.push(Effect::Status(
+            StatusLevel::Info,
+            format!("Opening {path} once the diff loads\u{2026}"),
+        )),
+        Reveal::Missing => effects.push(crate::workspace::not_in_diff(path)),
+    }
+    effects.extend(reload);
+    effects.push(Effect::Focus(Focus::Viewer));
+    effects
+}
+
 /// 選択の移動は 3 つのパネルに跨がるので、パネルの update ではなくここが持つ。
 ///
 /// 根は Explorer と Viewer が別々に持つ。相対パスの解決先は Viewer なので、
@@ -557,6 +610,7 @@ pub(crate) fn select_worktree(ws: &mut Workspace, index: usize) -> Vec<Effect> {
         return Vec::new();
     };
     ws.panels.terminal.follow_worktree(Some(worktree.clone()));
+    ws.panels.changes.follow(&worktree);
     let mut effects = ws.panels.viewer.set_root(worktree.clone());
     effects.extend(
         ws.panels
@@ -757,6 +811,7 @@ fn switch_repo(
     ws.review = Default::default();
     ws.panels.worktree = Default::default();
     ws.panels.terminal.follow_worktree(None);
+    ws.panels.changes.follow(&root);
     let mut effects = ws.panels.viewer.set_root(root.clone());
     effects.extend(ws.panels.explorer.set_root(root, &ws.repo.main_branch));
     effects.push(Effect::Spawn(Task::ListWorktrees));
