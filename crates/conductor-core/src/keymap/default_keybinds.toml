@@ -138,10 +138,13 @@
 # 一覧の先頭へは K を重ねて行く。
 "g" = "open_branch_page"
 "G" = "go_to_bottom"
-"enter" = "select"
 "esc" = "exit_sub_panel"
 # 右に映した、この窓のセッションへ入る。戻るのは terminal 層の ctrl+esc (leave_terminal)。
 "tab" = "expand_or_right"
+"enter" = "expand_or_right"
+# 選んだ行の worktree の詳細の画面へ。素の文字にしないのは ctrl+n の行と同じ理由。
+# 全体の ctrl+o (open_repo) はここでは上書きする。open_repo はパレットとメニューに残る。
+"ctrl+o" = "select"
 ":" = "command_palette"
 # 小文字の d は、一覧に居ると気づかずに打った文 (ready など) から届いてしまう。
 # worktree の行では、同じキーが worktree ごと消す (action 名の stop_session は、キー設定を壊さないため残した)。

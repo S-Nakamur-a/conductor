@@ -301,13 +301,13 @@ fn 題は会話の_id_で引き_無ければ空() {
 }
 
 #[test]
-fn enter_は選んだ行に入り_esc_は入る前へ戻る() {
+fn 詳細は選んだ行に入り_esc_は入る前へ戻る() {
     let mut fleet = FleetPanel::default();
     fleet.open(Focus::Viewer, vec![own("CC:1", "/r/a", None)]);
     let ws = Workspace::for_test();
     assert!(matches!(
         fleet.update(Action::Select, &ws.ctx()).as_deref(),
-        Some([Effect::EnterSession(RowKey::Panel(id))]) if id == "CC:1"
+        Some([Effect::EnterDetail(DetailTarget::Panel(id))]) if id == "CC:1"
     ));
     assert!(matches!(
         fleet.update(Action::ExitSubPanel, &ws.ctx()).as_deref(),
@@ -890,28 +890,28 @@ mod hint {
     }
 
     #[test]
-    fn この窓の行では開く_返事_止める_新しいセッション_閉じる_prを出す() {
+    fn この窓の行では返事_詳細_止める_新しいセッション_閉じる_prを出す() {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · D 止める · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
+            "tab 返事 · ctrl+o 詳細 · D 止める · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
         );
     }
 
     #[test]
-    fn この窓の外の行では止める_新しいセッション_閉じる_pr() {
+    fn この窓の外の行では詳細_止める_新しいセッション_閉じる_pr() {
         let ws = listing(
             vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
             Vec::new(),
         );
         assert_eq!(
             render::hint(&ws),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "ctrl+o 詳細 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
     #[test]
-    fn worktree_の行では新しいセッション_消す_閉じる_pr() {
+    fn worktree_の行では詳細_新しいセッション_消す_閉じる_pr() {
         let mut ws = listing(Vec::new(), Vec::new());
         ws.apply_fleet(
             FleetStatus {
@@ -929,7 +929,7 @@ mod hint {
         );
         assert_eq!(
             render::hint(&ws),
-            "ctrl+n 新しいセッション · ctrl+t シェル · D worktree を消す · esc 閉じる · g PR を開く"
+            "ctrl+o 詳細 · ctrl+n 新しいセッション · ctrl+t シェル · D worktree を消す · esc 閉じる · g PR を開く"
         );
     }
 
@@ -955,7 +955,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n");
         assert_eq!(
             render::hint(&ws),
-            "enter 開く · tab 返事 · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
+            "tab 返事 · ctrl+o 詳細 · ctrl+n 新しいセッション · ctrl+t シェル · esc 閉じる · g PR を開く"
         );
         let key = crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('D'),
@@ -976,7 +976,7 @@ mod hint {
         rebind(&mut ws, "\"D\" = false\n\"x\" = \"stop_session\"\n");
         assert_eq!(
             render::hint(&ws),
-            "x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "ctrl+o 詳細 · x 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -985,7 +985,7 @@ mod hint {
         let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
         let lines = drawn(&ws, 24, 8);
         let footer = lines[6].trim_end();
-        assert!(footer.starts_with(" enter 開く"), "{lines:#?}");
+        assert!(footer.starts_with(" tab 返事"), "{lines:#?}");
         assert!(footer.ends_with('…'), "{lines:#?}");
         assert!(!lines[5].contains("閉じる"), "{lines:#?}");
     }
@@ -1002,7 +1002,7 @@ mod hint {
         let lines = drawn(&ws, 80, 3);
         assert_eq!(
             lines[1].trim(),
-            "D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
+            "ctrl+o 詳細 · D 止める · ctrl+n 新しいセッション · esc 閉じる · g PR を開く"
         );
     }
 
@@ -1135,12 +1135,15 @@ mod screen {
     }
 
     #[test]
-    fn この窓の外の行に_enter_しても入らない() {
+    fn git_でない_dir_の詳細には入らない() {
         let (mut ws, mut svc) = opened();
+        let plain = tempfile::tempdir().unwrap();
         apply(
             &mut ws,
             &mut svc,
-            vec![Effect::EnterSession(RowKey::Pid(9))],
+            vec![Effect::EnterDetail(DetailTarget::Dir(
+                plain.path().to_path_buf(),
+            ))],
         );
         assert!(ws.chrome.fleet_open);
         assert_eq!(ws.focus, Focus::Fleet);
@@ -1210,14 +1213,14 @@ mod screen {
         apply(
             &mut ws,
             &mut svc,
-            vec![Effect::EnterSession(RowKey::Panel(id))],
+            vec![Effect::EnterDetail(DetailTarget::Panel(id))],
         );
         assert!(!ws.chrome.fleet_open);
         assert_eq!(
             std::fs::canonicalize(ws.worktree_path()).unwrap(),
             std::fs::canonicalize(&feat).unwrap()
         );
-        assert_eq!(ws.focus, Focus::TerminalClaude);
+        assert_eq!(ws.focus, Focus::Viewer);
     }
 
     #[test]
@@ -1232,7 +1235,7 @@ mod screen {
         apply(
             &mut ws,
             &mut svc,
-            vec![Effect::EnterSession(RowKey::Panel(id))],
+            vec![Effect::EnterDetail(DetailTarget::Panel(id))],
         );
         assert_eq!(svc.generation(), before, "同じ repo を開き直した");
         assert!(ws.chrome.fleet_open);
@@ -1259,7 +1262,7 @@ mod screen {
         apply(
             &mut ws,
             &mut svc,
-            vec![Effect::EnterSession(RowKey::Panel(id))],
+            vec![Effect::EnterDetail(DetailTarget::Panel(id))],
         );
         crate::testing::pump(&mut ws, &mut svc);
         (ws, svc, dir)
@@ -1274,7 +1277,7 @@ mod screen {
         let a = crate::testing::TestRepo::new();
         let (ws, _svc, _) = enter_from_explorer(&a, |ws| ws.worktree_path());
         assert!(!ws.chrome.fleet_open);
-        assert_eq!(ws.focus, Focus::TerminalClaude);
+        assert_eq!(ws.focus, Focus::Viewer);
     }
 
     #[test]
@@ -1283,7 +1286,7 @@ mod screen {
         let feat = a.worktree("feat");
         let (ws, _svc, _) = enter_from_explorer(&a, |_| feat.clone());
         assert!(same_dir(&ws.worktree_path(), &feat));
-        assert_eq!(ws.focus, Focus::TerminalClaude);
+        assert_eq!(ws.focus, Focus::Viewer);
     }
 
     #[test]
@@ -1292,7 +1295,7 @@ mod screen {
         let b = crate::testing::TestRepo::new();
         let (ws, _svc, _) = enter_from_explorer(&a, |_| b.root());
         assert!(same_dir(&ws.worktree_path(), &b.root()));
-        assert_eq!(ws.focus, Focus::TerminalClaude);
+        assert_eq!(ws.focus, Focus::Viewer);
     }
 
     #[test]
@@ -1302,7 +1305,24 @@ mod screen {
         let b_feat = b.worktree("feat");
         let (ws, _svc, _) = enter_from_explorer(&a, |_| b_feat.clone());
         assert!(same_dir(&ws.worktree_path(), &b_feat));
-        assert_eq!(ws.focus, Focus::TerminalClaude);
+        assert_eq!(ws.focus, Focus::Viewer);
+    }
+
+    #[test]
+    fn セッションの無い_worktree_の詳細に入ると一覧を閉じて中央へ() {
+        let repo = crate::testing::TestRepo::new();
+        let feat = repo.worktree("feat");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        crate::testing::pump(&mut ws, &mut svc);
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::EnterDetail(DetailTarget::Dir(feat.clone()))],
+        );
+        assert!(!ws.chrome.fleet_open);
+        assert!(same_dir(&ws.worktree_path(), &feat));
+        assert_eq!(ws.focus, Focus::Viewer);
     }
 
     #[test]
@@ -1322,7 +1342,7 @@ mod screen {
         apply(
             &mut ws,
             &mut svc,
-            vec![Effect::EnterSession(RowKey::Panel(id))],
+            vec![Effect::EnterDetail(DetailTarget::Panel(id))],
         );
         assert!(ws.chrome.fleet_open);
         assert_eq!(ws.worktree_path(), root);
@@ -1406,6 +1426,23 @@ mod pane {
         press(&mut ws, &mut svc, KeyCode::Enter, KeyModifiers::NONE);
         crate::testing::wait_for(|| shows(&ws, &listed, "typed-42"));
         assert!(!shows(&ws, &hidden, "typed"));
+    }
+
+    #[test]
+    fn この窓の外の行の_enter_は一覧に留まり帯も出さない() {
+        let (mut ws, mut svc, _dir) = opened();
+        ws.apply_fleet(
+            FleetStatus {
+                live: vec![live(9, "/r/a", "s9", Status::Idle, Owner::Elsewhere)],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert!(ws.panels.fleet.selected_row().is_some());
+        press(&mut ws, &mut svc, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(ws.chrome.fleet_open);
+        assert!(ws.chrome.status.is_none(), "{:?}", ws.chrome.status);
     }
 
     #[test]
@@ -2270,12 +2307,15 @@ mod tree {
     }
 
     #[test]
-    fn worktree_の行では_enter_は何もせず_d_は消す前の点検を頼む() {
+    fn worktree_の行では詳細はその_worktree_へ入り_d_は消す前の点検を頼む() {
         let mut fleet = app();
         let ws = Workspace::for_test();
         fleet.update(Action::NavigateDown, &ws.ctx());
         assert_eq!(fleet.selected_worktree().unwrap().label, "feature/a");
-        assert_eq!(fleet.update(Action::Select, &ws.ctx()), Some(Vec::new()));
+        assert!(matches!(
+            fleet.update(Action::Select, &ws.ctx()).as_deref(),
+            Some([Effect::EnterDetail(DetailTarget::Dir(dir))]) if dir == Path::new("/r/app-a")
+        ));
         let effects = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
         let [Effect::InspectFleetWorktree { repo, path, label }] = effects.as_slice() else {
             panic!("{effects:?}");
@@ -2285,6 +2325,22 @@ mod tree {
             (Path::new("/r/app"), Path::new("/r/app-a"), "feature/a")
         );
         assert!(fleet.selected_row().is_none());
+    }
+
+    #[test]
+    fn この窓の外のセッション行の詳細は置かれた_worktree_へ入る() {
+        let mut fleet = app();
+        let ws = Workspace::for_test();
+        for _ in 0..10 {
+            if fleet.selected_row().map(|row| row.key) == Some(RowKey::Pid(8)) {
+                break;
+            }
+            fleet.update(Action::NavigateDown, &ws.ctx());
+        }
+        assert!(matches!(
+            fleet.update(Action::Select, &ws.ctx()).as_deref(),
+            Some([Effect::EnterDetail(DetailTarget::Dir(dir))]) if dir == Path::new("/r/app-b")
+        ));
     }
 
     fn status_text(effects: &[Effect]) -> String {

@@ -32,6 +32,13 @@ pub enum RowKey {
     Pid(u32),
 }
 
+/// 詳細の画面で開く先。この窓のセッションはその Claude も右に映す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DetailTarget {
+    Panel(String),
+    Dir(PathBuf),
+}
+
 /// 外のプロセスは、一覧に載せたときの起動時刻で同じものかを確かめてから止める。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopTarget {
@@ -1059,10 +1066,13 @@ impl FleetPanel {
                 i
             }
             Action::Select => {
-                return Some(match &self.selected {
-                    Some(Selected::Session(key, _)) => vec![Effect::EnterSession(key.clone())],
-                    _ => Vec::new(),
-                });
+                let target = match &self.selected {
+                    Some(Selected::Session(RowKey::Panel(id), _)) => {
+                        Some(DetailTarget::Panel(id.clone()))
+                    }
+                    _ => self.selected_dir().map(DetailTarget::Dir),
+                };
+                return Some(target.map(Effect::EnterDetail).into_iter().collect());
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
