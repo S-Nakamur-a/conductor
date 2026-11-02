@@ -14,9 +14,9 @@ pub enum Region {
     ExplorerTree,
     ExplorerChanges,
     Viewer,
-    /// Files changed タブの変更ファイル一覧。Explorer の列を占める。
+    /// Files changed タブの変更ファイル一覧か Commits タブのコミット一覧。Explorer の列を占める。
     ChangesList,
-    /// Files changed タブの縦並びの diff。Viewer の列を占める。
+    /// Files changed / Commits タブの縦並びの diff。Viewer の列を占める。
     Changes,
     /// 埋め込み $EDITOR。Explorer と Viewer の列を併合して占める。
     Editor,
@@ -173,14 +173,14 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     let cfg = &ws.config.layout;
     // 最大化してもこの分割は残す。変更ファイル一覧ごと消えると、レビュー中に
     // 広げただけで導線が切れる。
-    let files = ws.center_tab() == crate::panels::changes::Tab::Files;
-    let center = if files {
+    let pages = ws.center_tab() != crate::panels::changes::Tab::Code;
+    let center = if pages {
         Region::Changes
     } else {
         Region::Viewer
     };
     let push_explorer = |regions: &mut Vec<(Region, Rect)>, area: Rect| {
-        if files {
+        if pages {
             regions.push((Region::ChangesList, area));
             return;
         }

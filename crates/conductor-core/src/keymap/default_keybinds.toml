@@ -169,6 +169,7 @@
 [layers.explorer]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -194,6 +195,7 @@
 [layers.explorer_diff_list]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -221,6 +223,7 @@
 [layers.explorer_commit_log]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -241,6 +244,7 @@
 [layers.explorer_comment_list]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -272,6 +276,7 @@
 [layers.explorer_tour_stops]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -295,6 +300,7 @@
 [layers.viewer]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -355,6 +361,7 @@
 [layers.viewer_diff_mode]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -406,11 +413,12 @@
 ":" = "command_palette"
 
 # ── Files changed: 変更ファイルの一覧 ─────────────────────────────────────────────
-# 詳細の画面のタブ。1 で Code、2 で Files changed。Claude の列からは切り替えない
+# 詳細の画面のタブ。1 で Code、2 で Files changed、3 で Commits。Claude の列からは切り替えない
 # (素の数字はそこでは Claude への入力になる)。
 [layers.changes_list]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -426,6 +434,7 @@
 [layers.changes]
 "1" = "show_code_tab"
 "2" = "show_files_tab"
+"3" = "show_commits_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"

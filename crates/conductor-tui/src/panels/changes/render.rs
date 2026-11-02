@@ -1,4 +1,4 @@
-//! Files changed タブの左の一覧と中央の縦並び。描くのは見えている行だけ。
+//! Files changed / Commits タブの左の一覧と中央の縦並び。描くのは見えている行だけ。
 
 use conductor_core::diff_state::DiffSource;
 use conductor_core::keymap::{Action, KeyContext};
@@ -11,6 +11,7 @@ use ratatui::widgets::Paragraph;
 
 use conductor_core::review_store::ReviewComment;
 
+use super::commits::ListRow;
 use super::{ChangesPanel, Row, THREAD_INDENT, Tab, Top};
 use crate::panels::explorer::git_changes::render::status_color;
 use crate::panels::viewer::Scroll;
@@ -20,13 +21,56 @@ use crate::panels::viewer::thread;
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
-pub const LIST_TITLE: &str = " Files ";
+pub fn list_title(ws: &Workspace) -> &'static str {
+    match ws.center_tab() {
+        Tab::Commits => " Commits ",
+        _ => " Files ",
+    }
+}
 
 pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = crate::list::inner(rect);
-    if inner.height > 0 {
-        frame.render_widget(Paragraph::new(list_lines(ws)), inner);
+    if inner.height == 0 {
+        return;
     }
+    let lines = match ws.center_tab() {
+        Tab::Commits => commit_lines(ws),
+        _ => list_lines(ws),
+    };
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+pub fn commit_lines(ws: &Workspace) -> Vec<Line<'static>> {
+    let tab = &ws.panels.commits;
+    let theme = &ws.theme;
+    let (cursor, view) = (tab.cursor(), tab.viewport());
+    let focused = ws.focus == Focus::Explorer;
+    cursor
+        .visible(tab.len(), view)
+        .map(|i| {
+            let spans = match tab.line(i) {
+                Some(ListRow::Commit(c)) => {
+                    let commit = &tab.commits()[c];
+                    vec![
+                        Span::styled(
+                            format!(" {} ", commit.short_oid),
+                            Style::default().fg(theme.hint),
+                        ),
+                        Span::styled(commit.message.clone(), Style::default().fg(theme.fg)),
+                        Span::styled(
+                            format!("  {} {}", commit.author, commit.time_ago),
+                            Style::default().fg(theme.hint),
+                        ),
+                    ]
+                }
+                _ => vec![Span::styled(
+                    " load more\u{2026}",
+                    Style::default().fg(theme.hint),
+                )],
+            };
+            crate::list::row_line(spans, theme, i == cursor.selected(), focused)
+        })
+        .collect()
 }
 
 pub fn body(frame: &mut Frame, rect: Rect, ws: &Workspace) {
@@ -63,8 +107,16 @@ pub fn list_lines(ws: &Workspace) -> Vec<Line<'static>> {
 
 /// 差分全体の失敗と base を解決できなかった理由は、どこまで送っても先頭に残す。
 pub fn body_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'static>> {
-    let panel = &ws.panels.changes;
+    let panel = ws.shown_changes();
     let theme = &ws.theme;
+    if ws.center_tab() == Tab::Commits
+        && let Some(notice) = ws.panels.commits.notice()
+    {
+        return vec![match notice {
+            Ok(text) => hint(theme, &text),
+            Err(error) => Line::styled(format!(" {error}"), Style::default().fg(theme.warning)),
+        }];
+    }
     let Some(diff) = panel.diff() else {
         return vec![hint(theme, "loading\u{2026}")];
     };
@@ -75,17 +127,19 @@ pub fn body_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'stat
         .collect();
     if diff.files.is_empty() {
         if diff.error.is_none() {
-            let base = match &diff.source {
-                DiffSource::WorkingTree { base } => base.as_str(),
-                DiffSource::Commit { oid } => oid.as_str(),
-            };
-            lines.push(hint(theme, &format!("No changes against {base}")));
+            lines.push(hint(
+                theme,
+                &match &diff.source {
+                    DiffSource::WorkingTree { base } => format!("No changes against {base}"),
+                    DiffSource::Commit { .. } => "This commit changes no files".to_string(),
+                },
+            ));
         }
         return lines;
     }
     let top = panel.top();
     if top == Top::default()
-        && let Some(summary) = ws.review.summary()
+        && let Some(summary) = panel.review(&ws.review).summary()
     {
         lines.extend(summary_lines(summary, theme, width));
     }
@@ -114,13 +168,13 @@ struct FileDrawer<'a> {
 
 impl<'a> FileDrawer<'a> {
     fn new(ws: &'a Workspace, file: usize, width: usize) -> Self {
-        let panel = &ws.panels.changes;
+        let panel = ws.shown_changes();
         let path = panel.diff().map(|d| d.files[file].path.as_str());
         Self {
             ws,
             file,
             width,
-            comments: path.map_or_else(Vec::new, |path| ws.review.for_file(path)),
+            comments: path.map_or_else(Vec::new, |path| panel.review(&ws.review).for_file(path)),
             side: panel
                 .side_by_side()
                 .then(|| side_by_side(&panel.sections()[file].entries)),
@@ -130,11 +184,17 @@ impl<'a> FileDrawer<'a> {
 
     fn line(&mut self, row: usize) -> Line<'static> {
         let ws = self.ws;
-        let panel = &ws.panels.changes;
+        let panel = ws.shown_changes();
         let theme = &ws.theme;
         let section = &panel.sections()[self.file];
         match section.rows[row] {
-            Row::Header => header(panel, self.file, &ws.review, theme, self.width),
+            Row::Header => header(
+                panel,
+                self.file,
+                panel.review(&ws.review),
+                theme,
+                self.width,
+            ),
             Row::Blank => Line::default(),
             Row::Note => hint(theme, "Binary or empty file"),
             Row::Thread { anchor, line } => self.thread_line(anchor, line),
@@ -173,7 +233,7 @@ impl<'a> FileDrawer<'a> {
         if self.thread.as_ref().is_none_or(|(at, _)| *at != anchor) {
             let ws = self.ws;
             let lines = thread::lines(
-                &ws.review,
+                ws.shown_changes().review(&ws.review),
                 &self.comments,
                 anchor,
                 &ws.theme,
@@ -235,7 +295,7 @@ fn hint(theme: &Theme, text: &str) -> Line<'static> {
     Line::styled(format!(" {text}"), Style::default().fg(theme.hint))
 }
 
-/// 中央の枠の題。Code と Files changed のどちらを出しているかと、切り替えるキー。
+/// 中央の枠の題。どのタブを出しているかと、切り替えるキー。
 pub fn tab_title(ws: &Workspace) -> String {
     let current = ws.center_tab();
     let labels: Vec<String> = tab_labels(ws)
@@ -261,7 +321,7 @@ pub fn tab_at(ws: &Workspace, offset: usize) -> Option<Tab> {
     None
 }
 
-fn tab_labels(ws: &Workspace) -> [(Tab, String); 2] {
+fn tab_labels(ws: &Workspace) -> [(Tab, String); 3] {
     let key = |action| {
         crate::render::representative_chord(&ws.keymap, KeyContext::Viewer, action)
             .map_or_else(String::new, |chord| format!("{chord} "))
@@ -273,5 +333,9 @@ fn tab_labels(ws: &Workspace) -> [(Tab, String); 2] {
     [
         (Tab::Code, format!("{}Code", key(Action::ShowCodeTab))),
         (Tab::Files, format!("{}{files}", key(Action::ShowFilesTab))),
+        (
+            Tab::Commits,
+            format!("{}Commits", key(Action::ShowCommitsTab)),
+        ),
     ]
 }

@@ -613,7 +613,7 @@ fn on_mouse(
             }
             let columns = viewer_code_columns(ws, region, mouse);
             // 左右表示の行は 2 つのファイルの断片を 1 行に並べたもので、写しても読めない。
-            let selectable = !(region == Region::Changes && ws.panels.changes.side_by_side());
+            let selectable = !(region == Region::Changes && ws.shown_changes().side_by_side());
             ws.chrome.selection = select::area(layout, region)
                 .filter(|_| selectable)
                 .map(|_| {
@@ -640,7 +640,12 @@ fn on_mouse(
             };
             apply(ws, svc, vec![Effect::Focus(focus)]);
             if region == Region::ChangesList {
-                ws.panels.changes.click_list(mouse.row);
+                if ws.center_tab() == crate::panels::changes::Tab::Commits {
+                    let effects = ws.panels.commits.click(mouse.row).unwrap_or_default();
+                    apply(ws, svc, effects);
+                } else {
+                    ws.panels.changes.click_list(mouse.row);
+                }
                 return;
             }
             if region == Region::Changes {
@@ -910,8 +915,11 @@ fn scroll_region(
             panels.explorer.scroll(region, delta, review)
         }
         Region::Viewer => ws.panels.viewer.scroll_lines(delta),
+        Region::ChangesList if ws.center_tab() == crate::panels::changes::Tab::Commits => {
+            ws.panels.commits.scroll_list(delta)
+        }
         Region::ChangesList => ws.panels.changes.scroll_list(delta),
-        Region::Changes => ws.panels.changes.wheel(delta),
+        Region::Changes => ws.shown_changes_mut().wheel(delta),
         // [+] のポップアップは押した行の位置に出ているので、下だけ動かすと指す行がずれる。
         Region::FleetList if ws.modals.is_empty() => {
             let Some(composed) = layout
@@ -995,6 +1003,56 @@ mod tests {
             git: Debounce::new(GIT_DEBOUNCE),
             config: Debounce::new(CONFIG_DEBOUNCE),
         }
+    }
+
+    #[test]
+    fn コミットの一覧はクリックで選び_中央のホイールはコミットの差分を送る() {
+        use crate::panels::changes::{Top, tests as changes};
+        let mut ws = changes::on_commits();
+        let mut svc = Services::new();
+        let (logs, _) = changes::spawned(&ws.prepare());
+        let _ = changes::listed(
+            &mut ws,
+            "/r/feat",
+            logs[0].0,
+            0,
+            Ok(changes::commits(100, 0)),
+        );
+        let _ = changes::commit_diff(&mut ws, "/r/feat", 0, changes::two_files());
+        let l = layout(&ws, Rect::new(0, 0, 160, 40));
+        let list = crate::list::inner(l.rect(Region::ChangesList).unwrap());
+        let body = l.rect(Region::Changes).unwrap();
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let left = MouseEventKind::Down(MouseButton::Left);
+
+        on_mouse(&mut ws, &mut svc, &l, at(left, list.x + 2, list.y + 1));
+        assert_eq!(ws.panels.commits.cursor().selected(), 1);
+        let _ = changes::commit_diff(&mut ws, "/r/feat", 1, changes::two_files());
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::ScrollDown, body.x + 5, body.y + 5),
+        );
+        assert_eq!(ws.panels.commits.page.top(), Top { file: 0, row: 3 });
+        assert_eq!(ws.panels.changes.top(), Top::default());
+
+        let tab = &ws.panels.commits;
+        let first = tab.cursor().visible(tab.len(), tab.viewport()).start;
+        on_mouse(
+            &mut ws,
+            &mut svc,
+            &l,
+            at(MouseEventKind::ScrollDown, list.x + 2, list.y + 2),
+        );
+        let tab = &ws.panels.commits;
+        assert!(tab.cursor().visible(tab.len(), tab.viewport()).start > first);
+        assert_eq!(tab.cursor().selected(), 1, "ホイールは選びを動かさない");
     }
 
     #[test]

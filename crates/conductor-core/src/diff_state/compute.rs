@@ -169,7 +169,7 @@ fn merge_base_tree<'r>(repo: &'r Repository, base: &str, head: Oid) -> Result<gi
 /// 古いままになり上流に載った他人の変更まで差分に出る。逆に Merge into main の直後は
 /// ローカルだけが進んでいて、origin を常に取るとマージした分が全部出る。分岐して
 /// いれば origin。エラーには利用者が設定した綴りの方を残す。
-fn resolve_base_commit(repo: &Repository, base: &str) -> Result<Oid> {
+pub(crate) fn resolve_base_commit(repo: &Repository, base: &str) -> Result<Oid> {
     let commit_of = |spec: &str| {
         repo.revparse_single(spec)
             .ok()

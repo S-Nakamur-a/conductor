@@ -1,7 +1,9 @@
-//! 詳細の画面の Files changed タブ。作業ツリー対 base の差分を、ファイルの見出しの下に
-//! 全部縦に並べる。差分は Explorer が投げた作業ツリーの結果を写して持ち、自分では投げない
+//! 詳細の画面の Files changed タブ。差分を、ファイルの見出しの下に全部縦に並べる。
+//! Files changed は Explorer が投げた作業ツリーの結果を写して持ち、自分では投げない
 //! — 大きなリポジトリで 9 秒かかる diff を 2 本走らせないため。
+//! Commits タブの中央も読むだけにした同じパネルで、差分は [commits::CommitsTab] が投げる。
 
+pub mod commits;
 pub mod render;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -22,7 +24,7 @@ use crate::panels::viewer::diff::{DiffPane, Entry, SideRow, side_by_side};
 use crate::panels::viewer::render::{MARK, digit_count};
 use crate::panels::viewer::syntax::Highlighter;
 use crate::panels::viewer::thread::{self, ThreadFolds};
-use crate::review::{anchor_for, anchors, innermost};
+use crate::review::{ReviewState, anchor_for, anchors, innermost};
 use crate::task::{ReviewWrite, Task};
 use crate::workspace::{Ctx, StatusLevel};
 
@@ -32,6 +34,7 @@ pub const THREAD_INDENT: usize = MARK + 2;
 pub enum Tab {
     Code,
     Files,
+    Commits,
 }
 
 /// 中央の一番上に出ている行。row は [Section::rows] の添字。
@@ -215,7 +218,11 @@ pub struct ChangesPanel {
     /// 読んでいる本文の generation。結果が捨てられても、generation が上がれば次を投げられる。
     reading: Option<u64>,
     highlighted_by: String,
+    /// Commits タブのコミットの差分。作業ツリーのレビューとは別物なので review を見ない。
+    read_only: bool,
 }
+
+static NO_REVIEW: std::sync::LazyLock<ReviewState> = std::sync::LazyLock::new(ReviewState::default);
 
 impl ChangesPanel {
     pub fn new(side_by_side: bool) -> Self {
@@ -238,7 +245,31 @@ impl ChangesPanel {
             generation: 0,
             reading: None,
             highlighted_by: String::new(),
+            read_only: false,
         }
+    }
+
+    pub fn read_only(side_by_side: bool) -> Self {
+        Self {
+            read_only: true,
+            ..Self::new(side_by_side)
+        }
+    }
+
+    /// このパネルが描き、畳みを決めるのに使うレビュー。
+    pub fn review<'a>(&self, review: &'a ReviewState) -> &'a ReviewState {
+        if self.read_only { &NO_REVIEW } else { review }
+    }
+
+    /// 別のコミットを出す前に、前のコミットの位置と畳みを捨てる。
+    pub fn forget(&mut self) {
+        self.diff = None;
+        self.sections.clear();
+        self.top = Top::default();
+        self.folds = Folds::default();
+        self.parked.remove(&self.root);
+        self.parked_folds.remove(&self.root);
+        self.parked_sections.remove(&self.root);
     }
 
     /// 人が選んだタブが無ければ、main worktree は Code、それ以外は Files changed。
@@ -317,10 +348,12 @@ impl ChangesPanel {
         self.pending_reveal = None;
     }
 
-    /// 届いた diff を写す。別の根のものとコミットを出どころにしたものは捨てる。
+    /// 届いた diff を写す。別の根のものと、このパネルの出さない出どころ (読むだけのパネルは作業ツリー、
+    /// それ以外はコミット) は捨てる。
     /// 見せる約束をしていたファイルがこの差分に無ければ、そのパスを返す。
     pub fn install(&mut self, root: &Path, diff: &DiffState, ctx: &Ctx) -> Option<String> {
-        if root != self.root || !matches!(diff.source, DiffSource::WorkingTree { .. }) {
+        let commit = matches!(diff.source, DiffSource::Commit { .. });
+        if root != self.root || commit != self.read_only {
             return None;
         }
         let anchor = match self.diff {
@@ -395,14 +428,14 @@ impl ChangesPanel {
             return;
         };
         let (theme, icons, width) = (ctx.theme, ctx.config.ui.icon_set(), self.body_width);
+        let review = self.review(ctx.review);
         for (file, section) in diff.files.iter().zip(&mut self.sections) {
-            let comments = ctx.review.for_file(&file.path);
-            let collapsed =
-                ctx.review.is_viewed(&file.path) != self.folds.files.contains(&file.path);
+            let comments = review.for_file(&file.path);
+            let collapsed = review.is_viewed(&file.path) != self.folds.files.contains(&file.path);
             let threads = self.folds.threads.entry(file.path.clone()).or_default();
             section.lay_out(collapsed, self.side_by_side, &comments, threads, |anchor| {
                 thread::lines(
-                    ctx.review,
+                    review,
                     &comments,
                     anchor,
                     theme,
@@ -443,7 +476,7 @@ impl ChangesPanel {
     }
 
     pub fn wanted(&mut self) -> Option<Task> {
-        if self.reading == Some(self.generation) {
+        if self.read_only || self.reading == Some(self.generation) {
             return None;
         }
         let diff = self.diff.as_ref()?;
@@ -635,6 +668,9 @@ impl ChangesPanel {
             return Some(effects);
         }
         if matches!(action, Action::ExpandContext | Action::ExpandAllContext) {
+            if self.read_only {
+                return Some(status("hidden lines are not shown for commits".into()));
+            }
             return Some(self.expand(action == Action::ExpandAllContext, ctx));
         }
         let half = (self.body_height / 2).max(1) as isize;
@@ -669,8 +705,11 @@ impl ChangesPanel {
             return None;
         }
         let path = self.diff.as_ref()?.files.get(self.top.file)?.path.clone();
-        let comments = ctx.review.for_file(&path);
         let row = self.sections[self.top.file].rows[self.top.row];
+        if self.read_only && !(action == Action::ToggleInlineThread && row == Row::Header) {
+            return Some(status("Commits are read only".into()));
+        }
+        let comments = ctx.review.for_file(&path);
         let line = self.comment_line();
         let effects = match action {
             Action::ToggleViewed => vec![Effect::ToggleViewed(path)],

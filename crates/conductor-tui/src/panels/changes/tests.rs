@@ -232,6 +232,11 @@ fn タブの切替キーは覚える側に落ちる() {
     assert!(matches!(effects.as_slice(), [Effect::ShowTab(Tab::Code)]));
     let effects = crate::route::global_effects(&ws, Action::ShowFilesTab);
     assert!(matches!(effects.as_slice(), [Effect::ShowTab(Tab::Files)]));
+    let effects = crate::route::global_effects(&ws, Action::ShowCommitsTab);
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::ShowTab(Tab::Commits)]
+    ));
 }
 
 #[test]
@@ -529,6 +534,8 @@ fn エディタを開いている間はタブを切り替えない() {
         .unwrap();
     crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Code)]);
     assert_eq!(ws.center_tab(), Tab::Files);
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Commits)]);
+    assert_eq!(ws.center_tab(), Tab::Files);
     let status = ws.chrome.status.as_ref().map(|s| s.text.as_str());
     assert!(
         status.is_some_and(|s| s.starts_with("Close ")),
@@ -541,13 +548,17 @@ fn 枠の題でタブを示し押した桁のタブを返す() {
     let mut ws = feat_workspace();
     let _ = deliver(&mut ws, "/r/feat", two_files());
     let title = tab_title(&ws);
-    assert_eq!(title, "  1 Code  [2 Files changed 2] ");
+    assert_eq!(title, "  1 Code  [2 Files changed 2]  3 Commits  ");
     assert_eq!(tab_at(&ws, 0), None);
     assert_eq!(tab_at(&ws, 2), Some(Tab::Code));
     let gap = title.find('[').unwrap() - 1;
     assert_eq!(tab_at(&ws, gap), None, "タブの間の空白");
     assert_eq!(tab_at(&ws, gap + 1), Some(Tab::Files));
     assert_eq!(tab_at(&ws, title.find("Files").unwrap()), Some(Tab::Files));
+    assert_eq!(
+        tab_at(&ws, title.find("Commits").unwrap()),
+        Some(Tab::Commits)
+    );
 }
 
 #[test]
@@ -1831,4 +1842,456 @@ fn シンボリックリンクの本文は読まない() {
     std::os::unix::fs::symlink("CLAUDE.md", dir.path().join("AGENTS.md")).unwrap();
     let read = crate::panels::viewer::content::read_lines(dir.path(), "AGENTS.md", 4);
     assert!(read.is_err(), "{read:?}");
+}
+
+use conductor_core::git_engine::CommitInfo;
+
+pub(crate) fn on_commits() -> Workspace {
+    let mut ws = feat_workspace();
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 160, 40)));
+    ws.panels.changes.choose(Path::new("/r/feat"), Tab::Commits);
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 160, 40)));
+    ws.focus = Focus::Explorer;
+    ws
+}
+
+pub(crate) fn spawned(effects: &[Effect]) -> (Vec<(u64, usize, bool)>, Vec<String>) {
+    let mut logs = Vec::new();
+    let mut diffs = Vec::new();
+    for effect in effects {
+        match effect {
+            Effect::Spawn(Task::RangeLog {
+                seq, skip, ends, ..
+            }) => logs.push((*seq, *skip, ends.is_some())),
+            Effect::Spawn(Task::ComputeDiff {
+                source: DiffSource::Commit { oid },
+                ..
+            }) => diffs.push(oid.clone()),
+            _ => {}
+        }
+    }
+    (logs, diffs)
+}
+
+pub(crate) fn commits(n: usize, from: usize) -> Vec<CommitInfo> {
+    (from..from + n)
+        .map(|i| crate::panels::explorer::git_changes::log::tests::commit(&format!("{i:040}")))
+        .collect()
+}
+
+fn oid(i: usize) -> String {
+    format!("{i:040}")
+}
+
+pub(crate) fn listed(
+    ws: &mut Workspace,
+    root: &str,
+    seq: u64,
+    skip: usize,
+    page: Result<Vec<CommitInfo>, String>,
+) -> Vec<Effect> {
+    let page = page.map(|commits| crate::task::RangePage {
+        ends: (git2::Oid::zero(), git2::Oid::zero()),
+        commits,
+    });
+    ws.accept(TaskResult::RangeLog {
+        seq,
+        worktree: PathBuf::from(root),
+        skip,
+        page,
+    })
+}
+
+pub(crate) fn commit_diff(
+    ws: &mut Workspace,
+    root: &str,
+    i: usize,
+    files: Vec<FileDiff>,
+) -> Vec<Effect> {
+    let mut diff = DiffState::new(DiffSource::Commit { oid: oid(i) });
+    diff.files = files;
+    ws.accept(TaskResult::Diff {
+        root: PathBuf::from(root),
+        diff: Box::new(diff),
+    })
+}
+
+/// Commits に入り、n 件の一覧を届け、先頭の差分まで届けた窓。
+fn showing(n: usize) -> (Workspace, u64) {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let seq = logs[0].0;
+    let _ = listed(&mut ws, "/r/feat", seq, 0, Ok(commits(n, 0)));
+    let _ = commit_diff(&mut ws, "/r/feat", 0, two_files());
+    (ws, seq)
+}
+
+fn body_text(ws: &Workspace) -> Vec<String> {
+    body_lines(ws, 100, 30).iter().map(text).collect()
+}
+
+#[test]
+fn コミットの一覧が届く前は読み込み中で_続きの行も空の文も出さない() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    assert_eq!(
+        logs.iter().map(|l| (l.1, l.2)).collect::<Vec<_>>(),
+        [(0, false)]
+    );
+    assert_eq!(ws.panels.commits.len(), 0);
+    assert_eq!(body_text(&ws)[0].trim(), "loading\u{2026}");
+}
+
+#[test]
+fn コミットの一覧が届くと先頭のコミットを選んでその差分を頼む() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let effects = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    assert_eq!(spawned(&effects).1, [oid(0)]);
+    assert_eq!(body_text(&ws)[0].trim(), "loading\u{2026}");
+}
+
+#[test]
+fn 続きの行で_enter_を押すと次の頁を読み_届いたらカーソルのコミットを頼む() {
+    let page = crate::panels::explorer::git_changes::log::PAGE;
+    let (mut ws, seq) = showing(page);
+    let _ = ws.dispatch(Action::GoToBottom);
+    let effects = ws.dispatch(Action::Select).unwrap();
+    assert_eq!(spawned(&effects).0, [(seq, page, true)]);
+    let effects = listed(&mut ws, "/r/feat", seq, page, Ok(commits(1, page)));
+    assert_eq!(spawned(&effects).1, [oid(page)]);
+}
+
+#[test]
+fn コミットの一覧の読み込みに失敗したら理由を出し_入り直すと読み直す() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(
+        &mut ws,
+        "/r/feat",
+        logs[0].0,
+        0,
+        Err("base ref 'main' cannot be resolved".into()),
+    );
+    assert_eq!(
+        body_text(&ws)[0].trim(),
+        "base ref 'main' cannot be resolved"
+    );
+    ws.panels.changes.choose(Path::new("/r/feat"), Tab::Files);
+    let _ = ws.prepare();
+    ws.panels.changes.choose(Path::new("/r/feat"), Tab::Commits);
+    assert_eq!(spawned(&ws.prepare()).0.len(), 1);
+}
+
+#[test]
+fn 選びを続けて動かしてもコミットの差分は1本ずつで_待つ間は読み込み中() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    for _ in 0..2 {
+        let effects = ws.dispatch(Action::NavigateDown).unwrap();
+        assert!(spawned(&effects).1.is_empty(), "読んでいる間は投げない");
+    }
+    let effects = commit_diff(&mut ws, "/r/feat", 0, two_files());
+    assert_eq!(spawned(&effects).1, [oid(2)]);
+    assert_eq!(body_text(&ws)[0].trim(), "loading\u{2026}");
+    let _ = commit_diff(&mut ws, "/r/feat", 2, two_files());
+    assert!(body_text(&ws)[0].contains("a.rs"));
+}
+
+#[test]
+fn 別のコミットを選ぶと中央は先頭から_畳みも戻る() {
+    let (mut ws, _) = showing(2);
+    ws.focus = Focus::Viewer;
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert_eq!(
+        ws.panels.commits.page.sections()[0].rows,
+        [Row::Header, Row::Blank]
+    );
+    let _ = ws.dispatch(Action::NextChangedFile);
+    ws.focus = Focus::Explorer;
+    let _ = ws.dispatch(Action::NavigateDown);
+    let _ = commit_diff(&mut ws, "/r/feat", 1, two_files());
+    assert_eq!(ws.panels.commits.page.top(), Top::default());
+    assert!(ws.panels.commits.page.sections()[0].rows.len() > 2);
+}
+
+#[test]
+fn 待っていないコミットの差分は入らない() {
+    let (mut ws, _) = showing(2);
+    let _ = commit_diff(&mut ws, "/r/feat", 0, vec![binary("x.png")]);
+    let files = &ws.panels.commits.page.diff().unwrap().files;
+    assert_eq!(files.len(), 2);
+}
+
+#[test]
+fn コミットの中央ではコメントと_viewed_と展開を断る() {
+    let (mut ws, _) = showing(1);
+    assert!(
+        ws.panels.commits.page.wanted().is_none(),
+        "コミットの本文は読まない"
+    );
+    assert!(
+        !ws.prepare()
+            .iter()
+            .any(|e| matches!(e, Effect::Spawn(Task::LoadChangeSource { .. })))
+    );
+    ws.focus = Focus::Viewer;
+    for action in [
+        Action::AddComment,
+        Action::ToggleViewed,
+        Action::ReplyToComment,
+        Action::ToggleResolve,
+        Action::NextComment,
+        Action::PrevComment,
+    ] {
+        let effects = ws.dispatch(action).unwrap();
+        assert!(
+            matches!(effects.as_slice(), [Effect::Status(_, text)] if text == "Commits are read only"),
+            "{action:?}: {effects:?}"
+        );
+    }
+    let effects = ws.dispatch(Action::ExpandContext).unwrap();
+    assert!(
+        matches!(effects.as_slice(), [Effect::Status(_, text)] if text == "hidden lines are not shown for commits"),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn コミットの中央には作業ツリーのコメントの印も_viewed_も変更サマリも出さない() {
+    let (mut ws, _) = showing(1);
+    let mut snapshot = snapshot(vec![comment_at("x", "a.rs", 2)]);
+    snapshot.summary = Some("why this branch exists".into());
+    snapshot.viewed.insert("a.rs".into());
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot))));
+    ws.relayout_changes();
+    let root = ws.panels.viewer.root().to_path_buf();
+    let (panels, _, ctx) = ws.split(&root);
+    panels.commits.page.relayout(&ctx);
+    let body = body_text(&ws);
+    assert!(
+        !body.iter().any(|l| l.contains("why this branch exists")),
+        "{body:?}"
+    );
+    assert!(body[0].contains("[ ]"), "{body:?}");
+    assert!(
+        !ws.panels.commits.page.sections()[0]
+            .rows
+            .iter()
+            .any(|r| matches!(r, Row::Thread { .. }))
+    );
+    assert!(
+        ws.panels.commits.page.sections()[0].rows.len() > 2,
+        "viewed で畳まない"
+    );
+    assert!(
+        body.iter()
+            .filter(|l| l.contains("a.rs:"))
+            .all(|l| l.starts_with("  ")),
+        "{body:?}"
+    );
+}
+
+#[test]
+fn 空のコミットはそう言う() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(1, 0)));
+    let _ = commit_diff(&mut ws, "/r/feat", 0, Vec::new());
+    assert_eq!(body_text(&ws)[0].trim(), "This commit changes no files");
+}
+
+#[test]
+fn コミットの中央の送りと左右表示は_files_changed_に効かない() {
+    let (mut ws, _) = showing(1);
+    let _ = deliver(&mut ws, "/r/feat", two_files());
+    let files_side = ws.panels.changes.side_by_side();
+    ws.focus = Focus::Viewer;
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    let _ = ws.dispatch(Action::ScrollHalfPageDown);
+    assert_ne!(ws.panels.commits.page.side_by_side(), files_side);
+    assert_eq!(ws.panels.changes.side_by_side(), files_side);
+    assert_eq!(ws.panels.changes.top(), Top::default());
+    assert_ne!(
+        ws.panels.commits.page.top(),
+        Top::default(),
+        "半頁は sync_layout の高さで送る"
+    );
+}
+
+#[test]
+fn コミットの一覧のクリックで選び_中央のホイールはコミットのパネルを送る() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    let _ = commit_diff(&mut ws, "/r/feat", 0, two_files());
+    let _ = deliver(&mut ws, "/r/feat", two_files());
+    let top = ws.panels.commits.viewport().top;
+    let effects = ws.panels.commits.click(top + 2).unwrap();
+    assert_eq!(spawned(&effects).1, [oid(2)]);
+    let _ = commit_diff(&mut ws, "/r/feat", 2, two_files());
+    ws.shown_changes_mut().wheel(3);
+    assert_eq!(ws.panels.changes.top(), Top::default());
+    assert_ne!(ws.panels.commits.page.top(), Top::default());
+}
+
+#[test]
+fn コミットの行で_enter_を押しても何もしない() {
+    let (mut ws, _) = showing(2);
+    assert_eq!(ws.dispatch(Action::Select), Some(Vec::new()));
+}
+
+#[test]
+fn 本線の_worktree_では先へ進んだコミットが無いと言う() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(Vec::new()));
+    assert_eq!(body_text(&ws)[0].trim(), "No commits ahead of main");
+    assert_eq!(ws.panels.commits.len(), 0);
+}
+
+#[test]
+fn worktree_を移って戻ると選んでいたコミットを選び直す() {
+    let (mut ws, _) = showing(3);
+    let _ = ws.dispatch(Action::NavigateDown);
+    let _ = crate::effect::select_worktree(&mut ws, 0);
+    ws.panels.changes.choose(Path::new("/r/main"), Tab::Commits);
+    let _ = ws.prepare();
+    let _ = crate::effect::select_worktree(&mut ws, 1);
+    let (logs, _) = spawned(&ws.prepare());
+    let effects = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    assert_eq!(spawned(&effects).1, [oid(1)]);
+}
+
+#[test]
+fn 別の根のコミットの一覧と差分は入らない() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/other", logs[0].0, 0, Ok(commits(3, 0)));
+    assert_eq!(ws.panels.commits.len(), 0);
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(1, 0)));
+    let _ = commit_diff(&mut ws, "/r/other", 0, two_files());
+    assert!(ws.panels.commits.page.diff().is_none());
+    let _ = commit_diff(&mut ws, "/r/feat", 0, two_files());
+    assert!(
+        ws.panels.commits.page.diff().is_some(),
+        "別の根の差分で待ちを下ろさない"
+    );
+}
+
+#[test]
+fn 他のタブから入り直すとコミットの一覧を読み直し_出したまま_3_では読まない() {
+    let (mut ws, seq) = showing(2);
+    assert!(spawned(&ws.prepare()).0.is_empty());
+    let mut svc = conductor_svc::Services::new();
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Commits)]);
+    assert!(spawned(&ws.prepare()).0.is_empty());
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Files)]);
+    let _ = ws.prepare();
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Commits)]);
+    let (logs, _) = spawned(&ws.prepare());
+    assert_eq!(logs.len(), 1);
+    assert!(logs[0].0 > seq, "古い頁と見分ける");
+}
+
+#[test]
+fn リポジトリを開き直して読みが捨てられても選びでコミットの差分を頼める() {
+    let mut ws = on_commits();
+    let (logs, _) = spawned(&ws.prepare());
+    let _ = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    ws.panels.commits.hide();
+    let (logs, _) = spawned(&ws.prepare());
+    let effects = listed(&mut ws, "/r/feat", logs[0].0, 0, Ok(commits(3, 0)));
+    assert_eq!(
+        spawned(&effects).1,
+        [oid(0)],
+        "捨てられた読みの見張りが残らない"
+    );
+}
+
+#[test]
+fn 同じ_worktree_を選び直してもコミットの一覧を読み直さない() {
+    let (mut ws, _) = showing(2);
+    let _ = crate::effect::select_worktree(&mut ws, 1);
+    assert!(spawned(&ws.prepare()).0.is_empty());
+}
+
+#[test]
+fn コミットから開くファイルは_code_へ_差分つきは_files_changed_へ() {
+    let (mut ws, _) = showing(1);
+    let mut svc = conductor_svc::Services::new();
+    crate::effect::apply(
+        &mut ws,
+        &mut svc,
+        vec![Effect::OpenFile {
+            path: "a.rs".into(),
+            line: None,
+            diff: None,
+            preview: false,
+        }],
+    );
+    assert_eq!(ws.center_tab(), Tab::Code);
+    ws.panels.changes.choose(Path::new("/r/feat"), Tab::Commits);
+    crate::effect::apply(
+        &mut ws,
+        &mut svc,
+        vec![Effect::ShowChange {
+            path: "a.rs".into(),
+            line: Some(2),
+        }],
+    );
+    assert_eq!(ws.center_tab(), Tab::Files);
+}
+
+#[test]
+fn コミットの一覧の枠はコミットと名乗る() {
+    let mut ws = on_commits();
+    assert_eq!(super::render::list_title(&ws), " Commits ");
+    ws.panels.changes.choose(Path::new("/r/feat"), Tab::Files);
+    assert_eq!(super::render::list_title(&ws), " Files ");
+}
+
+#[test]
+fn コミットの中央の案内には断るキーを出さない() {
+    let (mut ws, _) = showing(1);
+    ws.focus = Focus::Viewer;
+    let hint: String = crate::render::status_line(&ws)
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    for refused in ["comment", "viewed", "expand"] {
+        assert!(!hint.contains(refused), "{hint}");
+    }
+    assert!(hint.contains("split"), "{hint}");
+}
+
+#[test]
+fn 同じリポジトリを開き直すとコミットの一覧を読み直す() {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    let root = dir.path().canonicalize().unwrap();
+    let mut ws = Workspace::for_test();
+    let mut svc = conductor_svc::Services::new();
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(root.clone())]);
+    ws.panels.changes.choose(&root, Tab::Commits);
+    assert_eq!(spawned(&ws.prepare()).0.len(), 1);
+    assert!(spawned(&ws.prepare()).0.is_empty());
+    crate::effect::apply(&mut ws, &mut svc, vec![Effect::SwitchRepo(root.clone())]);
+    assert_eq!(
+        spawned(&ws.prepare()).0.len(),
+        1,
+        "世代で捨てられた読みを待ち続けない"
+    );
 }

@@ -78,12 +78,15 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
                 "Explorer \u{2014} comment list",
                 KeyContext::ExplorerCommentList,
             ),
-            ("Files changed \u{2014} file list", KeyContext::ChangesList),
+            (
+                "Files changed / Commits \u{2014} list",
+                KeyContext::ChangesList,
+            ),
         ],
         Focus::Viewer => &[
             ("Viewer", KeyContext::Viewer),
             ("Viewer \u{2014} diff mode", KeyContext::ViewerDiffMode),
-            ("Files changed", KeyContext::Changes),
+            ("Files changed (Commits: read only)", KeyContext::Changes),
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
         Focus::Editor => &[("Editor panel", KeyContext::Editor)],
@@ -162,6 +165,14 @@ mod tests {
     use super::*;
     use crate::workspace::Workspace;
     use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn 詳細の左と中央のキー表は_commits_も名乗る() {
+        for page in [Focus::Explorer, Focus::Viewer] {
+            let titles: Vec<&str> = super::layers(page).iter().map(|(t, _)| *t).collect();
+            assert!(titles.iter().any(|t| t.contains("Commits")), "{titles:?}");
+        }
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

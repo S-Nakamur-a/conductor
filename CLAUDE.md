@@ -476,13 +476,13 @@ every keybinding. On the Sessions screen the keys do nothing: the detail screen'
 columns are not drawn there, and moving them would write a width nobody can see. The
 Sessions borders are dragged with the mouse only.
 
-**The Explorer and Viewer columns are one of two tabs** (`panels/changes/`,
+**The Explorer and Viewer columns are one of three tabs** (`panels/changes/`,
 `Workspace::center_tab`): Code is the above, Files changed (`Region::ChangesList` /
 `Region::Changes`) replaces both columns with a pull-request page of the worktree's
 changes. `Focus::Explorer` / `Focus::Viewer` mean its list / body while it is shown —
 `key_context` and `dispatch_to` divert there, so there is no new `Focus`. The tab is
 derived from `is_main` every time and remembered only once someone switches
-(`ChangesPanel::choose`: 1 / 2, a click on the tab names, any `Effect::OpenFile` back to
+(`ChangesPanel::choose`: 1 / 2 / 3, a click on the tab names, any `Effect::OpenFile` back to
 Code, `Effect::ShowChange` to Files changed). Its diff is a copy of the working-tree
 `TaskResult::Diff` the Explorer asked for — it never spawns one, so a 9s diff is not run
 twice — which also means it is not refreshed while Git Changes shows a commit (until an open_file
@@ -504,6 +504,17 @@ that changed. Only a changed new side closes its expanded blocks. A rebuild that
 blocks keeps the very row on top; one that closes them finds it by (path, new-side line),
 where a line inside a hidden block means that block. Leaving a worktree parks its diff and
 sections with the folds, so coming back brings the expanded blocks back.
+
+Commits (`changes/commits.rs`, `CommitsTab`) reuses both regions: the list is
+`GitEngine::range_log` (base hidden from HEAD, the ends fixed on the first page so a later
+page cannot drift), the middle a second `ChangesPanel` built `read_only` — a commit's new
+side is a blob, not the disk, so it reads no sources, expands nothing and shows no review
+(`ChangesPanel::review` answers an empty one). Unlike Files changed it spawns its own
+`ComputeDiff` with a `DiffSource::Commit`, one at a time while the tab stays shown
+(entering it again can overlap one still running); `Workspace::accept` offers every
+`TaskResult::Diff` to it first, and it takes only the one it is waiting for. Whether it is
+shown is judged once a frame in `prepare` (entering reads the list again; `switch_repo`
+hides it), and the commit picked is kept per worktree.
 
 **Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is
 the screen conductor opens on: every Claude on the machine, built from the state
@@ -656,7 +667,7 @@ the worktree panel, the Explorer and `Focus` alone and only says so on the statu
 |--------|------|
 | `tui/route.rs` · `layout.rs` · `liveness.rs` | Where a key goes · where a region is · why the screen moves. All pure |
 | `tui/workspace.rs` · `effect.rs` · `task.rs` | State, the effect vocabulary, every long-running job and its result |
-| `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together. `panels/fleet/` is Sessions, `panels/changes/` the Files changed tab |
+| `tui/panels/<name>/` · `modal/<name>.rs` | One panel / one modal: its state, `update` and render, together. `panels/fleet/` is Sessions, `panels/changes/` the Files changed and Commits tabs |
 | `tui/command/` · `index.rs` · `markdown/` | The command table with `exec` and `enabled` · both indexes and their rebuilds · markdown, shared by the Viewer and the transcript |
 | `svc/pty/` · `svc/watch/` | The PTY host (holds the masters), its window-side mirror and the vt100 screen · the filesystem, config and refresh-pipe watchers (cc-notify's listener runs in the PTY host) |
 | `core/git_engine/` · `diff_state/` · `review_store/` | All git via `git2` bar the status shell-out below · the diff model over `similar` · SQLite for reviews, sessions and viewed files |

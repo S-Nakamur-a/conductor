@@ -12,6 +12,7 @@ use conductor_core::update_checker::UpdateInfo;
 use crate::effect::Effect;
 use crate::index::Index;
 use crate::modal::Modal;
+use crate::panels::changes::commits::CommitsTab;
 use crate::panels::changes::{ChangesPanel, Tab};
 use crate::panels::explorer::{BottomView, ExplorerPanel};
 use crate::panels::terminal::TerminalPanel;
@@ -205,6 +206,7 @@ impl Appearance {
 pub struct Panels {
     pub fleet: crate::panels::fleet::FleetPanel,
     pub changes: ChangesPanel,
+    pub commits: CommitsTab,
     pub worktree: WorktreePanel,
     pub explorer: ExplorerPanel,
     pub viewer: ViewerPanel,
@@ -279,6 +281,9 @@ impl Workspace {
             changes: ChangesPanel::new(
                 config.diff.default_view == conductor_core::diff_state::DiffView::SideBySide,
             ),
+            commits: CommitsTab::new(
+                config.diff.default_view == conductor_core::diff_state::DiffView::SideBySide,
+            ),
             worktree: WorktreePanel::default(),
             explorer: ExplorerPanel::default(),
             viewer: ViewerPanel::new(&config),
@@ -332,13 +337,28 @@ impl Workspace {
 
     /// 1 つのパネルが 2 つの層を持つことがあるので、区画やモードは持ち主に訊く。
     pub fn key_context(&self) -> KeyContext {
-        let files = self.center_tab() == Tab::Files;
+        let pages = self.center_tab() != Tab::Code;
         match self.focus {
-            Focus::Explorer if files => KeyContext::ChangesList,
-            Focus::Viewer if files => KeyContext::Changes,
+            Focus::Explorer if pages => KeyContext::ChangesList,
+            Focus::Viewer if pages => KeyContext::Changes,
             Focus::Explorer => self.panels.explorer.key_context(),
             Focus::Viewer => self.panels.viewer.key_context(),
             focus => focus.key_context(),
+        }
+    }
+
+    /// 中央に縦並びで出している差分のパネル。Commits ならコミットの読むだけのパネル。
+    pub fn shown_changes(&self) -> &ChangesPanel {
+        match self.center_tab() {
+            Tab::Commits => &self.panels.commits.page,
+            _ => &self.panels.changes,
+        }
+    }
+
+    pub fn shown_changes_mut(&mut self) -> &mut ChangesPanel {
+        match self.center_tab() {
+            Tab::Commits => &mut self.panels.commits.page,
+            _ => &mut self.panels.changes,
         }
     }
 
@@ -436,23 +456,31 @@ impl Workspace {
 
     /// フォーカスの外にあるパネルへ渡す。コマンドの宛先が選択で決まるとき用。
     pub fn dispatch_to(&mut self, target: Focus, action: Action) -> Option<Vec<Effect>> {
-        let files = self.center_tab() == Tab::Files;
+        let tab = self.center_tab();
         let root = self.panels.viewer.root().to_path_buf();
         let (panels, _, ctx) = self.split(&root);
-        match target {
-            Focus::Explorer if files => panels.changes.update_list(action).map(|()| Vec::new()),
-            Focus::Viewer if files => panels.changes.update_body(action, &ctx),
-            Focus::Worktree => panels.worktree.update(action, &ctx),
-            Focus::Explorer => panels.explorer.update(action, &ctx),
-            Focus::Viewer => panels.viewer.update(action, &ctx),
-            Focus::TerminalClaude | Focus::TerminalShell => panels.terminal.update(action, &ctx),
-            Focus::Fleet | Focus::FleetSession => panels
-                .terminal
-                .update(action, &ctx)
-                .or_else(|| panels.fleet.update(action, &ctx)),
-            // 端末パネルの読みビューとスクロールは右の Claude のもの。左下のシェルには無い。
-            Focus::FleetShell => panels.fleet.update(action, &ctx),
-            _ => None,
+        match (target, tab) {
+            (Focus::Explorer, Tab::Files) => {
+                panels.changes.update_list(action).map(|()| Vec::new())
+            }
+            (Focus::Viewer, Tab::Files) => panels.changes.update_body(action, &ctx),
+            (Focus::Explorer, Tab::Commits) => panels.commits.update_list(action),
+            (Focus::Viewer, Tab::Commits) => panels.commits.page.update_body(action, &ctx),
+            _ => match target {
+                Focus::Worktree => panels.worktree.update(action, &ctx),
+                Focus::Explorer => panels.explorer.update(action, &ctx),
+                Focus::Viewer => panels.viewer.update(action, &ctx),
+                Focus::TerminalClaude | Focus::TerminalShell => {
+                    panels.terminal.update(action, &ctx)
+                }
+                Focus::Fleet | Focus::FleetSession => panels
+                    .terminal
+                    .update(action, &ctx)
+                    .or_else(|| panels.fleet.update(action, &ctx)),
+                // 端末パネルの読みビューとスクロールは右の Claude のもの。左下のシェルには無い。
+                Focus::FleetShell => panels.fleet.update(action, &ctx),
+                _ => None,
+            },
         }
     }
 
@@ -548,11 +576,20 @@ impl Workspace {
             TaskResult::Diff { ref root, ref diff } => {
                 let viewer_root = self.panels.viewer.root().to_path_buf();
                 let (panels, _, ctx) = self.split(&viewer_root);
+                let mut asked = Vec::new();
+                panels.commits.accept_diff(root, diff, &ctx, &mut asked);
                 let missing = panels.changes.install(root, diff, &ctx);
                 let mut effects = self.panels.explorer.apply_result(result);
                 effects.extend(missing.map(not_in_diff));
+                effects.extend(asked);
                 effects
             }
+            TaskResult::RangeLog {
+                seq,
+                worktree,
+                skip,
+                page,
+            } => self.panels.commits.accept_log(seq, &worktree, skip, page),
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
@@ -987,6 +1024,7 @@ impl Workspace {
         if self.center_tab() == Tab::Files && !self.chrome.fleet_open {
             effects.extend(self.prepare_changes());
         }
+        effects.extend(self.prepare_commits());
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
         if !self.panels.terminal.has_transcript() {
             return effects;
@@ -1011,6 +1049,20 @@ impl Workspace {
         effects
     }
 
+    /// Commits に入った (タブを選んだ・worktree を移った) ら一覧を読み直す。判定はここ 1 か所。
+    fn prepare_commits(&mut self) -> Option<Effect> {
+        let shown = self.center_tab() == Tab::Commits && !self.chrome.fleet_open;
+        if !shown {
+            self.panels.commits.hide();
+            return None;
+        }
+        let root = self.panels.explorer.root().to_path_buf();
+        if root.as_os_str().is_empty() {
+            return None;
+        }
+        self.panels.commits.show(&root, &self.repo.main_branch)
+    }
+
     fn prepare_changes(&mut self) -> Option<Effect> {
         let Panels {
             viewer, changes, ..
@@ -1021,12 +1073,27 @@ impl Workspace {
         changes.wanted().map(Effect::Spawn)
     }
 
+    fn sync_commits(&mut self, layout: &crate::layout::Layout) {
+        if self.center_tab() != Tab::Commits {
+            return;
+        }
+        if let Some(rect) = layout.rect(crate::layout::Region::ChangesList) {
+            (self.panels.commits).set_viewport(crate::list::Viewport::inside(rect, 0));
+        }
+        if self.panels.commits.page.sync_layout(layout) {
+            let root = self.panels.viewer.root().to_path_buf();
+            let (panels, _, ctx) = self.split(&root);
+            panels.commits.page.relayout(&ctx);
+        }
+    }
+
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
         if self.panels.changes.sync_layout(layout) {
             self.relayout_changes();
         }
+        self.sync_commits(layout);
         self.panels.viewer.sync_layout(layout);
         let lower = layout.rect(crate::layout::Region::FleetChanges);
         self.panels.fleet.set_lower_shown(lower.is_some());
