@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use super::{DiffListEntry, DiffState, FileDiff, OpenDiff};
+use super::{DiffListEntry, DiffState, FileDiff};
 
 #[derive(Default)]
 struct Dir {
@@ -38,9 +38,8 @@ impl Dir {
             let mut name = name.clone();
             let mut dir = dir;
             // 子が 1 つしかない階層は 1 行に畳む。深い一本道が行と字下げを食い潰すため。
-            // 畳んだ行のパスは最深のものになるが、reveal_path は祖先を全部展開するので
-            // 折りたたみとは噛み合う。途中が折りたたみ済みならそこで止める。畳むと閉じた
-            // 指定が消えてしまう。
+            // 畳んだ行のパスは最深のものになる。途中が折りたたみ済みならそこで止める。
+            // 畳むと閉じた指定が消えてしまう。
             while !collapsed_dirs.contains(&path)
                 && dir.file_indices.is_empty()
                 && dir.subdirs.len() == 1
@@ -97,13 +96,6 @@ impl DiffState {
         }
     }
 
-    pub fn open_diff(&self, display_idx: usize) -> Option<OpenDiff> {
-        Some(OpenDiff {
-            source: self.source.clone(),
-            file: self.resolve_file(display_idx)?.clone(),
-        })
-    }
-
     /// [Self::resolve_file] の逆引き。折りたたまれたディレクトリの中のファイルは見えない。
     pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
         (0..self.display_list.len())
@@ -155,64 +147,5 @@ impl DiffState {
             (Some(only), None) => Some(only.to_string()),
             _ => None,
         }
-    }
-
-    /// path の行が見えるよう折りたたまれた祖先を展開し、その行の位置を返す。
-    /// diff に無いファイルなら None。
-    pub fn reveal_path(&mut self, path: &str) -> Option<usize> {
-        if let Some(idx) = self.display_index_for_path(path) {
-            return Some(idx);
-        }
-        let ancestors: Vec<&str> = path
-            .match_indices('/')
-            .map(|(slash, _)| &path[..slash])
-            .collect();
-        let mut changed = false;
-        for ancestor in ancestors {
-            changed |= self.collapsed_dirs.remove(ancestor);
-        }
-        if changed {
-            self.rebuild_display_list();
-        }
-        self.display_index_for_path(path)
-    }
-
-    /// ディレクトリ行なら折りたたみを反転して true。他の行では何もしない。
-    pub fn toggle_section(&mut self, display_idx: usize) -> bool {
-        match self.display_list.get(display_idx) {
-            Some(DiffListEntry::Directory { collapsed, .. }) => {
-                let collapse = !*collapsed;
-                self.set_collapsed(display_idx, collapse)
-            }
-            _ => false,
-        }
-    }
-
-    pub fn collapse_section(&mut self, display_idx: usize) {
-        self.set_collapsed(display_idx, true);
-    }
-
-    pub fn expand_section(&mut self, display_idx: usize) {
-        self.set_collapsed(display_idx, false);
-    }
-
-    fn set_collapsed(&mut self, display_idx: usize, collapse: bool) -> bool {
-        let Some(DiffListEntry::Directory {
-            path, collapsed, ..
-        }) = self.display_list.get(display_idx)
-        else {
-            return false;
-        };
-        if *collapsed == collapse {
-            return false;
-        }
-        let path = path.clone();
-        if collapse {
-            self.collapsed_dirs.insert(path);
-        } else {
-            self.collapsed_dirs.remove(&path);
-        }
-        self.rebuild_display_list();
-        true
     }
 }

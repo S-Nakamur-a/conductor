@@ -200,9 +200,7 @@ fn タブの切替は左と中央の数字で_claude_の列からは無い() {
     let two = KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
     for context in [
         KeyContext::Explorer,
-        KeyContext::ExplorerDiffList,
         KeyContext::Viewer,
-        KeyContext::ViewerDiffMode,
         KeyContext::ChangesList,
         KeyContext::Changes,
     ] {
@@ -515,7 +513,6 @@ fn ファイルを開くと_code_タブへ移る() {
         vec![Effect::OpenFile {
             path: "a.rs".into(),
             line: None,
-            diff: None,
             preview: false,
         }],
     );
@@ -598,24 +595,6 @@ fn 読み直し中に写しに無いファイルを頼まれたら届いてか�
 }
 
 #[test]
-fn コミットを選んでいる間に頼まれたら作業ツリーへ戻して届いてから出す() {
-    let mut ws = feat_workspace();
-    let _ = deliver(&mut ws, "/r/feat", two_files());
-    let _ = ws
-        .panels
-        .explorer
-        .changes
-        .set_source(DiffSource::commit("abc"));
-    show_change(&mut ws, "c.rs");
-    assert!(matches!(
-        ws.panels.explorer.changes.source(),
-        DiffSource::WorkingTree { .. }
-    ));
-    let _ = deliver(&mut ws, "/r/feat", with_c());
-    assert_eq!(ws.panels.changes.top(), Top { file: 2, row: 0 });
-}
-
-#[test]
 fn 頼まれたパスは変更ファイルの一覧と同じ規則で探す() {
     let mut ws = feat_workspace();
     let _ = deliver(&mut ws, "/r/feat", two_files());
@@ -665,27 +644,6 @@ fn ハンクの無いファイルの断り書きと区切りの空行も位置�
         install(&mut panel, Path::new("/r/feat"), &working(files()));
         assert_eq!(panel.top(), Top { file: 0, row });
     }
-}
-
-#[test]
-fn コミットを選んでいる間に写しにあるファイルを頼まれても作業ツリーを読み直す() {
-    let mut ws = feat_workspace();
-    let _ = deliver(&mut ws, "/r/feat", two_files());
-    let _ = ws
-        .panels
-        .explorer
-        .changes
-        .set_source(DiffSource::commit("abc"));
-    let effects = crate::effect::show_change(&mut ws, "b.rs".into(), None);
-    assert!(
-        effects.iter().any(|e| matches!(
-            e,
-            Effect::Spawn(crate::task::Task::ComputeDiff { source, .. })
-                if matches!(source, DiffSource::WorkingTree { .. })
-        )),
-        "{effects:?}"
-    );
-    assert_eq!(ws.panels.changes.top(), Top { file: 1, row: 0 });
 }
 
 fn comment_at(id: &str, path: &str, line: u32) -> conductor_core::review_store::ReviewComment {
@@ -1854,7 +1812,16 @@ pub(crate) fn spawned(effects: &[Effect]) -> (Vec<(u64, usize, bool)>, Vec<Strin
 
 pub(crate) fn commits(n: usize, from: usize) -> Vec<CommitInfo> {
     (from..from + n)
-        .map(|i| crate::panels::explorer::git_changes::log::tests::commit(&format!("{i:040}")))
+        .map(|i| {
+            let oid = oid(i);
+            CommitInfo {
+                short_oid: oid[..8].to_string(),
+                message: format!("message of {oid}"),
+                author: "someone".into(),
+                time_ago: "2h ago".into(),
+                oid,
+            }
+        })
         .collect()
 }
 
@@ -1932,7 +1899,7 @@ fn コミットの一覧が届くと先頭のコミットを選んでその差�
 
 #[test]
 fn 続きの行で_enter_を押すと次の頁を読み_届いたらカーソルのコミットを頼む() {
-    let page = crate::panels::explorer::git_changes::log::PAGE;
+    let page = super::commits::PAGE;
     let (mut ws, seq) = showing(page);
     let _ = ws.dispatch(Action::GoToBottom);
     let effects = ws.dispatch(Action::Select).unwrap();
@@ -2206,7 +2173,6 @@ fn コミットから開くファイルは_code_へ_差分つきは_files_change
         vec![Effect::OpenFile {
             path: "a.rs".into(),
             line: None,
-            diff: None,
             preview: false,
         }],
     );

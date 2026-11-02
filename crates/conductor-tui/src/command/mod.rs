@@ -53,8 +53,6 @@ pub enum CommandId {
     FoldAll,
     UnfoldAll,
     ToggleHelp,
-    ShowDiffList,
-    ShowCommitLog,
     ShowCommentList,
     ShowTourStops,
     SwitchTheme,
@@ -190,8 +188,6 @@ commands! {
     FoldAll, "Viewer: Fold All (zM)", View, None, "fold collapse all everything zM";
     UnfoldAll, "Viewer: Unfold All (zR)", View, None, "unfold expand all everything zR";
     ToggleHelp, "Show Help", View, Some(Action::ShowHelp), "keybindings shortcuts";
-    ShowDiffList, "Explorer: Show Git Changes", View, Some(Action::ShowDiffList), "git changes diff changed files";
-    ShowCommitLog, "Explorer: Show Commit Log", View, Some(Action::ShowCommitLog), "git log commits history hash";
     ShowCommentList, "Explorer: Show Comment List", View, Some(Action::ShowCommentList), "comment review list";
     ShowTourStops, "Explorer: Show Tour Stops", View, Some(Action::ShowTourStops), "tour stops walkthrough guide plan narration flow order reading";
     SwitchTheme, "Switch Theme", View, Some(Action::OpenThemePicker), "theme color light dark appearance palette catppuccin solarized github";

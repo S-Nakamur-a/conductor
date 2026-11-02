@@ -1,4 +1,4 @@
-//! 一覧の下区画: 選んだ行のブランチの変更ファイル。Explorer の Git Changes と同じ diff を読んで同じ形で描く。
+//! 一覧の下区画: 選んだ行のブランチの変更ファイル。Explorer が持つ作業ツリーの diff と同じ読み方で、同じ形で描く。
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

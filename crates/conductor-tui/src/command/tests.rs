@@ -160,6 +160,26 @@ fn フォーカスのコマンドはフォーカスを動かす() {
 }
 
 #[test]
+fn 消したgit_changesのコマンドはパレットにもメニューにも無い() {
+    for gone in ["Explorer: Show Git Changes", "Explorer: Show Commit Log"] {
+        assert!(!COMMANDS.iter().any(|c| c.label == gone), "{gone}");
+    }
+    let view = crate::menu::MENUS
+        .iter()
+        .find(|m| m.title == "View")
+        .unwrap();
+    for gone in ["Git Changes", "Commit Log"] {
+        assert!(
+            !view
+                .items
+                .iter()
+                .any(|i| matches!(i, crate::menu::Item::Command { label, .. } if *label == gone)),
+            "{gone}"
+        );
+    }
+}
+
+#[test]
 fn 新しいworktreeは一覧を開いていても入力を出す() {
     for fleet_open in [false, true] {
         let mut ws = Workspace::for_test();

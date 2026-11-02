@@ -42,8 +42,7 @@
 "ctrl+tab" = "next_worktree"
 "ctrl+shift+tab" = "prev_worktree"
 # Reliable worktree-switch aliases for terminals without the kitty protocol
-# (where ctrl+tab degrades to bare tab). ] / [ mirror the next/prev idiom used
-# for hunks in diff mode.
+# (where ctrl+tab degrades to bare tab).
 "alt+]" = "next_worktree"
 "alt+[" = "prev_worktree"
 "ctrl+n" = "new_claude_code"
@@ -149,61 +148,10 @@
 "enter" = "select"
 "g" = "go_to_top"
 "G" = "go_to_bottom"
-"d" = "show_diff_list"
-"L" = "show_commit_log"
 "c" = "show_comment_list"
 "C" = "open_comment_list"
 "t" = "show_tour_stops"
 "/" = "search_filename"
-":" = "command_palette"
-
-# ── Explorer: diff list ─────────────────────────────────────────────────────────
-[layers.explorer_diff_list]
-"1" = "show_code_tab"
-"2" = "show_files_tab"
-"3" = "show_commits_tab"
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
-"j" = "navigate_down"
-"down" = "navigate_down"
-"k" = "navigate_up"
-"up" = "navigate_up"
-"h" = "collapse_or_left"
-"left" = "collapse_or_left"
-"l" = "expand_or_right"
-"right" = "expand_or_right"
-"enter" = "select"
-"g" = "go_to_top"
-"G" = "go_to_bottom"
-"v" = "toggle_viewed"
-# 下区画の一覧は互いに行き来できる。ツリーまで戻らないと切り替えられないと、
-# コメントを見てから変更一覧へ戻る往復が毎回 2 手増える。
-"c" = "show_comment_list"
-"t" = "show_tour_stops"
-"L" = "show_commit_log"
-"esc" = "exit_sub_panel"
-"ctrl+esc" = "exit_sub_panel"
-":" = "command_palette"
-
-# ── Explorer: commit log ────────────────────────────────────────────────────────
-[layers.explorer_commit_log]
-"1" = "show_code_tab"
-"2" = "show_files_tab"
-"3" = "show_commits_tab"
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
-"j" = "navigate_down"
-"down" = "navigate_down"
-"k" = "navigate_up"
-"up" = "navigate_up"
-"enter" = "select"
-"g" = "go_to_top"
-"G" = "go_to_bottom"
-"d" = "show_diff_list"
-"c" = "show_comment_list"
-"t" = "show_tour_stops"
-"esc" = "exit_sub_panel"
-"ctrl+esc" = "exit_sub_panel"
 ":" = "command_palette"
 
 # ── Explorer: comment list ──────────────────────────────────────────────────────
@@ -230,7 +178,6 @@
 "e" = "edit_comment"
 "R" = "reply_to_comment"
 "space" = "view_comment_detail"
-"d" = "show_diff_list"
 "t" = "show_tour_stops"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
@@ -256,7 +203,6 @@
 "l" = "expand_or_right"
 "right" = "expand_or_right"
 "enter" = "select"
-"d" = "show_diff_list"
 "c" = "show_comment_list"
 "esc" = "exit_sub_panel"
 "ctrl+esc" = "exit_sub_panel"
@@ -295,8 +241,7 @@
 # against it too, so one binding covers both directions.
 "m" = "toggle_markdown_render"
 # File tabs — several files stay open at once in the Viewer; t/T walk them and
-# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
-# same three work in diff mode so the strip behaves identically in both.
+# x closes the current one. Vim leaves t/T/x free in a read-only pane.
 "t" = "next_viewer_tab"
 "T" = "prev_viewer_tab"
 "x" = "close_viewer_tab"
@@ -319,58 +264,6 @@
 # Hover info also appears automatically when the mouse rests on a symbol or the
 # cursor sits idle. `K` (à la Vim/LSP hover) forces it instantly without waiting.
 "K" = "show_hover_info"
-
-# ── Viewer: diff mode ────────────────────────────────────────────────────────────
-[layers.viewer_diff_mode]
-"1" = "show_code_tab"
-"2" = "show_files_tab"
-"3" = "show_commits_tab"
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
-"j" = "navigate_down"
-"down" = "navigate_down"
-"k" = "navigate_up"
-"up" = "navigate_up"
-"ctrl+d" = "scroll_half_page_down"
-"ctrl+u" = "scroll_half_page_up"
-"g" = "go_to_top"
-"G" = "go_to_bottom"
-"h" = "scroll_left"
-"left" = "scroll_left"
-"l" = "scroll_right"
-"right" = "scroll_right"
-"0" = "scroll_home"
-"/" = "search_in_file"
-"n" = "next_search_match"
-"N" = "prev_search_match"
-"ctrl+f" = "search_filename"
-# Jump between changes (hunks) and between review comments.
-"]" = "next_hunk"
-"[" = "prev_hunk"
-"}" = "next_comment"
-"{" = "prev_comment"
-# Jump to the next/previous changed file (GitHub-style "next file").
-"J" = "next_changed_file"
-"K" = "prev_changed_file"
-"c" = "add_comment"
-"v" = "toggle_viewed"
-# 's' for "side by side": unified と左右 2 列を行き来する。
-"s" = "toggle_diff_view"
-# File tabs — several files stay open at once in the Viewer; t/T walk them and
-# x closes the current one. Vim leaves t/T/x free in a read-only pane, and the
-# same three work in diff mode so the strip behaves identically in both.
-"t" = "next_viewer_tab"
-"T" = "prev_viewer_tab"
-"x" = "close_viewer_tab"
-"space" = "toggle_inline_thread"
-# インラインスレッドの中だけで返信と解決を完結させる。
-"R" = "reply_to_comment"
-"r" = "toggle_resolve"
-"esc" = "exit_to_explorer"
-"ctrl+esc" = "exit_to_explorer"
-"enter" = "expand_context"
-"shift+enter" = "expand_all_context"
-":" = "command_palette"
 
 # ── Files changed: 変更ファイルの一覧 ─────────────────────────────────────────────
 # 詳細の画面のタブ。1 で Code、2 で Files changed、3 で Commits。Claude の列からは切り替えない

@@ -748,55 +748,6 @@ fn 変更パスの解決() {
     }
 }
 
-/// 折りたたんだディレクトリの中のファイルには行が無い。ジャンプ先が無いのと区別するため
-/// 途中まで展開する。
-#[test]
-fn revealは畳まれた親を開く() {
-    let mut ds = diff_state_with(&["src/deep/nested/c.rs"]);
-    ds.collapsed_dirs.insert("src".to_string());
-    ds.rebuild_display_list();
-    assert_eq!(
-        ds.display_index_for_path("src/deep/nested/c.rs"),
-        None,
-        "precondition"
-    );
-
-    let idx = ds
-        .reveal_path("src/deep/nested/c.rs")
-        .expect("row after reveal");
-
-    assert_eq!(
-        ds.resolve_file(idx).map(|f| f.path.as_str()),
-        Some("src/deep/nested/c.rs")
-    );
-    assert_eq!(ds.reveal_path("src/missing.rs"), None);
-}
-
-#[test]
-fn 折りたたみはディレクトリ行だけを変えファイル行では何もしない() {
-    let mut ds = diff_state_with(&["src/a.rs", "top.txt"]);
-    let rows_open = ds.display_list.clone();
-
-    assert!(!ds.toggle_section(1), "ファイル行");
-    assert!(!ds.toggle_section(9), "範囲外");
-    ds.collapse_section(1);
-    ds.expand_section(0);
-    assert_eq!(ds.display_list, rows_open, "no-op は表示リストを変えない");
-
-    assert!(ds.toggle_section(0));
-    assert_eq!(ds.display_index_for_path("src/a.rs"), None);
-    ds.collapse_section(0);
-    assert_eq!(
-        ds.display_index_for_path("src/a.rs"),
-        None,
-        "畳み済みを畳んでも落ちない"
-    );
-
-    assert!(ds.toggle_section(0));
-    ds.expand_section(0);
-    assert_eq!(ds.display_list, rows_open, "展開済みを開いても落ちない");
-}
-
 #[test]
 fn コミットの差分は最初の親からそのコミットまで() {
     let repo = TestRepo::new();
@@ -852,25 +803,6 @@ fn 無いコミットは理由を残して0件になる() {
     );
 }
 
-#[test]
-fn 新しい側の本文は出どころから読む() {
-    let repo = TestRepo::new();
-    let root = repo.commit_tree(None, &[("a.txt", b"committed\n")]);
-    repo.checkout_at("main", root);
-    repo.file("a.txt", "on disk\n");
-
-    let read = |source: DiffSource| {
-        String::from_utf8(source.read_new_side(&repo.path, "a.txt").unwrap()).unwrap()
-    };
-    assert_eq!(read(DiffSource::working_tree("main")), "on disk\n");
-    assert_eq!(read(DiffSource::commit(&root.to_string())), "committed\n");
-    assert!(
-        DiffSource::commit(&root.to_string())
-            .read_new_side(&repo.path, "missing.txt")
-            .is_err()
-    );
-}
-
 fn dir_rows(ds: &DiffState) -> Vec<(String, usize)> {
     ds.display_list
         .iter()
@@ -898,14 +830,14 @@ fn 子が1つだけの階層は1行に畳まれる() {
 #[test]
 fn 畳んだ行の折りたたみはその単位で効く() {
     let mut ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
-    let idx = ds
-        .display_list
-        .iter()
-        .position(
-            |e| matches!(e, DiffListEntry::Directory { path, .. } if path == "crates/core/src"),
-        )
-        .expect("畳んだ行のパスは最深のもの");
-    ds.collapse_section(idx);
+    assert!(
+        ds.display_list.iter().any(
+            |e| matches!(e, DiffListEntry::Directory { path, .. } if path == "crates/core/src")
+        ),
+        "畳んだ行のパスは最深のもの"
+    );
+    ds.collapsed_dirs.insert("crates/core/src".to_string());
+    ds.rebuild_display_list();
     assert!(ds.display_index_for_path("crates/core/src/a.rs").is_none());
     assert!(ds.display_index_for_path("crates/tui/src/b.rs").is_some());
 }

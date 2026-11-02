@@ -4,7 +4,7 @@ use conductor_core::keymap::Action;
 use conductor_core::review_store::ReviewComment;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{H_STEP, HALF_PAGE, ViewerPanel, diff, search};
+use super::{H_STEP, HALF_PAGE, ViewerPanel};
 use crate::comment_list::flip_status;
 use crate::effect::Effect;
 use crate::modal::{CommentEditor, Modal, Prompt};
@@ -84,12 +84,9 @@ impl ViewerPanel {
         match action {
             Action::ExitToExplorer => {
                 if self.nav.hover.take().is_some() {
-                    // 出ているポップアップが先。畳む前に diff を抜けると、
-                    // 見えているものと esc の意味がずれる。
+                    // 出ているポップアップが先。
                 } else if !self.selection.is_empty() {
                     self.selection.clear();
-                } else if self.diff.active {
-                    self.diff.clear();
                 } else {
                     return Some(vec![Effect::Focus(Focus::Explorer)]);
                 }
@@ -112,11 +109,7 @@ impl ViewerPanel {
         if self.common_key(action) {
             return Some(Vec::new());
         }
-        if self.diff.active {
-            self.diff_key(action)
-        } else {
-            self.file_key(action)
-        }
+        self.file_key(action)
     }
 
     /// レンダリング表示のキー。
@@ -142,7 +135,6 @@ impl ViewerPanel {
         Some(Vec::new())
     }
 
-    /// レビューコメントのキー。素の本文と diff のどちらでも同じ意味になる。
     fn comment_key(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         let review = ctx.review;
         if !matches!(
@@ -205,24 +197,18 @@ impl ViewerPanel {
         ))]
     }
 
-    /// コメントを付ける行 (1 始まり)。削除行のように新ファイル側の行番号を持たない
-    /// 位置は None — コメントのキーは新ファイル側の行番号なので、置き場所が無い。
+    /// コメントを付ける行 (1 始まり)。本文が無ければ None。
     pub(super) fn comment_line(&self) -> Option<usize> {
-        if !self.diff.active {
-            return (!self.content.lines.is_empty()).then(|| self.scroll.line + 1);
-        }
-        self.diff.entries.get(self.scroll.diff)?.new_line_no()
+        (!self.content.lines.is_empty()).then(|| self.scroll.line + 1)
     }
 
     fn comment_range(&self, line: usize) -> (u32, Option<u32>) {
         match self.selection.range() {
-            Some((start, end)) if !self.diff.active => (start as u32, Some(end as u32)),
+            Some((start, end)) => (start as u32, Some(end as u32)),
             _ => (line as u32, None),
         }
     }
 
-    /// 素の本文と diff のどちらで見ていても同じ意味になるキー。片方に足し忘れると
-    /// 「diff では効くが本文では効かない」が静かに出る。
     fn common_key(&mut self, action: Action) -> bool {
         match action {
             Action::NextSearchMatch => {
@@ -256,52 +242,6 @@ impl ViewerPanel {
             }
             Action::FoldPrefix => self.pending_fold = true,
             _ => return None,
-        }
-        Some(Vec::new())
-    }
-
-    fn diff_key(&mut self, action: Action) -> Option<Vec<Effect>> {
-        let last = self.diff.entries.len().saturating_sub(1);
-        match action {
-            Action::NavigateDown => self.scroll.diff = (self.scroll.diff + 1).min(last),
-            Action::NavigateUp => self.scroll.diff = self.scroll.diff.saturating_sub(1),
-            Action::ScrollHalfPageDown => {
-                self.scroll.diff = (self.scroll.diff + HALF_PAGE as usize).min(last);
-            }
-            Action::ScrollHalfPageUp => {
-                self.scroll.diff = self.scroll.diff.saturating_sub(HALF_PAGE as usize);
-            }
-            Action::GoToTop => self.scroll.diff = 0,
-            Action::GoToBottom => self.scroll.diff = last,
-            Action::NextHunk => {
-                if let Some(idx) = diff::next_block(&self.diff.entries, self.scroll.diff) {
-                    self.scroll.diff = idx;
-                }
-            }
-            Action::PrevHunk => {
-                if let Some(idx) = diff::prev_block(&self.diff.entries, self.scroll.diff) {
-                    self.scroll.diff = idx;
-                }
-            }
-            Action::ExpandContext | Action::ExpandAllContext => {
-                let all = action == Action::ExpandAllContext;
-                let height = (self.body.height as usize).max(1);
-                if let Some(idx) = self.diff.visible_expandable(self.scroll.diff, height) {
-                    self.diff.expand(idx, all, &self.content.lines);
-                }
-            }
-            Action::ToggleDiffView => self.diff.side_by_side = !self.diff.side_by_side,
-            Action::NextChangedFile => return Some(vec![Effect::StepChangedFile(1)]),
-            Action::PrevChangedFile => return Some(vec![Effect::StepChangedFile(-1)]),
-            Action::ToggleViewed => {
-                let path = self.content.path.clone()?;
-                return Some(vec![Effect::ToggleViewed(path)]);
-            }
-            _ => return None,
-        }
-        // diff を歩いた結果を素の本文側のカーソルへ写す。検索は本文の行で数える。
-        if let Some(line) = search::file_line_at(&self.diff.entries, self.scroll.diff) {
-            self.scroll.line = line;
         }
         Some(Vec::new())
     }

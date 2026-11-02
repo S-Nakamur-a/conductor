@@ -65,14 +65,6 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
         Focus::Explorer => &[
             ("Explorer \u{2014} file tree", KeyContext::Explorer),
             (
-                "Explorer \u{2014} Git Changes",
-                KeyContext::ExplorerDiffList,
-            ),
-            (
-                "Explorer \u{2014} commit log",
-                KeyContext::ExplorerCommitLog,
-            ),
-            (
                 "Explorer \u{2014} comment list",
                 KeyContext::ExplorerCommentList,
             ),
@@ -83,7 +75,6 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
         ],
         Focus::Viewer => &[
             ("Viewer", KeyContext::Viewer),
-            ("Viewer \u{2014} diff mode", KeyContext::ViewerDiffMode),
             ("Files changed (Commits: read only)", KeyContext::Changes),
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
@@ -187,7 +178,7 @@ mod tests {
         let ws = Workspace::for_test();
         let area = Rect::new(0, 0, 80, 200);
         let viewer = text(&Help::open(Focus::Viewer), &ws, area).join("\n");
-        assert!(viewer.contains("Viewer \u{2014} diff mode"));
+        assert!(viewer.contains("Files changed (Commits: read only)"));
         assert!(!viewer.contains("Explorer \u{2014} file tree"));
         // 表ではなくキーマップを引くので、案内と実挙動がずれない。
         assert!(viewer.contains("Search in file"));

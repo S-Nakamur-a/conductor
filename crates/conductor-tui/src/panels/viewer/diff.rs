@@ -103,12 +103,6 @@ impl DiffPane {
         self.active = !self.entries.is_empty();
     }
 
-    pub fn clear(&mut self) {
-        self.active = false;
-        self.entries.clear();
-        self.max_line_no = 0;
-    }
-
     /// idx の隠れた塊を開く。expand_all でなければ先頭 5 行 + 末尾 5 行だけ出し、
     /// 残りをより小さい塊として残す。開いたら true。
     pub fn expand(&mut self, idx: usize, expand_all: bool, source: &[String]) -> bool {
@@ -148,12 +142,6 @@ impl DiffPane {
         self.entries.splice(idx..=idx, replacement);
         self.recalc_max_line_no();
         true
-    }
-
-    /// 窓の中にある最初の展開できる塊。
-    pub fn visible_expandable(&self, scroll: usize, height: usize) -> Option<usize> {
-        let end = (scroll + height).min(self.entries.len());
-        (scroll..end).find(|i| matches!(self.entries[*i], Entry::ExpandableContext { .. }))
     }
 
     /// line_1 を先頭行に持つ展開できる塊の添字。
@@ -255,25 +243,6 @@ fn run(entries: &[Entry], from: usize, tag: DiffLineTag) -> std::ops::Range<usiz
         end += 1;
     }
     from..end
-}
-
-/// 変更のかたまりの先頭か。
-fn is_block_start(entries: &[Entry], idx: usize) -> bool {
-    let changed = |i: usize| {
-        matches!(
-            entries.get(i).and_then(Entry::tag),
-            Some(DiffLineTag::Insert | DiffLineTag::Delete)
-        )
-    };
-    changed(idx) && (idx == 0 || !changed(idx - 1))
-}
-
-pub fn next_block(entries: &[Entry], from: usize) -> Option<usize> {
-    (from + 1..entries.len()).find(|i| is_block_start(entries, *i))
-}
-
-pub fn prev_block(entries: &[Entry], from: usize) -> Option<usize> {
-    (0..from).rev().find(|i| is_block_start(entries, *i))
 }
 
 #[cfg(test)]
@@ -417,21 +386,5 @@ mod tests {
             "削除の方が多ければ右が空く"
         );
         assert!(matches!(rows[3], SideRow::Span(_)));
-    }
-
-    #[test]
-    fn 変更ブロックの移動は先頭だけに止まる() {
-        let entries = vec![
-            entry(DiffLineTag::Equal, Some(1)),
-            entry(DiffLineTag::Insert, Some(2)),
-            entry(DiffLineTag::Insert, Some(3)),
-            entry(DiffLineTag::Equal, Some(4)),
-            entry(DiffLineTag::Delete, None),
-        ];
-        assert_eq!(next_block(&entries, 0), Some(1));
-        assert_eq!(next_block(&entries, 1), Some(4));
-        assert_eq!(next_block(&entries, 4), None);
-        assert_eq!(prev_block(&entries, 4), Some(1));
-        assert_eq!(prev_block(&entries, 1), None);
     }
 }

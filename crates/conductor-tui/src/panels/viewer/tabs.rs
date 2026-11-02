@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use super::{Content, DiffPane, FoldState, Scroll, Search, Selection, ViewerPanel};
+use super::{Content, FoldState, Scroll, Search, Selection, ViewerPanel};
 use crate::effect::Effect;
 
 /// タブをいつ閉じるか。
@@ -45,7 +45,6 @@ pub struct Tab {
 #[derive(Debug, Default)]
 struct Stashed {
     content: Content,
-    diff: DiffPane,
     search: Search,
     fold: FoldState,
     selection: Selection,
@@ -125,7 +124,7 @@ impl ViewerPanel {
             self.restore(idx);
         }
         let path = self.tabs[self.active].path.clone();
-        self.request(path, None, None, true)
+        self.request(path, None, true)
     }
 
     /// idx のタブを閉じる。アクティブなら右隣 (無ければ左隣) へ移り、最後の 1 枚を
@@ -151,7 +150,7 @@ impl ViewerPanel {
         self.active = idx.min(self.tabs.len() - 1);
         self.restore(self.active);
         let path = self.tabs[self.active].path.clone();
-        self.request(path, None, None, true)
+        self.request(path, None, true)
     }
 
     /// relative_path のタブを閉じる。開いていなければ None。
@@ -185,7 +184,7 @@ impl ViewerPanel {
         }
         self.restore(active);
         let path = self.tabs[active].path.clone();
-        self.request(path, None, None, true)
+        self.request(path, None, true)
     }
 
     /// preview は必ずアクティブなので、呼ぶのはフォーカスが他へ移る直前だけ。閉じたタブ
@@ -211,7 +210,6 @@ impl ViewerPanel {
             return;
         };
         self.content = view.content;
-        self.diff = view.diff;
         self.search = view.search;
         self.fold = view.fold;
         self.selection = view.selection;
@@ -224,7 +222,6 @@ impl ViewerPanel {
         self.hold_highlight();
         Stashed {
             content: std::mem::take(&mut self.content),
-            diff: std::mem::take(&mut self.diff),
             search: std::mem::take(&mut self.search),
             fold: std::mem::take(&mut self.fold),
             selection: std::mem::take(&mut self.selection),
@@ -234,9 +231,7 @@ impl ViewerPanel {
 
     /// アクティブなタブの状態を捨て、ファイル未選択の表示へ戻す。
     fn clear_active(&mut self) {
-        let side_by_side = self.diff.side_by_side;
         self.take_active();
-        self.diff.side_by_side = side_by_side;
     }
 }
 
@@ -381,10 +376,9 @@ impl ViewerPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conductor_core::config::Config;
 
     fn panel(paths: &[&str]) -> ViewerPanel {
-        let mut panel = ViewerPanel::new(&Config::default());
+        let mut panel = ViewerPanel::default();
         for path in paths {
             panel.activate_tab_for(path, TabStatus::Persistent);
         }

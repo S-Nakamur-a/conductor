@@ -275,7 +275,7 @@ impl Workspace {
             ),
             worktree: WorktreePanel::default(),
             explorer: ExplorerPanel::default(),
-            viewer: ViewerPanel::new(&config),
+            viewer: ViewerPanel::default(),
             terminal: TerminalPanel::new(&config),
         };
         let mut fx = crate::fx::Fx::default();
@@ -324,14 +324,13 @@ impl Workspace {
         }
     }
 
-    /// 1 つのパネルが 2 つの層を持つことがあるので、区画やモードは持ち主に訊く。
+    /// 1 つのパネルが 2 つの層を持つことがあるので、区画は持ち主に訊く。
     pub fn key_context(&self) -> KeyContext {
         let pages = self.center_tab() != Tab::Code;
         match self.focus {
             Focus::Explorer if pages => KeyContext::ChangesList,
             Focus::Viewer if pages => KeyContext::Changes,
             Focus::Explorer => self.panels.explorer.key_context(),
-            Focus::Viewer => self.panels.viewer.key_context(),
             focus => focus.key_context(),
         }
     }
@@ -577,11 +576,9 @@ impl Workspace {
                 skip,
                 page,
             } => self.panels.commits.accept_log(seq, &worktree, skip, page),
-            TaskResult::Tree(_)
-            | TaskResult::FileIndex { .. }
-            | TaskResult::GitStatus { .. }
-            | TaskResult::HeadLog { .. }
-            | TaskResult::CommitOverview(_) => self.panels.explorer.apply_result(result),
+            TaskResult::Tree(_) | TaskResult::FileIndex { .. } | TaskResult::GitStatus { .. } => {
+                self.panels.explorer.apply_result(result)
+            }
             TaskResult::ChangeSource {
                 root,
                 path,

@@ -189,6 +189,5 @@ of action names is `crates/conductor-core/src/keymap/action.rs`, and the built-i
 bindings they are layered over are in `default_keybinds.toml` beside it.
 
 Accepted `[keybinds.layers.<context>]` names: `fleet`, `explorer`,
-`explorer_diff_list`, `explorer_commit_log`, `explorer_comment_list`,
-`explorer_tour_stops`, `viewer`, `viewer_diff_mode`, `changes_list`, `changes`,
+`explorer_comment_list`, `explorer_tour_stops`, `viewer`, `changes_list`, `changes`,
 `terminal`, `overlay`.

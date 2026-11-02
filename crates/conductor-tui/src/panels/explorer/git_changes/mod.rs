@@ -1,51 +1,26 @@
-//! Git Changes: ある出どころ ([DiffSource]) の変更ファイル一覧と、出どころを選ぶ
-//! コミット一覧。Explorer の下区画の 1 つ。
+//! ある出どころ ([DiffSource]) の変更ファイル一覧。Explorer はこれで作業ツリーの diff を
+//! 持ち、Sessions の Git Changes はこれを描く。
 
-pub mod log;
 pub mod render;
 
 use std::path::PathBuf;
 
-use conductor_core::diff_state::{DiffListEntry, DiffSource, DiffState};
-use conductor_core::git_engine::CommitInfo;
-use conductor_core::keymap::{Action, KeyContext};
+use conductor_core::diff_state::{DiffSource, DiffState};
 
-use crate::click::ClickTracker;
 use crate::effect::Effect;
 use crate::list::{ListCursor, Viewport};
 use crate::task::Task;
 use crate::workspace::StatusLevel;
 
-use log::{CommitLog, Row};
-
-/// 下区画に出している一覧。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Listing {
-    #[default]
-    Files,
-    Log,
-}
-
 #[derive(Debug)]
 pub struct GitChanges {
     worktree: PathBuf,
-    /// 作業ツリー差分のベース。出どころを作業ツリーへ戻すときに要る。
-    base: String,
     /// いま見ている出どころ。
     source: DiffSource,
     diff: DiffState,
-    listing: Listing,
-    log: CommitLog,
     cursor: ListCursor,
     view: Viewport,
-    /// 区画の内側の左端。戻る行のどちらを押したかは列で決まる。
-    left: u16,
-    /// コミット一覧で目を通しているコミットの中身。Viewer がこれを出す。
-    preview: Option<DiffState>,
-    clicks: ClickTracker,
     loading: bool,
-    /// 作業ツリー差分が届いたら開くパス。
-    pending_open: Option<(String, Option<usize>)>,
 }
 
 impl Default for GitChanges {
@@ -59,18 +34,11 @@ impl GitChanges {
         let source = DiffSource::working_tree(base);
         Self {
             worktree,
-            base: base.to_string(),
             source: source.clone(),
             diff: DiffState::new(source),
-            listing: Listing::default(),
-            log: CommitLog::default(),
             cursor: ListCursor::default(),
-            left: 0,
-            preview: None,
             view: Viewport::default(),
-            clicks: ClickTracker::default(),
             loading: false,
-            pending_open: None,
         }
     }
 
@@ -86,21 +54,6 @@ impl GitChanges {
         self.loading
     }
 
-    pub fn listing(&self) -> Listing {
-        self.listing
-    }
-
-    pub fn log(&self) -> &CommitLog {
-        &self.log
-    }
-
-    pub fn key_context(&self) -> KeyContext {
-        match self.listing {
-            Listing::Files => KeyContext::ExplorerDiffList,
-            Listing::Log => KeyContext::ExplorerCommitLog,
-        }
-    }
-
     pub fn cursor(&self) -> ListCursor {
         self.cursor
     }
@@ -109,41 +62,19 @@ impl GitChanges {
         self.view
     }
 
-    /// view は区画全体。バナーを出すのはファイル一覧だけなので、その分は
-    /// ここで食い、コミット一覧には区画をそのまま渡す。
+    /// view は区画全体。バナーの分はここで食う。
     pub fn set_viewport(&mut self, view: Viewport) {
         let banner = self.banner_rows();
         self.view = Viewport::new(view.top + banner as u16, view.height.saturating_sub(banner));
-        self.log.set_viewport(view);
     }
 
     /// 一覧の先頭でバナーが使う行数。
     pub fn banner_rows(&self) -> usize {
-        usize::from(self.diff.error.is_some()) + usize::from(self.shows_back_row())
+        usize::from(self.diff.error.is_some())
     }
 
-    /// コミットを出どころにしているか。
-    pub fn on_commit(&self) -> bool {
-        matches!(self.source, DiffSource::Commit { .. })
-    }
-
-    /// コミットを見ている間だけ、出どころを戻す行を出す。
-    pub fn shows_back_row(&self) -> bool {
-        self.listing == Listing::Files && self.on_commit()
-    }
-
-    pub fn set_left(&mut self, left: u16) {
-        self.left = left;
-    }
-
-    /// worktree が変わった。前の worktree のコミットは新しい方に無いので出どころも戻す。
     pub fn reset(&mut self, worktree: PathBuf, base: &str) {
         *self = Self::new(worktree, base);
-    }
-
-    pub fn set_source(&mut self, source: DiffSource) -> Effect {
-        self.source = source;
-        self.reload()
     }
 
     pub fn reload(&mut self) -> Effect {
@@ -154,43 +85,8 @@ impl GitChanges {
         })
     }
 
-    pub fn show_files(&mut self) {
-        self.listing = Listing::Files;
-    }
-
-    pub fn show_log(&mut self) -> Vec<Effect> {
-        self.listing = Listing::Log;
-        vec![self.log.restart(&self.worktree)]
-    }
-
-    /// コミット一覧を見ていればファイル一覧へ戻して true。
-    pub fn leave_log(&mut self) -> bool {
-        let was_log = self.listing == Listing::Log;
-        self.listing = Listing::Files;
-        was_log
-    }
-
-    pub fn install_log(
-        &mut self,
-        skip: usize,
-        commits: Result<Vec<CommitInfo>, String>,
-    ) -> Vec<Effect> {
-        match commits {
-            Ok(commits) => {
-                // 読み込み中に動かしたカーソルは戻さない。
-                let untouched = self.log.cursor().selected() == 0;
-                self.log.install(skip, commits);
-                if skip == 0 && untouched {
-                    self.log.select_source(&self.source);
-                }
-                // 一覧に入った直後は行が無いので、届いてからここで最初の 1 件を取る。
-                self.preview_selected().into_iter().collect()
-            }
-            Err(e) => vec![Effect::Status(StatusLevel::Error, e)],
-        }
-    }
-
-    /// 届いた diff を据える。頼んだ出どころと違えば (その後に替えた) 捨てる。
+    /// 届いた diff を据える。頼んだ出どころと違えば捨てる。同じ worktree に Commits タブが
+    /// 頼んだコミットの diff も届くので、これが無いと作業ツリーの diff が上書きされる。
     pub fn install(&mut self, diff: DiffState) -> Vec<Effect> {
         if diff.source != self.source {
             return Vec::new();
@@ -206,237 +102,15 @@ impl GitChanges {
             self.cursor.place(at, self.diff.display_list.len());
         }
         self.clamp();
-        let mut effects = Vec::new();
-        if let Some(e) = self.diff.error.clone() {
-            effects.push(Effect::Status(StatusLevel::Warning, e));
-        }
-        if let Some((path, line)) = self.pending_open.take() {
-            effects.push(Effect::OpenChangedFile { path, line });
-        }
-        effects
+        self.diff
+            .error
+            .clone()
+            .map(|e| Effect::Status(StatusLevel::Warning, e))
+            .into_iter()
+            .collect()
     }
 
-    /// 中身が入れ替わっていることがあるので、窓の高さを知っているここで収め直す。
-    pub fn clamp(&mut self) {
+    fn clamp(&mut self) {
         self.cursor.clamp(self.diff.display_list.len(), self.view);
-        self.log.clamp();
-    }
-
-    pub fn update(&mut self, action: Action) -> Option<Vec<Effect>> {
-        match self.listing {
-            Listing::Files => self.files_key(action),
-            Listing::Log => self.log_key(action),
-        }
-    }
-
-    fn log_key(&mut self, action: Action) -> Option<Vec<Effect>> {
-        if self.log.navigate(action) {
-            return Some(self.preview_selected().into_iter().collect());
-        }
-        match action {
-            Action::Select => Some(self.pick(self.log.selected_row()?)),
-            _ => None,
-        }
-    }
-
-    fn pick(&mut self, row: Row) -> Vec<Effect> {
-        let (source, status) = match row {
-            Row::LoadMore => return vec![self.log.load_more(&self.worktree)],
-            Row::WorkingTree => (DiffSource::working_tree(&self.base), None),
-            Row::Commit(i) => {
-                let Some(commit) = self.log.commits().get(i) else {
-                    return Vec::new();
-                };
-                (
-                    DiffSource::commit(&commit.oid),
-                    Some(format!("{}  {}", commit.oid, commit.message)),
-                )
-            }
-        };
-        self.listing = Listing::Files;
-        let mut effects = vec![self.set_source(source)];
-        effects.extend(status.map(|s| Effect::Status(StatusLevel::Info, s)));
-        effects
-    }
-
-    fn files_key(&mut self, action: Action) -> Option<Vec<Effect>> {
-        let len = self.diff.display_list.len();
-        let row = self.cursor.selected();
-        match action {
-            Action::ToggleViewed => {
-                let path = self.diff.resolve_file(row)?.path.clone();
-                return Some(vec![Effect::ToggleViewed(path)]);
-            }
-            Action::NavigateDown => self.cursor.step(1, len, self.view),
-            Action::NavigateUp => self.cursor.step(-1, len, self.view),
-            Action::GoToTop => self.cursor.select(0, len, self.view),
-            Action::GoToBottom => self.cursor.select(usize::MAX, len, self.view),
-            Action::CollapseOrLeft => self.diff.collapse_section(row),
-            Action::ExpandOrRight => self.diff.expand_section(row),
-            Action::Select => return Some(self.activate(row, false)),
-            _ => return None,
-        }
-        Some(Vec::new())
-    }
-
-    /// 行のクリック。ファイルは preview で開いて 2 回目で固定する。区画の外なら None。
-    pub fn click(&mut self, x: u16, y: u16) -> Option<Vec<Effect>> {
-        if self.shows_back_row() && Some(y) == self.view.top.checked_sub(1) {
-            let col = usize::from(x.saturating_sub(self.left));
-            return render::back_target_at(col).map(|target| self.go_back(target));
-        }
-        if self.listing == Listing::Log {
-            let row = self.log.select_at(y)?;
-            return Some(self.pick(row));
-        }
-        let len = self.diff.display_list.len();
-        let row = self.cursor.index_at(y, len, self.view)?;
-        self.cursor.select(row, len, self.view);
-        let preview = !self.clicks.is_double(row);
-        Some(self.activate(row, preview))
-    }
-
-    /// 出どころを戻す。コミットの中から一覧へ、または作業ツリーへ。
-    fn go_back(&mut self, target: render::BackTarget) -> Vec<Effect> {
-        match target {
-            render::BackTarget::Log => self.show_log(),
-            render::BackTarget::WorkingTree => {
-                let base = self.base.clone();
-                vec![self.set_source(DiffSource::working_tree(&base))]
-            }
-        }
-    }
-
-    /// 一覧で選んでいるコミットの中身を取りに行く。作業ツリーの行や読み足しの行では何もしない。
-    /// 前の結果はここで捨てる — 残すと別のコミットの中身を出したまま待つことになる。
-    fn preview_selected(&mut self) -> Option<Effect> {
-        self.preview = None;
-        let Some(Row::Commit(i)) = self.log.selected_row() else {
-            return None;
-        };
-        let oid = self.log.commits().get(i)?.oid.clone();
-        Some(Effect::Spawn(Task::CommitOverview {
-            worktree: self.worktree.clone(),
-            source: DiffSource::commit(&oid),
-        }))
-    }
-
-    /// 選んでいるコミットのものだけ残す。歩いている間に古い結果が届くため。
-    pub fn install_overview(&mut self, diff: DiffState) {
-        let wanted = match self.log.selected_row() {
-            Some(Row::Commit(i)) => self.log.commits().get(i).map(|c| c.oid.clone()),
-            _ => None,
-        };
-        let arrived = match &diff.source {
-            DiffSource::Commit { oid } => Some(oid.as_str()),
-            DiffSource::WorkingTree { .. } => None,
-        };
-        if arrived.is_some() && wanted.as_deref() == arrived {
-            self.preview = Some(diff);
-        }
-    }
-
-    /// preview と対になるコミットの見出し。
-    pub fn previewed_commit(&self) -> Option<&CommitInfo> {
-        match self.log.selected_row() {
-            Some(Row::Commit(i)) => self.log.commits().get(i),
-            _ => None,
-        }
-    }
-
-    /// Viewer が出すコミットの中身。一覧を見ていないときは無い。
-    pub fn preview(&self) -> Option<&DiffState> {
-        match self.listing {
-            Listing::Log => self.preview.as_ref(),
-            Listing::Files => None,
-        }
-    }
-
-    /// ホイール。選択は動かさず窓だけ送る。
-    pub fn scroll(&mut self, delta: isize) {
-        match self.listing {
-            Listing::Files => self
-                .cursor
-                .pan(delta, self.diff.display_list.len(), self.view),
-            Listing::Log => self.log.scroll(delta),
-        }
-    }
-
-    /// 1 行を発火させる。ディレクトリは開閉し、ファイルは diff を開く。
-    fn activate(&mut self, row: usize, preview: bool) -> Vec<Effect> {
-        match self.diff.display_list.get(row) {
-            Some(DiffListEntry::Directory { .. }) => {
-                self.diff.toggle_section(row);
-                Vec::new()
-            }
-            Some(DiffListEntry::File { .. }) => {
-                self.open_row(row, None, preview).into_iter().collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    fn open_row(&self, row: usize, line: Option<usize>, preview: bool) -> Option<Effect> {
-        let diff = self.diff.open_diff(row)?;
-        Some(Effect::OpenFile {
-            path: PathBuf::from(&diff.file.path),
-            line,
-            diff: Some(Box::new(diff)),
-            preview,
-        })
-    }
-
-    /// 一覧を 1 つ送り、その diff を開く。ディレクトリ行は飛ばす。
-    pub fn step_file(&mut self, delta: isize) -> Option<Effect> {
-        let files: Vec<usize> = self
-            .diff
-            .display_list
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| matches!(e, DiffListEntry::File { .. }))
-            .map(|(i, _)| i)
-            .collect();
-        let row = self.cursor.selected();
-        let at = files.partition_point(|&i| i < row);
-        let next = if delta > 0 {
-            *files.get(at + usize::from(files.get(at) == Some(&row)))?
-        } else {
-            *files.get(at.checked_sub(1)?)?
-        };
-        self.cursor
-            .select(next, self.diff.display_list.len(), self.view);
-        self.open_row(next, None, false)
-    }
-
-    /// コミットを見ていれば出どころを作業ツリーへ戻して読み直す。
-    pub fn return_to_working_tree(&mut self) -> Option<Effect> {
-        (!matches!(self.source, DiffSource::WorkingTree { .. }))
-            .then(|| self.set_source(DiffSource::working_tree(&self.base)))
-    }
-
-    /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
-    /// — 展開するまで表示行が無く、一覧の選択が動かせない。
-    pub fn open_path(&mut self, path: &str, line: Option<usize>) -> Option<Effect> {
-        // 外から来るパスはブランチの差分を指す。コミットを見ていれば作業ツリーへ戻し、
-        // 届いてから開き直す。
-        if let Some(reload) = self.return_to_working_tree() {
-            self.pending_open = Some((path.to_string(), line));
-            return Some(reload);
-        }
-        // worktree を移った直後は一覧が空なので、届くのを待つ。
-        let Some(path) = self.diff.resolve_changed_path(path) else {
-            if !self.loading {
-                return None;
-            }
-            self.pending_open = Some((path.to_string(), line));
-            return Some(Effect::Status(
-                StatusLevel::Info,
-                format!("Opening {path} once the diff loads\u{2026}"),
-            ));
-        };
-        let row = self.diff.reveal_path(&path)?;
-        self.cursor
-            .select(row, self.diff.display_list.len(), self.view);
-        self.open_row(row, line, false)
     }
 }

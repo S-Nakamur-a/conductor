@@ -12,7 +12,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use super::diff::{Entry, SideRow, side_by_side};
+use super::diff::{Entry, SideRow};
 use super::tabs;
 use super::thread;
 use super::{Scroll, ViewerPanel};
@@ -25,7 +25,7 @@ pub const DIVIDER: usize = 3;
 /// ガターのうち行番号が使わない列: 折りたたみマーカー(1) + 仕切り。
 /// diff 表示ではさらに +/- の 1 列と空白 1 列。
 pub const GUTTER_FIXED: usize = 1 + DIVIDER;
-pub const DIFF_SIGN: usize = 2;
+const DIFF_SIGN: usize = 2;
 
 /// 本文の上に載るタブ帯の高さ。[super::ViewerPanel::sync_layout] も同じ値を引く。
 pub const TAB_ROW: u16 = 1;
@@ -41,7 +41,7 @@ const BADGE: usize = 2;
 
 /// 実行ボタンの桁を開けるか。当たり判定 (gutter_zone) も同じ答えを読む。
 pub fn badge_width(panel: &ViewerPanel) -> usize {
-    if panel.diff.active || panel.content.runs.is_empty() {
+    if panel.content.runs.is_empty() {
         0
     } else {
         BADGE
@@ -110,20 +110,6 @@ pub fn render(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    // コミット一覧を歩いている間は、選んでいるコミットの中身をここに出す。Viewer の
-    // 本文を差し替えないのは、一覧から離れたら元の読みかけに戻るのが自然なため。
-    if let Some(diff) = ws.panels.explorer.changes.preview() {
-        let lines = commit_overview(
-            diff,
-            ws.panels.explorer.changes.previewed_commit(),
-            &ws.theme,
-            inner.width as usize,
-            inner.height as usize,
-        );
-        frame.render_widget(Paragraph::new(lines), inner);
-        return;
-    }
-
     let panel = &ws.panels.viewer;
     let strip = Rect {
         height: TAB_ROW,
@@ -175,9 +161,7 @@ fn scrollbar_extent(panel: &ViewerPanel) -> Option<(usize, usize)> {
     if panel.content.media.is_some() {
         return None;
     }
-    Some(if panel.diff.active {
-        (panel.diff.entries.len(), panel.scroll.diff)
-    } else if panel.is_showing_rendered_markdown() {
+    Some(if panel.is_showing_rendered_markdown() {
         (panel.content.rendered.len(), panel.scroll.md)
     } else {
         let total = panel.content.lines.len();
@@ -261,13 +245,11 @@ pub fn tab_row(panel: &ViewerPanel, theme: &Theme, width: u16) -> Line<'static> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Origin {
     Line(usize),
-    /// 新ファイル側の行番号を持たない diff の行。
-    Deleted,
     /// バナーや割り込んだスレッドなど、本文の行ではない行。
     Other,
 }
 
-/// 本文。素の表示と diff で行の組み方が違うだけで、窓の切り方は同じ。
+/// 本文。
 pub fn body(
     panel: &ViewerPanel,
     review: &ReviewState,
@@ -320,10 +302,7 @@ fn rows(
     width: u16,
     height: usize,
 ) -> Vec<(Line<'static>, Origin)> {
-    // 削除されたファイルは作業ツリーに無いが、diff だけで読める。
-    if let Some(error) = &panel.content.error
-        && !panel.diff.active
-    {
+    if let Some(error) = &panel.content.error {
         return unnumbered(vec![Line::styled(
             format!("  \u{26a0} {error}"),
             Style::default().fg(theme.error),
@@ -355,14 +334,7 @@ fn rows(
         .path
         .as_deref()
         .map_or_else(Vec::new, |path| review.for_file(path));
-    let mut out = unnumbered(summary_banner(panel, review, theme, width as usize));
-    let rest = height.saturating_sub(out.len());
-    out.extend(if panel.diff.active {
-        diff_body(panel, review, &comments, theme, icons, width, rest)
-    } else {
-        file_body(panel, review, &comments, theme, icons, width, rest)
-    });
-    out
+    file_body(panel, review, &comments, theme, icons, width, height)
 }
 
 fn unnumbered(lines: Vec<Line<'static>>) -> Vec<(Line<'static>, Origin)> {
@@ -398,22 +370,6 @@ fn media_body(preview: &super::media::Preview, theme: &Theme, height: usize) -> 
             lines
         }
     }
-}
-
-/// このブランチの変更サマリ。差分のときだけ出す — 素のファイルを開くたびに
-/// 本文の頭を数行奪わない。
-fn summary_banner(
-    panel: &ViewerPanel,
-    review: &ReviewState,
-    theme: &Theme,
-    width: usize,
-) -> Vec<Line<'static>> {
-    if !panel.diff.active {
-        return Vec::new();
-    }
-    review
-        .summary()
-        .map_or_else(Vec::new, |summary| summary_lines(summary, theme, width))
 }
 
 pub(crate) fn summary_lines(summary: &str, theme: &Theme, width: usize) -> Vec<Line<'static>> {
@@ -634,86 +590,6 @@ fn clip(pieces: Vec<(Style, String)>, skip: usize, width: usize) -> Vec<Span<'st
         }
     }
     out
-}
-
-fn diff_body(
-    panel: &ViewerPanel,
-    review: &ReviewState,
-    comments: &[&ReviewComment],
-    theme: &Theme,
-    icons: IconSet,
-    width: u16,
-    height: usize,
-) -> Vec<(Line<'static>, Origin)> {
-    let digits = digit_count(panel.diff.max_line_no);
-    let mark = if comments.is_empty() { 0 } else { MARK };
-    let mut out = Vec::with_capacity(height);
-    let drawn: Vec<(Line<'static>, Origin)> = if panel.diff.side_by_side {
-        side_by_side(&panel.diff.entries)
-            .iter()
-            .skip(panel.scroll.diff)
-            .map(|row| {
-                (
-                    side_line(
-                        row,
-                        theme,
-                        digits,
-                        width,
-                        panel.scroll,
-                        &panel.content.highlighted,
-                    ),
-                    Origin::Other,
-                )
-            })
-            .collect()
-    } else {
-        panel
-            .diff
-            .entries
-            .iter()
-            .skip(panel.scroll.diff)
-            .map(|entry| {
-                let mut spans = Vec::new();
-                if mark > 0 {
-                    let line_1 = entry.new_line_no().unwrap_or(0);
-                    spans.push(thread::marker(comments, line_1, theme, icons));
-                }
-                let body = unified_line(
-                    entry,
-                    theme,
-                    digits,
-                    (width as usize).saturating_sub(mark),
-                    panel.scroll.column,
-                    syntax_for(&panel.content.highlighted, entry.new_line_no()),
-                );
-                let style = body.style;
-                spans.extend(body.spans);
-                (Line::from(spans).style(style), origin_of(entry))
-            })
-            .collect()
-    };
-    for (line, origin) in drawn {
-        if out.len() >= height {
-            break;
-        }
-        out.push((line, origin));
-        if let Origin::Line(line_1) = origin {
-            out.extend(unnumbered(thread_rows(
-                panel, review, comments, line_1, theme, icons, width,
-            )));
-        }
-    }
-    out.truncate(height);
-    out
-}
-
-/// 展開できる塊のコメントの印とスレッドは先頭行に出るので、押した先も同じ行にする。
-fn origin_of(entry: &Entry) -> Origin {
-    match (entry.new_line_no(), entry) {
-        (Some(line_1), _) => Origin::Line(line_1),
-        (None, Entry::Line { .. }) => Origin::Deleted,
-        (None, _) => Origin::Other,
-    }
 }
 
 /// レビューの読み順ビューも同じ行を出すので共有する。
@@ -971,71 +847,15 @@ pub fn digit_count(n: usize) -> usize {
     n.max(1).ilog10() as usize + 1
 }
 
-/// コミット 1 つの見出しと変更ファイル。Git Changes の一覧と同じ語彙で並べる。
-fn commit_overview(
-    diff: &conductor_core::diff_state::DiffState,
-    commit: Option<&conductor_core::git_engine::CommitInfo>,
-    theme: &Theme,
-    width: usize,
-    height: usize,
-) -> Vec<Line<'static>> {
-    use crate::panels::explorer::git_changes::render::status_color;
-
-    let mut lines = Vec::with_capacity(height);
-    if let Some(c) = commit {
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!(" {} ", c.short_oid),
-                Style::default().fg(theme.info),
-            ),
-            Span::styled(c.message.clone(), Style::default().fg(theme.fg)),
-        ]));
-        lines.push(Line::styled(
-            format!(" {} \u{00b7} {}", c.author, c.time_ago),
-            Style::default().fg(theme.hint),
-        ));
-    }
-    if let Some(error) = &diff.error {
-        lines.push(Line::styled(
-            format!(" \u{26a0} {}", error.replace('\n', " ")),
-            Style::default().fg(theme.error),
-        ));
-    }
-    let added: usize = diff.files.iter().map(|f| f.added_lines).sum();
-    let deleted: usize = diff.files.iter().map(|f| f.deleted_lines).sum();
-    let count = diff.files.len();
-    let unit = if count == 1 { "file" } else { "files" };
-    lines.push(Line::styled(
-        format!(" {count} {unit}  +{added} -{deleted}"),
-        Style::default().fg(theme.hint),
-    ));
-    lines.push(Line::raw(""));
-
-    for file in diff.files.iter().take(height.saturating_sub(lines.len())) {
-        let stats = format!("+{} -{}", file.added_lines, file.deleted_lines);
-        let head = format!("  {} ", file.status.letter());
-        let room = width.saturating_sub(head.len() + stats.len() + 2);
-        let name = crate::strip::truncate_to_width(&file.path, room);
-        let used = head.len() + crate::strip::width_of(&name) as usize + stats.len();
-        lines.push(Line::from(vec![
-            Span::styled(head, Style::default().fg(status_color(theme, file.status))),
-            Span::styled(name, Style::default().fg(theme.fg)),
-            Span::raw(" ".repeat(width.saturating_sub(used + 1).max(1))),
-            Span::styled(stats, Style::default().fg(theme.hint)),
-        ]));
-    }
-    lines
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::diff::{DiffPane, side_by_side};
     use super::*;
-    use conductor_core::config::Config;
     use conductor_core::diff_state::{DiffHunk, DiffLine, FileDiff, FileStatus, InlineSegment};
     use ratatui::style::Color;
 
     fn panel(lines: &[&str]) -> ViewerPanel {
-        let mut panel = ViewerPanel::new(&Config::default());
+        let mut panel = ViewerPanel::default();
         panel.content.path = Some("a.rs".into());
         panel.content.lines = lines.iter().map(|s| s.to_string()).collect();
         panel
@@ -1076,7 +896,7 @@ mod tests {
 
     #[test]
     fn 未選択と読み込み失敗は別の行になる() {
-        let empty = ViewerPanel::new(&Config::default());
+        let empty = ViewerPanel::default();
         assert!(
             texts(&body(
                 &empty,
@@ -1106,38 +926,6 @@ mod tests {
     }
 
     #[test]
-    fn 削除されたファイルは本文が読めなくても差分が出る() {
-        let mut panel = panel(&[]);
-        panel.content.error = Some("No such file or directory".into());
-        let file_diff = FileDiff {
-            path: "a.rs".into(),
-            status: FileStatus::Modified,
-            added_lines: 0,
-            deleted_lines: 1,
-            hunks: vec![DiffHunk {
-                lines: vec![DiffLine {
-                    tag: DiffLineTag::Delete,
-                    old_line_no: Some(1),
-                    new_line_no: None,
-                    inline_segments: Vec::new(),
-                    content: "gone".into(),
-                }],
-                func_header: None,
-            }],
-        };
-        panel.diff.build(&file_diff, 0);
-        let lines = texts(&body(
-            &panel,
-            &ReviewState::default(),
-            &Theme::default(),
-            IconSet::Unicode,
-            40,
-            5,
-        ));
-        assert!(lines[0].contains("gone"), "{lines:?}");
-    }
-
-    #[test]
     fn 畳んだ行は本文から消え見出しに印が付く() {
         let source = "fn a() {\n    b();\n    c();\n}\n";
         let mut panel = panel(&["fn a() {", "    b();", "    c();", "}"]);
@@ -1159,7 +947,6 @@ mod tests {
 
     #[test]
     fn diffは符号と行番号を並べ区切りに隠れた行数を出す() {
-        let mut panel = panel(&["a", "b", "c"]);
         let file_diff = FileDiff {
             path: "a.rs".into(),
             status: FileStatus::Modified,
@@ -1194,30 +981,25 @@ mod tests {
                 func_header: None,
             }],
         };
-        panel.diff.build(&file_diff, 3);
+        let pane = built(&file_diff, 3);
+        let digits = digit_count(pane.max_line_no);
 
-        let lines = texts(&body(
-            &panel,
-            &ReviewState::default(),
-            &Theme::default(),
-            IconSet::Unicode,
-            40,
-            10,
-        ));
+        let lines: Vec<String> = pane
+            .entries
+            .iter()
+            .map(|e| unified_line(e, &Theme::default(), digits, 40, 0, None).to_string())
+            .collect();
         assert!(lines[0].contains("1 lines hidden"), "{:?}", lines[0]);
         assert!(lines[1].starts_with("-   \u{2502} old"), "{:?}", lines[1]);
         assert!(lines[2].starts_with("+ 2 \u{2502} new"), "{:?}", lines[2]);
         assert!(lines[3].contains("1 lines hidden"), "{:?}", lines[3]);
 
-        panel.diff.side_by_side = true;
-        let wide = texts(&body(
-            &panel,
-            &ReviewState::default(),
-            &Theme::default(),
-            IconSet::Unicode,
-            40,
-            10,
-        ));
+        let wide: Vec<String> = side_by_side(&pane.entries)
+            .iter()
+            .map(|row| {
+                side_line(row, &Theme::default(), digits, 40, Scroll::default(), &[]).to_string()
+            })
+            .collect();
         assert!(
             wide[1].contains("old") && wide[1].contains("new"),
             "{:?}",
@@ -1244,9 +1026,15 @@ mod tests {
         }
     }
 
-    fn diff_spans(panel: &ViewerPanel) -> Vec<Span<'static>> {
-        let entry = panel
-            .diff
+    fn built(file: &FileDiff, total: usize) -> DiffPane {
+        let mut pane = DiffPane::default();
+        pane.build(file, total);
+        pane
+    }
+
+    fn diff_spans(file: &FileDiff, highlighted: &[Vec<(Style, String)>]) -> Vec<Span<'static>> {
+        let pane = built(file, 1);
+        let entry = pane
             .entries
             .iter()
             .find(|e| e.new_line_no().is_some())
@@ -1257,21 +1045,23 @@ mod tests {
             1,
             40,
             0,
-            syntax_for(&panel.content.highlighted, entry.new_line_no()),
+            syntax_for(highlighted, entry.new_line_no()),
         )
         .spans
     }
 
     #[test]
     fn 構文トークンがあれば追加行は単色にならない() {
-        let mut panel = panel(&["let x = 1;"]);
-        panel.content.highlighted = vec![vec![
+        let highlighted = vec![vec![
             (Style::default().fg(Color::Red), "let ".to_string()),
             (Style::default().fg(Color::Blue), "x = 1;".to_string()),
         ]];
-        panel.diff.build(&insert_only("let x = 1;", Vec::new()), 1);
+        let file = insert_only("let x = 1;", Vec::new());
 
-        let body: Vec<_> = diff_spans(&panel).into_iter().skip(1).collect();
+        let body: Vec<_> = diff_spans(&file, &highlighted)
+            .into_iter()
+            .skip(1)
+            .collect();
         assert_eq!(
             body.iter().map(|s| s.style.fg).collect::<Vec<_>>(),
             [Some(Color::Red), Some(Color::Blue)]
@@ -1280,12 +1070,13 @@ mod tests {
 
     #[test]
     fn 本文が食い違えば単色に落ちる() {
-        let mut panel = panel(&["let x = 1;"]);
-        panel.content.highlighted =
-            vec![vec![(Style::default().fg(Color::Red), "other".to_string())]];
-        panel.diff.build(&insert_only("let x = 1;", Vec::new()), 1);
+        let highlighted = vec![vec![(Style::default().fg(Color::Red), "other".to_string())]];
+        let file = insert_only("let x = 1;", Vec::new());
 
-        let body: Vec<_> = diff_spans(&panel).into_iter().skip(1).collect();
+        let body: Vec<_> = diff_spans(&file, &highlighted)
+            .into_iter()
+            .skip(1)
+            .collect();
         assert_eq!(body.len(), 1);
         assert_eq!(body[0].style.fg, Some(Theme::default().diff_add));
     }
@@ -1341,8 +1132,8 @@ mod tests {
     }
 
     #[test]
-    fn 変更サマリは差分のときだけ本文の上に出る() {
-        let mut panel = panel(&["a"]);
+    fn 変更サマリは素の本文には出ず見出しの下に並ぶ() {
+        let panel = panel(&["a"]);
         let mut review = ReviewState::default();
         review.install(Ok(crate::review::Snapshot {
             summary: Some("rewrote the parser".into()),
@@ -1354,26 +1145,7 @@ mod tests {
                 .any(|l| l.contains("rewrote")),
         );
 
-        panel.diff.build(
-            &FileDiff {
-                path: "a.rs".into(),
-                status: FileStatus::Modified,
-                added_lines: 1,
-                deleted_lines: 0,
-                hunks: vec![DiffHunk {
-                    lines: vec![DiffLine {
-                        tag: DiffLineTag::Insert,
-                        old_line_no: None,
-                        new_line_no: Some(1),
-                        inline_segments: Vec::new(),
-                        content: "a".into(),
-                    }],
-                    func_header: None,
-                }],
-            },
-            1,
-        );
-        let lines = render_body(&panel, &review, 10);
+        let lines = texts(&summary_lines("rewrote the parser", &Theme::default(), 40));
         assert!(lines[0].contains("branch summary"), "{:?}", lines[0]);
         assert!(lines[1].contains("rewrote the parser"), "{:?}", lines[1]);
     }
@@ -1389,7 +1161,7 @@ mod tests {
         assert!(row.to_string().contains("name.rs"));
         assert!(row.to_string().contains('\u{2026}'), "{row}");
 
-        let empty = ViewerPanel::new(&Config::default());
+        let empty = ViewerPanel::default();
         assert_eq!(
             tab_row(&empty, &Theme::default(), 40).to_string(),
             "no file open"

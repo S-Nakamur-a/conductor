@@ -120,17 +120,6 @@ pub enum Task {
         worktree: PathBuf,
         source: DiffSource,
     },
-    /// コミット一覧で目を通しているコミットの中身。開くのではなく見せるだけなので、
-    /// 結果は Git Changes を差し替えず preview として持つ。
-    CommitOverview {
-        worktree: PathBuf,
-        source: DiffSource,
-    },
-    HeadLog {
-        worktree: PathBuf,
-        skip: usize,
-        limit: usize,
-    },
     /// Commits タブの一覧。seq は読み直すたびに上がり、古い頁を見分ける。
     RangeLog {
         seq: u64,
@@ -146,7 +135,6 @@ pub enum Task {
         root: PathBuf,
         path: String,
         seq: u64,
-        diff_of: Option<DiffSource>,
     },
     /// Files changed の 1 ファイルの本文 (作業ツリー)。generation で照合する。
     LoadChangeSource {
@@ -451,13 +439,6 @@ pub enum TaskResult {
         root: PathBuf,
         diff: Box<DiffState>,
     },
-    /// どのコミットの結果かは DiffState の source が持つ。
-    CommitOverview(Box<DiffState>),
-    /// `skip` は log 側の照合用にそのまま返す。
-    HeadLog {
-        skip: usize,
-        commits: Result<Vec<CommitInfo>, String>,
-    },
     RangeLog {
         seq: u64,
         worktree: PathBuf,
@@ -703,31 +684,6 @@ impl Task {
                     |(root, diff)| TaskResult::Diff { root, diff },
                 );
             }
-            Task::CommitOverview { worktree, source } => {
-                svc.spawn(
-                    move || {
-                        let mut diff = DiffState::new(source);
-                        diff.load(&worktree, env.word_diff, env.tab_width);
-                        Box::new(diff)
-                    },
-                    TaskResult::CommitOverview,
-                );
-            }
-            Task::HeadLog {
-                worktree,
-                skip,
-                limit,
-            } => {
-                svc.spawn(
-                    move || {
-                        let commits = GitEngine::open(&worktree)
-                            .and_then(|git| git.head_log(skip, limit))
-                            .map_err(|e| format!("{e:#}"));
-                        (skip, commits)
-                    },
-                    |(skip, commits)| TaskResult::HeadLog { skip, commits },
-                );
-            }
             Task::RangeLog {
                 seq,
                 worktree,
@@ -773,22 +729,9 @@ impl Task {
                     },
                 );
             }
-            Task::LoadFile {
-                root,
-                path,
-                seq,
-                diff_of,
-            } => {
+            Task::LoadFile { root, path, seq } => {
                 svc.spawn(
-                    move || {
-                        let loaded = match diff_of {
-                            Some(source) => {
-                                content::read_new_side(&root, &path, &source, env.tab_width)
-                            }
-                            None => content::read(&root, &path, env.tab_width),
-                        };
-                        (seq, loaded)
-                    },
+                    move || (seq, content::read(&root, &path, env.tab_width)),
                     |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
                 );
             }

@@ -108,13 +108,6 @@ pub struct FileDiff {
     pub hunks: Vec<DiffHunk>,
 }
 
-/// Viewer が差分として開く 1 ファイル。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenDiff {
-    pub source: DiffSource,
-    pub file: FileDiff,
-}
-
 #[derive(Debug, Clone)]
 pub struct DiffState {
     /// パス順。

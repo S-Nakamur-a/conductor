@@ -23,7 +23,7 @@ use crate::workspace::{Focus, Workspace};
 use super::TerminalPanel;
 
 /// 枠だけを除いた PTY のグリッド。一覧の右と左下のシェルはセッションタブを持たない。
-pub fn editor_area(panel: Rect) -> Rect {
+pub fn pty_area(panel: Rect) -> Rect {
     panel.inner(Margin::new(1, 1))
 }
 
@@ -209,7 +209,7 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
 /// 一覧の右に映す、この窓のセッション。
 pub fn fleet(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str) {
     if let Some(reflow) = ws.panels.terminal.transcript_of(Some(session)) {
-        let body = editor_area(rect);
+        let body = pty_area(rect);
         super::reflow::render(frame, body, reflow);
         let (total, at) = reflow.extent();
         crate::render::border_scrollbar(frame, rect, body, total, at);
@@ -237,7 +237,7 @@ pub fn fleet_shell(frame: &mut Frame, rect: Rect, ws: &Workspace, session: &str)
 /// タブ行もスクロールバックも無く、PTY のグリッドだけ。
 fn grid(frame: &mut Frame, rect: Rect, ws: &Workspace, session: Option<&str>, focused: bool) {
     let panel = &ws.panels.terminal;
-    let content = editor_area(rect);
+    let content = pty_area(rect);
     if content.width == 0 || content.height == 0 {
         return;
     }

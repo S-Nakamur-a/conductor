@@ -38,9 +38,6 @@ pub struct TourStops {
     view: Viewport,
     /// 畳んだ停留所。既定は開いているので、覚えるのは裏返した方だけ。
     collapsed: HashSet<usize>,
-    /// 末尾に連結した「誰も説明していない変更」の位置。台本の停留所ではないので、
-    /// ここだけは差分として開く。
-    coverage: Option<usize>,
     misplaced: HashSet<(usize, usize)>,
     /// 語りを折り返す桁数。行数が幅で変わるので、当たり判定と同じ値を使う。
     narration_width: usize,
@@ -74,7 +71,6 @@ impl TourStops {
     /// 台本を読み直す。開く操作のたびに読むので、外で書き換えられた台本が古いまま
     /// 残らない。
     pub fn load(&mut self, worktree: &Path, changed: &[FileDiff]) {
-        self.coverage = None;
         self.misplaced.clear();
         match tour::load(worktree) {
             tour::Outcome::Missing => {
@@ -83,7 +79,7 @@ impl TourStops {
             }
             tour::Outcome::Loaded(mut tour) => {
                 // 検証するのは台本が書いた分だけ。網羅性の車両の場所は diff から計算した
-                // ものなので作り話にならず、コミットの diff なら作業ツリーの行数と食い違う。
+                // ものなので作り話にならない。
                 self.misplaced = tour::misplaced(&tour, worktree).into_iter().collect();
                 self.append_coverage(&mut tour, changed);
                 self.tour = Some(tour);
@@ -104,10 +100,9 @@ impl TourStops {
         if missed.is_empty() {
             return;
         }
-        self.coverage = Some(tour.stops.len());
         tour.stops.push(Stop {
             title: format!("誰も説明していない変更 ({})", missed.len()),
-            narration: "台本が触れていない。差分として開く。".to_string(),
+            narration: "台本が触れていない。ファイルをその行で開く。".to_string(),
             places: missed,
         });
     }
@@ -205,16 +200,9 @@ impl TourStops {
             (Side::New, false) => place.start.map(|n| n as usize),
             _ => None,
         };
-        if self.coverage == Some(stop_of(row)) {
-            return Some(Effect::OpenChangedFile {
-                path: place.path.clone(),
-                line,
-            });
-        }
         Some(Effect::OpenFile {
             path: place.path.clone().into(),
             line,
-            diff: None,
             preview,
         })
     }
@@ -627,9 +615,8 @@ mod tests {
     }
 
     #[test]
-    fn 説明されていない変更は末尾の停留所になり差分として開く() {
+    fn 説明されていない変更は末尾の停留所になりenterで素のファイルをその行で固定して開く() {
         let mut stops = with_changes(&[changed("wild.rs", Side::New, 7)]);
-
         let last = stops.tour().unwrap().stops.last().unwrap();
         assert!(last.title.contains("誰も説明していない"), "{}", last.title);
         assert_eq!(
@@ -644,22 +631,58 @@ mod tests {
 
         stops.update(Action::GoToBottom);
         let effects = stops.update(Action::Select).unwrap();
-        let [Effect::OpenChangedFile { path, line }, ..] = effects.as_slice() else {
-            panic!("差分として開かない: {effects:?}");
+        let [
+            Effect::OpenFile {
+                path,
+                line,
+                preview,
+                ..
+            },
+            ..,
+        ] = effects.as_slice()
+        else {
+            panic!("素のファイルとして開かない: {effects:?}");
         };
-        assert_eq!((path.as_str(), *line), ("wild.rs", Some(7)));
+        assert_eq!(
+            (path.to_str(), *line, *preview),
+            (Some("wild.rs"), Some(7), false)
+        );
     }
 
     #[test]
-    fn 削除行の停留所は行を渡さずラベルに削除と出す() {
-        let mut stops = with_changes(&[changed("gone.rs", Side::Old, 42)]);
-
-        stops.update(Action::GoToBottom);
-        let effects = stops.update(Action::Select).unwrap();
-        let [Effect::OpenChangedFile { path, line }, ..] = effects.as_slice() else {
-            panic!("差分として開かない: {effects:?}");
+    fn 説明されていない変更へ移るだけならpreviewで開きキーボードは一覧に残る() {
+        let mut stops = with_changes(&[changed("wild.rs", Side::New, 7)]);
+        let effects = stops.update(Action::GoToBottom).unwrap();
+        let [Effect::OpenFile { preview, .. }, ..] = effects.as_slice() else {
+            panic!("素のファイルとして開かない: {effects:?}");
         };
-        assert_eq!((path.as_str(), *line), ("gone.rs", None));
+        assert!(*preview);
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::Focus(_))),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 説明されていない変更の語りは差分として開くと言わない() {
+        let stops = with_changes(&[changed("wild.rs", Side::New, 7)]);
+        let last = stops.tour().unwrap().stops.last().unwrap();
+        assert_eq!(
+            last.narration,
+            "台本が触れていない。ファイルをその行で開く。"
+        );
+    }
+
+    #[test]
+    fn 削除行とバイナリの停留所は素のファイルを行なしで開きラベルに削除と出す() {
+        let binary = FileDiff {
+            path: "logo.png".into(),
+            status: conductor_core::diff_state::FileStatus::Modified,
+            added_lines: 0,
+            deleted_lines: 0,
+            hunks: Vec::new(),
+        };
+        let mut stops = with_changes(&[changed("gone.rs", Side::Old, 42), binary]);
 
         let rendered: Vec<String> = lines(&stops, &Theme::default(), IconSet::Unicode, 40, true)
             .iter()
@@ -669,6 +692,16 @@ mod tests {
             rendered.iter().any(|row| row.contains("gone.rs:L42 削除")),
             "{rendered:?}"
         );
+
+        stops.update(Action::GoToBottom);
+        for want in ["logo.png", "gone.rs"] {
+            let effects = stops.update(Action::Select).unwrap();
+            let [Effect::OpenFile { path, line, .. }, ..] = effects.as_slice() else {
+                panic!("素のファイルとして開かない: {effects:?}");
+            };
+            assert_eq!((path.to_str(), *line), (Some(want), None));
+            stops.update(Action::NavigateUp);
+        }
     }
 
     #[test]

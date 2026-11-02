@@ -1,5 +1,4 @@
 use super::*;
-use conductor_core::diff_state::{DiffSource, FileDiff, FileStatus};
 use conductor_core::keymap::Action;
 use conductor_core::review_store::ReviewComment;
 use conductor_svc::Services;
@@ -42,7 +41,7 @@ impl Harness {
     }
 
     fn open(&mut self, path: &str) {
-        let effects = self.viewer().open(Path::new(path), None, None, false);
+        let effects = self.viewer().open(Path::new(path), None, false);
         self.run(effects);
     }
 
@@ -52,7 +51,7 @@ impl Harness {
     }
 
     fn peek(&mut self, path: &str) {
-        let effects = self.viewer().open(Path::new(path), None, None, true);
+        let effects = self.viewer().open(Path::new(path), None, true);
         self.run(effects);
     }
 
@@ -153,7 +152,7 @@ fn ファイルを開くとツリーを追従させるeffectが出る() {
     let dir = fixture(&[("a.txt", "A\n")]);
     let mut h = Harness::at(dir.path());
 
-    let effects = h.viewer().open(Path::new("a.txt"), None, None, false);
+    let effects = h.viewer().open(Path::new("a.txt"), None, false);
     let reveal = effects.iter().find_map(|e| match e {
         Effect::RevealInTree(path) => Some(path.as_str()),
         _ => None,
@@ -275,7 +274,7 @@ fn 読み込み中にworktreeを移っても前のファイルは出ない() {
     let a = fixture(&[("a.txt", "A\n")]);
     let b = fixture(&[]);
     let mut h = Harness::at(a.path());
-    let effects = h.viewer().open(Path::new("a.txt"), None, None, false);
+    let effects = h.viewer().open(Path::new("a.txt"), None, false);
     apply(&mut h.ws, &mut h.svc, effects);
 
     h.switch_root(b.path());
@@ -379,48 +378,6 @@ fn 貯める数を超えたら古いファイルの分は捨てる() {
         h.ws.panels.viewer.content.highlighted[0][0].1, "MARK",
         "押し出されずに残っている"
     );
-}
-
-#[test]
-fn diffを添えて開くと差分になりescで素の本文へ戻る() {
-    let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
-    let mut h = Harness::at(dir.path());
-    let file_diff = FileDiff {
-        path: "a.txt".into(),
-        status: FileStatus::Modified,
-        added_lines: 1,
-        deleted_lines: 0,
-        hunks: vec![conductor_core::diff_state::DiffHunk {
-            lines: vec![conductor_core::diff_state::DiffLine {
-                tag: conductor_core::diff_state::DiffLineTag::Insert,
-                old_line_no: None,
-                new_line_no: Some(2),
-                inline_segments: Vec::new(),
-                content: "two".into(),
-            }],
-            func_header: None,
-        }],
-    };
-    let effects = h.viewer().open(
-        Path::new("a.txt"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-
-    assert!(h.ws.panels.viewer.diff.active);
-    assert_eq!(h.ws.key_context(), KeyContext::ViewerDiffMode);
-    h.act(Action::ExitToExplorer);
-    assert!(
-        !h.ws.panels.viewer.diff.active,
-        "esc は先に diff から抜ける"
-    );
-    assert_eq!(h.ws.key_context(), KeyContext::Viewer);
-    assert_eq!(h.body(), ["one", "two", "three"]);
 }
 
 #[test]
@@ -645,170 +602,7 @@ fn 開いたスレッドの下の行を押すとその行が対象になる() {
 }
 
 #[test]
-fn 差分では符号と行番号を外し左右に割ると桁を絞らない() {
-    let dir = fixture(&[("a.txt", "one\n")]);
-    let mut h = Harness::at(dir.path());
-    let file_diff = FileDiff {
-        path: "a.txt".into(),
-        status: FileStatus::Modified,
-        added_lines: 1,
-        deleted_lines: 0,
-        hunks: vec![conductor_core::diff_state::DiffHunk {
-            lines: vec![conductor_core::diff_state::DiffLine {
-                tag: conductor_core::diff_state::DiffLineTag::Insert,
-                old_line_no: None,
-                new_line_no: Some(1),
-                inline_segments: Vec::new(),
-                content: "one".into(),
-            }],
-            func_header: None,
-        }],
-    };
-    let effects = h.viewer().open(
-        Path::new("a.txt"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
-
-    assert_eq!(h.code_columns(5, 10), None, "符号と行番号と仕切り");
-    assert_eq!(h.code_columns(6, 10), Some((6, 39)), "本文の 1 桁目");
-
-    h.viewer().diff.side_by_side = true;
-    assert_eq!(h.code_columns(6, 10), None, "ガターが 2 本ある");
-}
-
-/// 差分を読みながらコメントを付けるのが主な使い方。
-#[test]
-fn 差分表示でもガターから作成でき削除行では断る() {
-    let dir = fixture(&[("a.txt", "one\n")]);
-    let mut h = Harness::at(dir.path());
-    let file_diff = FileDiff {
-        path: "a.txt".into(),
-        status: FileStatus::Modified,
-        added_lines: 1,
-        deleted_lines: 1,
-        hunks: vec![conductor_core::diff_state::DiffHunk {
-            lines: vec![
-                conductor_core::diff_state::DiffLine {
-                    tag: conductor_core::diff_state::DiffLineTag::Delete,
-                    old_line_no: Some(1),
-                    new_line_no: None,
-                    inline_segments: Vec::new(),
-                    content: "gone".into(),
-                },
-                conductor_core::diff_state::DiffLine {
-                    tag: conductor_core::diff_state::DiffLineTag::Insert,
-                    old_line_no: None,
-                    new_line_no: Some(1),
-                    inline_segments: Vec::new(),
-                    content: "one".into(),
-                },
-            ],
-            func_header: None,
-        }],
-    };
-    let effects = h.viewer().open(
-        Path::new("a.txt"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
-
-    let effects = h.click(2, 11, false);
-    let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
-        panic!("{effects:?}");
-    };
-    assert!(
-        matches!(
-            editor.target,
-            crate::modal::EditTarget::New { line_start: 1, .. }
-        ),
-        "{:?}",
-        editor.target
-    );
-
-    let effects = h.click(2, 10, false);
-    assert!(
-        matches!(
-            effects.as_slice(),
-            [Effect::Status(StatusLevel::Warning, _)]
-        ),
-        "{effects:?}"
-    );
-    assert!(h.click(20, 10, false).is_empty(), "本文の桁は断らない");
-}
-
-#[test]
-fn 差分の隠れた塊を押すと展開される() {
-    let dir = fixture(&[("a.txt", "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")]);
-    let mut h = Harness::at(dir.path());
-    let line = |no| conductor_core::diff_state::DiffLine {
-        tag: conductor_core::diff_state::DiffLineTag::Equal,
-        old_line_no: Some(no),
-        new_line_no: Some(no),
-        inline_segments: Vec::new(),
-        content: "".into(),
-    };
-    let file_diff = FileDiff {
-        path: "a.txt".into(),
-        status: FileStatus::Modified,
-        added_lines: 0,
-        deleted_lines: 0,
-        hunks: vec![
-            conductor_core::diff_state::DiffHunk {
-                lines: vec![line(1)],
-                func_header: None,
-            },
-            conductor_core::diff_state::DiffHunk {
-                lines: vec![line(7)],
-                func_header: None,
-            },
-        ],
-    };
-    let effects = h.viewer().open(
-        Path::new("a.txt"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
-    assert!(matches!(
-        h.ws.panels.viewer.diff.entries[1],
-        diff::Entry::ExpandableContext { .. }
-    ));
-
-    let effects = h.click(20, 11, false);
-    assert!(effects.is_empty(), "コメント作成には行かない: {effects:?}");
-    assert!(
-        !h.ws
-            .panels
-            .viewer
-            .diff
-            .entries
-            .iter()
-            .any(|e| matches!(e, diff::Entry::ExpandableContext { .. })),
-        "{:?}",
-        h.ws.panels.viewer.diff.entries
-    );
-}
-
-#[test]
-fn ホイールは畳みを跨いで送り差分では行ではなくエントリを送る() {
+fn ホイールは畳みを跨いで送る() {
     let dir = fixture(&[("a.rs", "fn a() {\n    b();\n    c();\n}\nfn d() {}\n")]);
     let mut h = Harness::at(dir.path());
     h.open("a.rs");
@@ -876,57 +670,6 @@ fn cは選択の範囲をそのままコメントのアンカーにする() {
     assert!(
         h.ws.panels.viewer.selection.is_empty(),
         "書き始めたら選択は畳む"
-    );
-}
-
-/// コメントの座標は新ファイル側の行番号なので、削除行には置き場所が無い。
-#[test]
-fn 削除行ではコメントを始められない() {
-    let dir = fixture(&[("a.txt", "one\n")]);
-    let mut h = Harness::at(dir.path());
-    let file_diff = FileDiff {
-        path: "a.txt".into(),
-        status: FileStatus::Modified,
-        added_lines: 0,
-        deleted_lines: 1,
-        hunks: vec![conductor_core::diff_state::DiffHunk {
-            lines: vec![conductor_core::diff_state::DiffLine {
-                tag: conductor_core::diff_state::DiffLineTag::Delete,
-                old_line_no: Some(1),
-                new_line_no: None,
-                inline_segments: Vec::new(),
-                content: "gone".into(),
-            }],
-            func_header: None,
-        }],
-    };
-    let effects = h.viewer().open(
-        Path::new("a.txt"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-    h.ws.focus = Focus::Viewer;
-
-    let entry = h.ws.panels.viewer.diff.entries.iter().position(|e| {
-        matches!(
-            e,
-            diff::Entry::Line {
-                new_line_no: None,
-                ..
-            }
-        )
-    });
-    h.viewer().scroll.diff = entry.expect("削除行");
-    assert_eq!(h.ws.panels.viewer.comment_line(), None);
-    let effects = h.ws.dispatch(Action::AddComment).unwrap();
-    assert!(
-        matches!(effects.as_slice(), [Effect::Status(..)]),
-        "{effects:?}"
     );
 }
 
@@ -1059,8 +802,6 @@ fn 切り替えはスクロールを戻し行の選択を畳む() {
     assert_eq!(h.ws.panels.viewer.scroll.md, 0, "戻るときも先頭から");
 }
 
-/// unified diff は本文を組み直すと +/- の構造が壊れ、markdown でないファイルには
-/// そもそも意味が無い。描画のトグルとキーの両方がこの 1 つの述語を読む。
 #[test]
 fn レンダリング表示は素のmarkdownファイルに限る() {
     let dir = fixture(&[("notes.md", NOTES), ("a.txt", "plain\n")]);
@@ -1075,37 +816,6 @@ fn レンダリング表示は素のmarkdownファイルに限る() {
     h.open("notes.md");
     h.act(Action::ToggleMarkdownRender);
     assert!(h.ws.panels.viewer.is_showing_rendered_markdown());
-
-    let file_diff = FileDiff {
-        path: "notes.md".into(),
-        status: FileStatus::Modified,
-        added_lines: 1,
-        deleted_lines: 0,
-        hunks: vec![conductor_core::diff_state::DiffHunk {
-            lines: vec![conductor_core::diff_state::DiffLine {
-                tag: conductor_core::diff_state::DiffLineTag::Insert,
-                old_line_no: None,
-                new_line_no: Some(1),
-                inline_segments: Vec::new(),
-                content: "# Title".into(),
-            }],
-            func_header: None,
-        }],
-    };
-    let effects = h.viewer().open(
-        Path::new("notes.md"),
-        None,
-        Some(Box::new(OpenDiff {
-            source: DiffSource::working_tree("main"),
-            file: file_diff,
-        })),
-        false,
-    );
-    h.run(effects);
-    assert!(
-        !h.ws.panels.viewer.is_showing_rendered_markdown(),
-        "差分では畳む"
-    );
 }
 
 /// 押した行のテストだけを走らせる。コマンドはシェルへ送るので、Viewer は

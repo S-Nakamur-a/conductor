@@ -1,4 +1,4 @@
-//! Git Changes の描画。行は純関数が組む。
+//! 変更ファイル一覧の描画。行は純関数が組む。
 
 use conductor_core::config::Config;
 use conductor_core::diff_state::{DiffListEntry, DiffSource, FileDiff, FileStatus, short_oid};
@@ -9,16 +9,12 @@ use conductor_core::theme::Theme;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use super::log::Row;
-use super::{GitChanges, Listing};
+use super::GitChanges;
 use crate::list::row_line;
 use crate::review::ReviewState;
 use crate::strip::{truncate_to_width, width_of};
 
 pub fn title(changes: &GitChanges) -> String {
-    if changes.listing() == Listing::Log {
-        return format!(" Git Changes: commits ({}) ", changes.log().commits().len());
-    }
     let diff = changes.diff();
     let source = match (changes.source(), &diff.head) {
         (DiffSource::WorkingTree { .. }, Some(head)) => format!("{} ", short_oid(head)),
@@ -49,37 +45,6 @@ pub struct Area {
     pub height: usize,
 }
 
-/// 戻る行の行き先。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackTarget {
-    Log,
-    WorkingTree,
-}
-
-const BACK_INDENT: usize = 2;
-const BACK_GAP: usize = 3;
-const TO_LOG: &str = "< commits";
-const TO_TREE: &str = "< working tree";
-
-/// 区画内側の列 x が指す行き先。描画とクリックがこの 1 つの定義を読む。
-pub fn back_target_at(x: usize) -> Option<BackTarget> {
-    let log = BACK_INDENT..BACK_INDENT + TO_LOG.len();
-    let tree = log.end + BACK_GAP..log.end + BACK_GAP + TO_TREE.len();
-    if log.contains(&x) {
-        return Some(BackTarget::Log);
-    }
-    tree.contains(&x).then_some(BackTarget::WorkingTree)
-}
-
-fn back_row(theme: &Theme) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(" ".repeat(BACK_INDENT)),
-        Span::styled(TO_LOG, Style::default().fg(theme.info)),
-        Span::raw(" ".repeat(BACK_GAP)),
-        Span::styled(TO_TREE, Style::default().fg(theme.info)),
-    ])
-}
-
 pub fn lines(
     changes: &GitChanges,
     status: &GitStatusMap,
@@ -90,9 +55,6 @@ pub fn lines(
     focused: bool,
 ) -> Vec<Line<'static>> {
     let Area { width, height } = area;
-    if changes.listing() == Listing::Log {
-        return log_lines(changes, theme, width, height, focused);
-    }
     let icons = config.ui.icon_set();
     let diff = changes.diff();
     let stats_w = StatsWidth::of(&diff.files);
@@ -106,9 +68,6 @@ pub fn lines(
             format!("  \u{26a0} {}", error.replace('\n', " ")),
             Style::default().fg(theme.error),
         ));
-    }
-    if changes.shows_back_row() {
-        lines.push(back_row(theme));
     }
     if diff.display_list.is_empty() {
         let text = if changes.is_loading() {
@@ -202,73 +161,6 @@ pub fn lines(
     lines
 }
 
-fn log_lines(
-    changes: &GitChanges,
-    theme: &Theme,
-    width: usize,
-    height: usize,
-    focused: bool,
-) -> Vec<Line<'static>> {
-    let log = changes.log();
-    let cursor = log.cursor();
-    let current = changes.source();
-    let mut lines = Vec::with_capacity(height);
-    for row in cursor.visible(log.len(), log.viewport()).take(height) {
-        let spans = match log.row(row) {
-            Some(Row::WorkingTree) => {
-                let showing = matches!(current, DiffSource::WorkingTree { .. });
-                let fg = if showing { theme.accent } else { theme.fg };
-                let mut spans = vec![Span::styled(
-                    format!("{} working tree", pointer(showing)),
-                    Style::default().fg(fg),
-                )];
-                // 合計を出せるのは作業ツリーを読み込んでいるときだけ。コミットを見ている
-                // 間の数字は手元の変更を表さないので、出さない。
-                if showing {
-                    let total = totals(&changes.diff().files);
-                    push_right(&mut spans, total, width, theme.hint);
-                }
-                spans
-            }
-            Some(Row::Commit(i)) => {
-                let Some(commit) = log.commits().get(i) else {
-                    continue;
-                };
-                // 背景色が使えないテーマがあるので前景で示す。
-                let showing = matches!(current, DiffSource::Commit { oid } if *oid == commit.oid);
-                let hash_fg = if showing { theme.accent } else { theme.info };
-                vec![
-                    Span::styled(
-                        format!("{} ", pointer(showing)),
-                        Style::default().fg(theme.accent),
-                    ),
-                    Span::styled(
-                        format!("{} ", commit.short_oid),
-                        Style::default().fg(hash_fg),
-                    ),
-                    Span::styled(
-                        format!("{:<8}", commit.time_ago),
-                        Style::default().fg(theme.hint),
-                    ),
-                    Span::styled(commit.message.clone(), Style::default().fg(theme.fg)),
-                ]
-            }
-            Some(Row::LoadMore) => {
-                let text = if log.is_loading() {
-                    "  loading\u{2026}"
-                } else {
-                    "  load more\u{2026}"
-                };
-                // Enter で効く行なので、背景と同化しうる muted ではなく hint。
-                vec![Span::styled(text, Style::default().fg(theme.hint))]
-            }
-            None => continue,
-        };
-        lines.push(row_line(spans, theme, row == cursor.selected(), focused));
-    }
-    lines
-}
-
 /// 増減の桁。一覧で一番大きいものに合わせて縦に読めるようにする。
 #[derive(Clone, Copy, Default)]
 struct StatsWidth {
@@ -292,11 +184,6 @@ impl StatsWidth {
                 .unwrap_or(1),
         }
     }
-}
-
-/// 出どころの目印。色差の弱いテーマ向けに文字で示す (`▸` は CJK 端末で 2 桁になる)。
-fn pointer(showing: bool) -> &'static str {
-    if showing { " >" } else { "  " }
 }
 
 pub fn status_color(theme: &Theme, status: FileStatus) -> ratatui::style::Color {
@@ -341,17 +228,6 @@ impl Stats {
             Style::default().fg(theme.diff_del),
         ));
     }
-}
-
-fn push_right(
-    spans: &mut Vec<Span<'static>>,
-    text: String,
-    width: usize,
-    color: ratatui::style::Color,
-) {
-    let tail = width_of(&text) as usize + 1;
-    spans.push(Span::raw(gap(spans, width, tail)));
-    spans.push(Span::styled(format!("{text} "), Style::default().fg(color)));
 }
 
 /// 右端に寄せるための空白。入り切らないときも 1 つは空けて、名前と数字がくっつかないようにする。
@@ -432,10 +308,9 @@ mod tests {
         changes
     }
 
-    fn with_files(source: DiffSource, files: Vec<FileDiff>) -> GitChanges {
+    fn with_files(files: Vec<FileDiff>) -> GitChanges {
         let mut changes = GitChanges::default();
-        changes.set_source(source.clone());
-        let mut diff = DiffState::new(source);
+        let mut diff = DiffState::new(changes.source().clone());
         diff.files = files;
         diff.rebuild_display_list();
         changes.install(diff);
@@ -454,34 +329,22 @@ mod tests {
     }
 
     #[test]
-    fn 変更の種類はコミットを見ている間も文字で分かる() {
-        let source = DiffSource::commit("0123456789abcdef0123456789abcdef01234567");
-        let changes = with_files(
-            source,
-            vec![
-                sized("added.rs", FileStatus::Added, 9, 0),
-                sized("gone.rs", FileStatus::Deleted, 0, 4),
-            ],
-        );
+    fn 変更の種類は行頭の文字で分かる() {
+        let changes = with_files(vec![
+            sized("added.rs", FileStatus::Added, 9, 0),
+            sized("gone.rs", FileStatus::Deleted, 0, 4),
+        ]);
         let lines = texts(&changes, &ReviewState::default());
-        assert!(
-            lines[0].contains("< commits"),
-            "先頭は戻る行: {:?}",
-            lines[0]
-        );
-        assert!(lines[1].starts_with("  A added.rs"), "{:?}", lines[1]);
-        assert!(lines[2].starts_with("  D gone.rs"), "{:?}", lines[2]);
+        assert!(lines[0].starts_with("  A added.rs"), "{:?}", lines[0]);
+        assert!(lines[1].starts_with("  D gone.rs"), "{:?}", lines[1]);
     }
 
     #[test]
     fn 増減は右端で桁が揃う() {
-        let changes = with_files(
-            DiffSource::working_tree("main"),
-            vec![
-                sized("a.rs", FileStatus::Modified, 1, 128),
-                sized("b.rs", FileStatus::Modified, 12, 3),
-            ],
-        );
+        let changes = with_files(vec![
+            sized("a.rs", FileStatus::Modified, 1, 128),
+            sized("b.rs", FileStatus::Modified, 12, 3),
+        ]);
         let lines = texts(&changes, &ReviewState::default());
         assert!(lines[0].ends_with(" +1 -128 "), "{:?}", lines[0]);
         assert!(lines[1].ends_with("+12   -3 "), "{:?}", lines[1]);
@@ -490,61 +353,6 @@ mod tests {
             lines[1].chars().count(),
             "右端が揃う: {lines:?}"
         );
-    }
-
-    #[test]
-    fn 戻る行の当たり判定は左が一覧で右が作業ツリー() {
-        assert_eq!(back_target_at(0), None, "字下げ");
-        assert_eq!(back_target_at(2), Some(BackTarget::Log));
-        assert_eq!(back_target_at(10), Some(BackTarget::Log));
-        assert_eq!(back_target_at(12), None, "2 つの間");
-        assert_eq!(back_target_at(14), Some(BackTarget::WorkingTree));
-        assert_eq!(back_target_at(27), Some(BackTarget::WorkingTree));
-        assert_eq!(back_target_at(28), None, "行の右外");
-    }
-
-    #[test]
-    fn 戻る行はコミットの中を見ている間だけ出る() {
-        let mut changes = GitChanges::default();
-        assert!(!changes.shows_back_row(), "作業ツリーでは要らない");
-        assert_eq!(changes.banner_rows(), 0);
-
-        changes.set_source(DiffSource::commit(
-            "0123456789abcdef0123456789abcdef01234567",
-        ));
-        assert!(changes.shows_back_row());
-        assert_eq!(changes.banner_rows(), 1);
-
-        changes.show_log();
-        assert!(!changes.shows_back_row(), "一覧そのものからは戻る先が自明");
-    }
-
-    #[test]
-    fn 歩いている間に届いた別のコミットの中身は捨てる() {
-        use conductor_core::keymap::Action;
-
-        let a = "0123456789abcdef0123456789abcdef01234567";
-        let b = "89abcdef0123456789abcdef0123456789abcdef";
-        let mut changes = GitChanges::default();
-        changes.set_viewport(Viewport::new(0, 20));
-        changes.show_log();
-        changes.install_log(
-            0,
-            Ok(vec![
-                super::super::log::tests::commit(a),
-                super::super::log::tests::commit(b),
-            ]),
-        );
-        changes.update(Action::NavigateDown);
-
-        changes.install_overview(DiffState::new(DiffSource::commit(b)));
-        assert!(changes.preview().is_none(), "選んでいない方は捨てる");
-
-        changes.install_overview(DiffState::new(DiffSource::commit(a)));
-        assert!(changes.preview().is_some());
-
-        changes.show_files();
-        assert!(changes.preview().is_none(), "一覧を離れたら出さない");
     }
 
     fn texts(changes: &GitChanges, review: &ReviewState) -> Vec<String> {
@@ -568,15 +376,12 @@ mod tests {
 
     #[test]
     fn 狭い区画では増減より先に名前が削られる() {
-        let changes = with_files(
-            DiffSource::working_tree("main"),
-            vec![sized(
-                "crates/tui/very_long_file_name.rs",
-                FileStatus::Modified,
-                3,
-                128,
-            )],
-        );
+        let changes = with_files(vec![sized(
+            "crates/tui/very_long_file_name.rs",
+            FileStatus::Modified,
+            3,
+            128,
+        )]);
         let line = texts_at(&changes, &ReviewState::default(), 24)
             .pop()
             .unwrap();
@@ -594,15 +399,6 @@ mod tests {
     }
 
     #[test]
-    fn コミットの見出しには短縮ハッシュが付く() {
-        let mut changes = GitChanges::default();
-        let oid = "0123456789abcdef0123456789abcdef01234567";
-        changes.set_source(DiffSource::commit(oid));
-        changes.install(DiffState::new(DiffSource::commit(oid)));
-        assert_eq!(title(&changes), " Git Changes 01234567 (0) ");
-    }
-
-    #[test]
     fn 作業ツリーの見出しには今の_head_の短縮ハッシュが付く() {
         let mut changes = GitChanges::default();
         let mut diff = DiffState::new(changes.source().clone());
@@ -612,49 +408,10 @@ mod tests {
     }
 
     #[test]
-    fn コミット一覧は短縮ハッシュで出す() {
-        let mut changes = GitChanges::default();
-        changes.set_viewport(Viewport::new(0, 20));
-        changes.show_log();
-        let commits = vec![super::super::log::tests::commit(
-            "0123456789abcdef0123456789abcdef01234567",
-        )];
-        changes.install_log(0, Ok(commits));
-        let lines = texts(&changes, &ReviewState::default());
-        assert!(lines[0].contains("working tree"), "{lines:?}");
-        assert!(
-            lines[1].starts_with("   01234567 "),
-            "ハッシュの列は短縮形: {:?}",
-            lines[1]
-        );
-        assert_eq!(lines.len(), 2, "1 件で尽きたので読み足しの行は無い");
-        assert!(title(&changes).contains("commits (1)"));
-    }
-
-    #[test]
-    fn 出どころの目印は色ではなく文字で付く() {
-        let mut changes = GitChanges::default();
-        changes.set_viewport(Viewport::new(0, 20));
-        changes.show_log();
-        let oid = "0123456789abcdef0123456789abcdef01234567";
-        changes.install_log(0, Ok(vec![super::super::log::tests::commit(oid)]));
-
-        let lines = texts(&changes, &ReviewState::default());
-        assert!(lines[0].starts_with(" >"), "作業ツリー: {:?}", lines[0]);
-        assert!(!lines[1].starts_with(" >"), "コミット: {:?}", lines[1]);
-
-        changes.set_source(DiffSource::commit(oid));
-        let lines = texts(&changes, &ReviewState::default());
-        assert!(!lines[0].starts_with(" >"), "作業ツリー: {:?}", lines[0]);
-        assert!(lines[1].starts_with(" >"), "コミット: {:?}", lines[1]);
-    }
-
-    #[test]
-    fn バナーの分だけ窓がずれるのはファイル一覧だけ() {
+    fn バナーの分だけ窓がずれる() {
         let mut changes = with_diff(&["a"], Some("boom"));
         changes.set_viewport(Viewport::new(5, 10));
         assert_eq!(changes.viewport(), Viewport::new(6, 9));
-        assert_eq!(changes.log().viewport(), Viewport::new(5, 10));
     }
 
     #[test]

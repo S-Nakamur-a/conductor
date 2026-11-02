@@ -1,4 +1,4 @@
-//! 開いているファイルを読む場所。素の本文と unified / 左右 2 列の diff。
+//! 開いているファイルを読む場所。素の本文、レンダリングした markdown、画像。
 //!
 //! 相対パスの解決先はここが持つ。書き換えるのは [ViewerPanel::set_root] だけで、
 //! 表示中のツリーと開く先が食い違う窓を作らない。
@@ -20,8 +20,6 @@ pub mod thread;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use conductor_core::diff_state::OpenDiff;
-use conductor_core::keymap::KeyContext;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 
@@ -32,7 +30,6 @@ use crate::workspace::StatusLevel;
 
 use code_nav::CodeNav;
 use content::Content;
-use diff::DiffPane;
 use fold::FoldState;
 pub use mouse::Selection;
 use search::Search;
@@ -46,14 +43,12 @@ const HALF_PAGE: isize = 15;
 /// 横スクロールの 1 回分。
 const H_STEP: usize = 4;
 
-/// スクロール位置。素の本文と diff で別々に覚える。
+/// スクロール位置。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Scroll {
     /// 素の本文の最上行 (0 始まり)。Viewer は独立したカーソルを持たず、これが兼ねる。
     pub line: usize,
     pub column: usize,
-    /// diff のエントリ列への添字。
-    pub diff: usize,
     /// レンダリング済み markdown の最上行。折り返し後の行なので line とは別。
     pub md: usize,
 }
@@ -63,13 +58,12 @@ pub struct Scroll {
 struct Load {
     seq: u64,
     path: String,
-    /// 読み終わってから組む。エントリの末尾はファイルの行数で決まる。
-    diff: Option<Box<OpenDiff>>,
     line: Option<usize>,
     /// タブを開き直しただけなら、読んでいた位置に戻す。
     keep_scroll: bool,
 }
 
+#[derive(Default)]
 pub struct ViewerPanel {
     root: PathBuf,
     tabs: Vec<Tab>,
@@ -77,7 +71,6 @@ pub struct ViewerPanel {
     /// 今の根以外の worktree で開いていたタブ。
     parked: HashMap<PathBuf, Parked>,
     pub content: Content,
-    pub diff: DiffPane,
     pub search: Search,
     pub fold: FoldState,
     pub selection: Selection,
@@ -105,37 +98,6 @@ pub struct ViewerPanel {
 }
 
 impl ViewerPanel {
-    pub fn new(config: &conductor_core::config::Config) -> Self {
-        Self {
-            root: PathBuf::new(),
-            tabs: Vec::new(),
-            active: 0,
-            parked: HashMap::new(),
-            content: Content::default(),
-            diff: DiffPane {
-                side_by_side: config.diff.default_view
-                    == conductor_core::diff_state::DiffView::SideBySide,
-                ..DiffPane::default()
-            },
-            search: Search::default(),
-            fold: FoldState::default(),
-            selection: Selection::default(),
-            scroll: Scroll::default(),
-            threads: ThreadFolds::default(),
-            nav: CodeNav::default(),
-            md_rendered: false,
-            highlighter: None,
-            highlight_stash: VecDeque::new(),
-            tour_range: None,
-            load: None,
-            seq: 0,
-            pending_fold: false,
-            tab_scroll: 0,
-            body: Rect::default(),
-            tab_row: Rect::default(),
-        }
-    }
-
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -159,16 +121,6 @@ impl ViewerPanel {
         self.load.is_some()
     }
 
-    /// diff を見ている間はキーの層が変わる。ハンク送りや文脈の展開は素の本文に
-    /// 意味を持たない。
-    pub fn key_context(&self) -> KeyContext {
-        if self.diff.active {
-            KeyContext::ViewerDiffMode
-        } else {
-            KeyContext::Viewer
-        }
-    }
-
     pub fn sync_layout(&mut self, layout: &Layout) {
         let Some(rect) = layout.rect(Region::Viewer) else {
             return;
@@ -186,11 +138,9 @@ impl ViewerPanel {
         self.reveal_tab(self.tab_strip_width(self.tab_row.width));
     }
 
-    /// Raw と Rendered のトグルが意味を持つか。素の markdown ファイルを開いている
-    /// ときだけ — unified diff は本文を組み直すと +/- の構造が壊れる。
+    /// Raw と Rendered のトグルが意味を持つか。markdown ファイルを開いているときだけ。
     pub fn markdown_toggle_available(&self) -> bool {
-        !self.diff.active
-            && self.content.error.is_none()
+        self.content.error.is_none()
             && self
                 .content
                 .path
@@ -231,13 +181,7 @@ impl ViewerPanel {
     }
 
     /// ファイルを開く唯一の入口。既に開いていればタブを増やさず、そこへ戻る。
-    pub fn open(
-        &mut self,
-        path: &Path,
-        line: Option<usize>,
-        file_diff: Option<Box<OpenDiff>>,
-        preview: bool,
-    ) -> Vec<Effect> {
+    pub fn open(&mut self, path: &Path, line: Option<usize>, preview: bool) -> Vec<Effect> {
         let Some(relative) = self.relative(path) else {
             return vec![Effect::Status(
                 StatusLevel::Error,
@@ -250,7 +194,7 @@ impl ViewerPanel {
             TabStatus::Persistent
         };
         let fresh = self.activate_tab_for(&relative, status);
-        self.request(relative, file_diff, line, !fresh)
+        self.request(relative, line, !fresh)
     }
 
     /// 根の外のパスは開かない。絶対パスは端末のリンクから来る。
@@ -263,13 +207,7 @@ impl ViewerPanel {
         Some(relative.to_string_lossy().to_string())
     }
 
-    fn request(
-        &mut self,
-        path: String,
-        file_diff: Option<Box<OpenDiff>>,
-        line: Option<usize>,
-        keep_scroll: bool,
-    ) -> Vec<Effect> {
+    fn request(&mut self, path: String, line: Option<usize>, keep_scroll: bool) -> Vec<Effect> {
         let reveal = Effect::RevealInTree(path.clone());
         if media::is_image_path(&path) {
             self.show_image(path);
@@ -280,12 +218,10 @@ impl ViewerPanel {
             root: self.root.clone(),
             path: path.clone(),
             seq: self.seq,
-            diff_of: file_diff.as_ref().map(|d| d.source.clone()),
         };
         self.load = Some(Load {
             seq: self.seq,
             path,
-            diff: file_diff,
             line,
             keep_scroll,
         });
@@ -317,7 +253,6 @@ impl ViewerPanel {
         self.content.media = None;
         self.search.matches.clear();
         self.selection.clear();
-        self.diff.clear();
         self.threads.clear();
         self.fold.clear();
     }
@@ -397,11 +332,7 @@ impl ViewerPanel {
         } else {
             0
         };
-        self.scroll.diff = 0;
         self.scroll.md = 0;
-        if let Some(diff) = load.diff {
-            self.diff.build(&diff.file, self.content.lines.len());
-        }
         if let Some(line) = load.line {
             self.goto_line(line);
         }
@@ -417,11 +348,6 @@ impl ViewerPanel {
         self.md_rendered = false;
         self.fold.reveal(line_1);
         self.scroll.line = line_1.saturating_sub(1).min(self.last_line());
-        if self.diff.active
-            && let Some(idx) = search::diff_index_for(&self.diff.entries, self.scroll.line)
-        {
-            self.scroll.diff = idx;
-        }
     }
 
     fn last_line(&self) -> usize {
@@ -494,13 +420,8 @@ impl ViewerPanel {
         }
     }
 
-    /// ホイール。diff とそれ以外で数える単位が違う。
+    /// ホイール。
     pub fn scroll_lines(&mut self, delta: isize) {
-        if self.diff.active {
-            let last = self.diff.entries.len().saturating_sub(1);
-            self.scroll.diff = (self.scroll.diff as isize + delta).clamp(0, last as isize) as usize;
-            return;
-        }
         self.move_cursor(delta);
     }
 
@@ -515,18 +436,7 @@ impl ViewerPanel {
 
     /// 最も長い行を超えて右へ流れないようにする。
     fn scroll_right(&mut self) {
-        let widest = if self.diff.active {
-            self.diff
-                .entries
-                .iter()
-                .filter_map(|e| match e {
-                    diff::Entry::Line { content, .. } => Some(content.chars().count()),
-                    _ => None,
-                })
-                .max()
-        } else {
-            self.content.lines.iter().map(|l| l.chars().count()).max()
-        };
+        let widest = self.content.lines.iter().map(|l| l.chars().count()).max();
         let limit = widest.unwrap_or(0).saturating_sub(H_STEP);
         self.scroll.column = (self.scroll.column + H_STEP).min(limit);
     }

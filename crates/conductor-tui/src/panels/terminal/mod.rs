@@ -720,11 +720,7 @@ impl TerminalPanel {
         let (focus, content, session) = match region {
             // 他の窓や外の端末の行は、右にセッションを映していない。
             Region::FleetSession if fleet_session.is_none() => return Vec::new(),
-            Region::FleetSession => (
-                Focus::FleetSession,
-                render::editor_area(rect),
-                fleet_session,
-            ),
+            Region::FleetSession => (Focus::FleetSession, render::pty_area(rect), fleet_session),
             _ => (
                 focus_of(region),
                 render::content_area(rect),
@@ -1180,11 +1176,11 @@ impl TerminalPanel {
             layout.rect(Region::FleetChanges),
             self.index_of(fleet_shell),
         ) {
-            let content = render::editor_area(rect);
+            let content = render::pty_area(rect);
             self.fit(index, (content.height.max(1), content.width.max(1)));
         }
         if let Some(rect) = layout.rect(Region::FleetSession) {
-            let content = render::editor_area(rect);
+            let content = render::pty_area(rect);
             self.fleet_size = (content.height.max(1), content.width.max(1));
             if let Some(index) = self.index_of(fleet_session) {
                 self.fit(index, self.fleet_size);
@@ -1583,15 +1579,15 @@ mod tests {
 
     /// 一覧の右はタブ行を持たないので、枠の 2 行 2 桁だけを引く。
     #[test]
-    fn エディタの内容領域は枠だけを引く() {
+    fn ptyの内容領域は枠だけを引く() {
         assert_eq!(
-            render::editor_area(Rect::new(0, 0, 80, 40)),
+            render::pty_area(Rect::new(0, 0, 80, 40)),
             Rect::new(1, 1, 78, 38)
         );
         // 極小の区画でもアンダーフローしない。vt100 は 1 以上が要る。
         for w in 1..=3u16 {
             for h in 1..=3u16 {
-                let area = render::editor_area(Rect::new(0, 0, w, h));
+                let area = render::pty_area(Rect::new(0, 0, w, h));
                 assert!(area.width.max(1) >= 1 && area.height.max(1) >= 1, "{w}x{h}");
             }
         }
@@ -2197,7 +2193,7 @@ mod tests {
         let mut svc = conductor_svc::Services::new();
         let (_dir, id) = fleet_showing_shell(&mut ws, &mut svc);
         let rect = Rect::new(0, 0, 60, 20);
-        let content = render::editor_area(rect);
+        let content = render::pty_area(rect);
         ws.panels.terminal.fleet_size = (content.height, content.width);
         open_for(&mut ws.panels.terminal, &id);
         ws.prepare();

@@ -545,12 +545,9 @@ fn on_mouse(
 ) {
     // メニューとモーダルは枠の上に重なっているので、開いている間は題を押したことにしない。
     let covered = ws.chrome.menu.is_active() || !ws.modals.is_empty();
-    // 下区画の見出しは境界の行にあるが、文字が並んでいる範囲だけは一覧の切り替えに使う。
-    // 残りの桁はそのまま境界のドラッグへ渡す — 枠を掴んで高さを変える操作を潰さない。
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         && !covered
-        && let Some(effects) =
-            bottom_title_click(ws, layout, mouse).or_else(|| tab_title_click(ws, layout, mouse))
+        && let Some(effects) = tab_title_click(ws, layout, mouse)
     {
         apply(ws, svc, effects);
         return;
@@ -646,7 +643,7 @@ fn on_mouse(
                 }),
                 Focus::FleetSession => layout.rect(region).map(|rect| {
                     (
-                        crate::panels::terminal::render::editor_area(rect),
+                        crate::panels::terminal::render::pty_area(rect),
                         ws.fleet_session(),
                     )
                 }),
@@ -663,10 +660,7 @@ fn on_mouse(
                 return;
             }
             let effects = match focus {
-                Focus::Explorer => ws
-                    .panels
-                    .explorer
-                    .click(mouse.column, mouse.row, &ws.review),
+                Focus::Explorer => ws.panels.explorer.click(mouse.row, &ws.review),
                 Focus::Viewer => {
                     let root = ws.panels.viewer.root().to_path_buf();
                     let (panels, _, ctx) = ws.split(&root);
@@ -813,43 +807,6 @@ fn tab_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Option
     let offset = usize::from(mouse.column - rect.x - 1);
     let tab = crate::panels::changes::render::tab_at(ws, offset)?;
     Some(vec![Effect::ShowTab(tab)])
-}
-
-/// 下区画の見出しを押したら、何を出すかを選ぶポップアップを開く。見出しの外なら None。
-fn bottom_title_click(ws: &Workspace, layout: &Layout, mouse: MouseEvent) -> Option<Vec<Effect>> {
-    let rect = layout.rect(Region::ExplorerChanges)?;
-    if mouse.row != rect.y {
-        return None;
-    }
-    let title = crate::panels::explorer::render::bottom_title(&ws.panels.explorer, ws);
-    let zone = rect.x + 1..rect.x + 1 + crate::strip::width_of(&title);
-    if !zone.contains(&mouse.column) {
-        return None;
-    }
-    let explorer = &ws.panels.explorer;
-    let current = match (explorer.bottom(), explorer.changes.listing()) {
-        (crate::panels::explorer::BottomView::Comments, _) => 2,
-        (_, crate::panels::explorer::git_changes::Listing::Log) => 1,
-        _ => 0,
-    };
-    Some(vec![Effect::PushModal(crate::modal::Modal::Popup(
-        crate::modal::popup::Popup::new("Show", listings(), Some((rect.x, rect.y + 1)), current),
-    ))])
-}
-
-fn listings() -> crate::modal::popup::Choices {
-    use crate::command::CommandId;
-    vec![
-        ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
-        (
-            "Commit Log".into(),
-            Effect::Command(CommandId::ShowCommitLog),
-        ),
-        (
-            "Comments".into(),
-            Effect::Command(CommandId::ShowCommentList),
-        ),
-    ]
 }
 
 /// ポップアップと Cmd+クリックはガターの当たり判定より先。どちらも本文の上に
@@ -1285,7 +1242,7 @@ mod tests {
         let effects = ws
             .panels
             .viewer
-            .open(std::path::Path::new("a.rs"), None, None, false);
+            .open(std::path::Path::new("a.rs"), None, false);
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
 
@@ -1565,6 +1522,23 @@ mod tests {
             },
         );
         assert_eq!(ws.focus, Focus::Viewer);
+    }
+
+    #[test]
+    fn 下区画の見出しを押すと上下の境界を掴む() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let l = layout(&ws, Rect::new(0, 0, 100, 40));
+        let bottom = l.rect(Region::ExplorerChanges).unwrap();
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: bottom.x + 2,
+            row: bottom.y,
+            modifiers: KeyModifiers::NONE,
+        };
+        on_mouse(&mut ws, &mut svc, &l, press);
+        assert!(ws.modals.is_empty(), "{:?}", ws.modals);
+        assert_eq!(ws.chrome.drag, Some(crate::layout::Divider::ExplorerSplit));
     }
 
     #[test]
@@ -2385,7 +2359,7 @@ mod tests {
         let effects = ws
             .panels
             .viewer
-            .open(std::path::Path::new("a.txt"), Some(2), None, false);
+            .open(std::path::Path::new("a.txt"), Some(2), false);
         apply(&mut ws, &mut svc, effects);
         crate::testing::pump(&mut ws, &mut svc);
         ws.focus = Focus::Viewer;
@@ -2426,7 +2400,7 @@ mod tests {
 
         ws.focus = Focus::Explorer;
         on_key(&mut ws, &mut svc, key(KeyCode::Char('c')));
-        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 60, 10)
+        let listed: Vec<String> = crate::panels::explorer::render::bottom_lines(&ws, 10)
             .iter()
             .map(ratatui::text::Line::to_string)
             .collect();
