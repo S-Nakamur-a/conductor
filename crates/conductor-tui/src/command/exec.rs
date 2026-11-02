@@ -215,11 +215,24 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::PruneWorktrees => vec![Effect::Spawn(Task::ListStaleWorktrees)],
         CommandId::CherryPick => cherry_pick(ws),
         CommandId::PullWorktree => {
-            let worktree = ws.panels.worktree.selected();
+            let worktree = if ws.chrome.fleet_open {
+                ws.panels
+                    .fleet
+                    .selected_tree_worktree()
+                    .map(|w| (w.head.label(), w.path.clone()))
+            } else {
+                ws.panels
+                    .worktree
+                    .selected()
+                    .map(|w| (w.branch.clone(), w.path.clone()))
+            };
+            let question = worktree
+                .as_ref()
+                .map(|(label, _)| format!("Pull '{label}' (fast-forward only)?"));
             confirm(
-                worktree.map(|w| format!("Pull '{}' (fast-forward only)?", w.branch)),
+                question,
                 Task::PullWorktree {
-                    worktree: worktree.map(|w| w.path.clone()).unwrap_or_default(),
+                    worktree: worktree.map(|(_, path)| path).unwrap_or_default(),
                 },
             )
         }
@@ -252,7 +265,13 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
             None => Vec::new(),
         },
         CommandId::ReviewPullRequest => {
-            vec![Effect::PushModal(Modal::PrInput(pr::PrInput::default()))]
+            let repo = if ws.chrome.fleet_open {
+                let (dir, root) = ws.panels.fleet.launch_target(&ws.repo.root);
+                root.unwrap_or(dir)
+            } else {
+                ws.repo.root.clone()
+            };
+            vec![Effect::PushModal(Modal::PrInput(pr::PrInput::new(repo)))]
         }
         CommandId::PublishReview => vec![Effect::Spawn(Task::LoadPublishable {
             worktree: ws.worktree_path(),

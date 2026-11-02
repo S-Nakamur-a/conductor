@@ -236,8 +236,9 @@ pub enum Task {
     OpenArtifact {
         url: String,
     },
-    /// PR 番号か URL を worktree にする。取り込めたら PR のメタデータも書く。
+    /// PR 番号か URL を repo の worktree にする。取り込めたら PR のメタデータも書く。
     IntakePr {
+        repo: PathBuf,
         input: String,
     },
     /// 設定したリポジトリの、自分にレビューが依頼された PR を 1 件 worktree にする。
@@ -475,7 +476,13 @@ pub enum TaskResult {
     RemoteBranches(Result<Vec<String>, String>),
     StaleWorktrees(Result<Vec<String>, String>),
     Commits(Result<Vec<CommitInfo>, String>),
-    PrIntake(Result<Box<IntakenPr>, String>),
+    /// repo は頼んだときのパスのまま返す。どの入力欄の結果かをこれで見分ける。
+    /// 窓の repo でなければ other_repo に取り込み先の名前が入る。
+    PrIntake {
+        repo: PathBuf,
+        other_repo: Option<String>,
+        outcome: Result<Box<IntakenPr>, String>,
+    },
     ReviewRound {
         round: Box<pr_intake::ReviewRound>,
         in_window_repo: bool,
@@ -836,9 +843,10 @@ impl Task {
                     TaskResult::GitDone,
                 );
             }
+            // fetch するのは worktree の repo の origin。窓の repo のとは限らない。
             Task::PullWorktree { worktree } => {
                 svc.spawn(
-                    move || git(&env, |git| git.pull_worktree(&worktree)),
+                    move || git_at(&worktree, |git| git.pull_worktree(&worktree)),
                     TaskResult::GitDone,
                 );
             }
@@ -887,8 +895,20 @@ impl Task {
                     TaskResult::ArtifactOpened,
                 );
             }
-            Task::IntakePr { input } => {
-                svc.spawn(move || intake_pr(&env, &input), TaskResult::PrIntake);
+            Task::IntakePr { repo, input } => {
+                svc.spawn(
+                    move || {
+                        let outcome = intake_pr_into(&repo, env.worktree_dir.as_deref(), &input)
+                            .map(Box::new);
+                        let other_repo = other_repo_name(&env.root, &repo);
+                        (repo, other_repo, outcome)
+                    },
+                    |(repo, other_repo, outcome)| TaskResult::PrIntake {
+                        repo,
+                        other_repo,
+                        outcome,
+                    },
+                );
             }
             // 結果が届かないと次の問い合わせが始まらないので、repo を切り替えても捨てない。
             Task::ReviewRequests {
@@ -988,7 +1008,11 @@ const CHERRY_PICK_COMMITS: usize = 20;
 
 /// 失敗の綴りをここに集める。
 fn git<T>(env: &TaskEnv, op: impl FnOnce(&GitEngine) -> anyhow::Result<T>) -> Result<T, String> {
-    GitEngine::open(&env.root)
+    git_at(&env.root, op)
+}
+
+fn git_at<T>(dir: &Path, op: impl FnOnce(&GitEngine) -> anyhow::Result<T>) -> Result<T, String> {
+    GitEngine::open(dir)
         .and_then(|git| op(&git))
         .map_err(|e| format!("{e:#}"))
 }
@@ -1228,8 +1252,23 @@ fn pr_lookup_of(out: &std::process::Output) -> crate::panels::fleet::PrLookup {
     }
 }
 
-fn intake_pr(env: &TaskEnv, input: &str) -> Result<Box<IntakenPr>, String> {
-    intake_pr_into(&env.root, env.worktree_dir.as_deref(), input).map(Box::new)
+fn main_worktree(dir: &Path) -> Option<PathBuf> {
+    GitEngine::open(dir)
+        .and_then(|git| git.main_worktree_path())
+        .ok()
+}
+
+/// dir が窓と別の repo なら、その repo の名前。窓の repo が git でなければ別の repo とみなす。
+fn other_repo_name(window_root: &Path, dir: &Path) -> Option<String> {
+    let main = main_worktree(dir);
+    if main.is_some() && main == main_worktree(window_root) {
+        return None;
+    }
+    let named = main.unwrap_or_else(|| dir.to_path_buf());
+    Some(named.file_name().map_or_else(
+        || named.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    ))
 }
 
 /// PR のメタデータは取り込み先のリポジトリの DB に書く。窓のリポジトリとは限らない。
@@ -1259,9 +1298,7 @@ fn review_round(
         pr_intake::review_requests,
         |main, number| intake_pr_into(main, worktree_dir, &number.to_string()),
     );
-    let window_main = GitEngine::open(window_root)
-        .and_then(|git| git.main_worktree_path())
-        .ok();
+    let window_main = main_worktree(window_root);
     let in_window_repo = round
         .intaken
         .as_ref()

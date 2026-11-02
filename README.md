@@ -269,7 +269,8 @@ keeps working while you review.
 
 *Review ▸ Review Pull Request…* checks the PR's branch out of `origin` into a
 worktree (via `gh`; an existing one is pulled up to date) and focuses the
-Explorer on its review comment list. *Review: Publish Comments to GitHub* posts your inline
+Explorer on its review comment list. From the Sessions list it goes into the
+repository of the selected line instead of the window's. *Review: Publish Comments to GitHub* posts your inline
 comments back to the PR. For an AI review of the branch, run the `/revidere` skill
 in a Claude Code session there: it publishes the review as an Artifact page.
 

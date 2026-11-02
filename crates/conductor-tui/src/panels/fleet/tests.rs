@@ -2056,6 +2056,20 @@ mod tree {
     }
 
     #[test]
+    fn セッション行を選ぶとその_worktree_と_repo_が操作の対象になる() {
+        let mut fleet = app();
+        fleet.selected = Some(Selected::Session(RowKey::Pid(8), false));
+        assert_eq!(
+            fleet.selected_tree_worktree().map(|w| w.path.clone()),
+            Some(PathBuf::from("/r/app-b"))
+        );
+        assert_eq!(
+            fleet.launch_target(Path::new("/window")).1,
+            Some(PathBuf::from("/r/app"))
+        );
+    }
+
+    #[test]
     fn 置き場の無い_dir_はその_dir_自身を見出しと_worktree_にする() {
         let mut fleet = FleetPanel::default();
         fleet.apply(

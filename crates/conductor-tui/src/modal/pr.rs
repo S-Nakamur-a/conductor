@@ -1,5 +1,7 @@
 //! PR 番号か URL を受け取って、レビューできる worktree にする入口。
 
+use std::path::PathBuf;
+
 use conductor_core::text_input::TextInput;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Style;
@@ -9,8 +11,10 @@ use crate::effect::Effect;
 use crate::task::Task;
 use crate::workspace::Ctx;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PrInput {
+    /// 開いたときに決めた取り込み先。打っている間に一覧の選択が動いても変えない。
+    pub repo: PathBuf,
     pub input: TextInput,
     loading: bool,
     /// 直前の取り込みが失敗した理由。
@@ -18,6 +22,15 @@ pub struct PrInput {
 }
 
 impl PrInput {
+    pub fn new(repo: PathBuf) -> Self {
+        Self {
+            repo,
+            input: TextInput::default(),
+            loading: false,
+            error: None,
+        }
+    }
+
     pub fn update(&mut self, key: KeyEvent, _ctx: &Ctx) -> Vec<Effect> {
         // 走っている間は入力を凍らせる。打った文字が、いま取り込んでいるものと
         // 食い違う入力欄を作ってしまう。
@@ -36,7 +49,10 @@ impl PrInput {
                 }
                 self.loading = true;
                 self.error = None;
-                vec![Effect::Spawn(Task::IntakePr { input })]
+                vec![Effect::Spawn(Task::IntakePr {
+                    repo: self.repo.clone(),
+                    input,
+                })]
             }
             KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
                 self.error = None;
@@ -109,7 +125,7 @@ mod tests {
 
     fn typed(text: &str) -> (PrInput, Workspace) {
         let ws = Workspace::for_test();
-        let mut prompt = PrInput::default();
+        let mut prompt = PrInput::new("/r/b".into());
         for c in text.chars() {
             prompt.update(key(KeyCode::Char(c)), &ws.ctx());
         }
@@ -130,7 +146,8 @@ mod tests {
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::Spawn(Task::IntakePr { input })] if input == "123"
+                [Effect::Spawn(Task::IntakePr { repo, input })]
+                    if input == "123" && repo == std::path::Path::new("/r/b")
             ),
             "{effects:?}"
         );

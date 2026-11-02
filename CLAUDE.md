@@ -602,6 +602,11 @@ the state file's cwd first, so it follows a Claude that entered a worktree mid-s
 as far as the state file does. Artifacts from before a `/clear` or from a subagent are not
 listed.
 
+**Review Pull Request** and **Pull** opened from the list act on the selected line's
+repository (`launch_target` / `selected_tree_worktree`), not the window's: the input
+keeps the repository it was opened with, and a PR taken into another repository leaves
+the worktree panel, the Explorer and `Focus` alone and only says so on the status line.
+
 ### Key modules
 
 | Module | Role |
