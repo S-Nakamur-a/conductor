@@ -136,9 +136,9 @@ beside this file in `sessions-fold.json`, rewritten on every fold, and read at s
 # "ctrl+q" = "quit"
 # "ctrl+r" = false          # remove a default binding entirely
 #
-# [keybinds.layers.worktree]
+# [keybinds.layers.fleet]
 # "j" = "navigate_down"
-# "w" = "create_worktree"
+# "down" = "navigate_down"
 
 [api]
 # Which AI answers Conductor's own prompts (smart worktree naming). Conductor
@@ -188,6 +188,7 @@ once, which is why `general.main_branch` is gone.
 of action names is `crates/conductor-core/src/keymap/action.rs`, and the built-in
 bindings they are layered over are in `default_keybinds.toml` beside it.
 
-Accepted `[keybinds.layers.<context>]` names: `worktree`, `explorer`,
-`explorer_diff_list`, `explorer_comment_list`, `viewer`, `viewer_diff_mode`,
-`terminal`, `editor`, `overlay`.
+Accepted `[keybinds.layers.<context>]` names: `fleet`, `explorer`,
+`explorer_diff_list`, `explorer_commit_log`, `explorer_comment_list`,
+`explorer_tour_stops`, `viewer`, `viewer_diff_mode`, `changes_list`, `changes`,
+`terminal`, `overlay`.

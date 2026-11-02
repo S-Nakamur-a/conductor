@@ -523,27 +523,6 @@ fn ファイルを開くと_code_タブへ移る() {
 }
 
 #[test]
-fn エディタを開いている間はタブを切り替えない() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let mut ws = feat_workspace();
-    let mut svc = conductor_svc::Services::new();
-    let argv = ["/bin/sh", "-c", "sleep 30"].map(String::from);
-    ws.panels
-        .terminal
-        .open_editor(&dir.path().join("a.txt"), dir.path(), &argv)
-        .unwrap();
-    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Code)]);
-    assert_eq!(ws.center_tab(), Tab::Files);
-    crate::effect::apply(&mut ws, &mut svc, vec![Effect::ShowTab(Tab::Commits)]);
-    assert_eq!(ws.center_tab(), Tab::Files);
-    let status = ws.chrome.status.as_ref().map(|s| s.text.as_str());
-    assert!(
-        status.is_some_and(|s| s.starts_with("Close ")),
-        "{status:?}"
-    );
-}
-
-#[test]
 fn 枠の題でタブを示し押した桁のタブを返す() {
     let mut ws = feat_workspace();
     let _ = deliver(&mut ws, "/r/feat", two_files());

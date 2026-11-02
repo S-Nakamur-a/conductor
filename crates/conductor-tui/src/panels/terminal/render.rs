@@ -22,7 +22,7 @@ use crate::workspace::{Focus, Workspace};
 #[cfg(test)]
 use super::TerminalPanel;
 
-/// 枠だけを除いた PTY のグリッド。エディタと一覧の右はセッションタブを持たない。
+/// 枠だけを除いた PTY のグリッド。一覧の右と左下のシェルはセッションタブを持たない。
 pub fn editor_area(panel: Rect) -> Rect {
     panel.inner(Margin::new(1, 1))
 }
@@ -204,17 +204,6 @@ fn tab_row(ws: &Workspace, region: Region, width: u16) -> Line<'static> {
         })
         .collect::<Vec<_>>();
     Line::from(spans)
-}
-
-/// 埋め込みエディタの中身。
-pub fn editor(frame: &mut Frame, rect: Rect, ws: &Workspace) {
-    let session = ws
-        .panels
-        .terminal
-        .editor
-        .as_ref()
-        .map(|e| e.session.as_str());
-    grid(frame, rect, ws, session, ws.focus == Focus::Editor);
 }
 
 /// 一覧の右に映す、この窓のセッション。

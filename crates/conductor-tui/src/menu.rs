@@ -144,7 +144,6 @@ pub const MENUS: &[Menu] = &[
         icon: icons::MENU_PANEL,
         items: &[
             cmd(CommandId::FocusSessions, "Sessions"),
-            cmd(CommandId::FocusWorktree, "Focus Worktree"),
             cmd(CommandId::FocusExplorer, "Focus Explorer"),
             cmd(CommandId::FocusViewer, "Focus Viewer"),
             cmd(CommandId::FocusTerminalClaude, "Focus Claude Code"),

@@ -1,4 +1,4 @@
-//! チップ帯の部品。worktree ストリップ、端末のセッションタブ、Viewer のタブが共有する。
+//! チップ帯の部品。端末のセッションタブと Viewer のタブが共有する。
 
 use conductor_core::theme::Theme;
 use ratatui::style::{Modifier, Style};

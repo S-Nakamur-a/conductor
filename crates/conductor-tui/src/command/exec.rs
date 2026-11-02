@@ -102,7 +102,6 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
     }
     match id {
         CommandId::FocusSessions => vec![Effect::OpenFleet],
-        CommandId::FocusWorktree => vec![Effect::Focus(Focus::Worktree)],
         CommandId::FocusExplorer => vec![Effect::Focus(Focus::Explorer)],
         CommandId::FocusViewer => vec![Effect::Focus(Focus::Viewer)],
         CommandId::FocusTerminalClaude => vec![Effect::Focus(Focus::TerminalClaude)],
@@ -119,8 +118,8 @@ fn run(ws: &mut Workspace, id: CommandId) -> Vec<Effect> {
         CommandId::ResizePaneDown => resize(ws, Resize::Down),
 
         // 対象は選択中の worktree なので、フォーカスがどこでも同じ意味になる。
-        CommandId::CreateWorktree => to_panel(ws, Focus::Worktree, Action::CreateWorktree),
-        CommandId::DeleteWorktree => to_panel(ws, Focus::Worktree, Action::DeleteWorktree),
+        CommandId::CreateWorktree => ws.panels.worktree.update(Action::CreateWorktree),
+        CommandId::DeleteWorktree => ws.panels.worktree.update(Action::DeleteWorktree),
         CommandId::RefreshWorktrees => vec![Effect::Spawn(Task::ListWorktrees)],
 
         CommandId::NewClaudeCode => vec![Effect::NewSession(SessionKind::ClaudeCode)],
@@ -413,7 +412,6 @@ fn resize(ws: &mut Workspace, dir: Resize) -> Vec<Effect> {
         -STEP
     };
     let divider = match (dir, ws.focus) {
-        (Resize::Left | Resize::Right, Focus::Worktree) => return Vec::new(),
         // 最左の列が持つ境界は 1 本だけ。
         (Resize::Left | Resize::Right, Focus::Explorer) => Divider::ExplorerViewer,
         // 中央の列は向いた側の境界を押すので、縮むだけの窮屈な列にならない。

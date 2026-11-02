@@ -19,11 +19,10 @@ pub struct Help {
 }
 
 /// 数字キーとページの対応。ヘルプの見出しの並びでもある。
-const PAGES: [(char, &str, Focus); 4] = [
-    ('1', "Worktree", Focus::Worktree),
-    ('2', "Explorer", Focus::Explorer),
-    ('3', "Viewer", Focus::Viewer),
-    ('4', "Terminal", Focus::TerminalClaude),
+const PAGES: [(char, &str, Focus); 3] = [
+    ('1', "Explorer", Focus::Explorer),
+    ('2', "Viewer", Focus::Viewer),
+    ('3', "Terminal", Focus::TerminalClaude),
 ];
 
 impl Help {
@@ -54,13 +53,12 @@ impl Help {
 }
 
 pub fn title() -> String {
-    "Keys  1-4 page  j/k scroll  esc close".into()
+    "Keys  1-3 page  j/k scroll  esc close".into()
 }
 
 /// パネルの層を先に、どこでも効くグローバルを最後に。
 fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
     match page {
-        Focus::Worktree => &[("Worktree panel", KeyContext::Worktree)],
         Focus::Fleet | Focus::FleetSession | Focus::FleetShell => {
             &[("Sessions", KeyContext::Fleet)]
         }
@@ -89,7 +87,6 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
             ("Files changed (Commits: read only)", KeyContext::Changes),
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
-        Focus::Editor => &[("Editor panel", KeyContext::Editor)],
     }
 }
 
@@ -191,7 +188,7 @@ mod tests {
         let area = Rect::new(0, 0, 80, 200);
         let viewer = text(&Help::open(Focus::Viewer), &ws, area).join("\n");
         assert!(viewer.contains("Viewer \u{2014} diff mode"));
-        assert!(!viewer.contains("Worktree panel"));
+        assert!(!viewer.contains("Explorer \u{2014} file tree"));
         // 表ではなくキーマップを引くので、案内と実挙動がずれない。
         assert!(viewer.contains("Search in file"));
         assert!(
@@ -218,16 +215,32 @@ mod tests {
     }
 
     #[test]
+    fn 数字のページは1から3で_explorer_viewer_terminal() {
+        let mut help = Help::open(Focus::Viewer);
+        for (digit, page) in [
+            ('1', Focus::Explorer),
+            ('2', Focus::Viewer),
+            ('3', Focus::TerminalClaude),
+        ] {
+            help.update(key(KeyCode::Char(digit)));
+            assert_eq!(help.page, page, "{digit}");
+        }
+        help.update(key(KeyCode::Char('4')));
+        assert_eq!(help.page, Focus::TerminalClaude, "4 のページは無い");
+        assert!(title().contains("1-3 page"), "{}", title());
+    }
+
+    #[test]
     fn ページを変えると先頭に戻る() {
         let ws = Workspace::for_test();
         let area = Rect::new(0, 0, 80, 20);
         let mut help = Help::open(Focus::Viewer);
         help.update(key(KeyCode::Char('j')));
         help.update(key(KeyCode::Char('1')));
-        assert_eq!(help.page, Focus::Worktree);
+        assert_eq!(help.page, Focus::Explorer);
         assert_eq!(
             text(&help, &ws, area),
-            text(&Help::open(Focus::Worktree), &ws, area)
+            text(&Help::open(Focus::Explorer), &ws, area)
         );
     }
 }

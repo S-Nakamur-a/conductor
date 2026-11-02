@@ -23,12 +23,10 @@ use crate::task::{Task, TaskEnv, TaskResult, UpdateCheck, UpdateStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Focus {
-    Worktree,
     Explorer,
     Viewer,
     TerminalClaude,
     TerminalShell,
-    Editor,
     /// マシン上の全 Claude の一覧。
     Fleet,
     /// 一覧の右に映した、この窓のセッション。
@@ -41,11 +39,7 @@ impl Focus {
     pub fn is_pty(self) -> bool {
         matches!(
             self,
-            Self::TerminalClaude
-                | Self::TerminalShell
-                | Self::Editor
-                | Self::FleetSession
-                | Self::FleetShell
+            Self::TerminalClaude | Self::TerminalShell | Self::FleetSession | Self::FleetShell
         )
     }
 
@@ -53,12 +47,11 @@ impl Focus {
         matches!(self, Self::Fleet | Self::FleetSession | Self::FleetShell)
     }
 
-    /// Tab の輪。Editor は開いている間だけ通る。
+    /// Tab の輪。
     pub fn next(self) -> Self {
         match self {
-            Self::Worktree => Self::Explorer,
             Self::Explorer => Self::Viewer,
-            Self::Viewer | Self::Editor => Self::TerminalClaude,
+            Self::Viewer => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
             Self::TerminalShell | Self::Fleet | Self::FleetSession | Self::FleetShell => {
                 Self::Explorer
@@ -68,7 +61,7 @@ impl Focus {
 
     pub fn prev(self) -> Self {
         match self {
-            Self::Worktree | Self::Explorer | Self::Editor => Self::TerminalShell,
+            Self::Explorer => Self::TerminalShell,
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
@@ -79,12 +72,10 @@ impl Focus {
     /// パレットのスコープ見出しに出す名前。
     pub fn label(self) -> &'static str {
         match self {
-            Self::Worktree => "Worktree",
             Self::Explorer => "Explorer",
             Self::Viewer => "Viewer",
             Self::TerminalClaude => "Claude Code",
             Self::TerminalShell => "Shell",
-            Self::Editor => "Editor",
             Self::Fleet => "Sessions",
             Self::FleetSession => "Session",
             Self::FleetShell => "Shell",
@@ -93,14 +84,12 @@ impl Focus {
 
     pub fn key_context(self) -> KeyContext {
         match self {
-            Self::Worktree => KeyContext::Worktree,
             Self::Fleet => KeyContext::Fleet,
             Self::Explorer => KeyContext::Explorer,
             Self::Viewer => KeyContext::Viewer,
             Self::TerminalClaude | Self::TerminalShell | Self::FleetSession | Self::FleetShell => {
                 KeyContext::Terminal
             }
-            Self::Editor => KeyContext::Editor,
         }
     }
 }
@@ -467,7 +456,6 @@ impl Workspace {
             (Focus::Explorer, Tab::Commits) => panels.commits.update_list(action),
             (Focus::Viewer, Tab::Commits) => panels.commits.page.update_body(action, &ctx),
             _ => match target {
-                Focus::Worktree => panels.worktree.update(action, &ctx),
                 Focus::Explorer => panels.explorer.update(action, &ctx),
                 Focus::Viewer => panels.viewer.update(action, &ctx),
                 Focus::TerminalClaude | Focus::TerminalShell => {
@@ -479,7 +467,6 @@ impl Workspace {
                     .or_else(|| panels.fleet.update(action, &ctx)),
                 // 端末パネルの読みビューとスクロールは右の Claude のもの。左下のシェルには無い。
                 Focus::FleetShell => panels.fleet.update(action, &ctx),
-                _ => None,
             },
         }
     }
@@ -1007,14 +994,14 @@ impl Workspace {
     /// キーと貼り付けを受け取るセッション。
     pub fn pty_session(&self) -> Option<String> {
         match self.focus {
-            Focus::TerminalClaude | Focus::TerminalShell | Focus::Editor => {
+            Focus::TerminalClaude | Focus::TerminalShell => {
                 self.panels.terminal.session_in(self.focus)
             }
             Focus::FleetSession => self.fleet_session(),
             Focus::FleetShell => self
                 .fleet_shell()
                 .filter(|id| self.panels.fleet.typing_shell() == Some(id.as_str())),
-            Focus::Worktree | Focus::Explorer | Focus::Viewer | Focus::Fleet => None,
+            Focus::Explorer | Focus::Viewer | Focus::Fleet => None,
         }
     }
 

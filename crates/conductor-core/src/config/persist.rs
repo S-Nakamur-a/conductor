@@ -55,8 +55,9 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #
 # [keybinds.keys] is the global layer (active everywhere). Each
 # [keybinds.layers.<context>] table is a per-panel layer. Context names:
-# worktree, explorer, explorer_diff_list, explorer_comment_list, viewer,
-# viewer_diff_mode, terminal, editor, overlay.
+# fleet, explorer, explorer_diff_list, explorer_commit_log,
+# explorer_comment_list, explorer_tour_stops, viewer, viewer_diff_mode,
+# changes_list, changes, terminal, overlay.
 #
 # Key grammar: modifiers ctrl/alt/shift/super joined with '+', then the key.
 # A single char is verbatim and case-sensitive (e.g. "G" is Shift+g). Back-tab
@@ -67,10 +68,9 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 # "ctrl+q" = "quit"
 # "ctrl+r" = false          # remove a default binding entirely
 #
-# [keybinds.layers.worktree]
+# [keybinds.layers.fleet]
 # "j" = "navigate_down"
 # "down" = "navigate_down"
-# "w" = "create_worktree"
 
 [api]
 # Which AI answers Conductor's own prompts (smart worktree naming).

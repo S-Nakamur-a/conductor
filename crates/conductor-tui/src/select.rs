@@ -81,7 +81,7 @@ impl Selection {
 pub fn area(layout: &Layout, region: Region) -> Option<Rect> {
     let inside_panel = !matches!(
         region,
-        Region::TitleBar | Region::MenuBar | Region::WorktreeStrip | Region::StatusBar
+        Region::TitleBar | Region::MenuBar | Region::StatusBar
     );
     inside_panel
         .then(|| layout.rect(region))?

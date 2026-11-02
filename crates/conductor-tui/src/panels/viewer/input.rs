@@ -70,9 +70,6 @@ impl ViewerPanel {
         if action == Action::ToggleMarkdownRender {
             return Some(self.toggle_markdown());
         }
-        if action == Action::OpenInEditor {
-            return Some(self.open_in_editor());
-        }
         // 行に紐づくキーは素通しして global へ落ち、そこから戻ってもまたここへ来る
         // ので何も起きない。畳む対象を並べた表を持たずに済む。
         if self.is_showing_rendered_markdown() {

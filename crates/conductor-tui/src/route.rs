@@ -222,6 +222,41 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_wとalt_3は端末の区画ではptyへ届く() {
+        let mut ws = Workspace::for_test();
+        let keys = [
+            ctrl('w'),
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::SUPER),
+            key(KeyCode::Char('£')),
+        ];
+        for focus in [
+            Focus::TerminalClaude,
+            Focus::TerminalShell,
+            Focus::FleetSession,
+            Focus::FleetShell,
+        ] {
+            ws.focus = focus;
+            for k in keys {
+                assert_eq!(
+                    route(&mut ws, k),
+                    Routed::ForwardToPty(k),
+                    "{focus:?} {k:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_wは一覧でも詳細でも何もしない() {
+        let mut ws = Workspace::for_test();
+        for focus in [Focus::Fleet, Focus::Explorer, Focus::Viewer] {
+            ws.focus = focus;
+            assert_eq!(route(&mut ws, ctrl('w')), Routed::Ignored, "{focus:?}");
+        }
+    }
+
+    #[test]
     fn パネルフォーカスでは_keymapで解決する() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;
@@ -234,16 +269,15 @@ mod tests {
 
     #[test]
     fn フォーカスの輪() {
-        let mut f = Focus::Worktree;
+        let mut f = Focus::Explorer;
         let mut seen = vec![f];
-        for _ in 0..5 {
+        for _ in 0..4 {
             f = f.next();
             seen.push(f);
         }
         assert_eq!(
             seen,
             [
-                Focus::Worktree,
                 Focus::Explorer,
                 Focus::Viewer,
                 Focus::TerminalClaude,

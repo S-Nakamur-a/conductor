@@ -56,15 +56,14 @@ the Claude Code sessions inside the TUI, resolving the DB from
   cc-notify socket as one `ui <json>` line (`cc_hook::UiRequest`), relayed by the
   PTY host like `cc-signal`. They can only answer *sent*: a host with no window
   drops the line, and it is deliberately not replayed on attach. An open_file
-  request from another worktree switches the window there first —
-  unless an editor is open, which the switch would kill; close_file does not, and
+  request from another worktree switches the window there first; close_file does not, and
   only acts on the worktree being shown. With `diff` it lands in the Files changed tab
   (`Effect::ShowChange`), waiting for the diff while it is being read and taking Git Changes
   back to the working tree if it shows a commit, as the old Viewer did; without, in Code.
   Adding a window tool runs an action at a moment nobody chose. Open one level of
   the callees of the action it reuses and check each side effect against someone
-  who is typing, has an editor open, or is on another worktree: #403's three bugs
-  were all visible that way (`follow_worktree` discards the editor, the top modal
+  who is typing or is on another worktree: #403's three bugs were all visible that
+  way (a worktree switch killed the editor pane conductor had then, the top modal
   takes keys before the PTY, a diff result outlives a worktree switch).
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
@@ -77,15 +76,16 @@ links the old file to the new one, so a panel pinned to its spawn-time
 runs inside the panel's own Claude process and reports the current id back over a
 Unix socket, which the PTY host (below) listens on through `conductor-svc`'s
 `watch/cc_notify.rs` and relays to the window. `cc-signal`
-rides the same socket with the waiting/active state the monitor strip shows.
+rides the same socket with the panel's waiting/active state. Nothing in the window
+reads it; the host still relays and replays it.
 `pty/spawn.rs` writes `.conductor/claude-hooks.json` and passes it as `--settings`
 on every spawn (that *adds a layer*, so the user's own settings keep working),
 plus `CONDUCTOR_PANEL_ID` and `CONDUCTOR_NOTIFY_SOCK`.
 They live in the binary rather than `plugins/` for the same reason `mcp-serve`
 does: a separately released plugin drifts, and the failure is silent — and
-waiting/active used to be plugin-only, so anyone without it had a dead strip.
+waiting/active used to be plugin-only, so anyone without it had no state at all.
 `PostToolUse` is declared on top of the plugin's three events because it is the
-only one that fires after a permission dialog is approved; without it the strip
+only one that fires after a permission dialog is approved; without it the state
 stays "waiting" while the panel is working. **There is no hook-less fallback** —
 the old log-shape inference is gone, so a panel whose hook stays quiet keeps its
 spawn-time session id.
@@ -136,8 +136,8 @@ with no window open, and the window opened later showed it mid-tool.
 - **The host answers what nobody else can while the window is away:** cursor-position
   queries (`CSI 6 n`), the alternate-screen SIGWINCH nudge, and cc-notify. It keeps
   each panel's session id and the last active/waiting for each cwd that still has a
-  live Claude, and replays them on attach, which is what keeps the transcript and the
-  strip right across a reopen.
+  live Claude, and replays them on attach, which is what keeps the transcript right
+  across a reopen.
 - **Lock order is window → each session's parser.** Building the handshake under the
   window lock is what makes snapshot and stream meet with no gap and no repeat.
 - **The child's environment is the window's, sent whole with each spawn.** The host's
@@ -168,8 +168,7 @@ with no window open, and the window opened later showed it mid-tool.
   Claude whose canonical cwd is inside it, whichever window holds it, and deletes only
   after each one with a state file has ended (a Claude with no state file yet has its
   tab closed but is not waited for) and a second `deletion_check` finds nothing the
-  confirmation did not show (`task.rs`'s `fleet_delete`). Editors are the exception
-  and die with the window that opened them. The host exits once it has had no sessions
+  confirmation did not show (`task.rs`'s `fleet_delete`). The host exits once it has had no sessions
   and no window for 3s. **A host of another version is kept while it has sessions**
   (the status bar says so) and is told to `Shutdown` when it has none; the frame
   protocol carries its own number for that reason.
@@ -462,7 +461,7 @@ the dirty check.
 ### Layout
 
 ```
-Title bar / Menu bar / Worktree monitor strip   (all full width)
+Title bar / Menu bar   (full width)
 Explorer | Viewer | Terminal (Claude Code / Shell)
 Status bar
 ```
@@ -470,7 +469,7 @@ Status bar
 The middle row is a three-column accordion with focus-driven widths: Explorer
 (file tree over the changed-files / comment list), Viewer, Terminal (Claude Code
 over shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
-persist), `Focus::Editor` merges Explorer+Viewer into one PTY region. Menu rows
+persist). Menu rows
 carry a `CommandId` and run through the same `command::exec` as the palette and
 every keybinding. On the Sessions screen the keys do nothing: the detail screen's
 columns are not drawn there, and moving them would write a width nobody can see. The

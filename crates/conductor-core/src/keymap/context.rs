@@ -4,7 +4,6 @@
 pub enum KeyContext {
     Global,
     Fleet,
-    Worktree,
     Explorer,
     ExplorerDiffList,
     ExplorerCommitLog,
@@ -17,15 +16,13 @@ pub enum KeyContext {
     /// Files changed タブの中央の、全ファイルを縦に並べた diff。
     Changes,
     Terminal,
-    Editor,
     Overlay,
 }
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 14] = [
+    pub const PANELS: [KeyContext; 12] = [
         KeyContext::Fleet,
-        KeyContext::Worktree,
         KeyContext::Explorer,
         KeyContext::ExplorerDiffList,
         KeyContext::ExplorerCommitLog,
@@ -36,7 +33,6 @@ impl KeyContext {
         KeyContext::ChangesList,
         KeyContext::Changes,
         KeyContext::Terminal,
-        KeyContext::Editor,
         KeyContext::Overlay,
     ];
 
@@ -44,7 +40,6 @@ impl KeyContext {
         match self {
             KeyContext::Global => keymap_suite::GLOBAL_LAYER,
             KeyContext::Fleet => "fleet",
-            KeyContext::Worktree => "worktree",
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerDiffList => "explorer_diff_list",
             KeyContext::ExplorerCommitLog => "explorer_commit_log",
@@ -55,13 +50,12 @@ impl KeyContext {
             KeyContext::ChangesList => "changes_list",
             KeyContext::Changes => "changes",
             KeyContext::Terminal => "terminal",
-            KeyContext::Editor => "editor",
             KeyContext::Overlay => "overlay",
         }
     }
 
     /// 解決しなかったキーを内側のプログラム (PTY) へ転送するコンテキスト。
     pub(crate) fn forwards_to_pty(self) -> bool {
-        matches!(self, KeyContext::Terminal | KeyContext::Editor)
+        self == KeyContext::Terminal
     }
 }

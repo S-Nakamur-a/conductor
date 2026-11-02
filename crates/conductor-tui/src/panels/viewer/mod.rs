@@ -203,17 +203,6 @@ impl ViewerPanel {
         self.md_rendered && self.markdown_toggle_available()
     }
 
-    /// 開いているファイルを埋め込みエディタへ渡す。開いていなければ何も起こさない。
-    fn open_in_editor(&self) -> Vec<Effect> {
-        match self.active_path() {
-            Some(path) => vec![Effect::OpenInEditor(self.root.join(path))],
-            None => vec![Effect::Status(
-                StatusLevel::Warning,
-                "no file open to edit".into(),
-            )],
-        }
-    }
-
     /// 素のソースとレンダリング表示を切り替える。切り替えたら必ず先頭に着地し、
     /// 行に紐づいた途中の操作 (選択、ホバー、ジャンプ先の札) は畳む。
     pub fn toggle_markdown(&mut self) -> Vec<Effect> {
