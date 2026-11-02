@@ -309,7 +309,7 @@ impl ChangesPanel {
 
     /// レビュー・幅・開閉が変わったあとに組み直す。差分は同じなので一番上は同じ行のまま
     /// (スレッドの途中や削除行も)。その行が無くなれば (パス, 新しい側の行番号) で探し、
-    /// この組み直しで畳まれたファイルなら見出しへ。
+    /// この組み直しで畳む・開くが変わったファイルなら見出しへ。
     pub fn relayout(&mut self, ctx: &Ctx) {
         let anchor = self.anchor();
         let held = (self.sections.get(self.top.file))
@@ -319,7 +319,7 @@ impl ChangesPanel {
             let section = &self.sections[self.top.file];
             let same = row.and_then(|row| section.rows.iter().position(|r| *r == row));
             match same {
-                _ if section.collapsed && !was_collapsed => self.top.row = 0,
+                _ if section.collapsed != was_collapsed => self.top.row = 0,
                 Some(row) => self.top.row = row,
                 None => {
                     if let Some(anchor) = anchor {
@@ -356,6 +356,12 @@ impl ChangesPanel {
         }
     }
 
+    fn flip_file_fold(&mut self, path: String) {
+        if !self.folds.files.remove(&path) {
+            self.folds.files.insert(path);
+        }
+    }
+
     /// viewed を切り替えたファイルは、手で開閉した分を忘れて viewed のとおりに畳む。
     pub fn follow_viewed(&mut self, path: &str) {
         self.folds.files.remove(path);
@@ -371,9 +377,7 @@ impl ChangesPanel {
             return false;
         };
         if self.sections[file].collapsed {
-            if !self.folds.files.remove(&path) {
-                self.folds.files.insert(path);
-            }
+            self.flip_file_fold(path);
             self.lay_out(ctx);
         }
         self.top = Top {
@@ -447,9 +451,7 @@ impl ChangesPanel {
                 }
             }
             Action::ToggleInlineThread if row == Row::Header => {
-                if !self.folds.files.remove(&path) {
-                    self.folds.files.insert(path);
-                }
+                self.flip_file_fold(path);
                 self.relayout(ctx);
                 Vec::new()
             }

@@ -1339,3 +1339,27 @@ fn 畳んだファイルを綴りの違うパスや届く前に頼まれても�
     let top = ws.panels.changes.top();
     assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(3));
 }
+
+#[test]
+fn 畳んだファイルの空行で_viewed_を外すと一番上は見出し() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    top_to(&mut ws, 0, 1);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert!(rows(&ws, 0).len() > 2);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+}
+
+#[test]
+fn 一覧で畳んだファイルを選んでも開かない() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    ws.panels.changes.list_view = Viewport::new(5, 10);
+    top_to(&mut ws, 1, 0);
+    assert!(ws.panels.changes.click_list(5));
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+}

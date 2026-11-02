@@ -662,6 +662,10 @@ fn centered(area: Rect, width_pct: u16, height: u16) -> Rect {
 mod tests {
     use super::*;
     use crate::layout::layout;
+    use crate::modal::Modal;
+    use conductor_core::keymap::KeyMap;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn files_changed_の中央の案内にコメントと_viewed_が出る() {
@@ -670,11 +674,6 @@ mod tests {
         assert!(hint.contains("c: comment"), "{hint}");
         assert!(hint.contains("v: viewed"), "{hint}");
     }
-
-    use crate::modal::Modal;
-    use conductor_core::keymap::KeyMap;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
 
     fn draw(ws: &Workspace) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
