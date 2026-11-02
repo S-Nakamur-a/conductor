@@ -934,6 +934,24 @@ mod hint {
     }
 
     #[test]
+    fn 映せないこの窓の行の右には詳細へ入るキーを出す() {
+        let ws = listing(Vec::new(), vec![own("CC:1", "/r/a", None)]);
+        assert_eq!(ws.fleet_session(), None);
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        terminal
+            .draw(|frame| render::detail(frame, frame.area(), &ws))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .filter(|symbol| !symbol.trim().is_empty())
+            .collect();
+        assert!(text.contains("ctrl+oでこのworktreeの画面に入る"), "{text}");
+    }
+
+    #[test]
     fn 行が無ければ新しいセッションと閉じるを出す() {
         let ws = listing(Vec::new(), Vec::new());
         assert_eq!(render::hint(&ws), "ctrl+n 新しいセッション · esc 閉じる");
