@@ -250,6 +250,8 @@ pub struct Workspace {
     pub keymap: KeyMap,
     pub config: Config,
     review_requests: ReviewRequests,
+    /// 一覧の畳みを書き残すファイル。
+    pub fleet_fold_file: Option<PathBuf>,
 }
 
 /// repo を切り替えても持ち越す。他の repo で消した worktree を作り直さないため。
@@ -300,6 +302,7 @@ impl Workspace {
             keymap,
             config,
             review_requests: ReviewRequests::default(),
+            fleet_fold_file: None,
         }
     }
 

@@ -141,6 +141,29 @@ mod tests {
     }
 
     #[test]
+    fn 一覧の_h_l_と左右の矢印は右の区画と左下のシェルでは端末へ届く() {
+        let mut ws = Workspace::for_test();
+        let keys = [
+            (key(KeyCode::Char('h')), Action::CollapseOrLeft),
+            (key(KeyCode::Left), Action::CollapseOrLeft),
+            (key(KeyCode::Char('l')), Action::ExpandNode),
+            (key(KeyCode::Right), Action::ExpandNode),
+        ];
+        for (event, action) in keys {
+            ws.focus = Focus::Fleet;
+            assert_eq!(route(&mut ws, event), Routed::Action(action));
+            for focus in [Focus::FleetSession, Focus::FleetShell] {
+                ws.focus = focus;
+                assert_eq!(
+                    route(&mut ws, event),
+                    Routed::ForwardToPty(event),
+                    "{focus:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn 一覧の大文字のaは右の区画と左下のシェルでは端末へ届く() {
         let mut ws = Workspace::for_test();
         let a = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT);

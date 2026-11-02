@@ -145,6 +145,12 @@
 # 選んだ行の worktree の詳細の画面へ。素の文字にしないのは ctrl+n の行と同じ理由。
 # 全体の ctrl+o (open_repo) はここでは上書きする。open_repo はパレットとメニューに残る。
 "ctrl+o" = "select"
+"h" = "collapse_or_left"
+"left" = "collapse_or_left"
+# l を tab / enter と同じ expand_or_right にしないのは、打ちかけの文の l でキーボードが右の Claude へ移り、
+# 続く文字がそこへ打たれるため。
+"l" = "expand_node"
+"right" = "expand_node"
 ":" = "command_palette"
 # 小文字の d は、一覧に居ると気づかずに打った文 (ready など) から届いてしまう。
 # worktree の行では、同じキーが worktree ごと消す (action 名の stop_session は、キー設定を壊さないため残した)。

@@ -209,6 +209,11 @@ fn workspace(root: PathBuf, version: &'static str) -> Workspace {
     let account_problems = config.claude_account_problems();
 
     let mut ws = Workspace::new(repo, config, keymap, theme, version);
+    let fold_file = crate::panels::fleet::fold::file_path();
+    ws.panels
+        .fleet
+        .restore_fold(crate::panels::fleet::fold::load(&fold_file));
+    ws.fleet_fold_file = Some(fold_file);
     let warning = config_warning.into_iter().chain(account_problems).chain(
         keybind_warnings
             .iter()

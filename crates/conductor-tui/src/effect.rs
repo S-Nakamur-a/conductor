@@ -83,6 +83,8 @@ pub enum Effect {
         account: Option<String>,
         startup_prompt: Option<String>,
     },
+    /// 一覧で畳んだものを書き残す。書き先の無い窓 (テスト) では何もしない。
+    SaveFleetFold(crate::panels::fleet::fold::Fold),
     /// その repo で Smart Worktree の説明を聞く。
     FleetSmartPrompt(PathBuf),
     /// [Effect::FleetSmartPrompt] で聞いた説明。repo は一覧が覚えている。
@@ -313,6 +315,18 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     queue.push_back(Effect::Spawn(Task::PersistConfig(
                         crate::task::Persist::Theme(name),
                     )));
+                }
+            }
+            Effect::SaveFleetFold(fold) => {
+                let saved = ws
+                    .fleet_fold_file
+                    .as_deref()
+                    .map(|path| crate::panels::fleet::fold::save(path, &fold));
+                if let Some(Err(e)) = saved {
+                    queue.push_back(Effect::Status(
+                        StatusLevel::Warning,
+                        format!("Could not save the folded lines: {e}"),
+                    ));
                 }
             }
             Effect::Focus(Focus::Fleet) => ws.focus = Focus::Fleet,
@@ -760,6 +774,34 @@ mod tests {
 
     use super::*;
     use crate::panels::fleet::StopTarget;
+
+    #[test]
+    fn 畳みの保存は書き先があれば書き_書けなければ警告し_無ければ何もしない() {
+        use crate::panels::fleet::fold::{Fold, load};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions-fold.json");
+        let fold = Fold {
+            repos: [PathBuf::from("/r/app")].into(),
+            ..Fold::default()
+        };
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::<TaskResult>::new();
+
+        apply(&mut ws, &mut svc, vec![Effect::SaveFleetFold(fold.clone())]);
+        assert!(ws.chrome.status.is_none());
+        assert!(!path.exists());
+
+        ws.fleet_fold_file = Some(path.clone());
+        apply(&mut ws, &mut svc, vec![Effect::SaveFleetFold(fold.clone())]);
+        assert_eq!(load(&path), fold);
+
+        ws.fleet_fold_file = Some(path.join("sessions-fold.json"));
+        apply(&mut ws, &mut svc, vec![Effect::SaveFleetFold(fold)]);
+        assert!(matches!(
+            ws.chrome.status.as_ref().map(|s| s.level),
+            Some(StatusLevel::Warning)
+        ));
+    }
 
     #[test]
     fn 起動できたら一覧でそのセッションを選んで右に入り_できなければ選択もフォーカスも動かさない() {

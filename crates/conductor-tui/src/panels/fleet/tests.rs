@@ -706,6 +706,7 @@ fn press(fleet: &mut FleetPanel, y: u16, hit: Option<&render::Slot>) -> Vec<Effe
             hit,
             button: None,
             button_column: None,
+            on_marker: false,
         },
         &conductor_core::config::Config::default(),
     )
@@ -835,7 +836,7 @@ fn worktree_の行は続けて押しても選ぶだけ() {
         .into_iter()
         .find_map(|i| match i {
             Item::Worktree(w) => Some(w),
-            Item::Session(_) => None,
+            Item::Repo(_) | Item::Session(_) => None,
         })
         .unwrap();
     let slot = render::Slot::Worktree(worktree.clone());
@@ -2088,13 +2089,28 @@ mod tree {
         fleet
     }
 
+    /// 選んでいる行の、shape と同じ書き方。repo の見出しは `# root`。
+    fn current(fleet: &FleetPanel) -> String {
+        let item = fleet
+            .items()
+            .into_iter()
+            .find(|item| fleet.is_selected_item(item))
+            .unwrap();
+        match item {
+            Item::Repo(root) => format!("# {}", root.display()),
+            Item::Worktree(w) => w.label,
+            Item::Session(row) => format!("  {:?}", row.key),
+        }
+    }
+
     fn shape(fleet: &FleetPanel) -> Vec<String> {
         fleet
             .items()
             .into_iter()
-            .map(|item| match item {
-                Item::Worktree(w) => w.label,
-                Item::Session(row) => format!("  {:?}", row.key),
+            .filter_map(|item| match item {
+                Item::Repo(_) => None,
+                Item::Worktree(w) => Some(w.label),
+                Item::Session(row) => Some(format!("  {:?}", row.key)),
             })
             .collect()
     }
@@ -2240,29 +2256,21 @@ mod tree {
             false,
             at(200),
         );
-        let current = |fleet: &FleetPanel| {
-            let items = fleet.items();
-            let i = items
-                .iter()
-                .position(|item| fleet.is_selected_item(item))
-                .unwrap();
-            (i, shape(fleet)[i].clone())
-        };
         let ws = Workspace::for_test();
-        assert_eq!(current(&fleet), (0, "  Pid(7)".to_string()), "入力待ちの欄");
+        assert_eq!(current(&fleet), "  Pid(7)", "入力待ちの欄");
         let steps = [
-            (Action::NextRepo, 1, "main"),
-            (Action::NextRepo, 4, "trunk"),
-            (Action::NextRepo, 4, "trunk"),
-            (Action::NavigateDown, 5, "  Pid(9)"),
-            (Action::PrevRepo, 4, "trunk"),
-            (Action::PrevRepo, 1, "main"),
-            (Action::PrevRepo, 0, "  Pid(7)"),
-            (Action::PrevRepo, 0, "  Pid(7)"),
+            (Action::NextRepo, "main"),
+            (Action::NextRepo, "trunk"),
+            (Action::NextRepo, "trunk"),
+            (Action::NavigateDown, "  Pid(9)"),
+            (Action::PrevRepo, "trunk"),
+            (Action::PrevRepo, "main"),
+            (Action::PrevRepo, "  Pid(7)"),
+            (Action::PrevRepo, "  Pid(7)"),
         ];
-        for (action, index, label) in steps {
+        for (action, label) in steps {
             fleet.update(action, &ws.ctx());
-            assert_eq!(current(&fleet), (index, label.to_string()), "{action:?}");
+            assert_eq!(current(&fleet), label, "{action:?}");
         }
     }
 
@@ -2373,7 +2381,8 @@ mod tree {
         let ws = Workspace::for_test();
         let mut fleet = app();
         fleet.update(Action::GoToTop, &ws.ctx());
-        fleet.update(Action::NavigateUp, &ws.ctx());
+        fleet.update(Action::NavigateDown, &ws.ctx());
+        assert_eq!(current(&fleet), "main");
         let main = fleet.update(Action::StopSession, &ws.ctx()).unwrap();
         assert!(status_text(&main).contains("main worktree"), "{main:?}");
 
@@ -2711,6 +2720,506 @@ mod tree {
             Some(theme.fg),
             "1 本以上の待機は 0 本と違う色"
         );
+    }
+
+    mod folding {
+        use super::*;
+        use crate::panels::fleet::fold::Fold;
+
+        fn press_key(fleet: &mut FleetPanel, action: Action) -> Vec<Effect> {
+            fleet.update(action, &Workspace::for_test().ctx()).unwrap()
+        }
+
+        fn pick(fleet: &mut FleetPanel, want: &str) {
+            let item = fleet
+                .items()
+                .into_iter()
+                .find(|item| {
+                    let label = match item {
+                        Item::Repo(root) => format!("# {}", root.display()),
+                        Item::Worktree(w) => w.label.clone(),
+                        Item::Session(row) => format!("  {:?}", row.key),
+                    };
+                    label == want
+                })
+                .unwrap_or_else(|| panic!("{want} is not in {:?}", shape(fleet)));
+            fleet.select(&item, at(300));
+        }
+
+        fn saved(effects: &[Effect]) -> Fold {
+            match effects {
+                [Effect::SaveFleetFold(fold)] => fold.clone(),
+                other => panic!("{other:?}"),
+            }
+        }
+
+        fn folded(repos: &[&str], worktrees: &[&str]) -> Fold {
+            Fold {
+                repos: repos.iter().map(PathBuf::from).collect(),
+                worktrees: worktrees.iter().map(PathBuf::from).collect(),
+            }
+        }
+
+        fn summary(fleet: &FleetPanel) -> String {
+            render::summary_lines(fleet, &Theme::default(), &[], at(300), 60)
+                .remove(0)
+                .to_string()
+        }
+
+        #[test]
+        fn 開いた_worktree_で_h_を押すと畳まれ_そのセッションは一覧から消えても本数には残る() {
+            let mut fleet = app();
+            let before = summary(&fleet);
+            pick(&mut fleet, "feature/b");
+            let effects = press_key(&mut fleet, Action::CollapseOrLeft);
+            assert_eq!(saved(&effects), folded(&[], &["/r/app-b"]));
+            assert_eq!(current(&fleet), "feature/b");
+            assert!(
+                !shape(&fleet).contains(&"  Pid(8)".to_string()),
+                "{:?}",
+                shape(&fleet)
+            );
+            assert_eq!(summary(&fleet), before);
+        }
+
+        #[test]
+        fn 畳んだ_worktree_で_l_は開き_開いた_worktree_で_l_は先頭のセッションへ() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&[], &["/r/app-b"]));
+            pick(&mut fleet, "feature/b");
+            let effects = press_key(&mut fleet, Action::ExpandNode);
+            assert_eq!(saved(&effects), Fold::default());
+            assert_eq!(current(&fleet), "feature/b");
+            assert!(press_key(&mut fleet, Action::ExpandNode).is_empty());
+            assert_eq!(current(&fleet), "  Pid(8)");
+        }
+
+        #[test]
+        fn セッション行の_h_l_とセッションの無い_worktree_の_l_は何もしない() {
+            let mut fleet = app();
+            pick(&mut fleet, "  Pid(8)");
+            for action in [Action::CollapseOrLeft, Action::ExpandNode] {
+                assert!(press_key(&mut fleet, action).is_empty(), "{action:?}");
+                assert_eq!(current(&fleet), "  Pid(8)", "{action:?}");
+            }
+            pick(&mut fleet, "feature/a");
+            assert!(press_key(&mut fleet, Action::ExpandNode).is_empty());
+            assert_eq!(current(&fleet), "feature/a");
+            assert_eq!(fleet.fold, Fold::default());
+        }
+
+        #[test]
+        fn 畳めない_worktree_の_h_は_repo_の見出しへ移り_見出しの_h_は畳み_二度目は何もしない() {
+            let mut fleet = app();
+            pick(&mut fleet, "feature/a");
+            assert!(press_key(&mut fleet, Action::CollapseOrLeft).is_empty());
+            assert_eq!(current(&fleet), "# /r/app");
+            let effects = press_key(&mut fleet, Action::CollapseOrLeft);
+            assert_eq!(saved(&effects), folded(&["/r/app"], &[]));
+            assert_eq!(shape(&fleet), Vec::<String>::new(), "見出しだけが残る");
+            assert!(press_key(&mut fleet, Action::CollapseOrLeft).is_empty());
+        }
+
+        #[test]
+        fn 畳んだ_repo_の_l_は開き_開いた_repo_の_l_は_main_の行へ() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&["/r/app"], &[]));
+            pick(&mut fleet, "# /r/app");
+            assert_eq!(
+                saved(&press_key(&mut fleet, Action::ExpandNode)),
+                Fold::default()
+            );
+            assert!(press_key(&mut fleet, Action::ExpandNode).is_empty());
+            assert_eq!(current(&fleet), "main");
+        }
+
+        #[test]
+        fn main_worktree_を畳んでも_repo_は畳まれず_repo_の開閉は_main_の畳みを変えない() {
+            let mut fleet = app();
+            pick(&mut fleet, "main");
+            let effects = press_key(&mut fleet, Action::CollapseOrLeft);
+            assert_eq!(saved(&effects), folded(&[], &["/r/app"]));
+            press_key(&mut fleet, Action::NavigateDown);
+            assert_eq!(
+                shape(&fleet),
+                ["main", "feature/a", "feature/b", "  Pid(8)"],
+                "main のセッションだけが隠れる"
+            );
+            pick(&mut fleet, "# /r/app");
+            press_key(&mut fleet, Action::CollapseOrLeft);
+            let effects = press_key(&mut fleet, Action::ExpandNode);
+            assert_eq!(saved(&effects), folded(&[], &["/r/app"]));
+        }
+
+        #[test]
+        fn 選んだセッションが入る節は畳んであっても開いて描き_選択が出ると畳んで描く() {
+            let mut fleet = app();
+            pick(&mut fleet, "  Pid(8)");
+            fleet.restore_fold(folded(&["/r/app"], &["/r/app-b"]));
+            assert!(
+                shape(&fleet).contains(&"  Pid(8)".to_string()),
+                "{:?}",
+                shape(&fleet)
+            );
+            fleet.apply(
+                FleetStatus {
+                    live: vec![
+                        live(7, "/r/app", "s7", Status::Working, Owner::Conductor),
+                        live(8, "/r/app-b/src", "s8", Status::Idle, Owner::Conductor),
+                    ],
+                    trees: fleet.trees.clone(),
+                    placement: fleet.placement.clone(),
+                    ..Default::default()
+                },
+                Vec::new(),
+                None,
+                false,
+                at(400),
+            );
+            assert_eq!(current(&fleet), "  Pid(8)", "読み直しても選び直さない");
+            pick(&mut fleet, "# /r/app");
+            assert_eq!(shape(&fleet), Vec::<String>::new());
+        }
+
+        #[test]
+        fn 入力待ちの欄で選んだセッションが木へ戻っても選択はそのまま畳んだ_worktree_は開いて描く()
+        {
+            let trees = app().trees.clone();
+            let placement = app().placement.clone();
+            let status = |state: Status| FleetStatus {
+                live: vec![live(8, "/r/app-b/src", "s8", state, Owner::Conductor)],
+                trees: trees.clone(),
+                placement: placement.clone(),
+                ..Default::default()
+            };
+            let mut fleet = FleetPanel::default();
+            fleet.restore_fold(folded(&[], &["/r/app-b"]));
+            fleet.apply(
+                status(Status::Waiting(Waiting::Question)),
+                Vec::new(),
+                None,
+                false,
+                at(200),
+            );
+            assert_eq!(
+                fleet.selected_row().map(|r| (r.key, r.pinned)),
+                Some((RowKey::Pid(8), true))
+            );
+            fleet.apply(status(Status::Working), Vec::new(), None, false, at(300));
+            let row = fleet.selected_row().unwrap();
+            assert_eq!((row.key, row.pinned), (RowKey::Pid(8), false));
+            assert!(shape(&fleet).contains(&"  Pid(8)".to_string()));
+            press_key(&mut fleet, Action::NavigateUp);
+            assert_eq!(current(&fleet), "feature/b");
+            assert!(
+                !shape(&fleet).contains(&"  Pid(8)".to_string()),
+                "選択が出たら畳んで描く"
+            );
+        }
+
+        #[test]
+        fn 畳んだ_worktree_へ起動したセッションは選ばれて見える() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&[], &["/r/app-a"]));
+            let mut placement = fleet.placement.clone();
+            placement.insert(PathBuf::from("/r/app-a"), PathBuf::from("/r/app-a"));
+            fleet.placement = placement;
+            fleet.note_launched("CC:1".into(), vec![own("CC:1", "/r/app-a", None)]);
+            assert_eq!(current(&fleet), "  Panel(\"CC:1\")");
+        }
+
+        #[test]
+        fn repo_の見出しの行き先は詳細も含めて_main_と同じで_d_a_は何もしない() {
+            let mut fleet = app();
+            pick(&mut fleet, "# /r/app");
+            assert_eq!(fleet.selected_dir(), Some(PathBuf::from("/r/app")));
+            assert_eq!(
+                fleet.launch_target(Path::new("/elsewhere")),
+                (PathBuf::from("/r/app"), Some(PathBuf::from("/r/app")))
+            );
+            assert_eq!(
+                fleet.selected_tree_worktree().map(|w| w.path.clone()),
+                Some(PathBuf::from("/r/app"))
+            );
+            assert!(matches!(
+                press_key(&mut fleet, Action::Select).as_slice(),
+                [Effect::EnterDetail(DetailTarget::Dir(dir))] if dir == Path::new("/r/app")
+            ));
+            for action in [Action::StopSession, Action::ReopenAsAccount] {
+                assert!(press_key(&mut fleet, action).is_empty(), "{action:?}");
+            }
+            assert!(fleet.selected_row().is_none());
+            assert!(fleet.selected_worktree().is_none());
+        }
+
+        #[test]
+        fn j_k_は_repo_の見出しにも止まり_畳んだ中は飛ばす() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&[], &["/r/app-b"]));
+            press_key(&mut fleet, Action::GoToTop);
+            assert_eq!(current(&fleet), "# /r/app");
+            let mut seen = vec![current(&fleet)];
+            for _ in 0..5 {
+                press_key(&mut fleet, Action::NavigateDown);
+                seen.push(current(&fleet));
+            }
+            assert_eq!(
+                seen,
+                [
+                    "# /r/app",
+                    "main",
+                    "  Pid(7)",
+                    "feature/a",
+                    "feature/b",
+                    "feature/b"
+                ]
+            );
+        }
+
+        #[test]
+        fn 畳んだ_repo_では大文字の_j_k_が見出しに止まる() {
+            let mut fleet = FleetPanel::default();
+            fleet.restore_fold(folded(&["/r/zoo"], &[]));
+            fleet.apply(
+                FleetStatus {
+                    live: vec![live(7, "/r/app", "s7", Status::Working, Owner::Conductor)],
+                    trees: vec![
+                        repo(
+                            "/r/app",
+                            vec![worktree("/r/app", Head::Branch("main".into()))],
+                        ),
+                        repo(
+                            "/r/zoo",
+                            vec![worktree("/r/zoo", Head::Branch("trunk".into()))],
+                        ),
+                    ],
+                    placement: placed(&[("/r/app", "/r/app")]),
+                    ..Default::default()
+                },
+                Vec::new(),
+                None,
+                false,
+                at(200),
+            );
+            press_key(&mut fleet, Action::NextRepo);
+            assert_eq!(current(&fleet), "# /r/zoo");
+            press_key(&mut fleet, Action::PrevRepo);
+            assert_eq!(current(&fleet), "main");
+        }
+
+        #[test]
+        fn 選んでいた_worktree_が消えて見出ししか無ければ見出しを選び直す() {
+            let status = |worktrees: Vec<WorktreeHead>| FleetStatus {
+                trees: vec![repo("/r/app", worktrees)],
+                ..Default::default()
+            };
+            let main = || worktree("/r/app", Head::Branch("main".into()));
+            let mut fleet = FleetPanel::default();
+            fleet.restore_fold(folded(&["/r/app"], &[]));
+            fleet.apply(
+                status(vec![main(), worktree("/r/app-a", Head::Branch("a".into()))]),
+                Vec::new(),
+                None,
+                false,
+                at(200),
+            );
+            fleet.select(
+                &Item::Worktree(Worktree {
+                    path: PathBuf::from("/r/app-a"),
+                    label: "a".into(),
+                    in_tree: true,
+                }),
+                at(200),
+            );
+            assert_eq!(current(&fleet), "a");
+            fleet.apply(status(vec![main()]), Vec::new(), None, false, at(300));
+            assert_eq!(current(&fleet), "# /r/app");
+        }
+
+        fn click(fleet: &mut FleetPanel, slot: &render::Slot, on_marker: bool) -> Vec<Effect> {
+            fleet.click_list(
+                (3, 4),
+                ListPress {
+                    hit: Some(slot),
+                    button: None,
+                    button_column: None,
+                    on_marker,
+                },
+                &conductor_core::config::Config::default(),
+            )
+        }
+
+        #[test]
+        fn 印を押すと畳んで行を選び_続けて押すたびに開閉し_題の直後の印は題の二度押しになる() {
+            let mut fleet = app();
+            pick(&mut fleet, "  Pid(8)");
+            let slot = feature_b(&fleet);
+            click(&mut fleet, &slot, false);
+            assert!(click(&mut fleet, &slot, true).is_empty(), "題の二度押し");
+            assert_eq!(fleet.fold, Fold::default());
+
+            fleet.row_clicks = ClickTracker::default();
+            assert_eq!(
+                saved(&click(&mut fleet, &slot, true)),
+                folded(&[], &["/r/app-b"])
+            );
+            assert_eq!(current(&fleet), "feature/b");
+            assert_eq!(saved(&click(&mut fleet, &slot, true)), Fold::default());
+            assert_eq!(
+                saved(&click(&mut fleet, &slot, true)),
+                folded(&[], &["/r/app-b"])
+            );
+
+            fleet.row_clicks = ClickTracker::default();
+            let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
+            assert_eq!(
+                saved(&click(&mut fleet, &repo, true)),
+                folded(&["/r/app"], &["/r/app-b"])
+            );
+            assert_eq!(current(&fleet), "# /r/app");
+        }
+
+        fn feature_b(fleet: &FleetPanel) -> render::Slot {
+            fleet
+                .items()
+                .into_iter()
+                .find_map(|item| match item {
+                    Item::Worktree(w) if w.label == "feature/b" => Some(render::Slot::Worktree(w)),
+                    _ => None,
+                })
+                .unwrap()
+        }
+
+        #[test]
+        fn 選択が中にあって開いて描かれた節の印を押すと畳んで描き_記録は消さない() {
+            let mut fleet = app();
+            pick(&mut fleet, "  Pid(8)");
+            fleet.restore_fold(folded(&["/r/app"], &["/r/app-b"]));
+            assert!(
+                shape(&fleet).contains(&"  Pid(8)".to_string()),
+                "選択が中なので開いて描く"
+            );
+            let slot = feature_b(&fleet);
+            assert!(click(&mut fleet, &slot, true).is_empty(), "記録は既にある");
+            assert_eq!(current(&fleet), "feature/b");
+            assert!(
+                !shape(&fleet).contains(&"  Pid(8)".to_string()),
+                "{:?}",
+                shape(&fleet)
+            );
+            assert_eq!(fleet.fold, folded(&["/r/app"], &["/r/app-b"]));
+
+            pick(&mut fleet, "  Pid(7)");
+            fleet.row_clicks = ClickTracker::default();
+            let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
+            assert!(click(&mut fleet, &repo, true).is_empty());
+            assert_eq!(current(&fleet), "# /r/app");
+            assert_eq!(shape(&fleet), Vec::<String>::new());
+        }
+
+        #[test]
+        fn 印の二度押しは送られて同じ点に別の行が来ても一度目の節に効く() {
+            let mut fleet = app();
+            let slot = feature_b(&fleet);
+            assert_eq!(
+                saved(&click(&mut fleet, &slot, true)),
+                folded(&[], &["/r/app-b"])
+            );
+            let other = fleet
+                .items()
+                .into_iter()
+                .find_map(|item| match item {
+                    Item::Session(row) => Some(render::Slot::Session(row)),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(saved(&click(&mut fleet, &other, false)), Fold::default());
+            assert_eq!(current(&fleet), "feature/b");
+        }
+
+        #[test]
+        fn セッション行の二度押しは送られて同じ点に印が来ても畳まず一度目の行に効く() {
+            let mut fleet = app();
+            let row = fleet
+                .items()
+                .into_iter()
+                .find_map(|item| match item {
+                    Item::Session(row) if row.key == RowKey::Pid(8) => {
+                        Some(render::Slot::Session(row))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            click(&mut fleet, &row, false);
+            let slot = feature_b(&fleet);
+            let second = click(&mut fleet, &slot, true);
+            assert!(
+                matches!(second.as_slice(), [Effect::Focus(Focus::FleetSession)]),
+                "{second:?}"
+            );
+            assert_eq!(fleet.fold, Fold::default());
+            assert_eq!(current(&fleet), "  Pid(8)");
+        }
+
+        #[test]
+        fn 一覧の実幅では見出しと_worktree_行の右端にボタンが残る() {
+            use unicode_width::UnicodeWidthStr;
+            for inner in [95u16, 123] {
+                let mut ws = Workspace::for_test();
+                ws.panels.fleet = app();
+                let rect = ratatui::layout::Rect::new(0, 0, inner + 2, 14);
+                let composed = render::compose(&ws, rect).unwrap();
+                for (line, slot) in composed.lines.iter().zip(&composed.slots) {
+                    let text = line.to_string();
+                    let end = match slot {
+                        render::Slot::Repo(Some(_)) => render::SMART_BUTTON,
+                        render::Slot::Worktree(_) => render::NEW_BUTTON,
+                        _ => continue,
+                    };
+                    assert!(text.ends_with(end), "{inner}: {text}");
+                    assert_eq!(text.width(), usize::from(inner), "{inner}: {text}");
+                }
+            }
+        }
+
+        #[test]
+        fn repo_の見出しの印以外を押すと見出しを選ぶ() {
+            let mut fleet = app();
+            let repo = render::Slot::Repo(Some(PathBuf::from("/r/app")));
+            assert!(click(&mut fleet, &repo, false).is_empty());
+            assert_eq!(current(&fleet), "# /r/app");
+            assert_eq!(fleet.fold, Fold::default());
+        }
+
+        #[test]
+        fn 印の当たりは見出しの行頭と_worktree_行の選択印の後ろの2桁() {
+            let body = ratatui::layout::Rect::new(10, 5, 60, 4);
+            let composed = render::Composed {
+                summary: None,
+                body,
+                footer: body,
+                lines: Vec::new(),
+                slots: vec![
+                    render::Slot::Repo(Some(PathBuf::from("/r/app"))),
+                    render::Slot::Worktree(Worktree {
+                        path: PathBuf::from("/r/app"),
+                        label: "main".into(),
+                        in_tree: true,
+                    }),
+                    render::Slot::Repo(None),
+                ],
+                offset: 0,
+                tree_start: 0,
+            };
+            let hits = |y: u16| -> Vec<u16> {
+                (10..20)
+                    .filter(|&x| render::on_marker(&composed, x, y))
+                    .collect()
+            };
+            assert_eq!(hits(5), [10, 11]);
+            assert_eq!(hits(6), [12, 13]);
+            assert_eq!(hits(7), Vec::<u16>::new(), "畳めない見出し");
+        }
     }
 }
 
@@ -3144,6 +3653,7 @@ mod launch {
             hit: render::slot_at(&composed, x, y),
             button: render::button_hit(&composed, x, y),
             button_column: render::button_column(&composed, x),
+            on_marker: render::on_marker(&composed, x, y),
         };
         let config = ws.config.clone();
         ws.panels.fleet.click_list((x, y), press, &config)

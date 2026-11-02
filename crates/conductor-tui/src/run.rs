@@ -724,6 +724,7 @@ fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Ve
         hit: render::slot_at(&composed, x, y),
         button: render::button_hit(&composed, x, y),
         button_column: render::button_column(&composed, x),
+        on_marker: render::on_marker(&composed, x, y),
     };
     ws.panels.fleet.click_list((x, y), press, &ws.config)
 }
@@ -3959,12 +3960,11 @@ needle here
     }
 
     #[test]
-    fn 見出しと区画の枠を押しても選択は動かない() {
+    fn 入力待ちの見出しと区画の枠を押しても選択は動かない() {
         use crate::panels::fleet::render::Slot;
         let (mut ws, mut svc, l) = fleet_with_sessions(60);
         let before = selected_key(&ws);
         assert!(before.is_some());
-        click_text(&mut ws, &mut svc, &l, |slot| matches!(slot, Slot::Repo(_)));
         click_text(&mut ws, &mut svc, &l, |slot| matches!(slot, Slot::Other));
         click_line(
             &mut ws,
@@ -4022,7 +4022,7 @@ needle here
             .into_iter()
             .filter_map(|item| match item {
                 Item::Session(row) => Some(row),
-                Item::Worktree(_) => None,
+                Item::Repo(_) | Item::Worktree(_) => None,
             })
             .next_back()
             .unwrap();
@@ -4033,6 +4033,7 @@ needle here
                 hit: Some(&Slot::Session(bottom)),
                 button: None,
                 button_column: None,
+                on_marker: false,
             },
             &ws.config,
         );
@@ -4130,7 +4131,7 @@ needle here
         for (i, slot) in composed.slots.iter().enumerate() {
             match slot {
                 Slot::Other => assert!(text(i).starts_with("入力待ち"), "{i}: {}", text(i)),
-                Slot::Repo(_) => assert!(text(i).starts_with("app"), "{i}: {}", text(i)),
+                Slot::Repo(_) => assert!(text(i).contains("app ─"), "{i}: {}", text(i)),
                 Slot::Worktree(w) => assert!(text(i).contains(&w.label), "{i}: {}", text(i)),
                 Slot::Session(r) if r.pinned => {
                     assert_eq!(r.key, RowKey::Pid(7));

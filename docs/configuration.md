@@ -7,6 +7,9 @@ All fields are optional with sensible defaults, so an absent file is a valid one
 Appearance settings (`[ui]`, `[viewer]`, `[diff]`, `[layout]`) take effect
 immediately on save; everything else needs a restart.
 
+Which repositories and worktrees the Sessions list has folded is not a setting: it is kept
+beside this file in `sessions-fold.json`, rewritten on every fold, and read at start.
+
 ```toml
 [general]
 # repo = "/path/to/default/repo"       # default repository to open on startup
