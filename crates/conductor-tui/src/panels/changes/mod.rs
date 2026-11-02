@@ -1,6 +1,7 @@
-//! 詳細の画面の Files changed タブ (Commits タブの中央も同じパネル)。作業ツリー対 base の差分を、ファイルの見出しの下に
-//! 全部縦に並べる。差分は Explorer が投げた作業ツリーの結果を写して持ち、自分では投げない
+//! 詳細の画面の Files changed タブ。差分を、ファイルの見出しの下に全部縦に並べる。
+//! Files changed は Explorer が投げた作業ツリーの結果を写して持ち、自分では投げない
 //! — 大きなリポジトリで 9 秒かかる diff を 2 本走らせないため。
+//! Commits タブの中央も読むだけにした同じパネルで、差分は [commits::CommitsTab] が投げる。
 
 pub mod commits;
 pub mod render;

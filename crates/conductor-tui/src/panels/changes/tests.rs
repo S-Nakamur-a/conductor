@@ -1879,7 +1879,7 @@ pub(crate) fn commits(n: usize, from: usize) -> Vec<CommitInfo> {
         .collect()
 }
 
-pub(crate) fn oid(i: usize) -> String {
+fn oid(i: usize) -> String {
     format!("{i:040}")
 }
 
