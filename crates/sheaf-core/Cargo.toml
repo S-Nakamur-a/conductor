@@ -1,6 +1,6 @@
 [package]
 name = "sheaf-core"
-version = "0.2.0"
+version = "0.2.0-wt.local-github-style-review-view"
 edition = "2024"
 rust-version = "1.88"
 publish = false
