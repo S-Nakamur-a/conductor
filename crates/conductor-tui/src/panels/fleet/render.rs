@@ -1029,12 +1029,12 @@ fn worktree_line(
 
 /// 打ちながら横目で探すので、他のリストの灰色の地では見落とす。
 fn selection(theme: &Theme, focused: bool, selected: bool) -> Style {
-    let tint = match (selected, focused) {
-        (false, _) => return Style::default(),
-        (true, true) => 0.45,
-        (true, false) => 0.3,
-    };
-    let style = Style::default().bg(Theme::lerp(theme.selected_bg_inactive, theme.accent, tint));
+    // これより accent へ寄せると、地が明るくなって行の本文が沈む (mocha で 0.45 のとき約 3:1)。
+    const TINT: f64 = 0.2;
+    if !selected {
+        return Style::default();
+    }
+    let style = Style::default().bg(Theme::lerp(theme.selected_bg_inactive, theme.accent, TINT));
     match focused {
         true => style.add_modifier(Modifier::BOLD),
         false => style,
