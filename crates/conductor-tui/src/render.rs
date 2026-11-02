@@ -383,6 +383,8 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: boo
         Focus::Viewer if context == KeyContext::Changes => &[
             ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
             ("file", &[Action::NextChangedFile, Action::PrevChangedFile]),
+            ("comment", &[Action::AddComment]),
+            ("viewed", &[Action::ToggleViewed]),
             ("split", &[Action::ToggleDiffView]),
             ("panel", &[Action::CycleFocusForward]),
         ],
@@ -665,6 +667,14 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
+    #[test]
+    fn files_changed_の中央の案内にコメントと_viewed_が出る() {
+        let ws = Workspace::for_test();
+        let hint = key_hint(Focus::Viewer, KeyContext::Changes, &ws.keymap, true);
+        assert!(hint.contains("c: comment"), "{hint}");
+        assert!(hint.contains("v: viewed"), "{hint}");
+    }
+
     fn draw(ws: &Workspace) -> ratatui::buffer::Buffer {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
@@ -686,7 +696,8 @@ mod tests {
         prompt.input.set_text(&long);
         let mut pr = crate::modal::pr::PrInput::new("/r".into());
         pr.input.set_text(&long);
-        let mut editor = crate::modal::CommentEditor::new_comment("a.rs".into(), 1, None);
+        let mut editor =
+            crate::modal::CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None);
         editor.input.set_text(&long);
         for modal in [
             Modal::Prompt(prompt),

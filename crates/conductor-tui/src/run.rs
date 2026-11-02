@@ -1023,9 +1023,10 @@ mod tests {
 
         on_mouse(&mut ws, &mut svc, &l, at(left, body.x + 5, body.y + 5));
         assert!(ws.chrome.selection.is_some(), "縦並びはドラッグで写せる");
-        ws.panels
-            .changes
-            .update_body(conductor_core::keymap::Action::ToggleDiffView);
+        ws.dispatch_to(
+            crate::workspace::Focus::Viewer,
+            conductor_core::keymap::Action::ToggleDiffView,
+        );
         on_mouse(&mut ws, &mut svc, &l, at(left, body.x + 5, body.y + 5));
         assert_eq!(ws.chrome.selection, None);
 

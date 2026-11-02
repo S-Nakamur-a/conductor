@@ -14,7 +14,7 @@ use super::*;
 use crate::effect::Effect;
 use crate::layout::layout;
 use crate::list::Viewport;
-use crate::task::TaskResult;
+use crate::task::{ReviewWrite, TaskResult};
 use crate::workspace::{Focus, Workspace};
 
 fn line(tag: DiffLineTag, old: Option<usize>, new: Option<usize>, text: &str) -> DiffLine {
@@ -78,10 +78,26 @@ fn working(files: Vec<FileDiff>) -> DiffState {
     diff
 }
 
+/// レビューの無い窓の Ctx でパネルだけを動かす。
+fn install(panel: &mut ChangesPanel, root: &Path, diff: &DiffState) -> Option<String> {
+    let ws = Workspace::for_test();
+    panel.install(root, diff, &ws.ctx())
+}
+
+fn reveal(panel: &mut ChangesPanel, path: String, line: Option<usize>, loading: bool) -> Reveal {
+    let ws = Workspace::for_test();
+    panel.reveal(path, line, loading, &ws.ctx())
+}
+
+fn body(panel: &mut ChangesPanel, action: Action) -> Option<Vec<Effect>> {
+    let ws = Workspace::for_test();
+    panel.update_body(action, &ws.ctx())
+}
+
 fn loaded(files: Vec<FileDiff>) -> ChangesPanel {
     let mut panel = ChangesPanel::new(false);
     panel.follow(Path::new("/r/feat"));
-    panel.install(Path::new("/r/feat"), &working(files));
+    install(&mut panel, Path::new("/r/feat"), &working(files));
     panel
 }
 
@@ -325,18 +341,18 @@ fn 一覧の行のクリックでそのファイルへ飛ぶ() {
 #[test]
 fn 大文字の_j_と_k_で見出しを渡る() {
     let mut panel = loaded(two_files());
-    panel.update_body(Action::NextChangedFile);
+    body(&mut panel, Action::NextChangedFile);
     assert_eq!(panel.top(), Top { file: 1, row: 0 });
-    panel.update_body(Action::NextChangedFile);
+    body(&mut panel, Action::NextChangedFile);
     assert_eq!(panel.top(), Top { file: 1, row: 0 });
-    panel.update_body(Action::NavigateDown);
-    panel.update_body(Action::PrevChangedFile);
+    body(&mut panel, Action::NavigateDown);
+    body(&mut panel, Action::PrevChangedFile);
     assert_eq!(
         panel.top(),
         Top { file: 1, row: 0 },
         "途中からは今の見出しへ"
     );
-    panel.update_body(Action::PrevChangedFile);
+    body(&mut panel, Action::PrevChangedFile);
     assert_eq!(panel.top(), Top { file: 0, row: 0 });
     assert_eq!(panel.cursor().selected(), 0, "一覧の選択も付いてくる");
 }
@@ -347,18 +363,18 @@ fn 縦の送りはファイルをまたいで両端で止まる() {
     panel.body_height = 10;
     // 1 ファイル = 見出し + 本文 5 行 + 空行。
     assert_eq!(panel.height(0), 7);
-    panel.update_body(Action::ScrollHalfPageDown);
+    body(&mut panel, Action::ScrollHalfPageDown);
     assert_eq!(panel.top(), Top { file: 0, row: 5 });
-    panel.update_body(Action::NavigateDown);
-    panel.update_body(Action::NavigateDown);
+    body(&mut panel, Action::NavigateDown);
+    body(&mut panel, Action::NavigateDown);
     assert_eq!(panel.top(), Top { file: 1, row: 0 });
-    panel.update_body(Action::ScrollHalfPageUp);
+    body(&mut panel, Action::ScrollHalfPageUp);
     assert_eq!(panel.top(), Top { file: 0, row: 2 });
-    panel.update_body(Action::GoToBottom);
+    body(&mut panel, Action::GoToBottom);
     assert_eq!(panel.top(), Top { file: 0, row: 5 });
-    panel.update_body(Action::GoToTop);
+    body(&mut panel, Action::GoToTop);
     assert_eq!(panel.top(), Top::default());
-    panel.update_body(Action::NavigateUp);
+    body(&mut panel, Action::NavigateUp);
     assert_eq!(panel.top(), Top::default());
 }
 
@@ -367,10 +383,10 @@ fn 左右表示に切り替えると今のファイルの見出しに戻る() {
     let mut panel = loaded(two_files());
     panel.scroll(9);
     assert_eq!(panel.top(), Top { file: 1, row: 2 });
-    panel.update_body(Action::ToggleDiffView);
+    body(&mut panel, Action::ToggleDiffView);
     assert!(panel.side_by_side());
     assert_eq!(panel.top(), Top { file: 1, row: 0 });
-    assert_eq!(panel.body_rows(1), 5, "削除と追加が向かい合って 1 行になる");
+    assert_eq!(panel.height(1), 7, "削除と追加が向かい合って 1 行になる");
 }
 
 #[test]
@@ -381,7 +397,7 @@ fn 読み直しても一番上をパスと新しい側の行で保つ() {
     let mut moved = two_files();
     moved.insert(0, file("0.rs", FileStatus::Added, 1, 2));
     moved[2] = file("b.rs", FileStatus::Modified, 8, 6);
-    panel.install(Path::new("/r/feat"), &working(moved));
+    install(&mut panel, Path::new("/r/feat"), &working(moved));
     assert_eq!(panel.top(), Top { file: 2, row: 4 });
 }
 
@@ -390,7 +406,7 @@ fn 削除行が一番上なら直前の行番号で保つ() {
     let mut panel = loaded(two_files());
     // a.rs の削除行。直前は 3 行目。
     panel.scroll(4);
-    panel.install(Path::new("/r/feat"), &working(two_files()));
+    install(&mut panel, Path::new("/r/feat"), &working(two_files()));
     assert_eq!(panel.top(), Top { file: 0, row: 3 });
 }
 
@@ -401,13 +417,13 @@ fn ファイルが消えたらパス順で次の見出しへ() {
         file("b.rs", FileStatus::Modified, 1, 1),
         file("c.rs", FileStatus::Modified, 1, 1),
     ]);
-    panel.update_body(Action::NextChangedFile);
-    panel.update_body(Action::NavigateDown);
+    body(&mut panel, Action::NextChangedFile);
+    body(&mut panel, Action::NavigateDown);
     let left = vec![
         file("a.rs", FileStatus::Modified, 1, 1),
         file("c.rs", FileStatus::Modified, 1, 1),
     ];
-    panel.install(Path::new("/r/feat"), &working(left));
+    install(&mut panel, Path::new("/r/feat"), &working(left));
     assert_eq!(panel.top(), Top { file: 1, row: 0 });
 }
 
@@ -416,11 +432,11 @@ fn worktree_を移って戻ると一番上が戻る() {
     let mut panel = loaded(two_files());
     panel.scroll(9);
     panel.follow(Path::new("/r/other"));
-    panel.install(Path::new("/r/other"), &working(two_files()));
+    install(&mut panel, Path::new("/r/other"), &working(two_files()));
     assert_eq!(panel.top(), Top::default());
     panel.follow(Path::new("/r/feat"));
     assert!(panel.diff().is_none(), "戻った直後は読み込み中");
-    panel.install(Path::new("/r/feat"), &working(two_files()));
+    install(&mut panel, Path::new("/r/feat"), &working(two_files()));
     assert_eq!(panel.top(), Top { file: 1, row: 2 });
 }
 
@@ -428,11 +444,11 @@ fn worktree_を移って戻ると一番上が戻る() {
 fn 別の根とコミットを出どころにした結果は捨てる() {
     let mut panel = ChangesPanel::new(false);
     panel.follow(Path::new("/r/feat"));
-    panel.install(Path::new("/r/main"), &working(two_files()));
+    install(&mut panel, Path::new("/r/main"), &working(two_files()));
     assert!(panel.diff().is_none());
     let mut commit = DiffState::new(DiffSource::commit("abc"));
     commit.files = two_files();
-    panel.install(Path::new("/r/feat"), &commit);
+    install(&mut panel, Path::new("/r/feat"), &commit);
     assert!(panel.diff().is_none());
 }
 
@@ -441,22 +457,28 @@ fn 届く前に頼まれたファイルは届いてから出し_無ければ言�
     let mut panel = ChangesPanel::new(false);
     panel.follow(Path::new("/r/feat"));
     assert_eq!(
-        panel.reveal("b.rs".into(), Some(12), false),
+        reveal(&mut panel, "b.rs".into(), Some(12), false),
         Reveal::Waiting
     );
     assert_eq!(
-        panel.install(Path::new("/r/feat"), &working(two_files())),
+        install(&mut panel, Path::new("/r/feat"), &working(two_files())),
         None
     );
     // 1〜9 行目の隠れた塊、10、11、12 行目。
     assert_eq!(panel.top(), Top { file: 1, row: 4 });
 
     panel.follow(Path::new("/r/x"));
-    panel.reveal("gone.rs".into(), None, false);
-    let missing = panel.install(Path::new("/r/x"), &working(two_files()));
+    reveal(&mut panel, "gone.rs".into(), None, false);
+    let missing = install(&mut panel, Path::new("/r/x"), &working(two_files()));
     assert_eq!(missing.as_deref(), Some("gone.rs"));
-    assert_eq!(panel.reveal("gone.rs".into(), None, false), Reveal::Missing);
-    assert_eq!(panel.reveal("gone.rs".into(), None, true), Reveal::Waiting);
+    assert_eq!(
+        reveal(&mut panel, "gone.rs".into(), None, false),
+        Reveal::Missing
+    );
+    assert_eq!(
+        reveal(&mut panel, "gone.rs".into(), None, true),
+        Reveal::Waiting
+    );
 }
 
 #[test]
@@ -626,13 +648,13 @@ fn 新しい側の行番号が無い行も読み直しで位置を保つ() {
         Top { file: 0, row: 1 },
     ] {
         panel.top = top;
-        panel.install(Path::new("/r/feat"), &working(files()));
+        install(&mut panel, Path::new("/r/feat"), &working(files()));
         assert_eq!(panel.top(), top);
     }
     panel.top = Top { file: 0, row: 20 };
     panel.follow(Path::new("/r/other"));
     panel.follow(Path::new("/r/feat"));
-    panel.install(Path::new("/r/feat"), &working(files()));
+    install(&mut panel, Path::new("/r/feat"), &working(files()));
     assert_eq!(panel.top(), Top { file: 0, row: 20 });
 }
 
@@ -640,7 +662,7 @@ fn 新しい側の行番号が無い行も読み直しで位置を保つ() {
 fn 区切りの空行が一番上なら直前の行で保つ() {
     let mut panel = loaded(two_files());
     panel.top = Top { file: 0, row: 6 };
-    panel.install(Path::new("/r/feat"), &working(two_files()));
+    install(&mut panel, Path::new("/r/feat"), &working(two_files()));
     assert_eq!(panel.top(), Top { file: 0, row: 5 });
 }
 
@@ -650,7 +672,7 @@ fn ハンクの無いファイルの断り書きと区切りの空行も位置�
     let mut panel = loaded(files());
     for row in [1, 2] {
         panel.top = Top { file: 0, row };
-        panel.install(Path::new("/r/feat"), &working(files()));
+        install(&mut panel, Path::new("/r/feat"), &working(files()));
         assert_eq!(panel.top(), Top { file: 0, row });
     }
 }
@@ -674,4 +696,670 @@ fn コミットを選んでいる間に写しにあるファイルを頼まれ�
         "{effects:?}"
     );
     assert_eq!(ws.panels.changes.top(), Top { file: 1, row: 0 });
+}
+
+fn comment_at(id: &str, path: &str, line: u32) -> conductor_core::review_store::ReviewComment {
+    crate::review::tests::comment(id, path, line, None)
+}
+
+fn snapshot(comments: Vec<conductor_core::review_store::ReviewComment>) -> crate::review::Snapshot {
+    crate::review::Snapshot {
+        branch: "feat".into(),
+        comments,
+        ..Default::default()
+    }
+}
+
+/// a.rs と c.rs はどちらも 1〜3 行目が文脈、4 行目が削除と追加。行は 見出し, 1, 2, 3, 削除, 4, 空行。
+fn reviewed(comments: Vec<conductor_core::review_store::ReviewComment>) -> Workspace {
+    let mut ws = feat_workspace();
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 160, 40)));
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot(comments)))));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![
+            file("a.rs", FileStatus::Modified, 1, 3),
+            file("c.rs", FileStatus::Modified, 1, 3),
+        ],
+    );
+    ws.focus = Focus::Viewer;
+    ws
+}
+
+fn rows(ws: &Workspace, file: usize) -> Vec<Row> {
+    ws.panels.changes.sections()[file].rows.clone()
+}
+
+fn top_to(ws: &mut Workspace, file: usize, row: usize) {
+    ws.panels.changes.top = Top { file, row };
+}
+
+fn submit(ws: &Workspace, effects: Vec<Effect>) -> Vec<Effect> {
+    let mut effects = effects;
+    let Some(Effect::PushModal(mut modal @ crate::modal::Modal::CommentEditor(_))) = effects.pop()
+    else {
+        panic!("{effects:?}");
+    };
+    let ctx = ws.ctx();
+    modal.update(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &ctx);
+    modal.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &ctx)
+}
+
+fn warning(effects: &[Effect]) -> String {
+    match effects {
+        [Effect::Status(_, text)] => text.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn 一番上の行で_c_を押すとその行と窓の_branch_で入力欄が開く() {
+    let mut ws = reviewed(Vec::new());
+    top_to(&mut ws, 0, 2);
+    let effects = ws.dispatch(Action::AddComment).unwrap();
+    let written = submit(&ws, effects);
+    assert!(
+        matches!(
+            written.as_slice(),
+            [_, Effect::Spawn(crate::task::Task::WriteReview(ReviewWrite::AddComment { branch, file_path, line_start: 2, .. }))]
+                if branch == "feat" && file_path == "a.rs"
+        ),
+        "{written:?}"
+    );
+}
+
+#[test]
+fn 削除行_見出し_断り書き_空行_左右表示ではコメントを断る() {
+    let mut ws = reviewed(Vec::new());
+    top_to(&mut ws, 0, 4);
+    assert!(warning(&ws.dispatch(Action::AddComment).unwrap()).contains("deleted line"));
+    for row in [0, 6] {
+        top_to(&mut ws, 0, row);
+        assert!(
+            warning(&ws.dispatch(Action::AddComment).unwrap()).contains("line of code"),
+            "row {row}"
+        );
+    }
+    let _ = deliver(&mut ws, "/r/feat", vec![binary("logo.png")]);
+    top_to(&mut ws, 0, 1);
+    assert!(warning(&ws.dispatch(Action::AddComment).unwrap()).contains("line of code"));
+
+    let mut ws = reviewed(Vec::new());
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    top_to(&mut ws, 0, 2);
+    assert!(warning(&ws.dispatch(Action::AddComment).unwrap()).contains("unified"));
+}
+
+#[test]
+fn スレッドの行と畳んだファイルの空行でもコメントを断る() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    top_to(&mut ws, 0, 3);
+    assert!(matches!(rows(&ws, 0)[3], Row::Thread { .. }));
+    assert!(warning(&ws.dispatch(Action::AddComment).unwrap()).contains("line of code"));
+
+    top_to(&mut ws, 1, 0);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert_eq!(rows(&ws, 1), [Row::Header, Row::Blank]);
+    top_to(&mut ws, 1, 1);
+    assert!(warning(&ws.dispatch(Action::AddComment).unwrap()).contains("line of code"));
+}
+
+#[test]
+fn 左右表示でも返信と解決とスレッドの開閉は効く() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 4)]);
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    let section = &ws.panels.changes.sections()[0];
+    let row = (0..section.rows.len())
+        .find(|row| matches!(section.rows[*row], Row::Body(_)) && section.line_of(*row) == Some(4))
+        .unwrap();
+    top_to(&mut ws, 0, row);
+    let effects = ws.dispatch(Action::ReplyToComment).unwrap();
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::PushModal(crate::modal::Modal::CommentEditor(_))]
+    ));
+    let effects = ws.dispatch(Action::ToggleResolve).unwrap();
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::Spawn(crate::task::Task::WriteReview(
+            ReviewWrite::SetStatus { .. }
+        ))]
+    ));
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert!(
+        !rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+}
+
+#[test]
+fn 隠れた行の塊にはその先頭の行でコメントを付ける() {
+    let mut ws = feat_workspace();
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("b.rs", FileStatus::Modified, 10, 3)],
+    );
+    ws.focus = Focus::Viewer;
+    top_to(&mut ws, 0, 1);
+    let effects = ws.dispatch(Action::AddComment).unwrap();
+    let written = submit(&ws, effects);
+    assert!(
+        matches!(
+            written.as_slice(),
+            [
+                _,
+                Effect::Spawn(crate::task::Task::WriteReview(ReviewWrite::AddComment {
+                    line_start: 1,
+                    ..
+                }))
+            ]
+        ),
+        "{written:?}"
+    );
+}
+
+#[test]
+fn コメントのある行に印を付け未解決のスレッドを行の直後に開く() {
+    let ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    let thread = rows(&ws, 0)
+        .iter()
+        .filter(|row| matches!(row, Row::Thread { anchor: 2, .. }))
+        .count();
+    assert!(thread > 0);
+    assert_eq!(rows(&ws, 0)[3], Row::Thread { anchor: 2, line: 0 });
+    let body: Vec<String> = body_lines(&ws, 80, 30).iter().map(text).collect();
+    let at = body.iter().position(|l| l.contains("a.rs:2")).unwrap();
+    assert!(!body[at].starts_with("  "), "印が付く: {:?}", body[at]);
+    assert!(
+        body[at + 1..at + 1 + thread]
+            .iter()
+            .any(|l| l.contains("body of x")),
+        "{body:?}"
+    );
+    assert!(body[at + 1 + thread].contains("a.rs:3"));
+}
+
+#[test]
+fn 描かれない行のコメントは出さない() {
+    let mut ws = feat_workspace();
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot(vec![
+        comment_at("x", "b.rs", 5),
+    ])))));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("b.rs", FileStatus::Modified, 10, 3)],
+    );
+    assert!(
+        !rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+    let body: Vec<String> = body_lines(&ws, 80, 30).iter().map(text).collect();
+    assert!(!body.iter().any(|l| l.contains("body of x")), "{body:?}");
+}
+
+#[test]
+fn space_はそのファイルのスレッドだけを開閉する() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2), comment_at("y", "c.rs", 2)]);
+    top_to(&mut ws, 0, 2);
+    assert_eq!(ws.dispatch(Action::ToggleInlineThread), Some(Vec::new()));
+    assert!(
+        !rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+    assert!(
+        rows(&ws, 1)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert!(
+        rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+}
+
+#[test]
+fn スレッドの行で_r_は解決を切り替え_大文字の_r_は返信を開く() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    top_to(&mut ws, 0, 4);
+    assert!(matches!(
+        ws.panels.changes.sections()[0].rows[4],
+        Row::Thread { .. }
+    ));
+    let effects = ws.dispatch(Action::ToggleResolve).unwrap();
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Spawn(crate::task::Task::WriteReview(ReviewWrite::SetStatus { id, .. }))] if id == "x"
+        ),
+        "{effects:?}"
+    );
+    let effects = ws.dispatch(Action::ReplyToComment).unwrap();
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::PushModal(crate::modal::Modal::CommentEditor(_))]
+    ));
+    top_to(&mut ws, 0, 1);
+    assert_eq!(
+        warning(&ws.dispatch(Action::ReplyToComment).unwrap()),
+        "no comment on this line"
+    );
+}
+
+#[test]
+fn 波括弧でスレッドのある行へファイルを跨いで渡る() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2), comment_at("y", "c.rs", 3)]);
+    let row_of = |ws: &Workspace, file: usize, line: usize| {
+        let section = &ws.panels.changes.sections()[file];
+        (0..section.rows.len())
+            .find(|row| section.line_of(*row) == Some(line))
+            .unwrap()
+    };
+    assert_eq!(ws.dispatch(Action::NextComment), Some(Vec::new()));
+    assert_eq!(
+        ws.panels.changes.top(),
+        Top {
+            file: 0,
+            row: row_of(&ws, 0, 2)
+        }
+    );
+    let _ = ws.dispatch(Action::NextComment);
+    assert_eq!(
+        ws.panels.changes.top(),
+        Top {
+            file: 1,
+            row: row_of(&ws, 1, 3)
+        }
+    );
+    assert_eq!(
+        warning(&ws.dispatch(Action::NextComment).unwrap()),
+        "no comment on this line"
+    );
+    let _ = ws.dispatch(Action::PrevComment);
+    assert_eq!(
+        ws.panels.changes.top(),
+        Top {
+            file: 0,
+            row: row_of(&ws, 0, 2)
+        }
+    );
+
+    let thread_row = row_of(&ws, 1, 3) + 1;
+    top_to(&mut ws, 1, thread_row);
+    let _ = ws.dispatch(Action::PrevComment);
+    assert_eq!(
+        ws.panels.changes.top(),
+        Top {
+            file: 0,
+            row: row_of(&ws, 0, 2)
+        },
+        "スレッドの行からは付いている行を飛ばす"
+    );
+}
+
+#[test]
+fn 波括弧は畳んだファイルのスレッドを飛ばす() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2), comment_at("y", "c.rs", 3)]);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    top_to(&mut ws, 1, 0);
+    assert_eq!(
+        warning(&ws.dispatch(Action::PrevComment).unwrap()),
+        "no comment on this line"
+    );
+    assert_eq!(ws.panels.changes.top(), Top { file: 1, row: 0 });
+}
+
+#[test]
+fn 手で開閉した畳みとスレッドは_worktree_を戻ると戻る() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    top_to(&mut ws, 0, 2);
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    top_to(&mut ws, 1, 0);
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    let before = (rows(&ws, 0), rows(&ws, 1));
+    assert!(!before.0.iter().any(|row| matches!(row, Row::Thread { .. })));
+    assert_eq!(before.1, [Row::Header, Row::Blank]);
+
+    ws.panels.changes.follow(Path::new("/r/other"));
+    ws.panels.changes.follow(Path::new("/r/feat"));
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![
+            file("a.rs", FileStatus::Modified, 1, 3),
+            file("c.rs", FileStatus::Modified, 1, 3),
+        ],
+    );
+    assert_eq!((rows(&ws, 0), rows(&ws, 1)), before);
+}
+
+#[test]
+fn 別のプロセスが書いたコメントは次の読み直しで出る() {
+    let mut ws = reviewed(Vec::new());
+    assert!(
+        !rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot(vec![
+        comment_at("x", "a.rs", 2),
+    ])))));
+    assert!(
+        rows(&ws, 0)
+            .iter()
+            .any(|row| matches!(row, Row::Thread { .. }))
+    );
+}
+
+#[test]
+fn 組み直しても一番上は同じ行のまま() {
+    let mut ws = reviewed(Vec::new());
+    top_to(&mut ws, 0, 3);
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot(vec![
+        comment_at("x", "a.rs", 2),
+    ])))));
+    let top = ws.panels.changes.top();
+    assert_eq!(
+        ws.panels.changes.sections()[0].line_of(top.row),
+        Some(3),
+        "{top:?}"
+    );
+
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 100, 40)));
+    let top = ws.panels.changes.top();
+    assert_eq!(
+        ws.panels.changes.sections()[0].line_of(top.row),
+        Some(3),
+        "{top:?}"
+    );
+}
+
+#[test]
+fn 幅が変わるとスレッドの折り返しを組み直す() {
+    let mut long = comment_at("x", "a.rs", 2);
+    long.body = "word ".repeat(40);
+    let mut ws = reviewed(vec![long]);
+    let wide = rows(&ws, 0).len();
+    ws.sync_layout(&layout(&ws, Rect::new(0, 0, 90, 40)));
+    assert!(rows(&ws, 0).len() > wide);
+}
+
+#[test]
+fn 左右表示のスレッドは右の新しい行の直後に開く() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 4)]);
+    let _ = ws.dispatch(Action::ToggleDiffView);
+    let rows = rows(&ws, 0);
+    let at = rows
+        .iter()
+        .position(|row| matches!(row, Row::Thread { .. }))
+        .unwrap();
+    assert_eq!(
+        ws.panels.changes.sections()[0].line_of(at - 1),
+        Some(4),
+        "{rows:?}"
+    );
+    assert!(matches!(rows[at - 1], Row::Body(_)));
+}
+
+fn apply(ws: &mut Workspace, effects: Vec<Effect>) {
+    let mut svc = conductor_svc::Services::new();
+    crate::effect::apply(ws, &mut svc, effects);
+}
+
+#[test]
+fn v_で一番上のファイルを_viewed_にして見出しだけに畳む() {
+    let mut ws = reviewed(Vec::new());
+    top_to(&mut ws, 0, 3);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    assert!(matches!(effects.as_slice(), [Effect::ToggleViewed(path)] if path == "a.rs"));
+    apply(&mut ws, effects);
+    assert!(ws.review.is_viewed("a.rs"));
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+    let header = text(&body_lines(&ws, 80, 5)[0]);
+    assert!(header.starts_with(" [x] M a.rs"), "{header}");
+}
+
+#[test]
+fn v_を書き込みが返る前に続けて押すと_2_回目で戻る() {
+    let mut ws = reviewed(Vec::new());
+    for want in [true, false] {
+        let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+        apply(&mut ws, effects);
+        assert_eq!(ws.review.is_viewed("a.rs"), want);
+    }
+    assert!(rows(&ws, 0).len() > 2, "戻すと開く");
+}
+
+#[test]
+fn 見出しで_space_は_viewed_のまま開き_もう一度で畳む() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert!(rows(&ws, 0).len() > 2);
+    assert!(ws.review.is_viewed("a.rs"));
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert!(!ws.review.is_viewed("a.rs"));
+    assert!(
+        rows(&ws, 0).len() > 2,
+        "手で開いた後に v で外しても開いたまま"
+    );
+
+    top_to(&mut ws, 1, 0);
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    assert_eq!(
+        rows(&ws, 1),
+        [Row::Header, Row::Blank],
+        "viewed でなくても畳める"
+    );
+}
+
+#[test]
+fn viewed_はファイルがまた変わっても畳んだまま() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 5)],
+    );
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
+}
+
+#[test]
+fn 削除されたファイルの本文で_v_を押すと一番上は見出し() {
+    let mut ws = feat_workspace();
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![deleted("a.rs", 5), file("b.rs", FileStatus::Modified, 1, 3)],
+    );
+    ws.focus = Focus::Viewer;
+    top_to(&mut ws, 0, 3);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+}
+
+#[test]
+fn 断り書きで_v_を押すと一番上は見出し() {
+    let mut ws = feat_workspace();
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![binary("logo.png"), file("b.rs", FileStatus::Modified, 1, 3)],
+    );
+    ws.focus = Focus::Viewer;
+    top_to(&mut ws, 0, 1);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+}
+
+#[test]
+fn スレッドの途中で読み直しが届いても位置を保つ() {
+    let mut long = comment_at("x", "a.rs", 2);
+    long.body = "word ".repeat(80);
+    let mut ws = reviewed(vec![long.clone()]);
+    let at = rows(&ws, 0)
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| matches!(row, Row::Thread { .. }))
+        .nth(3)
+        .unwrap()
+        .0;
+    top_to(&mut ws, 0, at);
+    let reloaded = snapshot(vec![long, comment_at("y", "c.rs", 2)]);
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(reloaded))));
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: at });
+}
+
+#[test]
+fn 削除の塊の途中でレビューの読み直しが届いても位置を保つ() {
+    let mut hunk = vec![line(DiffLineTag::Equal, Some(1), Some(1), "ctx")];
+    for n in 2..=41 {
+        hunk.push(line(DiffLineTag::Delete, Some(n), None, "gone"));
+    }
+    hunk.push(line(DiffLineTag::Equal, Some(42), Some(2), "ctx2"));
+    let removed = FileDiff {
+        path: "a.rs".into(),
+        status: FileStatus::Modified,
+        added_lines: 0,
+        deleted_lines: 40,
+        hunks: vec![DiffHunk {
+            lines: hunk,
+            func_header: None,
+        }],
+    };
+    let mut ws = feat_workspace();
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(snapshot(Vec::new())))));
+    let _ = deliver(&mut ws, "/r/feat", vec![removed]);
+    top_to(&mut ws, 0, 30);
+    let reloaded = snapshot(vec![comment_at("y", "z.rs", 1)]);
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(reloaded))));
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 30 });
+}
+
+#[test]
+fn viewed_で畳んだファイルも差分つきで開く頼みではその行を出す() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    apply(
+        &mut ws,
+        vec![Effect::ShowChange {
+            path: "a.rs".into(),
+            line: Some(3),
+        }],
+    );
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(3));
+    assert!(ws.review.is_viewed("a.rs"), "viewed の印はそのまま");
+}
+
+#[test]
+fn 区切りの空行で_v_を押しても一番上は見出し() {
+    let mut ws = reviewed(Vec::new());
+    top_to(&mut ws, 0, 6);
+    assert_eq!(rows(&ws, 0)[6], Row::Blank);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+}
+
+#[test]
+fn 畳んだファイルの空行にいる間にレビューの読み直しが届いても動かない() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    top_to(&mut ws, 0, 1);
+    let mut reloaded = snapshot(vec![comment_at("y", "c.rs", 2)]);
+    reloaded.viewed.insert("a.rs".into());
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(reloaded))));
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 1 });
+}
+
+#[test]
+fn 読んでいたスレッドの行が閉じたら付いている行へ落ちる() {
+    let mut ws = reviewed(vec![comment_at("x", "a.rs", 2)]);
+    top_to(&mut ws, 0, 3);
+    assert!(matches!(rows(&ws, 0)[3], Row::Thread { .. }));
+    let _ = ws.dispatch(Action::ToggleInlineThread);
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(2));
+}
+
+#[test]
+fn 畳んだファイルを綴りの違うパスや届く前に頼まれても開いてその行を出す() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    apply(
+        &mut ws,
+        vec![Effect::ShowChange {
+            path: "./a.rs".into(),
+            line: Some(3),
+        }],
+    );
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(3));
+
+    let mut ws = feat_workspace();
+    let mut viewed = snapshot(Vec::new());
+    viewed.viewed.insert("a.rs".into());
+    let _ = ws.accept(TaskResult::Review(Ok(Box::new(viewed))));
+    apply(
+        &mut ws,
+        vec![Effect::ShowChange {
+            path: "a.rs".into(),
+            line: Some(3),
+        }],
+    );
+    let _ = deliver(
+        &mut ws,
+        "/r/feat",
+        vec![file("a.rs", FileStatus::Modified, 1, 3)],
+    );
+    let top = ws.panels.changes.top();
+    assert_eq!(ws.panels.changes.sections()[0].line_of(top.row), Some(3));
+}
+
+#[test]
+fn 畳んだファイルの空行で_viewed_を外すと一番上は見出し() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    top_to(&mut ws, 0, 1);
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    assert!(rows(&ws, 0).len() > 2);
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+}
+
+#[test]
+fn 一覧で畳んだファイルを選んでも開かない() {
+    let mut ws = reviewed(Vec::new());
+    let effects = ws.dispatch(Action::ToggleViewed).unwrap();
+    apply(&mut ws, effects);
+    ws.panels.changes.list_view = Viewport::new(5, 10);
+    top_to(&mut ws, 1, 0);
+    assert!(ws.panels.changes.click_list(5));
+    assert_eq!(ws.panels.changes.top(), Top { file: 0, row: 0 });
+    assert_eq!(rows(&ws, 0), [Row::Header, Row::Blank]);
 }

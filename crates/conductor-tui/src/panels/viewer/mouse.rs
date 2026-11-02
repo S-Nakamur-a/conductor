@@ -98,9 +98,9 @@ impl ViewerPanel {
         match zone {
             Zone::Comment => match anchor_for(&comments, line) {
                 Some(anchor) => self.threads.flip(anchor),
-                None => return self.click_comment(line),
+                None => return self.click_comment(line, &ctx.branch),
             },
-            Zone::Number => return self.click_comment(line),
+            Zone::Number => return self.click_comment(line, &ctx.branch),
             Zone::Fold => {
                 self.fold.toggle(line);
                 self.scroll.line = self.fold.visible_anchor(line) - 1;
@@ -108,7 +108,7 @@ impl ViewerPanel {
             Zone::Run => {
                 return match self.content.runs.contains_key(&line) {
                     true => self.run_at(line),
-                    false => self.click_comment(line),
+                    false => self.click_comment(line, &ctx.branch),
                 };
             }
             // 選択の帯は素の本文にしか描かないので、diff では見えない選択を残さない。
@@ -122,9 +122,9 @@ impl ViewerPanel {
     }
 
     /// ガターを押しての作成。狙いは押した行なので、残っている選択には引きずられない。
-    fn click_comment(&mut self, line_1: usize) -> Vec<Effect> {
+    fn click_comment(&mut self, line_1: usize, branch: &str) -> Vec<Effect> {
         self.selection.clear();
-        self.start_comment(line_1)
+        self.start_comment(line_1, branch)
     }
 
     /// その行のコマンドをシェルへ流す。

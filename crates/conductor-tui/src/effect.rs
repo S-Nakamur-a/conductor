@@ -202,8 +202,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 queue.extend(follow_up);
             }
             Effect::ToggleViewed(path) => {
+                let viewed = ws.review.flip_viewed(&path);
+                ws.panels.changes.follow_viewed(&path);
+                ws.relayout_changes();
                 let write = crate::task::ReviewWrite::SetViewed {
-                    viewed: !ws.review.is_viewed(&path),
+                    viewed,
                     file_path: path,
                 };
                 queue.push_back(Effect::Spawn(Task::WriteReview(write)));
@@ -585,7 +588,9 @@ pub(crate) fn show_change(ws: &mut Workspace, path: String, line: Option<usize>)
     let git_changes = &mut ws.panels.explorer.changes;
     let reload = git_changes.return_to_working_tree();
     let loading = reload.is_some() || git_changes.is_loading();
-    match ws.panels.changes.reveal(path.clone(), line, loading) {
+    let root = ws.panels.viewer.root().to_path_buf();
+    let (panels, _, ctx) = ws.split(&root);
+    match panels.changes.reveal(path.clone(), line, loading, &ctx) {
         Reveal::Shown => {}
         // 戻した読み直しが届けば出るので、待っていると言わない。
         Reveal::Waiting if reload.is_some() => {}

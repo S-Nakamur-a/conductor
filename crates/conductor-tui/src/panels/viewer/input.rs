@@ -8,7 +8,7 @@ use super::{H_STEP, HALF_PAGE, ViewerPanel, diff, search};
 use crate::comment_list::flip_status;
 use crate::effect::Effect;
 use crate::modal::{CommentEditor, Modal, Prompt};
-use crate::review::{ReviewState, anchor_for, anchors, innermost};
+use crate::review::{anchor_for, anchors, innermost};
 use crate::task::{ReviewWrite, Task};
 use crate::workspace::{Ctx, Focus, StatusLevel};
 
@@ -78,7 +78,7 @@ impl ViewerPanel {
         if self.is_showing_rendered_markdown() {
             return self.rendered_key(action);
         }
-        if let Some(effects) = self.comment_key(action, ctx.review) {
+        if let Some(effects) = self.comment_key(action, ctx) {
             return Some(effects);
         }
         if let Some(effects) = self.nav_key(action, ctx) {
@@ -146,7 +146,8 @@ impl ViewerPanel {
     }
 
     /// レビューコメントのキー。素の本文と diff のどちらでも同じ意味になる。
-    fn comment_key(&mut self, action: Action, review: &ReviewState) -> Option<Vec<Effect>> {
+    fn comment_key(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        let review = ctx.review;
         if !matches!(
             action,
             Action::AddComment
@@ -164,7 +165,7 @@ impl ViewerPanel {
             return Some(no_place_to_comment());
         };
         let effects = match action {
-            Action::AddComment => self.start_comment(line),
+            Action::AddComment => self.start_comment(line, &ctx.branch),
             Action::ToggleInlineThread => {
                 if let Some(anchor) = anchor_for(&comments, line) {
                     self.threads.flip(anchor);
@@ -196,14 +197,14 @@ impl ViewerPanel {
         Some(effects)
     }
 
-    pub(super) fn start_comment(&mut self, line_1: usize) -> Vec<Effect> {
+    pub(super) fn start_comment(&mut self, line_1: usize, branch: &str) -> Vec<Effect> {
         let Some(path) = self.content.path.clone() else {
             return Vec::new();
         };
         let (start, end) = self.comment_range(line_1);
         self.selection.clear();
         vec![Effect::PushModal(Modal::CommentEditor(
-            CommentEditor::new_comment(path, start, end),
+            CommentEditor::new_comment(branch.to_string(), path, start, end),
         ))]
     }
 

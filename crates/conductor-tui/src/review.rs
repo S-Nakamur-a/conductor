@@ -1,9 +1,9 @@
 //! ブランチ 1 本ぶんのレビュー。コメント・返信・変更サマリ・viewed をまとめて持つ。
 //!
 //! Viewer も Explorer もモーダルもこれを読むので、パネルではなく [crate::workspace::Ctx]
-//! 経由で配る。書き換えるのは svc から返る [Snapshot] を丸ごと入れ替えるときだけで、
-//! 部分更新はしない。MCP が同じ DB を書いている以上、手元の差分を積み上げても
-//! 次の再読込で捨てられる。
+//! 経由で配る。書き換えるのは svc から返る [Snapshot] を丸ごと入れ替えるときと、
+//! viewed を書き込みの前に手元で切り替えるときだけ。MCP が同じ DB を書いている以上、
+//! 手元の差分を積み上げても次の再読込で捨てられる。
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,6 +50,16 @@ impl ReviewState {
 
     pub fn is_viewed(&self, path: &str) -> bool {
         self.snapshot.viewed.contains(path)
+    }
+
+    /// 書き込みが返る前に手元の印を切り替え、切り替えた後の値を返す。返る前にもう一度
+    /// 押されたとき、古い印から同じ値を書き直さないため。
+    pub fn flip_viewed(&mut self, path: &str) -> bool {
+        let viewed = !self.snapshot.viewed.remove(path);
+        if viewed {
+            self.snapshot.viewed.insert(path.to_string());
+        }
+        viewed
     }
 
     pub fn install(&mut self, loaded: Result<Snapshot, String>) {

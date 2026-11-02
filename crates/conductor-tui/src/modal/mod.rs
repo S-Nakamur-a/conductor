@@ -203,6 +203,7 @@ fn candidate_rows(candidates: &[String], width: usize) -> Vec<String> {
 #[derive(Debug)]
 pub enum EditTarget {
     New {
+        branch: String,
         file_path: String,
         line_start: u32,
         line_end: Option<u32>,
@@ -228,9 +229,15 @@ pub struct CommentEditor {
 }
 
 impl CommentEditor {
-    pub fn new_comment(file_path: String, line_start: u32, line_end: Option<u32>) -> Self {
+    pub fn new_comment(
+        branch: String,
+        file_path: String,
+        line_start: u32,
+        line_end: Option<u32>,
+    ) -> Self {
         Self {
             target: EditTarget::New {
+                branch,
                 file_path,
                 line_start,
                 line_end,
@@ -293,10 +300,12 @@ impl CommentEditor {
         }
         let write = match &self.target {
             EditTarget::New {
+                branch,
                 file_path,
                 line_start,
                 line_end,
             } => ReviewWrite::AddComment {
+                branch: branch.clone(),
                 file_path: file_path.clone(),
                 line_start: *line_start,
                 line_end: *line_end,
@@ -459,7 +468,7 @@ mod tests {
 
     #[test]
     fn 空の本文は保存せず理由を出す() {
-        let mut editor = CommentEditor::new_comment("a.rs".into(), 1, None);
+        let mut editor = CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None);
         let effects = press(&mut editor, &[KeyEvent::from(KeyCode::Enter)]);
         assert!(
             matches!(effects.as_slice(), [Effect::Status(..)]),
@@ -475,7 +484,7 @@ mod tests {
 
     #[test]
     fn 改行はshift_enterで本文に入る() {
-        let mut editor = CommentEditor::new_comment("a.rs".into(), 2, Some(4));
+        let mut editor = CommentEditor::new_comment("main".into(), "a.rs".into(), 2, Some(4));
         press(
             &mut editor,
             &[
@@ -507,7 +516,7 @@ mod tests {
 
     #[test]
     fn tabは新規のときだけ種別を入れ替える() {
-        let mut new = CommentEditor::new_comment("a.rs".into(), 1, None);
+        let mut new = CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None);
         press(&mut new, &[KeyEvent::from(KeyCode::Tab)]);
         assert_eq!(new.kind, CommentKind::Question);
         assert!(new.title().contains("question"), "{}", new.title());
@@ -535,7 +544,7 @@ mod tests {
 
     #[test]
     fn escは何も書かずに閉じる() {
-        let mut editor = CommentEditor::new_comment("a.rs".into(), 1, None);
+        let mut editor = CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None);
         let effects = press(&mut editor, &[ch('x'), KeyEvent::from(KeyCode::Esc)]);
         assert_eq!(effects.len(), 1);
         assert!(matches!(effects[0], Effect::PopModal));
@@ -550,7 +559,12 @@ mod tests {
         };
         assert_eq!(prompt.input.text(), "abcd");
 
-        let mut editor = Modal::CommentEditor(CommentEditor::new_comment("a.rs".into(), 1, None));
+        let mut editor = Modal::CommentEditor(CommentEditor::new_comment(
+            "main".into(),
+            "a.rs".into(),
+            1,
+            None,
+        ));
         editor.paste("ab\ncd");
         let Modal::CommentEditor(editor) = &editor else {
             unreachable!()

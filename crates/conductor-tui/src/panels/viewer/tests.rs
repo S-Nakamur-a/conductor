@@ -1206,3 +1206,26 @@ fn 選択の判定は両端を含む() {
     selection.clear();
     assert!(selection.is_empty() && !selection.contains(4));
 }
+
+#[test]
+fn コメントの入力欄は開いたときの窓の_branch_を持つ() {
+    let dir = fixture(&[("a.txt", "one\ntwo\nthree\n")]);
+    let mut h = Harness::at(dir.path());
+    h.ws.repo.main_branch = "trunk".into();
+    h.open("a.txt");
+    h.ws.focus = Focus::Viewer;
+    h.viewer().body = ratatui::layout::Rect::new(0, 10, 40, 20);
+
+    let by_key = h.ws.dispatch(Action::AddComment).unwrap();
+    let by_click = h.click(0, 11, false);
+    for effects in [by_key, by_click] {
+        let [Effect::PushModal(Modal::CommentEditor(editor))] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        assert!(
+            matches!(&editor.target, crate::modal::EditTarget::New { branch, .. } if branch == "trunk"),
+            "{:?}",
+            editor.target
+        );
+    }
+}

@@ -9,11 +9,14 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{ChangesPanel, Tab, Top};
+use conductor_core::review_store::ReviewComment;
+
+use super::{ChangesPanel, Row, THREAD_INDENT, Tab, Top};
 use crate::panels::explorer::git_changes::render::status_color;
 use crate::panels::viewer::Scroll;
 use crate::panels::viewer::diff::{SideRow, side_by_side};
-use crate::panels::viewer::render::{side_line, summary_lines, unified_line};
+use crate::panels::viewer::render::{MARK, side_line, summary_lines, unified_line};
+use crate::panels::viewer::thread;
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
@@ -87,56 +90,99 @@ pub fn body_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'stat
         lines.extend(summary_lines(summary, theme, width));
     }
     for file in top.file..panel.sections().len() {
-        let side = panel
-            .side_by_side()
-            .then(|| side_by_side(&panel.sections()[file].entries));
+        let mut drawer = FileDrawer::new(ws, file, width);
         let start = if file == top.file { top.row } else { 0 };
         for row in start..panel.height(file) {
             if lines.len() >= height {
                 return lines;
             }
-            lines.push(row_line(ws, file, row, side.as_deref(), width));
+            lines.push(drawer.line(row));
         }
     }
     lines
 }
 
-fn row_line(
-    ws: &Workspace,
+/// 1 ファイル分の行を描く。左右表示の行とスレッドは、描くファイルの分だけ組む。
+struct FileDrawer<'a> {
+    ws: &'a Workspace,
     file: usize,
-    row: usize,
-    side: Option<&[SideRow<'_>]>,
     width: usize,
-) -> Line<'static> {
-    let panel = &ws.panels.changes;
-    let theme = &ws.theme;
-    if row == 0 {
-        return header(panel, file, &ws.review, theme, width);
-    }
-    if row + 1 == panel.height(file) {
-        return Line::default();
-    }
-    let section = &panel.sections()[file];
-    if section.entries.is_empty() {
-        return hint(theme, "Binary or empty file");
-    }
-    match side {
-        Some(rows) => side_line(
-            &rows[row - 1],
-            theme,
-            section.digits,
-            width as u16,
-            Scroll::default(),
-            &[],
-        ),
-        None => unified_line(
-            &section.entries[row - 1],
-            theme,
-            section.digits,
+    comments: Vec<&'a ReviewComment>,
+    side: Option<Vec<SideRow<'a>>>,
+    thread: Option<(usize, Vec<Line<'static>>)>,
+}
+
+impl<'a> FileDrawer<'a> {
+    fn new(ws: &'a Workspace, file: usize, width: usize) -> Self {
+        let panel = &ws.panels.changes;
+        let path = panel.diff().map(|d| d.files[file].path.as_str());
+        Self {
+            ws,
+            file,
             width,
-            0,
-            None,
-        ),
+            comments: path.map_or_else(Vec::new, |path| ws.review.for_file(path)),
+            side: panel
+                .side_by_side()
+                .then(|| side_by_side(&panel.sections()[file].entries)),
+            thread: None,
+        }
+    }
+
+    fn line(&mut self, row: usize) -> Line<'static> {
+        let ws = self.ws;
+        let panel = &ws.panels.changes;
+        let theme = &ws.theme;
+        let section = &panel.sections()[self.file];
+        match section.rows[row] {
+            Row::Header => header(panel, self.file, &ws.review, theme, self.width),
+            Row::Blank => Line::default(),
+            Row::Note => hint(theme, "Binary or empty file"),
+            Row::Thread { anchor, line } => self.thread_line(anchor, line),
+            Row::Body(i) => {
+                let mark = if self.comments.is_empty() { 0 } else { MARK };
+                let width = self.width.saturating_sub(mark);
+                let body = match &self.side {
+                    Some(rows) => side_line(
+                        &rows[i],
+                        theme,
+                        section.digits,
+                        width as u16,
+                        Scroll::default(),
+                        &[],
+                    ),
+                    None => {
+                        unified_line(&section.entries[i], theme, section.digits, width, 0, None)
+                    }
+                };
+                if mark == 0 {
+                    return body;
+                }
+                let icons = ws.config.ui.icon_set();
+                let line_1 = section.line_of(row).unwrap_or(0);
+                let mut spans = vec![thread::marker(&self.comments, line_1, theme, icons)];
+                let style = body.style;
+                spans.extend(body.spans);
+                Line::from(spans).style(style)
+            }
+        }
+    }
+
+    fn thread_line(&mut self, anchor: usize, line: usize) -> Line<'static> {
+        if self.thread.as_ref().is_none_or(|(at, _)| *at != anchor) {
+            let ws = self.ws;
+            let lines = thread::lines(
+                &ws.review,
+                &self.comments,
+                anchor,
+                &ws.theme,
+                ws.config.ui.icon_set(),
+                self.width,
+                THREAD_INDENT,
+            );
+            self.thread = Some((anchor, lines));
+        }
+        let lines = self.thread.as_ref().map_or(&[][..], |(_, lines)| lines);
+        lines.get(line).cloned().unwrap_or_default()
     }
 }
 
