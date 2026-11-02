@@ -26,18 +26,21 @@ const UNTITLED: &str = "(まだ何も頼んでいない)";
 
 pub const LIST_TITLE: &str = " Sessions ";
 
-/// 一覧の上に固定する 1 行。右端に 5h / 7d を置き、幅が足りなければ残り時間、7d、0 本の状態項目、
-/// 使用量の順に落とす。全部 0 本なら状態項目は省かない — 省くと何の数か分からなくなる。
-pub fn summary_line(
+/// 一覧の上に固定する要約。右端に 5h / 7d を置き、幅が足りなければ残り時間、バー、0 本の状態項目の
+/// 順に落とす。それでも 1 行に入らなければ使用量を 2 行目に回し (1 行目に全状態が入らなければ 0 本の
+/// 項目を落とす)、2 行目にも入らなければ、アカウントの設定があるときだけ名前と 5h の率を 0 本でない
+/// 状態の横に出す。それも入らなければ使用量を落とす。全部 0 本なら状態項目は省かない — 省くと何の数か
+/// 分からなくなる。
+pub fn summary_lines(
     fleet: &FleetPanel,
     theme: &Theme,
     accounts: &[ClaudeAccount],
     now: SystemTime,
     width: usize,
-) -> Line<'static> {
+) -> Vec<Line<'static>> {
     let all = state_spans(fleet, theme, false);
     let nonzero = state_spans(fleet, theme, true);
-    let usage = usage_options(fleet.usage(), accounts, theme, now);
+    let usage = usage_options(fleet.usage(), accounts, theme, now, &WITH_WEEK);
     let mut candidates: Vec<(&[Span], &[Span])> = usage
         .iter()
         .map(|u| (all.as_slice(), u.as_slice()))
@@ -47,13 +50,38 @@ pub fn summary_line(
     {
         candidates.push((nonzero.as_slice(), narrowest.as_slice()));
     }
-    let spans_width = |spans: &[Span]| spans.iter().map(Span::width).sum::<usize>();
-    let (states, right) = candidates
+    if let Some((states, right)) = candidates
         .into_iter()
         .find(|(states, right)| spans_width(states) + 1 + spans_width(right) <= width)
-        .unwrap_or((all.as_slice(), &[]));
-    let pad = width.saturating_sub(spans_width(states) + spans_width(right));
-    let mut spans = states.to_vec();
+    {
+        return vec![spread(states, right, width)];
+    }
+    if let Some(right) = usage.iter().find(|u| spans_width(u) <= width) {
+        let states = if spans_width(&all) <= width || nonzero.is_empty() {
+            &all
+        } else {
+            &nonzero
+        };
+        return vec![spread(states, &[], width), spread(&[], right, width)];
+    }
+    if !accounts.is_empty() && !nonzero.is_empty() {
+        let first = usage_options(fleet.usage(), accounts, theme, now, &[Form::FirstLimit]);
+        if let Some(right) = first.first()
+            && spans_width(&nonzero) + 1 + spans_width(right) <= width
+        {
+            return vec![spread(&nonzero, right, width)];
+        }
+    }
+    vec![spread(&all, &[], width)]
+}
+
+fn spans_width(spans: &[Span]) -> usize {
+    spans.iter().map(Span::width).sum()
+}
+
+fn spread(left: &[Span<'static>], right: &[Span<'static>], width: usize) -> Line<'static> {
+    let pad = width.saturating_sub(spans_width(left) + spans_width(right));
+    let mut spans = left.to_vec();
     spans.push(Span::raw(" ".repeat(pad)));
     spans.extend_from_slice(right);
     Line::from(spans)
@@ -117,7 +145,7 @@ pub enum Slot {
 
 /// 一覧の区画の中身。要約行・本文・最下行の矩形と、本文の行とスクロール量。
 pub struct Composed {
-    pub summary: Option<Rect>,
+    pub summary: Option<(Rect, Vec<Line<'static>>)>,
     pub body: Rect,
     pub footer: Rect,
     pub lines: Vec<Line<'static>>,
@@ -144,9 +172,23 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
     }
     let fleet = &ws.panels.fleet;
     let theme = &ws.theme;
+    let now = SystemTime::now();
+    let mut summary = if inner.height >= 2 {
+        summary_lines(
+            fleet,
+            theme,
+            &ws.config.claude.accounts,
+            now,
+            usize::from(inner.width),
+        )
+    } else {
+        Vec::new()
+    };
+    summary.truncate(usize::from(inner.height - 1));
+    let summary_rows = summary.len() as u16;
     let body = Rect {
-        y: inner.y + 1,
-        height: inner.height.saturating_sub(2),
+        y: inner.y + summary_rows,
+        height: inner.height.saturating_sub(summary_rows + 1),
         ..inner
     };
     let footer = Rect {
@@ -154,7 +196,6 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
         height: 1,
         ..inner
     };
-    let now = SystemTime::now();
     let focused = ws.focus == Focus::Fleet;
     let (pinned, groups) = fleet.groups();
     let mut lines: Vec<Line> = Vec::new();
@@ -246,7 +287,13 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
             .min(max),
     };
     Some(Composed {
-        summary: (inner.height >= 2).then_some(Rect { height: 1, ..inner }),
+        summary: (!summary.is_empty()).then_some((
+            Rect {
+                height: summary_rows,
+                ..inner
+            },
+            summary,
+        )),
         body,
         footer,
         offset,
@@ -260,15 +307,8 @@ pub fn list(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let Some(composed) = compose(ws, rect) else {
         return;
     };
-    if let Some(summary_rect) = composed.summary {
-        let line = summary_line(
-            &ws.panels.fleet,
-            &ws.theme,
-            &ws.config.claude.accounts,
-            SystemTime::now(),
-            usize::from(summary_rect.width),
-        );
-        frame.render_widget(Paragraph::new(line), summary_rect);
+    if let Some((rect, lines)) = composed.summary {
+        frame.render_widget(Paragraph::new(lines), rect);
     }
     frame.render_widget(
         Paragraph::new(Line::styled(
@@ -710,14 +750,15 @@ pub fn inner(rect: Rect) -> Rect {
 
 type LimitsSpans<'a> = dyn Fn(&[(&str, Limit)]) -> Vec<Span<'static>> + 'a;
 
-/// 5h / 7d の表し方を、広いものから順に。アカウントがあれば、アカウントごとに名前をその色で前に置き、
-/// 一番狭い形は名前と 5h の % だけ (5h が無ければ 7d と書いて) にする。2 つ並ぶとバーつきでは、窓が狭いと
-/// 一覧の幅に収まらない。
+const WITH_WEEK: [Form; 3] = [Form::BarsWithCountdown, Form::Bars, Form::Percent];
+
+/// 使用量を forms の形ごとに。アカウントがあれば、アカウントごとに名前をその色で前に置く。
 fn usage_options(
     usage: &Usage,
     accounts: &[ClaudeAccount],
     theme: &Theme,
     now: SystemTime,
+    forms: &[Form],
 ) -> Vec<Vec<Span<'static>>> {
     let groups = (usage.limits.iter())
         .enumerate()
@@ -749,53 +790,64 @@ fn usage_options(
     if groups.is_empty() {
         return Vec::new();
     }
-    let mut options: Vec<_> = [(2, true), (2, false), (1, false)]
-        .into_iter()
-        .map(|(count, countdown)| {
-            compose(&|limits| limit_spans(limits, count, countdown, theme, now))
-        })
-        .collect();
-    if !accounts.is_empty() {
-        options.push(compose(&|limits| {
-            let (label, limit) = limits[0];
-            let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
-            let label = if label == "5h" {
-                String::new()
-            } else {
-                format!("{label} ")
-            };
-            vec![Span::styled(
-                format!("{label}{pct}%"),
-                Style::default().fg(level(theme, pct)),
-            )]
-        }));
-    }
-    options
+    forms
+        .iter()
+        .map(|&form| compose(&|limits| limit_spans(limits, form, theme, now)))
+        .collect()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Form {
+    BarsWithCountdown,
+    Bars,
+    Percent,
+    /// 最初の枠の率だけ。5h ならラベルも省く。
+    FirstLimit,
 }
 
 fn limit_spans(
     limits: &[(&str, Limit)],
-    count: usize,
-    countdown: bool,
+    form: Form,
     theme: &Theme,
     now: SystemTime,
 ) -> Vec<Span<'static>> {
+    let hint = Style::default().fg(theme.hint);
+    if form == Form::FirstLimit {
+        let (label, limit) = limits[0];
+        let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
+        let label = if label == "5h" {
+            String::new()
+        } else {
+            format!("{label} ")
+        };
+        return vec![Span::styled(
+            format!("{label}{pct}%"),
+            Style::default().fg(level(theme, pct)),
+        )];
+    }
     let mut spans = Vec::new();
-    for (i, (label, limit)) in limits.iter().take(count).enumerate() {
+    for (i, (label, limit)) in limits.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" · ", Style::default().fg(theme.hint)));
+            spans.push(Span::styled(
+                if form == Form::Percent { " " } else { " · " },
+                hint,
+            ));
         }
         let pct = limit.used_percentage.round().clamp(0.0, 100.0) as u8;
-        spans.push(Span::styled(
-            format!("{label} "),
-            Style::default().fg(theme.hint),
-        ));
+        spans.push(Span::styled(format!("{label} "), hint));
+        if form == Form::Percent {
+            spans.push(Span::styled(
+                format!("{pct}%"),
+                Style::default().fg(level(theme, pct)),
+            ));
+            continue;
+        }
         spans.extend(bar(pct, 8, theme));
         let mut text = format!(" {pct}%");
-        if countdown {
+        if form == Form::BarsWithCountdown {
             text.push_str(&format!(" {}", countdown_text(limit.secs_left(now))));
         }
-        spans.push(Span::styled(text, Style::default().fg(theme.hint)));
+        spans.push(Span::styled(text, hint));
     }
     spans
 }
