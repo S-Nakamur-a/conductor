@@ -4100,6 +4100,33 @@ mod worktree_row {
             assert_ne!(worktree, Some(ws.theme.fg), "{name}");
         }
     }
+
+    #[test]
+    fn 選んだ行はフォーカスが外れても地を_accent_へ寄せ_hint_の印も地に沈めない() {
+        let mut ws = Workspace::for_test();
+        let mut fleet = tree();
+        for _ in 0..3 {
+            fleet.update(Action::NavigateDown, &ws.ctx());
+        }
+        assert_eq!(fleet.selected_row().map(|r| r.key), Some(RowKey::Pid(8)));
+        ws.panels.fleet = fleet;
+        ws.focus = crate::workspace::Focus::FleetShell;
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+        let line = composed
+            .lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content == "z"))
+            .unwrap();
+        let theme = &ws.theme;
+        let bg = line.style.bg.expect("選択の地が無い");
+        let distance = conductor_core::theme::Theme::perceptual_distance;
+        assert!(
+            distance(bg, theme.accent) < distance(theme.selected_bg_inactive, theme.accent),
+            "{bg:?}"
+        );
+        let glyph = line.spans.iter().find(|s| s.content == "z").unwrap();
+        assert_eq!(glyph.style.fg, Some(theme.fg));
+    }
 }
 
 #[test]

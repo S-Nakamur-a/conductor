@@ -152,8 +152,7 @@ pub fn row_line(
     line.style(selection(theme, focused))
 }
 
-/// 選んだ行の地。行の一部だけを塗るときに使う。
-pub fn selection(theme: &Theme, focused: bool) -> Style {
+fn selection(theme: &Theme, focused: bool) -> Style {
     // 選択は背景だけで示し、行の色は残す。selected_bg は多くのテーマで accent と同値で、
     // 行の文字色と衝突して読めなくなるため使わない。Line のスタイルは fg を持つ Span に
     // 負けるので、fg を渡しても効かない。
