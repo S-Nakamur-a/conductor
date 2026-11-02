@@ -656,18 +656,24 @@ struct SlowProducer(PathBuf);
 
 fn slow_producer(dir: &Path) -> Arc<dyn Producer> {
     let script = dir.join("slow-producer.sh");
-    std::fs::write(&script, "#!/bin/sh\nsleep 30\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
+    std::fs::write(&script, "sleep 30\n").unwrap();
     Arc::new(SlowProducer(script))
 }
 
 impl Producer for SlowProducer {
     fn command(&self, _out: &Path) -> Vec<String> {
-        vec![self.0.to_string_lossy().into_owned()]
+        shell(&self.0, &[])
     }
+}
+
+/// 書いたばかりのスクリプトを直接 exec すると、macOS の初回の検査待ちで数十秒止まることがある
+/// (`/bin/sh` は同じ瞬間も止まらない)。テストの期限を越えるので、スクリプトは sh に読ませる。
+fn shell(script: &Path, args: &[&Path]) -> Vec<String> {
+    [Path::new("/bin/sh"), script]
+        .into_iter()
+        .chain(args.iter().copied())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// 渡された先に索引を置いてすぐ終わる producer。生成が完走した直後を作る。
@@ -678,24 +684,13 @@ fn fast_producer(dir: &Path) -> Arc<dyn Producer> {
     let seed = dir.join("seed.scip");
     write_index(&seed);
     let script = dir.join("fast-producer.sh");
-    std::fs::write(
-        &script,
-        format!("#!/bin/sh\ncp '{}' \"$1\"\n", seed.display()),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
+    std::fs::write(&script, format!("cp '{}' \"$1\"\n", seed.display())).unwrap();
     Arc::new(FastProducer(script))
 }
 
 impl Producer for FastProducer {
     fn command(&self, out: &Path) -> Vec<String> {
-        vec![
-            self.0.to_string_lossy().into_owned(),
-            out.to_string_lossy().into_owned(),
-        ]
+        shell(&self.0, &[out])
     }
 }
 
