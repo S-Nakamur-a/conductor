@@ -202,8 +202,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 queue.extend(follow_up);
             }
             Effect::ToggleViewed(path) => {
+                let viewed = ws.review.flip_viewed(&path);
+                ws.panels.changes.follow_viewed(&path);
+                ws.relayout_changes();
                 let write = crate::task::ReviewWrite::SetViewed {
-                    viewed: !ws.review.is_viewed(&path),
+                    viewed,
                     file_path: path,
                 };
                 queue.push_back(Effect::Spawn(Task::WriteReview(write)));

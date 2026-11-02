@@ -337,6 +337,8 @@ pub enum Persist {
 #[derive(Debug)]
 pub enum ReviewWrite {
     AddComment {
+        /// 入力欄を開いたときの branch。書く前に窓が別の worktree へ移っても、開いた側に付ける。
+        branch: String,
         file_path: String,
         line_start: u32,
         line_end: Option<u32>,
@@ -1689,6 +1691,7 @@ fn write_review(env: &TaskEnv, write: &ReviewWrite) -> Result<Box<Snapshot>, Str
     let branch = env.branch.as_str();
     let applied = match write {
         ReviewWrite::AddComment {
+            branch: opened_on,
             file_path,
             line_start,
             line_end,
@@ -1696,7 +1699,7 @@ fn write_review(env: &TaskEnv, write: &ReviewWrite) -> Result<Box<Snapshot>, Str
             body,
         } => store
             .add_review(NewReview {
-                branch,
+                branch: opened_on,
                 file_path,
                 line_start: *line_start,
                 line_end: *line_end,
@@ -2714,6 +2717,24 @@ mod resumable_tests {
             claude_dirs,
             account_dirs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn コメントは窓の今のbranchでなく入力欄を開いたときのbranchに書く() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = env_at(dir.path().to_path_buf(), Vec::new());
+        let write = super::ReviewWrite::AddComment {
+            branch: "feat".into(),
+            file_path: "a.rs".into(),
+            line_start: 2,
+            line_end: None,
+            kind: conductor_core::review_store::CommentKind::Suggest,
+            body: "off by one".into(),
+        };
+        super::write_review(&env, &write).unwrap();
+        let store = super::open_store(&env).unwrap();
+        assert_eq!(store.reviews_for_worktree("feat").unwrap().len(), 1);
+        assert!(store.reviews_for_worktree("main").unwrap().is_empty());
     }
 
     #[test]

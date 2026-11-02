@@ -439,6 +439,14 @@
 "J" = "next_changed_file"
 "K" = "prev_changed_file"
 "s" = "toggle_diff_view"
+# コメントと viewed は一番上の行・ファイルに効く。見出しで space はファイルを畳む / 開く。
+"c" = "add_comment"
+"v" = "toggle_viewed"
+"space" = "toggle_inline_thread"
+"R" = "reply_to_comment"
+"r" = "toggle_resolve"
+"}" = "next_comment"
+"{" = "prev_comment"
 ":" = "command_palette"
 
 # ── Overlay (shared popup navigation) ──────────────────────────────────────────

@@ -229,6 +229,8 @@ pub struct Ctx<'a> {
     pub key_context: KeyContext,
     /// 一覧の右に映っているセッション ([Workspace::fleet_session])。
     pub fleet_session: Option<String>,
+    /// [Workspace::branch]。コメントの入力欄が開いた時点の値を持ち歩く。
+    pub branch: String,
 }
 
 pub struct Workspace {
@@ -324,6 +326,7 @@ impl Workspace {
             focus: self.focus,
             key_context: self.key_context(),
             fleet_session: self.fleet_session(),
+            branch: self.branch().to_string(),
         }
     }
 
@@ -345,6 +348,13 @@ impl Workspace {
         self.panels
             .changes
             .tab(self.panels.explorer.root(), is_main)
+    }
+
+    /// レビュー・viewed・幅が変わったら Files changed のスレッドと畳みを組み直す。
+    pub fn relayout_changes(&mut self) {
+        let root = self.panels.viewer.root().to_path_buf();
+        let (panels, _, ctx) = self.split(&root);
+        panels.changes.relayout(&ctx);
     }
 
     /// 選択中の worktree。一覧が届くまではリポジトリの根。
@@ -387,6 +397,7 @@ impl Workspace {
     ) -> (&'a mut Panels, &'a mut Vec<Modal>, Ctx<'a>) {
         let key_context = self.key_context();
         let fleet_session = self.fleet_session();
+        let branch = self.branch().to_string();
         let Self {
             panels,
             modals,
@@ -412,6 +423,7 @@ impl Workspace {
             focus: *focus,
             key_context,
             fleet_session,
+            branch,
         };
         (panels, modals, ctx)
     }
@@ -429,7 +441,7 @@ impl Workspace {
         let (panels, _, ctx) = self.split(&root);
         match target {
             Focus::Explorer if files => panels.changes.update_list(action).map(|()| Vec::new()),
-            Focus::Viewer if files => panels.changes.update_body(action).map(|()| Vec::new()),
+            Focus::Viewer if files => panels.changes.update_body(action, &ctx),
             Focus::Worktree => panels.worktree.update(action, &ctx),
             Focus::Explorer => panels.explorer.update(action, &ctx),
             Focus::Viewer => panels.viewer.update(action, &ctx),
@@ -534,7 +546,9 @@ impl Workspace {
                 }]
             }
             TaskResult::Diff { ref root, ref diff } => {
-                let missing = self.panels.changes.install(root, diff);
+                let viewer_root = self.panels.viewer.root().to_path_buf();
+                let (panels, _, ctx) = self.split(&viewer_root);
+                let missing = panels.changes.install(root, diff, &ctx);
                 let mut effects = self.panels.explorer.apply_result(result);
                 effects.extend(missing.map(not_in_diff));
                 effects
@@ -582,6 +596,7 @@ impl Workspace {
             TaskResult::Review(Ok(snapshot)) if snapshot.branch != self.branch() => Vec::new(),
             TaskResult::Review(loaded) => {
                 self.review.install(loaded.map(|s| *s));
+                self.relayout_changes();
                 match self.review.error.clone() {
                     Some(e) => vec![Effect::Status(StatusLevel::Warning, e)],
                     None => Vec::new(),
@@ -983,7 +998,9 @@ impl Workspace {
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
-        self.panels.changes.sync_layout(layout);
+        if self.panels.changes.sync_layout(layout) {
+            self.relayout_changes();
+        }
         self.panels.viewer.sync_layout(layout);
         let lower = layout.rect(crate::layout::Region::FleetChanges);
         self.panels.fleet.set_lower_shown(lower.is_some());

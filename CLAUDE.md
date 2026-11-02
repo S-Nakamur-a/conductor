@@ -486,8 +486,12 @@ derived from `is_main` every time and remembered only once someone switches
 Code, `Effect::ShowChange` to Files changed). Its diff is a copy of the working-tree
 `TaskResult::Diff` the Explorer asked for — it never spawns one, so a 9s diff is not run
 twice — which also means it is not refreshed while Git Changes shows a commit (until an open_file
-with `diff` takes Git Changes back). The top
-row is kept as (path, new-side line) across a reload and per worktree.
+with `diff` takes Git Changes back). Each file is laid out as `changes::Row`s — header,
+body, the open threads' lines, a blank — and rebuilt when the diff, the review, the width,
+side-by-side or a fold changes, because a thread's height depends on the width; the top
+row is kept as (path, new-side line) across a rebuild and per worktree. A file folds when
+viewed XOR folded by hand. A comment editor carries the branch it was opened on, so a
+window that switches worktree before Enter still writes to the right one.
 
 **Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is
 the screen conductor opens on: every Claude on the machine, built from the state

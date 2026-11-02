@@ -6,15 +6,26 @@ pub mod render;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use conductor_core::diff_state::{DiffSource, DiffState, FileDiff};
 use conductor_core::keymap::Action;
+use conductor_core::review_store::ReviewComment;
 
+use crate::comment_list::flip_status;
+use crate::effect::Effect;
 use crate::layout::{Layout, Region};
 use crate::list::{ListCursor, Viewport};
+use crate::modal::{CommentEditor, Modal};
 use crate::panels::viewer::diff::{DiffPane, Entry, SideRow, side_by_side};
+use crate::panels::viewer::render::MARK;
+use crate::panels::viewer::thread::{self, ThreadFolds};
+use crate::review::{anchor_for, anchors, innermost};
+use crate::task::{ReviewWrite, Task};
+use crate::workspace::{Ctx, StatusLevel};
+
+pub const THREAD_INDENT: usize = MARK + 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -22,7 +33,7 @@ pub enum Tab {
     Files,
 }
 
-/// 中央の一番上に出ている行。row 0 はファイルの見出し、最後の 1 行は区切りの空行。
+/// 中央の一番上に出ている行。row は [Section::rows] の添字。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Top {
     pub file: usize,
@@ -48,11 +59,29 @@ pub enum Reveal {
     Missing,
 }
 
+/// 中央に描く 1 行。スレッドの行数は幅で変わるので、位置と送りはこの並びで数える。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    Header,
+    /// 本文の行。左右表示なら side_by_side の行の添字。
+    Body(usize),
+    /// 新しい側の行 anchor に開いたスレッドの line 行目。
+    Thread {
+        anchor: usize,
+        line: usize,
+    },
+    /// ハンクの無いファイル (バイナリ・空) の断り書き。
+    Note,
+    Blank,
+}
+
 #[derive(Debug)]
 pub struct Section {
     pub entries: Vec<Entry>,
-    side_rows: usize,
     pub digits: usize,
+    pub rows: Vec<Row>,
+    /// rows と同じ並びの、新しい側の行番号。
+    lines: Vec<Option<usize>>,
 }
 
 impl Section {
@@ -60,13 +89,71 @@ impl Section {
         let mut pane = DiffPane::default();
         pane.build(file, 0);
         let digits = crate::panels::viewer::render::digit_count(pane.max_line_no);
-        let side_rows = side_by_side(&pane.entries).len();
         Self {
             entries: pane.entries,
-            side_rows,
             digits,
+            rows: Vec::new(),
+            lines: Vec::new(),
         }
     }
+
+    fn lay_out(
+        &mut self,
+        collapsed: bool,
+        side: bool,
+        comments: &[&ReviewComment],
+        threads: &ThreadFolds,
+        thread_height: impl Fn(usize) -> usize,
+    ) {
+        self.rows = vec![Row::Header];
+        self.lines = vec![None];
+        if !collapsed && self.entries.is_empty() {
+            self.push(Row::Note, None);
+        } else if !collapsed {
+            let body: Vec<Option<usize>> = match side {
+                true => side_by_side(&self.entries)
+                    .iter()
+                    .map(|row| match row {
+                        SideRow::Span(entry) => entry.new_line_no(),
+                        SideRow::Split { left, right } => {
+                            right.or(*left).and_then(Entry::new_line_no)
+                        }
+                    })
+                    .collect(),
+                false => self.entries.iter().map(Entry::new_line_no).collect(),
+            };
+            let anchors = anchors(comments);
+            for (i, line) in body.into_iter().enumerate() {
+                self.push(Row::Body(i), line);
+                let Some(anchor) = line.filter(|n| anchors.contains(n)) else {
+                    continue;
+                };
+                if threads.is_open(comments, anchor) {
+                    for line in 0..thread_height(anchor) {
+                        self.push(Row::Thread { anchor, line }, None);
+                    }
+                }
+            }
+        }
+        self.push(Row::Blank, None);
+    }
+
+    pub fn line_of(&self, row: usize) -> Option<usize> {
+        self.lines.get(row).copied().flatten()
+    }
+
+    fn push(&mut self, row: Row, line: Option<usize>) {
+        self.rows.push(row);
+        self.lines.push(line);
+    }
+}
+
+/// 人が手で開閉したもの。worktree ごとに預ける。
+#[derive(Debug, Default)]
+struct Folds {
+    /// viewed による畳みを手で裏返したファイル。
+    files: HashSet<String>,
+    threads: HashMap<String, ThreadFolds>,
 }
 
 #[derive(Debug)]
@@ -77,10 +164,13 @@ pub struct ChangesPanel {
     sections: Vec<Section>,
     top: Top,
     parked: HashMap<PathBuf, Anchor>,
+    folds: Folds,
+    parked_folds: HashMap<PathBuf, Folds>,
     side_by_side: bool,
     cursor: ListCursor,
     list_view: Viewport,
     body_height: usize,
+    body_width: usize,
     pending_reveal: Option<Anchor>,
 }
 
@@ -93,10 +183,13 @@ impl ChangesPanel {
             sections: Vec::new(),
             top: Top::default(),
             parked: HashMap::new(),
+            folds: Folds::default(),
+            parked_folds: HashMap::new(),
             side_by_side,
             cursor: ListCursor::default(),
             list_view: Viewport::default(),
             body_height: 0,
+            body_width: 0,
             pending_reveal: None,
         }
     }
@@ -139,13 +232,18 @@ impl ChangesPanel {
         self.list_view
     }
 
-    pub fn sync_layout(&mut self, layout: &Layout) {
+    /// 中央の幅が変わったら true。スレッドの折り返しが変わるので組み直しが要る。
+    pub fn sync_layout(&mut self, layout: &Layout) -> bool {
         if let Some(rect) = layout.rect(Region::ChangesList) {
             self.list_view = Viewport::inside(rect, 0);
         }
-        if let Some(rect) = layout.rect(Region::Changes) {
-            self.body_height = crate::list::inner(rect).height as usize;
-        }
+        let Some(rect) = layout.rect(Region::Changes) else {
+            return false;
+        };
+        let inner = crate::list::inner(rect);
+        self.body_height = inner.height as usize;
+        let width = inner.width as usize;
+        std::mem::replace(&mut self.body_width, width) != width
     }
 
     /// Explorer の根に付いて動く。離れる根の位置は預け、戻ったときに差分が届いたら戻す。
@@ -156,6 +254,9 @@ impl ChangesPanel {
         if let Some(anchor) = self.anchor() {
             self.parked.insert(self.root.clone(), anchor);
         }
+        let folds = std::mem::take(&mut self.folds);
+        self.parked_folds.insert(self.root.clone(), folds);
+        self.folds = self.parked_folds.remove(root).unwrap_or_default();
         self.root = root.to_path_buf();
         self.diff = None;
         self.sections.clear();
@@ -166,7 +267,7 @@ impl ChangesPanel {
 
     /// 届いた diff を写す。別の根のものとコミットを出どころにしたものは捨てる。
     /// 見せる約束をしていたファイルがこの差分に無ければ、そのパスを返す。
-    pub fn install(&mut self, root: &Path, diff: &DiffState) -> Option<String> {
+    pub fn install(&mut self, root: &Path, diff: &DiffState, ctx: &Ctx) -> Option<String> {
         if root != self.root || !matches!(diff.source, DiffSource::WorkingTree { .. }) {
             return None;
         }
@@ -176,6 +277,7 @@ impl ChangesPanel {
         };
         self.sections = diff.files.iter().map(Section::build).collect();
         self.diff = Some(diff.clone());
+        self.lay_out(ctx);
         self.top = anchor.map_or_else(Top::default, |anchor| self.locate(&anchor));
         self.follow_cursor();
         let reveal = self.pending_reveal.take()?;
@@ -194,6 +296,46 @@ impl ChangesPanel {
             return Reveal::Waiting;
         }
         Reveal::Missing
+    }
+
+    /// レビュー・幅・開閉が変わったあとに組み直す。一番上は (パス, 新しい側の行番号) で保つ。
+    pub fn relayout(&mut self, ctx: &Ctx) {
+        let anchor = self.anchor();
+        self.lay_out(ctx);
+        if let Some(anchor) = anchor {
+            self.top = self.locate(&anchor);
+        }
+        self.follow_cursor();
+    }
+
+    fn lay_out(&mut self, ctx: &Ctx) {
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        let (theme, icons, width) = (ctx.theme, ctx.config.ui.icon_set(), self.body_width);
+        for (file, section) in diff.files.iter().zip(&mut self.sections) {
+            let comments = ctx.review.for_file(&file.path);
+            let collapsed =
+                ctx.review.is_viewed(&file.path) != self.folds.files.contains(&file.path);
+            let threads = self.folds.threads.entry(file.path.clone()).or_default();
+            section.lay_out(collapsed, self.side_by_side, &comments, threads, |anchor| {
+                thread::lines(
+                    ctx.review,
+                    &comments,
+                    anchor,
+                    theme,
+                    icons,
+                    width,
+                    THREAD_INDENT,
+                )
+                .len()
+            });
+        }
+    }
+
+    /// viewed を切り替えたファイルは、手で開閉した分を忘れて viewed のとおりに畳む。
+    pub fn follow_viewed(&mut self, path: &str) {
+        self.folds.files.remove(path);
     }
 
     /// パスは Git Changes の一覧と同じ規則で解決する (./ や repo 名の前置き)。
@@ -226,7 +368,10 @@ impl ChangesPanel {
         Some(())
     }
 
-    pub fn update_body(&mut self, action: Action) -> Option<()> {
+    pub fn update_body(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if let Some(effects) = self.comment_key(action, ctx) {
+            return Some(effects);
+        }
         let half = (self.body_height / 2).max(1) as isize;
         match action {
             Action::NavigateDown => self.scroll(1),
@@ -237,11 +382,126 @@ impl ChangesPanel {
             Action::GoToBottom => self.go_to_bottom(),
             Action::NextChangedFile => self.step_file(1),
             Action::PrevChangedFile => self.step_file(-1),
-            Action::ToggleDiffView => self.toggle_side_by_side(),
+            Action::ToggleDiffView => self.toggle_side_by_side(ctx),
             _ => return None,
         }
         self.follow_cursor();
-        Some(())
+        Some(Vec::new())
+    }
+
+    /// コメントと viewed のキー。どれも一番上の行に効く (Viewer と同じ)。
+    fn comment_key(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
+        if !matches!(
+            action,
+            Action::AddComment
+                | Action::ToggleInlineThread
+                | Action::ReplyToComment
+                | Action::ToggleResolve
+                | Action::NextComment
+                | Action::PrevComment
+                | Action::ToggleViewed
+        ) {
+            return None;
+        }
+        let path = self.diff.as_ref()?.files.get(self.top.file)?.path.clone();
+        let comments = ctx.review.for_file(&path);
+        let row = self.sections[self.top.file].rows[self.top.row];
+        let line = self.comment_line();
+        let effects = match action {
+            Action::ToggleViewed => vec![Effect::ToggleViewed(path)],
+            Action::AddComment => self.start_comment(row, path, &ctx.branch),
+            Action::NextComment | Action::PrevComment => {
+                match self.step_comment(ctx, action == Action::NextComment) {
+                    true => Vec::new(),
+                    false => no_comment_here(),
+                }
+            }
+            Action::ToggleInlineThread if row == Row::Header => {
+                if !self.folds.files.remove(&path) {
+                    self.folds.files.insert(path);
+                }
+                self.relayout(ctx);
+                Vec::new()
+            }
+            Action::ToggleInlineThread => {
+                if let Some(anchor) = line.and_then(|line| anchor_for(&comments, line)) {
+                    self.folds.threads.entry(path).or_default().flip(anchor);
+                    self.relayout(ctx);
+                }
+                Vec::new()
+            }
+            _ => match line.and_then(|line| innermost(&comments, line)) {
+                Some(comment) if action == Action::ReplyToComment => vec![Effect::PushModal(
+                    Modal::CommentEditor(CommentEditor::reply_to(comment)),
+                )],
+                Some(comment) => vec![Effect::Spawn(Task::WriteReview(ReviewWrite::SetStatus {
+                    id: comment.id.clone(),
+                    status: flip_status(comment.status),
+                }))],
+                None => no_comment_here(),
+            },
+        };
+        Some(effects)
+    }
+
+    /// 一番上の行の新しい側の行番号。スレッドの行は付いている行。
+    fn comment_line(&self) -> Option<usize> {
+        let section = &self.sections[self.top.file];
+        match section.rows[self.top.row] {
+            Row::Thread { anchor, .. } => Some(anchor),
+            _ => section.lines[self.top.row],
+        }
+    }
+
+    fn start_comment(&self, row: Row, path: String, branch: &str) -> Vec<Effect> {
+        let refuse = |text: &str| vec![Effect::Status(StatusLevel::Warning, text.to_string())];
+        let Row::Body(i) = row else {
+            return refuse("scroll a line of code to the top to comment on it");
+        };
+        if self.side_by_side {
+            return refuse("comments are added in the unified view (s)");
+        }
+        let entry = &self.sections[self.top.file].entries[i];
+        match (entry.new_line_no(), entry) {
+            (Some(line), _) => vec![Effect::PushModal(Modal::CommentEditor(
+                CommentEditor::new_comment(branch.to_string(), path, line as u32, None),
+            ))],
+            (None, Entry::Line { .. }) => refuse("a deleted line has no place to hang a comment"),
+            (None, _) => refuse("scroll a line of code to the top to comment on it"),
+        }
+    }
+
+    /// 次 / 前のスレッドのある行を一番上へ。ファイルを跨ぐ。無ければ false。
+    fn step_comment(&mut self, ctx: &Ctx, forward: bool) -> bool {
+        let Some(diff) = &self.diff else {
+            return false;
+        };
+        let here = (self.top.file, self.comment_line());
+        let order: Vec<usize> = match forward {
+            true => (self.top.file..self.sections.len()).collect(),
+            false => (0..=self.top.file).rev().collect(),
+        };
+        for file in order {
+            let anchors = anchors(&ctx.review.for_file(&diff.files[file].path));
+            let section = &self.sections[file];
+            let threaded = |row: &usize| {
+                matches!(section.rows[*row], Row::Body(_))
+                    && section.lines[*row].is_some_and(|n| anchors.contains(&n))
+                    && (file, section.lines[*row]) != here
+            };
+            let found = match (forward, file == self.top.file) {
+                (true, true) => (self.top.row + 1..section.rows.len()).find(threaded),
+                (true, false) => (0..section.rows.len()).find(threaded),
+                (false, true) => (0..self.top.row).rev().find(threaded),
+                (false, false) => (0..section.rows.len()).rev().find(threaded),
+            };
+            if let Some(row) = found {
+                self.top = Top { file, row };
+                self.follow_cursor();
+                return true;
+            }
+        }
+        false
     }
 
     /// 一覧の行のクリック。行の外なら false。
@@ -304,19 +564,8 @@ impl ChangesPanel {
         self.follow_cursor();
     }
 
-    /// 見出し + 本文 + 区切りの空行。
     pub fn height(&self, file: usize) -> usize {
-        2 + self.body_rows(file)
-    }
-
-    /// 本文の行数。ハンクの無いファイル (バイナリ・空) は断り書きの 1 行。
-    pub fn body_rows(&self, file: usize) -> usize {
-        let section = &self.sections[file];
-        match (section.entries.is_empty(), self.side_by_side) {
-            (true, _) => 1,
-            (false, true) => section.side_rows,
-            (false, false) => section.entries.len(),
-        }
+        self.sections[file].rows.len()
     }
 
     fn go_to_bottom(&mut self) {
@@ -342,8 +591,9 @@ impl ChangesPanel {
     }
 
     /// 行の添字は表示ごとに違うので、一番上は今のファイルの見出しに戻す。
-    fn toggle_side_by_side(&mut self) {
+    fn toggle_side_by_side(&mut self, ctx: &Ctx) {
         self.side_by_side = !self.side_by_side;
+        self.lay_out(ctx);
         self.top.row = 0;
     }
 
@@ -372,11 +622,16 @@ impl ChangesPanel {
 
     fn anchor(&self) -> Option<Anchor> {
         let file = self.diff.as_ref()?.files.get(self.top.file)?;
-        let lines = self.row_lines(self.top.file);
-        let line = self.top.row.checked_sub(1).and_then(|body| {
-            let last = lines.len().checked_sub(1)?;
-            lines[..=body.min(last)].iter().rev().find_map(|line| *line)
-        });
+        let lines = &self.sections.get(self.top.file)?.lines;
+        let line = match self.top.row {
+            0 => None,
+            row => lines
+                .get(..=row)
+                .unwrap_or(lines)
+                .iter()
+                .rev()
+                .find_map(|line| *line),
+        };
         Some(Anchor {
             path: file.path.clone(),
             line,
@@ -408,27 +663,19 @@ impl ChangesPanel {
         }
     }
 
-    /// 新しい側でその行番号以上の最初の行。無ければ本文の最後の行。
+    /// 新しい側でその行番号以上の最初の行。無ければ区切りの空行の手前。畳んでいれば見出し。
     fn row_of_line(&self, file: usize, line: usize) -> usize {
-        let lines = self.row_lines(file);
-        let body = lines
+        let lines = &self.sections[file].lines;
+        lines
             .iter()
             .position(|n| n.is_some_and(|n| n >= line))
-            .unwrap_or(lines.len().saturating_sub(1));
-        1 + body
+            .unwrap_or(lines.len().saturating_sub(2))
     }
+}
 
-    fn row_lines(&self, file: usize) -> Vec<Option<usize>> {
-        let entries = &self.sections[file].entries;
-        if !self.side_by_side {
-            return entries.iter().map(Entry::new_line_no).collect();
-        }
-        side_by_side(entries)
-            .iter()
-            .map(|row| match row {
-                SideRow::Span(entry) => entry.new_line_no(),
-                SideRow::Split { left, right } => right.or(*left).and_then(Entry::new_line_no),
-            })
-            .collect()
-    }
+fn no_comment_here() -> Vec<Effect> {
+    vec![Effect::Status(
+        StatusLevel::Info,
+        "no comment on this line".into(),
+    )]
 }
