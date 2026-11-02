@@ -488,9 +488,11 @@ Code, `Effect::ShowChange` to Files changed). Its diff is a copy of the working-
 twice — which also means it is not refreshed while Git Changes shows a commit (until an open_file
 with `diff` takes Git Changes back). Each file is laid out as `changes::Row`s — header,
 body, the open threads' lines, a blank — and rebuilt when the diff, the review, the width,
-side-by-side or a fold changes, because a thread's height depends on the width; the top
-row is kept as (path, new-side line) across a rebuild and per worktree. A file folds when
-viewed XOR folded by hand. A comment editor carries the branch it was opened on, so a
+side-by-side or a fold changes, because a thread's height depends on the width. A rebuild
+over the same diff keeps the very row on top (mid-thread, mid-deletion), falling back to
+(path, new-side line) when that row is gone and to the header when the rebuild folded the
+file; a new diff, and coming back to a worktree, find the top by (path, new-side line). A
+file folds when viewed XOR folded by hand, and open_file(diff) unfolds the file it asks for. A comment editor carries the branch it was opened on, so a
 window that switches worktree before Enter still writes to the right one.
 
 **Sessions** (`panels/fleet/`, `Focus::Fleet`, alt+1) is not in the accordion: it takes the main area whole, and is

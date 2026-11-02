@@ -229,7 +229,7 @@ pub struct Ctx<'a> {
     pub key_context: KeyContext,
     /// 一覧の右に映っているセッション ([Workspace::fleet_session])。
     pub fleet_session: Option<String>,
-    /// [Workspace::branch]。コメントの入力欄が開いた時点の値を持ち歩く。
+    /// [Workspace::branch]。
     pub branch: String,
 }
 

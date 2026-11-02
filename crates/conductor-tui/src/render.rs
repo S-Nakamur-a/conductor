@@ -662,6 +662,15 @@ fn centered(area: Rect, width_pct: u16, height: u16) -> Rect {
 mod tests {
     use super::*;
     use crate::layout::layout;
+
+    #[test]
+    fn files_changed_の中央の案内にコメントと_viewed_が出る() {
+        let ws = Workspace::for_test();
+        let hint = key_hint(Focus::Viewer, KeyContext::Changes, &ws.keymap, true);
+        assert!(hint.contains("c: comment"), "{hint}");
+        assert!(hint.contains("v: viewed"), "{hint}");
+    }
+
     use crate::modal::Modal;
     use conductor_core::keymap::KeyMap;
     use ratatui::Terminal;

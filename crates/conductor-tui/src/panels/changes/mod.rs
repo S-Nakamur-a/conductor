@@ -80,6 +80,7 @@ pub struct Section {
     pub entries: Vec<Entry>,
     pub digits: usize,
     pub rows: Vec<Row>,
+    collapsed: bool,
     /// rows と同じ並びの、新しい側の行番号。
     lines: Vec<Option<usize>>,
 }
@@ -93,6 +94,7 @@ impl Section {
             entries: pane.entries,
             digits,
             rows: Vec::new(),
+            collapsed: false,
             lines: Vec::new(),
         }
     }
@@ -105,6 +107,7 @@ impl Section {
         threads: &ThreadFolds,
         thread_height: impl Fn(usize) -> usize,
     ) {
+        self.collapsed = collapsed;
         self.rows = vec![Row::Header];
         self.lines = vec![None];
         if !collapsed && self.entries.is_empty() {
@@ -281,14 +284,20 @@ impl ChangesPanel {
         self.top = anchor.map_or_else(Top::default, |anchor| self.locate(&anchor));
         self.follow_cursor();
         let reveal = self.pending_reveal.take()?;
-        (!self.reveal_now(&reveal)).then_some(reveal.path)
+        (!self.reveal_now(&reveal, ctx)).then_some(reveal.path)
     }
 
     /// そのファイルのその行を一番上に出す。今の写しに無くても、差分を読み込み中 (loading)
     /// なら届いたときに出す。
-    pub fn reveal(&mut self, path: String, line: Option<usize>, loading: bool) -> Reveal {
+    pub fn reveal(
+        &mut self,
+        path: String,
+        line: Option<usize>,
+        loading: bool,
+        ctx: &Ctx,
+    ) -> Reveal {
         let anchor = Anchor { path, line, row: 0 };
-        if self.reveal_now(&anchor) {
+        if self.reveal_now(&anchor, ctx) {
             return Reveal::Shown;
         }
         if self.diff.is_none() || loading {
@@ -298,12 +307,26 @@ impl ChangesPanel {
         Reveal::Missing
     }
 
-    /// レビュー・幅・開閉が変わったあとに組み直す。一番上は (パス, 新しい側の行番号) で保つ。
+    /// レビュー・幅・開閉が変わったあとに組み直す。差分は同じなので一番上は同じ行のまま
+    /// (スレッドの途中や削除行も)。その行が無くなれば (パス, 新しい側の行番号) で探し、
+    /// この組み直しで畳まれたファイルなら見出しへ。
     pub fn relayout(&mut self, ctx: &Ctx) {
         let anchor = self.anchor();
+        let held = (self.sections.get(self.top.file))
+            .map(|section| (section.collapsed, section.rows.get(self.top.row).copied()));
         self.lay_out(ctx);
-        if let Some(anchor) = anchor {
-            self.top = self.locate(&anchor);
+        if let Some((was_collapsed, row)) = held {
+            let section = &self.sections[self.top.file];
+            let same = row.and_then(|row| section.rows.iter().position(|r| *r == row));
+            match same {
+                _ if section.collapsed && !was_collapsed => self.top.row = 0,
+                Some(row) => self.top.row = row,
+                None => {
+                    if let Some(anchor) = anchor {
+                        self.top = self.locate(&anchor);
+                    }
+                }
+            }
         }
         self.follow_cursor();
     }
@@ -339,13 +362,20 @@ impl ChangesPanel {
     }
 
     /// パスは Git Changes の一覧と同じ規則で解決する (./ や repo 名の前置き)。
-    fn reveal_now(&mut self, anchor: &Anchor) -> bool {
-        let Some(file) = (self.diff.as_ref())
+    /// 畳んだファイルは手で開いたのと同じに開く。頼まれた行を見せるため。
+    fn reveal_now(&mut self, anchor: &Anchor, ctx: &Ctx) -> bool {
+        let Some((file, path)) = (self.diff.as_ref())
             .and_then(|diff| diff.resolve_changed_path(&anchor.path))
-            .and_then(|path| self.position(&path))
+            .and_then(|path| Some((self.position(&path)?, path)))
         else {
             return false;
         };
+        if self.sections[file].collapsed {
+            if !self.folds.files.remove(&path) {
+                self.folds.files.insert(path);
+            }
+            self.lay_out(ctx);
+        }
         self.top = Top {
             file,
             row: anchor.line.map_or(0, |line| self.row_of_line(file, line)),
