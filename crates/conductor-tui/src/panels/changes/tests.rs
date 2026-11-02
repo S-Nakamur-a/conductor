@@ -589,7 +589,11 @@ fn 読み直し中に写しに無いファイルを頼まれたら届いてか�
 fn コミットを選んでいる間に頼まれたら作業ツリーへ戻して届いてから出す() {
     let mut ws = feat_workspace();
     let _ = deliver(&mut ws, "/r/feat", two_files());
-    let _ = (ws.panels.explorer.changes).set_source(DiffSource::commit("abc"));
+    let _ = ws
+        .panels
+        .explorer
+        .changes
+        .set_source(DiffSource::commit("abc"));
     show_change(&mut ws, "c.rs");
     assert!(matches!(
         ws.panels.explorer.changes.source(),
@@ -649,4 +653,25 @@ fn ハンクの無いファイルの断り書きと区切りの空行も位置�
         panel.install(Path::new("/r/feat"), &working(files()));
         assert_eq!(panel.top(), Top { file: 0, row });
     }
+}
+
+#[test]
+fn コミットを選んでいる間に写しにあるファイルを頼まれても作業ツリーを読み直す() {
+    let mut ws = feat_workspace();
+    let _ = deliver(&mut ws, "/r/feat", two_files());
+    let _ = ws
+        .panels
+        .explorer
+        .changes
+        .set_source(DiffSource::commit("abc"));
+    let effects = crate::effect::show_change(&mut ws, "b.rs".into(), None);
+    assert!(
+        effects.iter().any(|e| matches!(
+            e,
+            Effect::Spawn(crate::task::Task::ComputeDiff { source, .. })
+                if matches!(source, DiffSource::WorkingTree { .. })
+        )),
+        "{effects:?}"
+    );
+    assert_eq!(ws.panels.changes.top(), Top { file: 1, row: 0 });
 }

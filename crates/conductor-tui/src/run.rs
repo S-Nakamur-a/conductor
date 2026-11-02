@@ -562,10 +562,10 @@ fn on_mouse(
     layout: &Layout,
     mouse: MouseEvent,
 ) {
-    // 下区画の見出しは境界の行にあるが、文字が並んでいる範囲だけは一覧の切り替えに使う。
-    // 残りの桁はそのまま境界のドラッグへ渡す — 枠を掴んで高さを変える操作を潰さない。
     // メニューとモーダルは枠の上に重なっているので、開いている間は題を押したことにしない。
     let covered = ws.chrome.menu.is_active() || !ws.modals.is_empty();
+    // 下区画の見出しは境界の行にあるが、文字が並んでいる範囲だけは一覧の切り替えに使う。
+    // 残りの桁はそのまま境界のドラッグへ渡す — 枠を掴んで高さを変える操作を潰さない。
     if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
         && !covered
         && let Some(effects) =

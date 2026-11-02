@@ -576,7 +576,7 @@ fn show_tab(ws: &mut Workspace, tab: Tab) -> Vec<Effect> {
 
 /// 写しは Explorer の作業ツリーの diff なので、Explorer がコミットを見ていれば作業ツリーへ戻し、
 /// 読み直している間は届くのを待つ。
-fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Effect> {
+pub(crate) fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Effect> {
     use crate::panels::changes::Reveal;
     let mut effects = show_tab(ws, Tab::Files);
     if !effects.is_empty() {
@@ -587,13 +587,15 @@ fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Eff
     let loading = reload.is_some() || git_changes.is_loading();
     match ws.panels.changes.reveal(path.clone(), line, loading) {
         Reveal::Shown => {}
-        Reveal::Waiting if reload.is_some() => effects.extend(reload),
+        // 戻した読み直しが届けば出るので、待っていると言わない。
+        Reveal::Waiting if reload.is_some() => {}
         Reveal::Waiting => effects.push(Effect::Status(
             StatusLevel::Info,
             format!("Opening {path} once the diff loads\u{2026}"),
         )),
         Reveal::Missing => effects.push(crate::workspace::not_in_diff(path)),
     }
+    effects.extend(reload);
     effects.push(Effect::Focus(Focus::Viewer));
     effects
 }
