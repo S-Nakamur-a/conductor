@@ -16,6 +16,7 @@ use conductor_core::keymap::{Action, KeyContext, KeyMap};
 use crate::fx::Target;
 use crate::layout::{Layout, Region};
 use crate::modal::Modal;
+use crate::panels::changes::Tab;
 use crate::workspace::{Focus, StatusLevel, Workspace};
 
 pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
@@ -186,7 +187,7 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         }
         Region::ExplorerChanges => crate::panels::explorer::render::bottom_title(explorer, ws),
         Region::Viewer | Region::Changes => crate::panels::changes::render::tab_title(ws),
-        Region::ChangesList => crate::panels::changes::render::LIST_TITLE.to_string(),
+        Region::ChangesList => crate::panels::changes::render::list_title(ws).to_string(),
         Region::Editor => match ws.panels.terminal.editor_name() {
             Some(name) => format!(" Editor \u{2014} {name} "),
             None => " Editor ".to_string(),
@@ -278,10 +279,10 @@ fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
 
 /// フォーカスが枠を光らせる区画。Editor は Viewer の場所を借りる。
 fn focused_region(ws: &Workspace) -> Region {
-    let files = ws.center_tab() == crate::panels::changes::Tab::Files;
+    let pages = ws.center_tab() != crate::panels::changes::Tab::Code;
     match ws.focus {
-        Focus::Explorer if files => Region::ChangesList,
-        Focus::Viewer if files => Region::Changes,
+        Focus::Explorer if pages => Region::ChangesList,
+        Focus::Viewer if pages => Region::Changes,
         Focus::Worktree => Region::WorktreeStrip,
         Focus::Explorer => match ws.panels.explorer.pane() {
             crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
@@ -323,6 +324,7 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
                 key_hint(
                     ws.focus,
                     ws.key_context(),
+                    ws.center_tab(),
                     &ws.keymap,
                     ws.panels.fleet.lower_shown(),
                 ),
@@ -348,7 +350,13 @@ pub fn status_line(ws: &Workspace) -> Line<'static> {
 /// フッターのキーヒントを今のキーマップから組み立てる。
 ///
 /// 未割り当てのアクションだけのエントリは落ちるので、発火しないキーを案内しない。
-fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: bool) -> String {
+fn key_hint(
+    focus: Focus,
+    context: KeyContext,
+    tab: Tab,
+    keymap: &KeyMap,
+    lower_shown: bool,
+) -> String {
     let entries: &[(&str, &[Action])] = match focus {
         Focus::Fleet => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
@@ -378,6 +386,12 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: boo
         ],
         Focus::Explorer if context == KeyContext::ChangesList => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("panel", &[Action::CycleFocusForward]),
+        ],
+        Focus::Viewer if context == KeyContext::Changes && tab == Tab::Commits => &[
+            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            ("file", &[Action::NextChangedFile, Action::PrevChangedFile]),
+            ("split", &[Action::ToggleDiffView]),
             ("panel", &[Action::CycleFocusForward]),
         ],
         Focus::Viewer if context == KeyContext::Changes => &[
@@ -671,7 +685,13 @@ mod tests {
     #[test]
     fn files_changed_の中央の案内にコメントと_viewed_が出る() {
         let ws = Workspace::for_test();
-        let hint = key_hint(Focus::Viewer, KeyContext::Changes, &ws.keymap, true);
+        let hint = key_hint(
+            Focus::Viewer,
+            KeyContext::Changes,
+            Tab::Files,
+            &ws.keymap,
+            true,
+        );
         assert!(hint.contains("c: comment"), "{hint}");
         assert!(hint.contains("v: viewed"), "{hint}");
     }

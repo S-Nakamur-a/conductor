@@ -4,6 +4,7 @@
 //! 変更ファイルは explorer に出すディレクトリツリー (折りたたみ付き) に平坦化される。
 
 mod compute;
+pub(crate) use compute::resolve_base_commit;
 mod display_list;
 mod source;
 #[cfg(test)]

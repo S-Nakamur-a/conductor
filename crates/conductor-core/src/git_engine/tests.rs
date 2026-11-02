@@ -844,6 +844,105 @@ fn head_logはリンクされたworktreeのheadを歩く() {
     assert_eq!(repo.engine().head_log(0, 10).unwrap().len(), 1);
 }
 
+fn messages(commits: Vec<CommitInfo>) -> Vec<String> {
+    commits.into_iter().map(|c| c.message).collect()
+}
+
+#[test]
+fn range_logはbaseに無いコミットだけを新しい順にページで出す() {
+    let repo = TestRepo::with_base_commit();
+    let linked = repo.linked_worktree("wt");
+    for n in ["one", "two", "three"] {
+        linked.file("b.txt", n).add("b.txt").commit(n);
+    }
+    let engine = linked.engine();
+    let ends = engine.range_ends("main").unwrap();
+    assert_eq!(
+        messages(engine.range_log(ends, 0, 2).unwrap()),
+        ["three", "two"]
+    );
+    assert_eq!(messages(engine.range_log(ends, 2, 2).unwrap()), ["one"]);
+    let main = repo.engine();
+    let main_ends = main.range_ends("main").unwrap();
+    assert!(main.range_log(main_ends, 0, 10).unwrap().is_empty());
+}
+
+#[test]
+fn range_endsはbaseを解けず共通の祖先も無ければfiles_changedと同じ文で断る() {
+    let repo = TestRepo::with_base_commit();
+    let err = repo.engine().range_ends("nowhere").unwrap_err();
+    assert_eq!(format!("{err:#}"), "base ref 'nowhere' cannot be resolved");
+    let sig = signature();
+    let tree = repo
+        .repo
+        .find_tree(repo.repo.treebuilder(None).unwrap().write().unwrap())
+        .unwrap();
+    let orphan = repo
+        .repo
+        .commit(None, &sig, &sig, "orphan", &tree, &[])
+        .unwrap();
+    repo.checkout_at("pages", orphan);
+    let err = repo.engine().range_ends("main").unwrap_err();
+    assert!(
+        format!("{err:#}").starts_with("cannot find merge-base between 'main' and HEAD"),
+        "{err:#}"
+    );
+}
+
+#[test]
+fn range_logは1頁目の両端から続きを歩き間のコミットを混ぜない() {
+    let repo = TestRepo::with_base_commit();
+    let linked = repo.linked_worktree("wt");
+    for n in ["one", "two", "three"] {
+        linked.file("b.txt", n).add("b.txt").commit(n);
+    }
+    let engine = linked.engine();
+    let ends = engine.range_ends("main").unwrap();
+    assert_eq!(
+        messages(engine.range_log(ends, 0, 2).unwrap()),
+        ["three", "two"]
+    );
+    linked.file("b.txt", "four").add("b.txt").commit("four");
+    assert_eq!(messages(engine.range_log(ends, 2, 2).unwrap()), ["one"]);
+}
+
+#[test]
+fn range_logはmainを取り込んだマージを出しmain側のコミットは出さない() {
+    let repo = TestRepo::with_base_commit();
+    let linked = repo.linked_worktree("wt");
+    linked.file("b.txt", "b").add("b.txt").commit("on wt");
+    repo.file("a.txt", "main moved\n")
+        .add("a.txt")
+        .commit("on main");
+    let sig = signature();
+    let head = linked.repo.head().unwrap().peel_to_commit().unwrap();
+    let main = linked
+        .repo
+        .find_branch("main", git2::BranchType::Local)
+        .unwrap()
+        .get()
+        .peel_to_commit()
+        .unwrap();
+    linked
+        .repo
+        .commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "merge main",
+            &head.tree().unwrap(),
+            &[&head, &main],
+        )
+        .unwrap();
+    let engine = linked.engine();
+    let listed = messages(
+        engine
+            .range_log(engine.range_ends("main").unwrap(), 0, 10)
+            .unwrap(),
+    );
+    assert_eq!(listed, ["merge main", "on wt"]);
+}
+
 #[test]
 fn 経過時間は最大の単位で丸める() {
     for (seconds, want) in [

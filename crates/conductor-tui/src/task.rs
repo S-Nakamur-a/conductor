@@ -131,6 +131,15 @@ pub enum Task {
         skip: usize,
         limit: usize,
     },
+    /// Commits タブの一覧。seq は読み直すたびに上がり、古い頁を見分ける。
+    RangeLog {
+        seq: u64,
+        worktree: PathBuf,
+        base: String,
+        ends: Option<(git2::Oid, git2::Oid)>,
+        skip: usize,
+        limit: usize,
+    },
     /// `seq` は結果の照合に使う。同じファイルを続けて開いても古い結果が新しい本文を
     /// 上書きしない。
     LoadFile {
@@ -380,6 +389,12 @@ pub enum ReviewWrite {
 }
 
 #[derive(Debug)]
+pub struct RangePage {
+    pub ends: (git2::Oid, git2::Oid),
+    pub commits: Vec<CommitInfo>,
+}
+
+#[derive(Debug)]
 pub enum TaskResult {
     Worktrees(Result<Vec<WorktreeInfo>, String>),
     FleetStatus(Box<crate::panels::fleet::FleetStatus>),
@@ -442,6 +457,12 @@ pub enum TaskResult {
     HeadLog {
         skip: usize,
         commits: Result<Vec<CommitInfo>, String>,
+    },
+    RangeLog {
+        seq: u64,
+        worktree: PathBuf,
+        skip: usize,
+        page: Result<RangePage, String>,
     },
     FileLoaded {
         seq: u64,
@@ -705,6 +726,36 @@ impl Task {
                         (skip, commits)
                     },
                     |(skip, commits)| TaskResult::HeadLog { skip, commits },
+                );
+            }
+            Task::RangeLog {
+                seq,
+                worktree,
+                base,
+                ends,
+                skip,
+                limit,
+            } => {
+                svc.spawn(
+                    move || {
+                        let page = GitEngine::open(&worktree)
+                            .and_then(|git| {
+                                let ends = match ends {
+                                    Some(ends) => ends,
+                                    None => git.range_ends(&base)?,
+                                };
+                                let commits = git.range_log(ends, skip, limit)?;
+                                Ok(RangePage { ends, commits })
+                            })
+                            .map_err(|e| format!("{e:#}"));
+                        (seq, worktree, skip, page)
+                    },
+                    |(seq, worktree, skip, page)| TaskResult::RangeLog {
+                        seq,
+                        worktree,
+                        skip,
+                        page,
+                    },
                 );
             }
             Task::ReadTranscript {

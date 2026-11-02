@@ -22,6 +22,31 @@ impl GitEngine {
         walk(&self.repo, tip.id(), skip, limit)
     }
 
+    /// [Self::range_log] の両端 (HEAD, base)。base は Files changed の差分と同じ規則で解き、
+    /// 共通の祖先が無ければ同じ文で断る (隠すものが無いと HEAD の全履歴になる)。
+    pub fn range_ends(&self, base: &str) -> Result<(Oid, Oid)> {
+        let tip = (self.repo.head().context("cannot resolve HEAD")?)
+            .peel_to_commit()
+            .context("cannot peel HEAD to commit")?
+            .id();
+        let base_oid = crate::diff_state::resolve_base_commit(&self.repo, base)?;
+        self.repo
+            .merge_base(base_oid, tip)
+            .with_context(|| format!("cannot find merge-base between '{base}' and HEAD"))?;
+        Ok((tip, base_oid))
+    }
+
+    /// base に無く tip にあるコミットを新しい順に、skip 件飛ばして最大 limit 件。
+    /// 両端は 1 頁目の [Self::range_ends] の値を渡す。頁ごとに解き直すと、間の commit で頁がずれる。
+    pub fn range_log(
+        &self,
+        (tip, base): (Oid, Oid),
+        skip: usize,
+        limit: usize,
+    ) -> Result<Vec<CommitInfo>> {
+        walk_hiding(&self.repo, tip, Some(base), skip, limit)
+    }
+
     /// branch_name のコミットを新しい順に最大 limit 件返す。
     pub fn list_branch_commits(&self, branch_name: &str, limit: usize) -> Result<Vec<CommitInfo>> {
         let branch = self
@@ -37,8 +62,21 @@ impl GitEngine {
 }
 
 fn walk(repo: &Repository, tip: Oid, skip: usize, limit: usize) -> Result<Vec<CommitInfo>> {
+    walk_hiding(repo, tip, None, skip, limit)
+}
+
+fn walk_hiding(
+    repo: &Repository,
+    tip: Oid,
+    hide: Option<Oid>,
+    skip: usize,
+    limit: usize,
+) -> Result<Vec<CommitInfo>> {
     let mut revwalk = repo.revwalk()?;
     revwalk.push(tip)?;
+    if let Some(hide) = hide {
+        revwalk.hide(hide)?;
+    }
     // 同じ秒に作られたコミットは TIME だけでは順序が定まらない。
     revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
 

@@ -161,7 +161,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 diff,
                 preview,
             } => {
-                if ws.center_tab() == Tab::Files {
+                if ws.center_tab() != Tab::Code {
                     let root = ws.panels.explorer.root().to_path_buf();
                     ws.panels.changes.choose(&root, Tab::Code);
                 }
@@ -804,6 +804,7 @@ fn switch_repo(
     let moving = ws.panels.viewer.root() != root;
     svc.bump_generation();
     ws.index.forget_in_flight();
+    ws.panels.commits.hide();
     if moving {
         let repo = ws.repo.root.clone();
         ws.index.semantic.abort_regeneration(&repo);

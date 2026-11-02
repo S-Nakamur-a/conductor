@@ -69,12 +69,12 @@ list) and Terminal 80/20 (Claude Code / shell). Any panel maximizes with
 `Ctrl+Alt+Z` and resizes tmux-style with `Ctrl+Alt+Arrow`, and the ratios
 persist to `config.toml`.
 
-The Explorer and Viewer columns have two tabs, named in the Viewer's border:
+The Explorer and Viewer columns have three tabs, named in the Viewer's border:
 **Code** (the file tree, Git Changes and the Viewer, as above) and **Files
 changed**, which shows the worktree's changes against the base branch the way a
 pull request page does: the changed files on the left, and every file's diff one
 under another in the middle. The main worktree opens on Code and every other
-worktree on Files changed; **1** and **2** in either column switch (click the
+worktree on Files changed; **1**, **2** and **3** in either column switch (click the
 tab names too), and the choice is kept per worktree. In Files changed, **J** /
 **K** go to the next / previous file, **s** toggles side-by-side, and opening a
 file anywhere (the tree, find file, a search result) goes back to Code. Review
@@ -85,6 +85,12 @@ and folds it to its header; **space** on a header folds or unfolds any file.
 Files are coloured by syntax once they scroll into view, and **Enter** /
 **Shift+Enter** open the first block of hidden lines on screen, as in the
 Viewer's diff.
+
+**Commits** lists the commits the worktree has and the base branch does not, newest
+first, a page at a time (**Enter** on `load more…` reads the next). Moving through
+the list shows the selected commit's diff in the middle, laid out like Files changed
+but read only: no comments, no viewed marks, no syntax colours and no hidden lines,
+since those belong to the working tree, not to the commit.
 
 Dragging with the mouse selects inside one panel and copies to the clipboard on
 release. In the Viewer the column you press decides what you get: start on the
