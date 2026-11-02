@@ -4077,17 +4077,28 @@ mod worktree_row {
     }
 
     #[test]
-    fn worktree_の名前は_repo_の見出しと同じ色でセッションの題と分ける() {
-        let mut ws = Workspace::for_test();
-        ws.panels.fleet = tree();
-        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
-        let label = composed
-            .lines
-            .iter()
-            .flat_map(|l| &l.spans)
-            .find(|s| s.content.contains("feature/b"))
-            .unwrap();
-        assert_eq!(label.style.fg, Some(ws.theme.info));
+    fn repo_の見出しと_worktree_の名前とセッションの題はどのテーマでも色が違う() {
+        for name in conductor_core::theme::Theme::all_names() {
+            let mut ws = Workspace::for_test();
+            ws.theme = conductor_core::theme::Theme::from_name(name);
+            ws.panels.fleet = tree();
+            let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+            let fg_of = |text: &str| {
+                composed
+                    .lines
+                    .iter()
+                    .flat_map(|l| &l.spans)
+                    .find(|s| s.content == text)
+                    .unwrap_or_else(|| panic!("{text} が無い"))
+                    .style
+                    .fg
+            };
+            let repo = fg_of("app");
+            let worktree = fg_of("feature/b");
+            assert_ne!(repo, worktree, "{name}");
+            assert_ne!(repo, Some(ws.theme.fg), "{name}");
+            assert_ne!(worktree, Some(ws.theme.fg), "{name}");
+        }
     }
 }
 
