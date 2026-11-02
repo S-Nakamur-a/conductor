@@ -66,14 +66,14 @@ impl Harness {
         Regenerator::new(producer).with_clock(self.clock.clock())
     }
 
+    /// 直接 exec すると初回の検査待ちで wait_until の期限を越えるので sh に読ませる (CLAUDE.md の Conventions)。
     fn script(&self, body: &str) -> Arc<dyn Producer> {
-        use std::os::unix::fs::PermissionsExt;
         let path = self.dir.path().join("producer.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
-        Arc::new(Script(vec![path.to_string_lossy().into_owned()]))
+        std::fs::write(&path, format!("{body}\n")).unwrap();
+        Arc::new(Script(vec![
+            "/bin/sh".into(),
+            path.to_string_lossy().into_owned(),
+        ]))
     }
 
     fn target(&self) -> Target {

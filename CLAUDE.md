@@ -694,3 +694,8 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   or `pump` (waits for `Services::in_flight() == 0`). A quiet-time wait only fails on a
   loaded machine; to prove a flake is pre-existing, check main out with
   `git worktree add --detach` and run both under `yes` × CPU count
+- **A test that waits on a child process with a deadline runs its scripts as `/bin/sh <script>`.**
+  macOS checks an executable the first time it runs, and a script written moments ago and
+  exec'd directly sat in that queue for 36–170s while `/bin/sh` and `git` answered in 0.02s
+  (measured while other worktrees were building). That is what failed the `semantic_index`
+  and sheaf-core `regenerate` producer tests, a few runs in six.

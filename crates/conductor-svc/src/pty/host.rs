@@ -584,20 +584,29 @@ mod tests {
         (host, socket)
     }
 
+    /// 直前に drop した窓の接続は、ホストが切断を読むまで生きて見え、その間は Busy が返る。
+    /// 期限までつなぎ直す。
     fn window_with(
         socket: &Path,
         on_notify: impl Fn(Notification) + Send + Sync + 'static,
     ) -> PtyStore {
-        let mut store = PtyStore::new(100, 100);
-        let socket = socket.to_path_buf();
-        let detached = Detached {
-            version: "test".into(),
-            on_notify: Arc::new(on_notify),
-            socket_of: Arc::new(move |_| socket.clone()),
-            start: Arc::new(|_| anyhow::bail!("the host should already be up")),
-        };
-        store.attach_with(Path::new("/"), detached).unwrap();
-        store
+        let on_notify: Arc<dyn Fn(Notification) + Send + Sync> = Arc::new(on_notify);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut store = PtyStore::new(100, 100);
+            let socket = socket.to_path_buf();
+            let detached = Detached {
+                version: "test".into(),
+                on_notify: Arc::clone(&on_notify),
+                socket_of: Arc::new(move |_| socket.clone()),
+                start: Arc::new(|_| anyhow::bail!("the host should already be up")),
+            };
+            match store.attach_with(Path::new("/"), detached) {
+                Ok(_) => return store,
+                Err(e) if Instant::now() >= deadline => panic!("could not attach: {e:#}"),
+                Err(_) => thread::sleep(Duration::from_millis(10)),
+            }
+        }
     }
 
     fn window(socket: &Path) -> PtyStore {
