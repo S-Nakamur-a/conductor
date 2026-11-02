@@ -934,12 +934,14 @@ pub fn slot_at(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
         .get(composed.offset + usize::from(y - body.y))
 }
 
+/// worktree の名前 (info) とも題 (fg) とも全テーマで値が違うのが warning だけで、accent は github と
+/// kanagawa で info と同じ値になる。
 fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {
     if !smart {
-        return header(name, theme.info, width);
+        return header(name, theme.warning, width);
     }
     let name = clip(name, usize::from(width.saturating_sub(BUTTON_WIDTH + 2)));
-    let mut line = header(&name, theme.info, width.saturating_sub(BUTTON_WIDTH + 1));
+    let mut line = header(&name, theme.warning, width.saturating_sub(BUTTON_WIDTH + 1));
     line.spans.push(Span::raw(" "));
     line.spans.push(Span::styled(
         SMART_BUTTON,
@@ -1015,7 +1017,6 @@ fn worktree_line(
     let lead = if selected { " ❯" } else { "  " };
     let spans = vec![
         Span::styled(lead, Style::default().fg(theme.accent)),
-        // repo の見出しと同じ色で、下に並ぶセッションの題と分ける。
         Span::styled(label, Style::default().fg(theme.info)),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(badge, Style::default().fg(badge_fg)),
