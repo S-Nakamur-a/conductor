@@ -64,6 +64,8 @@ pub fn global_effects(ws: &Workspace, action: Action) -> Vec<Effect> {
             crate::command::by_hand(ws, vec![Effect::Focus(ws.screen_focus().prev())])
         }
         Action::FocusMenuBar => vec![Effect::FocusMenuBar],
+        Action::ShowCodeTab => vec![Effect::ShowTab(crate::panels::changes::Tab::Code)],
+        Action::ShowFilesTab => vec![Effect::ShowTab(crate::panels::changes::Tab::Files)],
         Action::CommandPalette => vec![Effect::PushModal(Modal::Palette(Palette::default()))],
         Action::OpenCommentList => vec![crate::comment_list::open_modal()],
         action => crate::command::COMMANDS

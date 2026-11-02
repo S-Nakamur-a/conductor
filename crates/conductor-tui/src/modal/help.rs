@@ -78,10 +78,12 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
                 "Explorer \u{2014} comment list",
                 KeyContext::ExplorerCommentList,
             ),
+            ("Files changed \u{2014} file list", KeyContext::ChangesList),
         ],
         Focus::Viewer => &[
             ("Viewer", KeyContext::Viewer),
             ("Viewer \u{2014} diff mode", KeyContext::ViewerDiffMode),
+            ("Files changed", KeyContext::Changes),
         ],
         Focus::TerminalClaude | Focus::TerminalShell => &[("Terminal panel", KeyContext::Terminal)],
         Focus::Editor => &[("Editor panel", KeyContext::Editor)],

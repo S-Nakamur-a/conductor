@@ -12,6 +12,7 @@ use conductor_core::update_checker::UpdateInfo;
 use crate::effect::Effect;
 use crate::index::Index;
 use crate::modal::Modal;
+use crate::panels::changes::{ChangesPanel, Tab};
 use crate::panels::explorer::{BottomView, ExplorerPanel};
 use crate::panels::terminal::TerminalPanel;
 use crate::panels::viewer::ViewerPanel;
@@ -203,6 +204,7 @@ impl Appearance {
 /// パネルの状態はここに 1 つずつ。
 pub struct Panels {
     pub fleet: crate::panels::fleet::FleetPanel,
+    pub changes: ChangesPanel,
     pub worktree: WorktreePanel,
     pub explorer: ExplorerPanel,
     pub viewer: ViewerPanel,
@@ -272,6 +274,9 @@ impl Workspace {
     ) -> Self {
         let panels = Panels {
             fleet: crate::panels::fleet::FleetPanel::default(),
+            changes: ChangesPanel::new(
+                config.diff.default_view == conductor_core::diff_state::DiffView::SideBySide,
+            ),
             worktree: WorktreePanel::default(),
             explorer: ExplorerPanel::default(),
             viewer: ViewerPanel::new(&config),
@@ -324,11 +329,22 @@ impl Workspace {
 
     /// 1 つのパネルが 2 つの層を持つことがあるので、区画やモードは持ち主に訊く。
     pub fn key_context(&self) -> KeyContext {
+        let files = self.center_tab() == Tab::Files;
         match self.focus {
+            Focus::Explorer if files => KeyContext::ChangesList,
+            Focus::Viewer if files => KeyContext::Changes,
             Focus::Explorer => self.panels.explorer.key_context(),
             Focus::Viewer => self.panels.viewer.key_context(),
             focus => focus.key_context(),
         }
+    }
+
+    /// 詳細の画面の左と中央に出しているタブ。
+    pub fn center_tab(&self) -> Tab {
+        let is_main = self.panels.worktree.selected().map(|w| w.is_main);
+        self.panels
+            .changes
+            .tab(self.panels.explorer.root(), is_main)
     }
 
     /// 選択中の worktree。一覧が届くまではリポジトリの根。
@@ -408,9 +424,12 @@ impl Workspace {
 
     /// フォーカスの外にあるパネルへ渡す。コマンドの宛先が選択で決まるとき用。
     pub fn dispatch_to(&mut self, target: Focus, action: Action) -> Option<Vec<Effect>> {
+        let files = self.center_tab() == Tab::Files;
         let root = self.panels.viewer.root().to_path_buf();
         let (panels, _, ctx) = self.split(&root);
         match target {
+            Focus::Explorer if files => panels.changes.update_list(action).map(|()| Vec::new()),
+            Focus::Viewer if files => panels.changes.update_body(action).map(|()| Vec::new()),
             Focus::Worktree => panels.worktree.update(action, &ctx),
             Focus::Explorer => panels.explorer.update(action, &ctx),
             Focus::Viewer => panels.viewer.update(action, &ctx),
@@ -514,10 +533,15 @@ impl Workspace {
                     Err(error) => Effect::Status(StatusLevel::Error, error),
                 }]
             }
+            TaskResult::Diff { ref root, ref diff } => {
+                let missing = self.panels.changes.install(root, diff);
+                let mut effects = self.panels.explorer.apply_result(result);
+                effects.extend(missing.map(not_in_diff));
+                effects
+            }
             TaskResult::Tree(_)
             | TaskResult::FileIndex { .. }
             | TaskResult::GitStatus { .. }
-            | TaskResult::Diff { .. }
             | TaskResult::HeadLog { .. }
             | TaskResult::CommitOverview(_) => self.panels.explorer.apply_result(result),
             TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
@@ -554,6 +578,8 @@ impl Workspace {
             } => self.accept_review_round(*round, in_window_repo),
             TaskResult::Publishable(loaded) => self.accept_publishable(loaded),
             TaskResult::Published(outcome) => published(outcome),
+            // worktree を移る前に投げた読みは、前のブランチの印を今の画面に付ける。
+            TaskResult::Review(Ok(snapshot)) if snapshot.branch != self.branch() => Vec::new(),
             TaskResult::Review(loaded) => {
                 self.review.install(loaded.map(|s| *s));
                 match self.review.error.clone() {
@@ -957,6 +983,7 @@ impl Workspace {
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。
     pub fn sync_layout(&mut self, layout: &crate::layout::Layout) {
         self.panels.explorer.sync_layout(layout);
+        self.panels.changes.sync_layout(layout);
         self.panels.viewer.sync_layout(layout);
         let lower = layout.rect(crate::layout::Region::FleetChanges);
         self.panels.fleet.set_lower_shown(lower.is_some());
@@ -1076,6 +1103,13 @@ fn published(outcome: conductor_core::review_publish::PublishOutcome) -> Vec<Eff
         Effect::Status(level, message),
         Effect::Spawn(crate::task::Task::LoadReview),
     ]
+}
+
+pub(crate) fn not_in_diff(path: String) -> Effect {
+    Effect::Status(
+        StatusLevel::Warning,
+        format!("{path} has no changes against the base."),
+    )
 }
 
 fn stopped_status(stopped: conductor_core::claude_sessions::registry::Stopped) -> Effect {

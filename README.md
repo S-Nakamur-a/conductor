@@ -69,6 +69,16 @@ list) and Terminal 80/20 (Claude Code / shell). Any panel maximizes with
 `Ctrl+Alt+Z` and resizes tmux-style with `Ctrl+Alt+Arrow`, and the ratios
 persist to `config.toml`.
 
+The Explorer and Viewer columns have two tabs, named in the Viewer's border:
+**Code** (the file tree, Git Changes and the Viewer, as above) and **Files
+changed**, which shows the worktree's changes against the base branch the way a
+pull request page does: the changed files on the left, and every file's diff one
+under another in the middle. The main worktree opens on Code and every other
+worktree on Files changed; **1** and **2** in either column switch (click the
+tab names too), and the choice is kept per worktree. In Files changed, **J** /
+**K** go to the next / previous file, **s** toggles side-by-side, and opening a
+file anywhere (the tree, find file, a search result) goes back to Code.
+
 Dragging with the mouse selects inside one panel and copies to the clipboard on
 release. In the Viewer the column you press decides what you get: start on the
 line numbers and the whole panel width is copied, gutter and all; start on the

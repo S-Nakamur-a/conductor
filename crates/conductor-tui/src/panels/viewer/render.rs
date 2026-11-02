@@ -411,9 +411,12 @@ fn summary_banner(
     if !panel.diff.active {
         return Vec::new();
     }
-    let Some(summary) = review.summary() else {
-        return Vec::new();
-    };
+    review
+        .summary()
+        .map_or_else(Vec::new, |summary| summary_lines(summary, theme, width))
+}
+
+pub(crate) fn summary_lines(summary: &str, theme: &Theme, width: usize) -> Vec<Line<'static>> {
     let heading = " \u{25a3} branch summary";
     let mut lines = vec![Line::styled(
         format!(
@@ -879,7 +882,7 @@ fn separator(theme: &Theme, label: Option<&str>, width: usize) -> Line<'static> 
 }
 
 /// 左右 2 列の 1 行。区切りは幅いっぱいに伸ばす。
-fn side_line(
+pub(crate) fn side_line(
     row: &SideRow<'_>,
     theme: &Theme,
     digits: usize,

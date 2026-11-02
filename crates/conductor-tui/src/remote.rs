@@ -38,7 +38,7 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
                 Err(refusal) => return refusal,
             };
             effects.push(match (diff, relative(&root, &path)) {
-                (true, Some(rel)) => Effect::OpenChangedFile { path: rel, line },
+                (true, Some(rel)) => Effect::ShowChange { path: rel, line },
                 _ => Effect::OpenFile {
                     path: path.into(),
                     line,
@@ -121,6 +121,16 @@ mod tests {
         }
     }
 
+    fn assert_shows_change(ws: &Workspace, path: &str) {
+        use crate::panels::changes::Tab;
+        assert_eq!(ws.center_tab(), Tab::Files);
+        let changes = &ws.panels.changes;
+        let top = changes
+            .diff()
+            .map(|d| d.files[changes.top().file].path.as_str());
+        assert_eq!(top, Some(path));
+    }
+
     #[test]
     fn 別のworktreeから頼まれたら移ってから差分を開く() {
         let repo = TestRepo::new();
@@ -134,7 +144,7 @@ mod tests {
         pump(&mut ws, &mut svc);
 
         assert_eq!(ws.worktree_path(), feat);
-        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+        assert_shows_change(&ws, "a.txt");
     }
 
     #[test]
@@ -178,7 +188,7 @@ mod tests {
         apply(&mut ws, &mut svc, follow);
         pump(&mut ws, &mut svc);
 
-        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
+        assert_shows_change(&ws, "a.txt");
     }
 
     #[test]

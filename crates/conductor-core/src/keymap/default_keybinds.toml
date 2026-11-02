@@ -167,6 +167,8 @@
 
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -190,6 +192,8 @@
 
 # ── Explorer: diff list ─────────────────────────────────────────────────────────
 [layers.explorer_diff_list]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -215,6 +219,8 @@
 
 # ── Explorer: commit log ────────────────────────────────────────────────────────
 [layers.explorer_commit_log]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -233,6 +239,8 @@
 
 # ── Explorer: comment list ──────────────────────────────────────────────────────
 [layers.explorer_comment_list]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -262,6 +270,8 @@
 # カーソル移動そのものが操作のすべてなので、覚える「開く」キーが要らない。
 # enter はタブを固定するだけ。
 [layers.explorer_tour_stops]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -283,6 +293,8 @@
 
 # ── Viewer (file content) ───────────────────────────────────────────────────────
 [layers.viewer]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -341,6 +353,8 @@
 
 # ── Viewer: diff mode ────────────────────────────────────────────────────────────
 [layers.viewer_diff_mode]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
 "tab" = "cycle_focus_forward"
 "shift+tab" = "cycle_focus_backward"
 "j" = "navigate_down"
@@ -389,6 +403,42 @@
 "ctrl+esc" = "exit_to_explorer"
 "enter" = "expand_context"
 "shift+enter" = "expand_all_context"
+":" = "command_palette"
+
+# ── Files changed: 変更ファイルの一覧 ─────────────────────────────────────────────
+# 詳細の画面のタブ。1 で Code、2 で Files changed。Claude の列からは切り替えない
+# (素の数字はそこでは Claude への入力になる)。
+[layers.changes_list]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"enter" = "select"
+":" = "command_palette"
+
+# ── Files changed: 全ファイルを縦に並べた diff ────────────────────────────────────
+[layers.changes]
+"1" = "show_code_tab"
+"2" = "show_files_tab"
+"tab" = "cycle_focus_forward"
+"shift+tab" = "cycle_focus_backward"
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"g" = "go_to_top"
+"G" = "go_to_bottom"
+"J" = "next_changed_file"
+"K" = "prev_changed_file"
+"s" = "toggle_diff_view"
 ":" = "command_palette"
 
 # ── Overlay (shared popup navigation) ──────────────────────────────────────────

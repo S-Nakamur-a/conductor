@@ -45,6 +45,8 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     }
                     Region::Editor => crate::panels::terminal::render::editor(frame, rect, ws),
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
+                    Region::ChangesList => crate::panels::changes::render::list(frame, rect, ws),
+                    Region::Changes => crate::panels::changes::render::body(frame, rect, ws),
                     Region::FleetList => crate::panels::fleet::render::list(frame, rect, ws),
                     Region::FleetSession => crate::panels::fleet::render::detail(frame, rect, ws),
                     Region::FleetChanges => crate::panels::fleet::render::lower(frame, rect, ws),
@@ -108,7 +110,9 @@ fn accordion_panels(layout: &Layout) -> Vec<Rect> {
     [
         Region::ExplorerTree,
         Region::ExplorerChanges,
+        Region::ChangesList,
         Region::Viewer,
+        Region::Changes,
         Region::TerminalClaude,
         Region::TerminalShell,
     ]
@@ -181,7 +185,8 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
             crate::panels::explorer::render::tree_title(explorer, explorer.tree_viewport().height)
         }
         Region::ExplorerChanges => crate::panels::explorer::render::bottom_title(explorer, ws),
-        Region::Viewer => " Viewer ".to_string(),
+        Region::Viewer | Region::Changes => crate::panels::changes::render::tab_title(ws),
+        Region::ChangesList => crate::panels::changes::render::LIST_TITLE.to_string(),
         Region::Editor => match ws.panels.terminal.editor_name() {
             Some(name) => format!(" Editor \u{2014} {name} "),
             None => " Editor ".to_string(),
@@ -273,7 +278,10 @@ fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
 
 /// フォーカスが枠を光らせる区画。Editor は Viewer の場所を借りる。
 fn focused_region(ws: &Workspace) -> Region {
+    let files = ws.center_tab() == crate::panels::changes::Tab::Files;
     match ws.focus {
+        Focus::Explorer if files => Region::ChangesList,
+        Focus::Viewer if files => Region::Changes,
         Focus::Worktree => Region::WorktreeStrip,
         Focus::Explorer => match ws.panels.explorer.pane() {
             crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
@@ -367,6 +375,16 @@ fn key_hint(focus: Focus, context: KeyContext, keymap: &KeyMap, lower_shown: boo
             ("open", &[Action::Select]),
             ("new", &[Action::CreateWorktree]),
             ("switch", &[Action::SwitchBranch]),
+        ],
+        Focus::Explorer if context == KeyContext::ChangesList => &[
+            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
+            ("panel", &[Action::CycleFocusForward]),
+        ],
+        Focus::Viewer if context == KeyContext::Changes => &[
+            ("scroll", &[Action::NavigateDown, Action::NavigateUp]),
+            ("file", &[Action::NextChangedFile, Action::PrevChangedFile]),
+            ("split", &[Action::ToggleDiffView]),
+            ("panel", &[Action::CycleFocusForward]),
         ],
         Focus::Explorer if context == KeyContext::ExplorerCommitLog => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
@@ -798,7 +816,7 @@ mod tests {
         assert!(text_of(&buffer, 0).contains("repo"));
         assert!(text_of(&buffer, 1).contains("Worktree"));
         let panels = (3..40).map(|y| text_of(&buffer, y)).collect::<String>();
-        for title in ["Explorer", "Viewer", "Claude Code", "Shell"] {
+        for title in ["Explorer", "[1 Code]", "Claude Code", "Shell"] {
             assert!(panels.contains(title), "{title} の枠が無い");
         }
         assert!(text_of(&buffer, 39).contains("nav"));

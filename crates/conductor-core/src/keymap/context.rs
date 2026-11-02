@@ -12,6 +12,10 @@ pub enum KeyContext {
     ExplorerTourStops,
     Viewer,
     ViewerDiffMode,
+    /// Files changed タブの左の変更ファイル一覧。
+    ChangesList,
+    /// Files changed タブの中央の、全ファイルを縦に並べた diff。
+    Changes,
     Terminal,
     Editor,
     Overlay,
@@ -19,7 +23,7 @@ pub enum KeyContext {
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 12] = [
+    pub const PANELS: [KeyContext; 14] = [
         KeyContext::Fleet,
         KeyContext::Worktree,
         KeyContext::Explorer,
@@ -29,6 +33,8 @@ impl KeyContext {
         KeyContext::ExplorerTourStops,
         KeyContext::Viewer,
         KeyContext::ViewerDiffMode,
+        KeyContext::ChangesList,
+        KeyContext::Changes,
         KeyContext::Terminal,
         KeyContext::Editor,
         KeyContext::Overlay,
@@ -46,6 +52,8 @@ impl KeyContext {
             KeyContext::ExplorerTourStops => "explorer_tour_stops",
             KeyContext::Viewer => "viewer",
             KeyContext::ViewerDiffMode => "viewer_diff_mode",
+            KeyContext::ChangesList => "changes_list",
+            KeyContext::Changes => "changes",
             KeyContext::Terminal => "terminal",
             KeyContext::Editor => "editor",
             KeyContext::Overlay => "overlay",

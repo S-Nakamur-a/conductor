@@ -408,14 +408,20 @@ impl GitChanges {
         self.open_row(next, None, false)
     }
 
+    /// コミットを見ていれば出どころを作業ツリーへ戻して読み直す。
+    pub fn return_to_working_tree(&mut self) -> Option<Effect> {
+        (!matches!(self.source, DiffSource::WorkingTree { .. }))
+            .then(|| self.set_source(DiffSource::working_tree(&self.base)))
+    }
+
     /// 変更ファイルとして開く。折りたたまれたディレクトリの中にあれば先に展開する
     /// — 展開するまで表示行が無く、一覧の選択が動かせない。
     pub fn open_path(&mut self, path: &str, line: Option<usize>) -> Option<Effect> {
         // 外から来るパスはブランチの差分を指す。コミットを見ていれば作業ツリーへ戻し、
         // 届いてから開き直す。
-        if !matches!(self.source, DiffSource::WorkingTree { .. }) {
+        if let Some(reload) = self.return_to_working_tree() {
             self.pending_open = Some((path.to_string(), line));
-            return Some(self.set_source(DiffSource::working_tree(&self.base)));
+            return Some(reload);
         }
         // worktree を移った直後は一覧が空なので、届くのを待つ。
         let Some(path) = self.diff.resolve_changed_path(path) else {
