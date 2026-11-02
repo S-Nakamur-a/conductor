@@ -4127,6 +4127,51 @@ mod worktree_row {
         let glyph = line.spans.iter().find(|s| s.content == "z").unwrap();
         assert_eq!(glyph.style.fg, Some(theme.fg));
     }
+
+    fn contrast(a: ratatui::style::Color, b: ratatui::style::Color) -> f64 {
+        let luminance = |c| {
+            let ratatui::style::Color::Rgb(r, g, b) = c else {
+                panic!("{c:?}")
+            };
+            let linear = |v: u8| {
+                let v = f64::from(v) / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+        };
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn 選んだ行の地は全テーマで本文の文字を沈めない() {
+        for name in conductor_core::theme::Theme::all_names() {
+            let mut ws = Workspace::for_test();
+            ws.theme = conductor_core::theme::Theme::from_name(name);
+            let mut fleet = tree();
+            for _ in 0..3 {
+                fleet.update(Action::NavigateDown, &ws.ctx());
+            }
+            ws.panels.fleet = fleet;
+            ws.focus = crate::workspace::Focus::Fleet;
+            let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 80, 12)).unwrap();
+            let line = composed
+                .lines
+                .iter()
+                .find(|l| l.spans.iter().any(|s| s.content == "z"))
+                .unwrap();
+            let bg = line.style.bg.expect("選択の地が無い");
+            let ratio = contrast(ws.theme.fg, bg);
+            // solarized は灰色の地でも 4:1 に届かないので、そこでは元の比の 3/4 を守る。
+            let grey = contrast(ws.theme.fg, ws.theme.selected_bg_inactive);
+            let floor = (grey * 0.75).min(4.0);
+            assert!(ratio >= floor, "{name}: {ratio:.2} < {floor:.2}");
+        }
+    }
 }
 
 #[test]
