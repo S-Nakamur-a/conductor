@@ -39,23 +39,15 @@ fn 既定は警告なしで組み上がる() {
 fn 下区画の一覧はどの層からでも切り替えられる() {
     let km = KeyMap::default();
     let views = [
-        (ch('d'), Action::ShowDiffList),
         (ch('c'), Action::ShowCommentList),
         (ch('t'), Action::ShowTourStops),
     ];
-    let layers = [
-        Explorer,
-        ExplorerDiffList,
-        ExplorerCommitLog,
-        ExplorerCommentList,
-        ExplorerTourStops,
-    ];
+    let layers = [Explorer, ExplorerCommentList, ExplorerTourStops];
     for (key, action) in views {
         for layer in layers {
             let own_view = matches!(
                 (layer, action),
-                (ExplorerDiffList | ExplorerCommitLog, Action::ShowDiffList)
-                    | (ExplorerCommentList, Action::ShowCommentList)
+                (ExplorerCommentList, Action::ShowCommentList)
                     | (ExplorerTourStops, Action::ShowTourStops)
             );
             assert!(
@@ -70,7 +62,7 @@ fn 下区画の一覧はどの層からでも切り替えられる() {
 fn レビューのキーだった_w_は_explorer_で何にも当たらない() {
     let km = KeyMap::default();
     for key in [ch('w'), shift('W'), alt('w')] {
-        for layer in [Explorer, ExplorerDiffList, ExplorerCommentList] {
+        for layer in [Explorer, ExplorerCommentList] {
             assert_eq!(km.resolve(&key, layer), None, "{layer:?} {key:?}");
         }
     }
@@ -163,15 +155,14 @@ fn 既定のキーが解決する() {
             key(KeyCode::Esc, KeyModifiers::CONTROL),
             Action::ExitToExplorer,
         ),
-        (ViewerDiffMode, ctrl('f'), Action::SearchFilename),
-        (ViewerDiffMode, ch('c'), Action::AddComment),
+        (Changes, ch('c'), Action::AddComment),
         (
-            ViewerDiffMode,
+            Changes,
             key(KeyCode::Enter, KeyModifiers::NONE),
             Action::ExpandContext,
         ),
         (
-            ViewerDiffMode,
+            Changes,
             key(KeyCode::Enter, KeyModifiers::SHIFT),
             Action::ExpandAllContext,
         ),
@@ -419,6 +410,63 @@ fn 消した区画の設定が残っていても警告で済み_ほかのキー�
     let f = |n| key(KeyCode::F(n), KeyModifiers::NONE);
     assert_eq!(km.resolve(&f(9), Global), Some(Action::Quit));
     assert_eq!(km.resolve(&f(8), Viewer), Some(Action::NavigateDown));
+}
+
+#[test]
+fn 消したgit_changesと差分表示の層とキーは既定に無い() {
+    let km = KeyMap::default();
+    for layer in [Explorer, ExplorerCommentList, ExplorerTourStops] {
+        assert_eq!(km.resolve(&ch('d'), layer), None, "{layer:?}");
+    }
+    assert_eq!(km.resolve(&shift('L'), Explorer), None);
+    let layers: Vec<&str> = KeyContext::PANELS.iter().map(|c| c.layer_name()).collect();
+    for gone in [
+        "explorer_diff_list",
+        "explorer_commit_log",
+        "viewer_diff_mode",
+    ] {
+        assert!(!layers.contains(&gone), "{layers:?}");
+    }
+}
+
+#[test]
+fn 消したgit_changesと差分表示の設定が残っていても警告で済み_ほかのキーは効く() {
+    let leftover = user(
+        "[layers.explorer]\n\"d\" = \"show_diff_list\"\n\"L\" = \"show_commit_log\"\n\"f8\" = \"navigate_down\"\n\
+         [layers.viewer]\n\"]\" = \"next_hunk\"\n\"[\" = \"prev_hunk\"\n\"f7\" = \"navigate_down\"\n\
+         [layers.explorer_diff_list]\n\"j\" = \"navigate_down\"\n\
+         [layers.explorer_commit_log]\n\"j\" = \"navigate_down\"\n\
+         [layers.viewer_diff_mode]\n\"j\" = \"navigate_down\"",
+    );
+    let (km, warnings) = KeyMap::with_warnings(&leftover);
+    for gone in [
+        "show_diff_list",
+        "show_commit_log",
+        "next_hunk",
+        "prev_hunk",
+    ] {
+        assert!(
+            warnings.iter().any(
+                |w| matches!(w, KeybindWarning::UnknownAction { action, .. } if action == gone)
+            ),
+            "{gone}: {warnings:?}"
+        );
+    }
+    for gone in [
+        "explorer_diff_list",
+        "explorer_commit_log",
+        "viewer_diff_mode",
+    ] {
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, KeybindWarning::UnknownLayer { layer } if layer == gone)),
+            "{gone}: {warnings:?}"
+        );
+    }
+    let f = |n| key(KeyCode::F(n), KeyModifiers::NONE);
+    assert_eq!(km.resolve(&f(8), Explorer), Some(Action::NavigateDown));
+    assert_eq!(km.resolve(&f(7), Viewer), Some(Action::NavigateDown));
 }
 
 #[test]

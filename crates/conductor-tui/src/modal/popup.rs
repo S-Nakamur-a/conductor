@@ -189,10 +189,13 @@ mod tests {
 
     fn at(x: u16, y: u16) -> Popup {
         let choices = vec![
-            ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
             (
-                "Commit Log".into(),
-                Effect::Command(CommandId::ShowCommitLog),
+                "Comments".into(),
+                Effect::Command(CommandId::ShowCommentList),
+            ),
+            (
+                "Tour Stops".into(),
+                Effect::Command(CommandId::ShowTourStops),
             ),
         ];
         Popup::new("Show", choices, Some((x, y)), 0)
@@ -215,7 +218,7 @@ mod tests {
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::PopModal, Effect::Command(CommandId::ShowCommitLog)]
+                [Effect::PopModal, Effect::Command(CommandId::ShowTourStops)]
             ),
             "{effects:?}"
         );
@@ -229,7 +232,7 @@ mod tests {
         assert!(
             matches!(
                 effects.as_slice(),
-                [Effect::PopModal, Effect::Command(CommandId::ShowCommitLog)]
+                [Effect::PopModal, Effect::Command(CommandId::ShowTourStops)]
             ),
             "{effects:?}"
         );
@@ -251,10 +254,13 @@ mod tests {
         let mut popup = Popup::numbered(
             "New",
             vec![
-                ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
                 (
-                    "Commit Log".into(),
-                    Effect::Command(CommandId::ShowCommitLog),
+                    "Comments".into(),
+                    Effect::Command(CommandId::ShowCommentList),
+                ),
+                (
+                    "Tour Stops".into(),
+                    Effect::Command(CommandId::ShowTourStops),
                 ),
             ],
             None,
@@ -278,10 +284,13 @@ mod tests {
             Popup::numbered(
                 "New",
                 vec![
-                    ("Changes".into(), Effect::Command(CommandId::ShowDiffList)),
                     (
-                        "Commit Log".into(),
-                        Effect::Command(CommandId::ShowCommitLog),
+                        "Comments".into(),
+                        Effect::Command(CommandId::ShowCommentList),
+                    ),
+                    (
+                        "Tour Stops".into(),
+                        Effect::Command(CommandId::ShowTourStops),
                     ),
                     ("Claude".into(), Effect::Command(CommandId::NewClaudeCode)),
                 ],
@@ -302,12 +311,12 @@ mod tests {
             }
         };
         use KeyCode::{Char, Down, Enter, Up};
-        assert_eq!(chosen(&[Char('2')]), Some(CommandId::ShowCommitLog));
+        assert_eq!(chosen(&[Char('2')]), Some(CommandId::ShowTourStops));
         assert_eq!(chosen(&[Down, Down, Enter]), Some(CommandId::NewClaudeCode));
         assert_eq!(chosen(&[Up, Enter]), Some(CommandId::NewClaudeCode));
         assert_eq!(
             chosen(&[Down, Down, Down, Enter]),
-            Some(CommandId::ShowDiffList)
+            Some(CommandId::ShowCommentList)
         );
         assert_eq!(
             chosen(&[Enter]),

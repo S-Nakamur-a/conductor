@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use conductor_core::diff_state::OpenDiff;
 use conductor_svc::Services;
 use conductor_svc::pty::SessionKind;
 
@@ -15,11 +14,10 @@ use crate::workspace::{Focus, RepoState, StatusLevel, StatusMessage, Workspace};
 
 #[derive(Debug)]
 pub enum Effect {
-    /// 相対パスは Viewer の根から解決する。`diff` があれば素の本文ではなく差分として開く。
+    /// 相対パスは Viewer の根から解決する。
     OpenFile {
         path: PathBuf,
         line: Option<usize>,
-        diff: Option<Box<OpenDiff>>,
         preview: bool,
     },
     /// 戻り先を積んでからファイルを開く。ジャンプの出どころが Viewer の外にもあるので、
@@ -36,11 +34,6 @@ pub enum Effect {
         path: String,
         line: Option<usize>,
     },
-    /// 変更ファイルとして開く (差分表示のまま)。読む順のビューから Viewer へ渡す唯一の口。
-    OpenChangedFile {
-        path: String,
-        line: Option<usize>,
-    },
     /// ツアーが見せている範囲。行を指すだけだと、その停留所がどこまでの話なのかが
     /// Viewer から消える。
     TourRange {
@@ -53,7 +46,6 @@ pub enum Effect {
     SearchInFile(String),
     /// レビュー済みの印。持ち主は Explorer。
     ToggleViewed(String),
-    StepChangedFile(isize),
     SelectWorktree(usize),
     /// 一覧を開く。どのフォーカスからでも。
     OpenFleet,
@@ -156,14 +148,13 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::OpenFile {
                 path,
                 line,
-                diff,
                 preview,
             } => {
                 if ws.center_tab() != Tab::Code {
                     let root = ws.panels.explorer.root().to_path_buf();
                     ws.panels.changes.choose(&root, Tab::Code);
                 }
-                let follow_up = open_file(ws, &path, line, diff, preview);
+                let follow_up = open_file(ws, &path, line, preview);
                 queue.extend(follow_up);
             }
             Effect::TourRange { path, start, end } => {
@@ -174,7 +165,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 queue.push_back(Effect::OpenFile {
                     path,
                     line: Some(line),
-                    diff: None,
                     preview: false,
                 });
             }
@@ -182,15 +172,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 if let Some(effect) = ws.panels.explorer.find_file(&query) {
                     queue.push_back(effect);
                 }
-            }
-            Effect::OpenChangedFile { path, line } => {
-                queue.push_back(match ws.panels.explorer.open_changed(&path, line) {
-                    Some(effect) => effect,
-                    None => Effect::Status(
-                        StatusLevel::Warning,
-                        format!("Section's file isn't in this diff: {path}"),
-                    ),
-                });
             }
             Effect::ShowTab(tab) => show_tab(ws, tab),
             Effect::ShowChange { path, line } => queue.extend(show_change(ws, path, line)),
@@ -208,11 +189,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     file_path: path,
                 };
                 queue.push_back(Effect::Spawn(Task::WriteReview(write)));
-            }
-            Effect::StepChangedFile(delta) => {
-                if let Some(effect) = ws.panels.explorer.step_changed_file(delta) {
-                    queue.push_back(effect);
-                }
             }
             Effect::SelectWorktree(index) => queue.extend(select_worktree(ws, index)),
             Effect::NewSession(kind) => new_session(ws, kind, None, ClaudeArgs::default()),
@@ -545,10 +521,9 @@ fn open_file(
     ws: &mut Workspace,
     path: &std::path::Path,
     line: Option<usize>,
-    diff: Option<Box<OpenDiff>>,
     preview: bool,
 ) -> Vec<Effect> {
-    let mut effects = ws.panels.viewer.open(path, line, diff, preview);
+    let mut effects = ws.panels.viewer.open(path, line, preview);
     // preview はクリックで開いた下見なので、キーボードは Explorer に残す。
     if !preview {
         effects.push(Effect::Focus(Focus::Viewer));
@@ -561,28 +536,22 @@ fn show_tab(ws: &mut Workspace, tab: Tab) {
     ws.panels.changes.choose(&root, tab);
 }
 
-/// 写しは Explorer の作業ツリーの diff なので、Explorer がコミットを見ていれば作業ツリーへ戻し、
-/// 読み直している間は届くのを待つ。
+/// 写しは Explorer の作業ツリーの diff なので、読み直している間は届くのを待つ。
 pub(crate) fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Effect> {
     use crate::panels::changes::Reveal;
     show_tab(ws, Tab::Files);
     let mut effects = Vec::new();
-    let git_changes = &mut ws.panels.explorer.changes;
-    let reload = git_changes.return_to_working_tree();
-    let loading = reload.is_some() || git_changes.is_loading();
+    let loading = ws.panels.explorer.changes.is_loading();
     let root = ws.panels.viewer.root().to_path_buf();
     let (panels, _, ctx) = ws.split(&root);
     match panels.changes.reveal(path.clone(), line, loading, &ctx) {
         Reveal::Shown => {}
-        // 戻した読み直しが届けば出るので、待っていると言わない。
-        Reveal::Waiting if reload.is_some() => {}
         Reveal::Waiting => effects.push(Effect::Status(
             StatusLevel::Info,
             format!("Opening {path} once the diff loads\u{2026}"),
         )),
         Reveal::Missing => effects.push(crate::workspace::not_in_diff(path)),
     }
-    effects.extend(reload);
     effects.push(Effect::Focus(Focus::Viewer));
     effects
 }

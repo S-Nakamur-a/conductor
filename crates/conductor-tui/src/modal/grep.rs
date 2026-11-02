@@ -180,7 +180,6 @@ impl Grep {
             Effect::OpenFile {
                 path: hit.file_path.clone().into(),
                 line: Some(hit.line_number),
-                diff: None,
                 preview: false,
             },
         ]

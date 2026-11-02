@@ -58,8 +58,7 @@ the Claude Code sessions inside the TUI, resolving the DB from
   drops the line, and it is deliberately not replayed on attach. An open_file
   request from another worktree switches the window there first; close_file does not, and
   only acts on the worktree being shown. With `diff` it lands in the Files changed tab
-  (`Effect::ShowChange`), waiting for the diff while it is being read and taking Git Changes
-  back to the working tree if it shows a commit, as the old Viewer did; without, in Code.
+  (`Effect::ShowChange`), waiting for the diff while it is being read; without, in Code.
   Adding a window tool runs an action at a moment nobody chose. Open one level of
   the callees of the action it reuses and check each side effect against someone
   who is typing or is on another worktree: #403's three bugs were all visible that
@@ -467,7 +466,7 @@ Status bar
 ```
 
 The middle row is a three-column accordion with focus-driven widths: Explorer
-(file tree over the changed-files / comment list), Viewer, Terminal (Claude Code
+(file tree over the comment list / tour stops), Viewer, Terminal (Claude Code
 over shell). `Ctrl+Alt+Z` maximizes, `Ctrl+Alt+Arrow` resizes tmux-style (ratios
 persist). Menu rows
 carry a `CommandId` and run through the same `command::exec` as the palette and
@@ -484,8 +483,7 @@ derived from `is_main` every time and remembered only once someone switches
 (`ChangesPanel::choose`: 1 / 2 / 3, a click on the tab names, any `Effect::OpenFile` back to
 Code, `Effect::ShowChange` to Files changed). Its diff is a copy of the working-tree
 `TaskResult::Diff` the Explorer asked for — it never spawns one, so a 9s diff is not run
-twice — which also means it is not refreshed while Git Changes shows a commit (until an open_file
-with `diff` takes Git Changes back). Each file is laid out as `changes::Row`s — header,
+twice (the Explorer still holds it, in `explorer.changes`, though Code no longer draws it). Each file is laid out as `changes::Row`s — header,
 body, the open threads' lines, a blank — and rebuilt when the diff, the review, the width,
 side-by-side or a fold changes, because a thread's height depends on the width. A rebuild
 over the same diff keeps the very row on top (mid-thread, mid-deletion), falling back to
@@ -720,8 +718,8 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   hit. The right edge drops a column **only when the scrollbar is actually drawn**
   (`render::scrollbar_covers`): `file_body` reserves nothing for it, so the bar overwrites
   the last column of code, and dropping it unconditionally would eat a real character on
-  any file that fits on screen. Deliberately excluded: side-by-side diff (two gutters
-  cannot be one range) and banner / thread rows (`Origin::Other`).
+  any file that fits on screen. Deliberately excluded: banner / thread rows
+  (`Origin::Other`).
 - **Status messages:** `Effect::Status(level, text)`
 - **`Effect`'s `==` compares the variant only** (`effect.rs`'s `impl PartialEq`), so
   `assert_eq!(effects, vec![Effect::X { .. }])` passes whatever the fields hold. When a

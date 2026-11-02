@@ -43,7 +43,6 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
                 _ => Effect::OpenFile {
                     path: path.into(),
                     line,
-                    diff: None,
                     preview: false,
                 },
             });

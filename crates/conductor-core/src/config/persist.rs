@@ -55,8 +55,7 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 #
 # [keybinds.keys] is the global layer (active everywhere). Each
 # [keybinds.layers.<context>] table is a per-panel layer. Context names:
-# fleet, explorer, explorer_diff_list, explorer_commit_log,
-# explorer_comment_list, explorer_tour_stops, viewer, viewer_diff_mode,
+# fleet, explorer, explorer_comment_list, explorer_tour_stops, viewer,
 # changes_list, changes, terminal, overlay.
 #
 # Key grammar: modifiers ctrl/alt/shift/super joined with '+', then the key.

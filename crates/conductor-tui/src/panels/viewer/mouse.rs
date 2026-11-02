@@ -1,6 +1,5 @@
 //! Viewer のマウス。当たり判定は描画と同じ行の列 (render::origin_at) から引く。
 
-use super::input::no_place_to_comment;
 use super::{ViewerPanel, render};
 use crate::effect::Effect;
 use crate::review::anchor_for;
@@ -86,15 +85,8 @@ impl ViewerPanel {
             (y - self.body.y) as usize,
         ) {
             render::Origin::Line(line) => line,
-            render::Origin::Deleted if zone != Zone::Text => return no_place_to_comment(),
-            _ => return Vec::new(),
+            render::Origin::Other => return Vec::new(),
         };
-        if self.diff.active
-            && let Some(idx) = self.diff.expandable_at(line)
-        {
-            self.diff.expand(idx, false, &self.content.lines);
-            return Vec::new();
-        }
         match zone {
             Zone::Comment => match anchor_for(&comments, line) {
                 Some(anchor) => self.threads.flip(anchor),
@@ -111,12 +103,7 @@ impl ViewerPanel {
                     false => self.click_comment(line, &ctx.branch),
                 };
             }
-            // 選択の帯は素の本文にしか描かないので、diff では見えない選択を残さない。
-            Zone::Text => {
-                if !self.diff.active {
-                    self.selection.click(line, extend);
-                }
-            }
+            Zone::Text => self.selection.click(line, extend),
         }
         Vec::new()
     }
@@ -142,10 +129,6 @@ impl ViewerPanel {
     /// ガターを持たない表示を押したなら None — 区画まるごとの選択に任せる。
     pub fn code_columns(&self, x: u16, y: u16, ctx: &Ctx) -> Option<(u16, u16)> {
         if y < self.body.y || self.is_showing_rendered_markdown() {
-            return None;
-        }
-        // side-by-side はガターが 2 本あるので、桁の範囲 1 つでは本文を表せない。
-        if self.diff.active && self.diff.side_by_side {
             return None;
         }
         let origin = render::origin_at(
@@ -183,15 +166,6 @@ impl ViewerPanel {
         let column = column as usize;
         if column < mark {
             return Zone::Comment;
-        }
-        if self.diff.active {
-            let digits = render::digit_count(self.diff.max_line_no);
-            // 畳みも実行ボタンも diff には出ないので、左マージンは符号と行番号だけ。
-            return if column < mark + render::DIFF_SIGN + digits {
-                Zone::Number
-            } else {
-                Zone::Text
-            };
         }
         let digits = render::digit_count(total);
         if column < mark + digits {

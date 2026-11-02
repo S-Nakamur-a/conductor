@@ -628,7 +628,7 @@ impl ChangesPanel {
         self.folds.files.remove(path);
     }
 
-    /// パスは Git Changes の一覧と同じ規則で解決する (./ や repo 名の前置き)。
+    /// パスは `DiffState::resolve_changed_path` で解決する (./ や repo 名の前置き)。
     /// 畳んだファイルは手で開いたのと同じに開く。頼まれた行を見せるため。
     fn reveal_now(&mut self, anchor: &Anchor, ctx: &Ctx) -> bool {
         let Some((file, path)) = (self.diff.as_ref())

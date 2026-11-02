@@ -11,9 +11,11 @@ use conductor_core::keymap::Action;
 use super::ChangesPanel;
 use crate::effect::Effect;
 use crate::list::{ListCursor, Viewport};
-use crate::panels::explorer::git_changes::log::PAGE;
 use crate::task::{RangePage, Task};
 use crate::workspace::Ctx;
+
+/// 巨大リポジトリで全履歴を読まないための 1 ページの件数。
+pub(crate) const PAGE: usize = 100;
 
 #[derive(Debug)]
 pub struct CommitsTab {

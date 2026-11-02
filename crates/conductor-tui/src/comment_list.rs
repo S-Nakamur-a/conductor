@@ -145,7 +145,6 @@ impl CommentList {
         Some(Effect::OpenFile {
             path: comment.file_path.clone().into(),
             line: Some(comment.line_start as usize),
-            diff: None,
             preview: false,
         })
     }

@@ -55,20 +55,20 @@ make dev                  # cargo run, for development
 ├──────────────┬──────────────┬──────────────────────────┤
 │              │              │ Claude Code              │
 │  Explorer    │   Viewer     ├──────────────────────────┤
-│ (tree + diff)│ (file/diff)  │ Shell                    │
+│ (tree + list)│   (file)     │ Shell                    │
 ├──────────────┴──────────────┴──────────────────────────┤
 │ Status bar                                              │
 └────────────────────────────────────────────────────────┘
 ```
 
 The main area is a three-column accordion — **Explorer | Viewer | Terminal** —
-with focus-driven widths. Explorer is split 50/50 (file tree / diff / comment
-list) and Terminal 80/20 (Claude Code / shell). Any panel maximizes with
+with focus-driven widths. Explorer is split 50/50 (file tree / comment list or
+tour stops) and Terminal 80/20 (Claude Code / shell). Any panel maximizes with
 `Ctrl+Alt+Z` and resizes tmux-style with `Ctrl+Alt+Arrow`, and the ratios
 persist to `config.toml`.
 
 The Explorer and Viewer columns have three tabs, named in the Viewer's border:
-**Code** (the file tree, Git Changes and the Viewer, as above) and **Files
+**Code** (the file tree, the comment list and the Viewer, as above) and **Files
 changed**, which shows the worktree's changes against the base branch the way a
 pull request page does: the changed files on the left, and every file's diff one
 under another in the middle. The main worktree opens on Code and every other
@@ -76,13 +76,12 @@ worktree on Files changed; **1**, **2** and **3** in either column switch (click
 tab names too), and the choice is kept per worktree. In Files changed, **J** /
 **K** go to the next / previous file, **s** toggles side-by-side, and opening a
 file anywhere (the tree, find file, a search result) goes back to Code. Review
-comments work there as in the Viewer's diff, on the line at the top: **c** adds
+comments work there as in the Viewer, on the line at the top: **c** adds
 one, **space** opens or closes its thread, **R** replies, **r** resolves and
 **}** / **{** jump between threads across files. **v** marks the top file viewed
 and folds it to its header; **space** on a header folds or unfolds any file.
 Files are coloured by syntax once they scroll into view, and **Enter** /
-**Shift+Enter** open the first block of hidden lines on screen, as in the
-Viewer's diff.
+**Shift+Enter** open the first block of hidden lines on screen.
 
 **Commits** lists the commits the worktree has and the base branch does not, newest
 first, a page at a time (**Enter** on `load more…` reads the next). Moving through
@@ -141,7 +140,7 @@ The mouse wheel over the list scrolls it without moving the selection, so the se
 the right stays put; the next key that moves the selection brings it back into view.
 
 Below the list, **Git Changes** shows the files the selected line's branch changed and
-by how much, the same way the main screen's Git Changes does: from where it left the
+by how much: from where it left the
 repository's default branch to the working tree, uncommitted and untracked files
 included. It is for reading only, is re-read about every five seconds while the list is
 open, and is not shown when the window is too short.

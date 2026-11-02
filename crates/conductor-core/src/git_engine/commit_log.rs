@@ -8,20 +8,6 @@ use super::{CommitInfo, GitEngine};
 use crate::diff_state::short_oid;
 
 impl GitEngine {
-    /// 開いた worktree の HEAD から新しい順に、skip 件飛ばして最大 limit 件。
-    ///
-    /// ページは毎回 tip から歩き直す。途中のコミットから歩き直すと、トポロジカル順で
-    /// 後に来るはずの別の枝が抜ける。
-    pub fn head_log(&self, skip: usize, limit: usize) -> Result<Vec<CommitInfo>> {
-        let tip = self
-            .repo
-            .head()
-            .context("cannot resolve HEAD")?
-            .peel_to_commit()
-            .context("cannot peel HEAD to commit")?;
-        walk(&self.repo, tip.id(), skip, limit)
-    }
-
     /// [Self::range_log] の両端 (HEAD, base)。base は Files changed の差分と同じ規則で解き、
     /// 共通の祖先が無ければ同じ文で断る (隠すものが無いと HEAD の全履歴になる)。
     pub fn range_ends(&self, base: &str) -> Result<(Oid, Oid)> {

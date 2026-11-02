@@ -30,9 +30,10 @@ terminal keybindings keep working while you review:
    number here by hand). Both are forgotten when the request is dropped, so a
    request made again is taken in again, and so is everything when you restart
    Conductor.
-2. **Changed files and comments** — the Explorer's bottom pane cycles between
-   the changed-files diff list and the review comment list.
-3. **Jump into the code** — the diff pane supports the Viewer's `gd`/`gi`/`gr`
+2. **Changed files and comments** — the Files changed tab (**2**) lists the
+   changed files and every diff one under another; in the Code tab (**1**) the
+   Explorer's bottom pane holds the review comment list.
+3. **Jump into the code** — the Viewer in the Code tab has `gd`/`gi`/`gr`
    symbol-jump hints (go to definition / implementation / references). **Symbol
    jumps only work for Rust, Go, and TypeScript** — other languages show no
    hints.
@@ -42,8 +43,3 @@ terminal keybindings keep working while you review:
    your inline review comments (and replies) back to the PR via `gh`.
 
 Requires the `gh` CLI (see Prerequisites) to be installed and authenticated.
-
-> **Breaking change:** diff mode's "jump to top" moved from `g` to `gg` (vim-style),
-> since `g` is now a prefix for symbol-jump hints (`gd`/`gi`/`gr`/`gg`).
-
-

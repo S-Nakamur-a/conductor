@@ -57,8 +57,6 @@ keymap_suite::actions! {
         OpenPullRequest => "open_pull_request",
 
         // エクスプローラパネル
-        ShowDiffList => "show_diff_list",
-        ShowCommitLog => "show_commit_log",
         ShowCommentList => "show_comment_list",
         ShowTourStops => "show_tour_stops",
         OpenCommentList => "open_comment_list",
@@ -113,8 +111,6 @@ keymap_suite::actions! {
         InlineReply => "inline_reply",
 
         // 差分ナビゲーション
-        NextHunk => "next_hunk",
-        PrevHunk => "prev_hunk",
         NextComment => "next_comment",
         PrevComment => "prev_comment",
         NextChangedFile => "next_changed_file",
@@ -200,8 +196,6 @@ impl Action {
             Action::ToggleViewed => "Toggle file viewed",
             Action::ReviewPullRequest => "Review a pull request by number or URL",
             Action::PublishReview => "Publish unpublished review comments to the GitHub PR",
-            Action::ShowDiffList => "Show Git Changes",
-            Action::ShowCommitLog => "Show commit log in Git Changes",
             Action::ShowCommentList => "Show comment list",
             Action::ShowTourStops => "Show tour stops",
             Action::OpenCommentList => "Open comment-list modal",
@@ -244,8 +238,6 @@ impl Action {
             Action::ShowHoverInfo => "Show hover info (signature/doc)",
             Action::ToggleInlineThread => "Toggle inline comment thread",
             Action::InlineReply => "Inline reply",
-            Action::NextHunk => "Next hunk",
-            Action::PrevHunk => "Previous hunk",
             Action::NextComment => "Next comment",
             Action::PrevComment => "Previous comment",
             Action::NextChangedFile => "Next changed file",

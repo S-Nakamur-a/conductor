@@ -238,7 +238,7 @@ impl ViewerPanel {
         use conductor_core::keymap::Action;
         match action {
             // g は前置。先頭へ飛ぶのは gg。
-            Action::GoToTop if !self.diff.active => {
+            Action::GoToTop => {
                 self.nav.pending_g = true;
                 Some(Vec::new())
             }
@@ -496,7 +496,6 @@ impl ViewerPanel {
         vec![Effect::OpenFile {
             path: PathBuf::from(spot.path),
             line: Some(spot.line + 1),
-            diff: None,
             preview: false,
         }]
     }
@@ -725,7 +724,7 @@ impl ViewerPanel {
     // ── 画面の 1 点を本文の座標へ ────────────────────────────────────────
 
     pub fn word_at_screen(&self, col: u16, row: u16, ctx: &Ctx) -> Option<Spotted> {
-        if self.diff.active || row < self.body.y {
+        if row < self.body.y {
             return None;
         }
         let line_1 = self.line_at_screen(row, ctx)?;
@@ -1077,7 +1076,7 @@ pub fn caller() { target(); }
                 .ws
                 .panels
                 .viewer
-                .open(Path::new("lib.rs"), None, None, false);
+                .open(Path::new("lib.rs"), None, false);
             crate::effect::apply(&mut harness.ws, &mut harness.svc, effects);
             pump(&mut harness.ws, &mut harness.svc);
             harness.load_index();
@@ -1318,7 +1317,7 @@ pub fn caller() { target(); }
     /// 囲んでいる型の定義を「ここが定義」と読むと、押しただけで参照一覧に化ける。
     #[test]
     fn 定義位置の判定はexactの答えだけを見る() {
-        let mut panel = ViewerPanel::new(&conductor_core::config::Config::default());
+        let mut panel = ViewerPanel::default();
         panel.content.path = Some("a.rs".into());
         assert!(panel.answer_is_here(&Definition::Exact(vec![at("a.rs", 3)]), 3));
         assert!(!panel.answer_is_here(&Definition::Exact(vec![at("a.rs", 3)]), 4));

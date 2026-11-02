@@ -9,7 +9,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{BottomView, ExplorerPanel, Pane, git_changes};
+use super::{BottomView, ExplorerPanel, Pane};
 use crate::list::row_line;
 use crate::workspace::Workspace;
 
@@ -25,23 +25,14 @@ pub fn render(frame: &mut Frame, tree_area: Rect, changes_area: Rect, ws: &Works
 
     let inner = crate::list::inner(changes_area);
     if inner.height > 0 {
-        let lines = bottom_lines(ws, inner.width as usize, inner.height as usize);
+        let lines = bottom_lines(ws, inner.height as usize);
         frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
-pub fn bottom_lines(ws: &Workspace, width: usize, height: usize) -> Vec<Line<'static>> {
+pub fn bottom_lines(ws: &Workspace, height: usize) -> Vec<Line<'static>> {
     let panel = &ws.panels.explorer;
     match panel.bottom() {
-        BottomView::GitChanges => git_changes::render::lines(
-            &panel.changes,
-            panel.tree().status(),
-            &ws.review,
-            &ws.theme,
-            &ws.config,
-            git_changes::render::Area { width, height },
-            panel.pane() == Pane::Bottom,
-        ),
         BottomView::Comments => crate::comment_list::lines(
             &panel.comments,
             &ws.review,
@@ -77,7 +68,6 @@ pub fn tree_title(panel: &ExplorerPanel, height: usize) -> String {
 pub fn bottom_title(panel: &ExplorerPanel, ws: &Workspace) -> String {
     match panel.bottom() {
         BottomView::Comments => crate::comment_list::title(&ws.review, ws.config.ui.icon_set()),
-        BottomView::GitChanges => git_changes::render::title(&panel.changes),
         BottomView::TourStops => super::tour_stops::title(&panel.tour, ws.config.ui.icon_set()),
     }
 }

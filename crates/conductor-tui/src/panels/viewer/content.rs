@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use conductor_core::diff_state::DiffSource;
 use conductor_core::runnable::{Runnable, scan_go_tests, scan_make_targets, scan_rust_tests};
 use conductor_core::syntax::CodeMask;
 use ratatui::style::Style;
@@ -87,31 +86,6 @@ pub fn read_lines(root: &Path, relative: &str, tab_width: usize) -> Result<Vec<S
     Ok(text.lines().map(|l| expand_tabs(l, tab_width)).collect())
 }
 
-pub fn read_new_side(
-    root: &Path,
-    relative: &str,
-    source: &DiffSource,
-    tab_width: usize,
-) -> Result<Loaded, String> {
-    // 作業ツリーは従来どおりディスクから。サイズ判定を読む前にできる。
-    let DiffSource::Commit { .. } = source else {
-        return read(root, relative, tab_width);
-    };
-    if let Some(reason) = opaque(relative) {
-        return Err(reason);
-    }
-    let bytes = source
-        .read_new_side(root, relative)
-        .map_err(|e| format!("{e:#}"))?;
-    if let Some(reason) = too_large(bytes.len() as u64) {
-        return Err(reason);
-    }
-    if is_binary(&bytes) {
-        return Err("binary file".to_string());
-    }
-    Ok(parse(&String::from_utf8_lossy(&bytes), relative, tab_width))
-}
-
 fn parse(text: &str, relative: &str, tab_width: usize) -> Loaded {
     let mut lines: Vec<String> = text.lines().map(|l| expand_tabs(l, tab_width)).collect();
     if lines.is_empty() && !text.is_empty() {
@@ -155,10 +129,6 @@ fn opaque(relative: &str) -> Option<String> {
 
 fn too_large(size: u64) -> Option<String> {
     (size > MAX_BYTES).then(|| format!("file is too large ({} MiB)", size / (1024 * 1024)))
-}
-
-fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..SNIFF_BYTES.min(bytes.len())].contains(&0)
 }
 
 fn contains_nul(full: &Path) -> bool {

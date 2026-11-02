@@ -1355,7 +1355,7 @@ mod pane {
     use super::*;
     use crate::effect::apply;
     use crate::layout::Region;
-    use crate::panels::terminal::render::{content_area, editor_area};
+    use crate::panels::terminal::render::{content_area, pty_area};
     use crate::run::{on_key, on_paste};
 
     type Svc = Services<crate::task::TaskResult>;
@@ -1401,7 +1401,7 @@ mod pane {
         ws.sync_layout(&layout);
         let rect = layout.rect(region).unwrap();
         let grid = match region {
-            Region::FleetSession => editor_area(rect),
+            Region::FleetSession => pty_area(rect),
             _ => content_area(rect),
         };
         (grid.height, grid.width)
