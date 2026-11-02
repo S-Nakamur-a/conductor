@@ -5,6 +5,7 @@
 
 pub mod artifacts;
 pub mod changes;
+pub mod fold;
 pub mod render;
 
 use std::collections::{BTreeSet, HashMap};
@@ -124,6 +125,8 @@ pub struct Worktree {
 /// 一覧で j / k が止まるもの。並びは描画と同じ。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
+    /// 木に載る repo の見出し。持つのは root。
+    Repo(PathBuf),
     Worktree(Worktree),
     Session(Row),
 }
@@ -133,10 +136,13 @@ pub struct ListPress<'a> {
     pub hit: Option<&'a render::Slot>,
     pub button: Option<(render::Button, &'a render::Slot)>,
     pub button_column: Option<usize>,
+    /// 行頭の開閉の印の桁を押した。
+    pub on_marker: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Selected {
+    Repo(PathBuf),
     Worktree(PathBuf),
     /// 同じ行が入力待ちの欄と repo の欄の両方にいるので、どちらかも持つ。
     Session(RowKey, bool),
@@ -264,6 +270,9 @@ pub struct FleetPanel {
     /// ホイールで動かした表示の先頭。None なら選択行を追う。入力待ちの欄は毎秒伸び縮みするので、
     /// その後ろの木の先頭から数えて、見ている木をずらさない。
     wheel_top: Option<isize>,
+    fold: fold::Fold,
+    /// 直前の一覧のクリックが開閉の印だったなら、その節。二度押しの 2 回目をそこへ効かせる。
+    last_marker: Option<Item>,
 }
 
 impl FleetPanel {
@@ -478,7 +487,7 @@ impl FleetPanel {
     /// 選んだ worktree、選んだセッションの worktree (外の端末はその cwd)。
     pub fn selected_dir(&self) -> Option<PathBuf> {
         match &self.selected {
-            Some(Selected::Worktree(path)) => Some(path.clone()),
+            Some(Selected::Repo(path) | Selected::Worktree(path)) => Some(path.clone()),
             Some(Selected::Session(..)) => self.selected_row().map(|row| {
                 self.placement
                     .get(&row.working_dir)
@@ -561,12 +570,29 @@ impl FleetPanel {
     }
 
     /// 一覧は選んだ行に合わせて送られるので、二度目は同じ画面の行に別の行やボタンが来ている。
-    /// 二度目はボタンも含めて引き直さず、一度目に選んだ行がまだ選ばれていればそこへ入る。
+    /// 二度目はボタンも印も引き直さず、一度目の行に効かせる。一度目が印ならその節をもう一度開閉し、
+    /// 題なら一度目に選んだ行がまだ選ばれていればそこへ入る。
     pub fn click_list(&mut self, at: (u16, u16), press: ListPress, config: &Config) -> Vec<Effect> {
         let key = (at.1, press.button_column, self.selected.clone());
         if self.row_clicks.is_double(key) {
-            return self.enter_selected();
+            return match self.last_marker.clone() {
+                Some(item) => self.toggle_fold(&item),
+                None => self.enter_selected(),
+            };
         }
+        let foldable = match press.hit {
+            Some(render::Slot::Repo(Some(root))) => Some(Item::Repo(root.clone())),
+            Some(render::Slot::Worktree(w)) => Some(Item::Worktree(w.clone())),
+            _ => None,
+        };
+        if let Some(item) = foldable.filter(|_| press.on_marker) {
+            let effects = self.toggle_fold(&item);
+            self.row_clicks
+                .arm((at.1, press.button_column, self.selected.clone()));
+            self.last_marker = Some(item);
+            return effects;
+        }
+        self.last_marker = None;
         let button = press.button.filter(|(button, slot)| match (button, slot) {
             (render::Button::Mark, render::Slot::Worktree(w)) => self.reviews.contains_key(&w.path),
             _ => true,
@@ -576,6 +602,7 @@ impl FleetPanel {
             return self.click_button(button, slot, at, config);
         }
         let item = match press.hit {
+            Some(render::Slot::Repo(Some(root))) => Item::Repo(root.clone()),
             Some(render::Slot::Worktree(w)) => Item::Worktree(w.clone()),
             Some(render::Slot::Session(row)) => Item::Session(row.clone()),
             _ => {
@@ -676,7 +703,7 @@ impl FleetPanel {
         let sessions = || {
             items.iter().filter_map(|item| match item {
                 Item::Session(row) => Some(row),
-                Item::Worktree(_) => None,
+                Item::Repo(_) | Item::Worktree(_) => None,
             })
         };
         let same_session = match &self.selected {
@@ -685,15 +712,24 @@ impl FleetPanel {
         };
         self.selected = match same_session.or_else(|| sessions().next()) {
             Some(row) => Some(Selected::Session(row.key.clone(), row.pinned)),
-            None => items.iter().find_map(|item| match item {
-                Item::Worktree(w) => Some(Selected::Worktree(w.path.clone())),
-                Item::Session(_) => None,
-            }),
+            None => items
+                .iter()
+                .find_map(|item| match item {
+                    Item::Worktree(w) => Some(Selected::Worktree(w.path.clone())),
+                    Item::Repo(_) | Item::Session(_) => None,
+                })
+                .or_else(|| {
+                    items.iter().find_map(|item| match item {
+                        Item::Repo(root) => Some(Selected::Repo(root.clone())),
+                        Item::Worktree(_) | Item::Session(_) => None,
+                    })
+                }),
         };
     }
 
     fn select(&mut self, item: &Item, now: SystemTime) {
         self.selected = Some(match item {
+            Item::Repo(root) => Selected::Repo(root.clone()),
             Item::Worktree(w) => Selected::Worktree(w.path.clone()),
             Item::Session(row) => Selected::Session(row.key.clone(), row.pinned),
         });
@@ -712,6 +748,10 @@ impl FleetPanel {
             .is_some_and(|s| *s == Selected::Session(row.key.clone(), row.pinned))
     }
 
+    pub fn is_selected_repo(&self, root: &Path) -> bool {
+        matches!(&self.selected, Some(Selected::Repo(r)) if r == root)
+    }
+
     pub fn is_selected_worktree(&self, worktree: &Worktree) -> bool {
         self.selected
             .as_ref()
@@ -720,6 +760,7 @@ impl FleetPanel {
 
     fn is_selected_item(&self, item: &Item) -> bool {
         match item {
+            Item::Repo(root) => self.is_selected_repo(root),
             Item::Worktree(w) => self.is_selected_worktree(w),
             Item::Session(row) => self.is_selected(row),
         }
@@ -838,16 +879,23 @@ impl FleetPanel {
         let (pinned, groups) = self.groups();
         let pinned: Vec<Item> = pinned.into_iter().map(Item::Session).collect();
         let repos = groups.into_iter().map(|group| {
-            group
-                .nodes
+            let mut items: Vec<Item> = self
+                .foldable_root(&group)
+                .cloned()
+                .map(Item::Repo)
                 .into_iter()
-                .flat_map(|node| {
-                    node.worktree
-                        .map(Item::Worktree)
-                        .into_iter()
-                        .chain(node.rows.into_iter().map(Item::Session))
-                })
-                .collect::<Vec<_>>()
+                .collect();
+            if !self.is_group_open(&group) {
+                return items;
+            }
+            for node in group.nodes {
+                let open = self.is_open(&node);
+                items.extend(node.worktree.map(Item::Worktree));
+                if open {
+                    items.extend(node.rows.into_iter().map(Item::Session));
+                }
+            }
+            items
         });
         std::iter::once(pinned)
             .chain(repos)
@@ -855,13 +903,175 @@ impl FleetPanel {
             .collect()
     }
 
-    fn section_starts(&self) -> Vec<usize> {
+    /// 見出しを選べて畳めるのは、木に載る repo だけ。
+    pub fn foldable_root<'a>(&self, group: &'a Group) -> Option<&'a PathBuf> {
+        group.root.as_ref().filter(|root| self.is_tree_root(root))
+    }
+
+    /// 畳んだ節でも、選んだものが中にあれば開いて描く。閉じたままだと選び直しが起き、
+    /// 右で打っている最中のキーボードが一覧へ戻されるため。節そのものを選んでいても中には数えない。
+    pub fn is_group_open(&self, group: &Group) -> bool {
+        let folded = self
+            .foldable_root(group)
+            .is_some_and(|root| self.fold.repos.contains(root));
+        !folded
+            || group.nodes.iter().any(|node| {
+                self.holds_in(node)
+                    || node
+                        .worktree
+                        .as_ref()
+                        .is_some_and(|w| self.is_selected_worktree(w))
+            })
+    }
+
+    pub fn is_open(&self, node: &Node) -> bool {
+        let folded = node
+            .worktree
+            .as_ref()
+            .is_some_and(|w| self.fold.worktrees.contains(&w.path));
+        !folded || self.holds_in(node)
+    }
+
+    /// 開閉の印を出す worktree。セッションが無ければ畳んでも何も隠れない。
+    pub fn can_fold(node: &Node) -> bool {
+        node.worktree.is_some() && !node.rows.is_empty()
+    }
+
+    fn holds_in(&self, node: &Node) -> bool {
+        matches!(&self.selected, Some(Selected::Session(key, _))
+            if node.rows.iter().any(|row| row.key == *key))
+    }
+
+    /// worktree の節と、その repo が畳めるならその root。畳みを掛ける前の groups から引く。
+    fn node_at(&self, path: &Path) -> Option<(Option<PathBuf>, Node)> {
+        let (_, groups) = self.groups();
+        groups.into_iter().find_map(|group| {
+            let root = self.foldable_root(&group).cloned();
+            let node = group
+                .nodes
+                .into_iter()
+                .find(|n| n.worktree.as_ref().is_some_and(|w| w.path == path))?;
+            Some((root, node))
+        })
+    }
+
+    fn first_worktree(&self, root: &Path) -> Option<PathBuf> {
+        let (_, groups) = self.groups();
+        let group = groups
+            .into_iter()
+            .find(|g| self.foldable_root(g).is_some_and(|r| r == root))?;
+        group
+            .nodes
+            .into_iter()
+            .find_map(|n| n.worktree)
+            .map(|w| w.path)
+    }
+
+    fn collapse(&mut self) -> Vec<Effect> {
+        match self.selected.clone() {
+            Some(Selected::Repo(root)) => {
+                if self.fold.repos.insert(root) {
+                    return self.save_fold();
+                }
+            }
+            Some(Selected::Worktree(path)) => {
+                let Some((root, node)) = self.node_at(&path) else {
+                    return Vec::new();
+                };
+                if Self::can_fold(&node) && self.fold.worktrees.insert(path) {
+                    return self.save_fold();
+                }
+                if let Some(root) = root {
+                    self.select_line(Selected::Repo(root));
+                }
+            }
+            Some(Selected::Session(..)) | None => {}
+        }
+        Vec::new()
+    }
+
+    fn expand(&mut self) -> Vec<Effect> {
+        match self.selected.clone() {
+            Some(Selected::Repo(root)) => {
+                if self.fold.repos.remove(&root) {
+                    return self.save_fold();
+                }
+                if let Some(path) = self.first_worktree(&root) {
+                    self.select_line(Selected::Worktree(path));
+                }
+            }
+            Some(Selected::Worktree(path)) => {
+                let Some((_, node)) = self.node_at(&path) else {
+                    return Vec::new();
+                };
+                if !Self::can_fold(&node) {
+                    return Vec::new();
+                }
+                if self.fold.worktrees.remove(&path) {
+                    return self.save_fold();
+                }
+                if let Some(first) = node.rows.first() {
+                    self.select(&Item::Session(first.clone()), SystemTime::now());
+                    self.wheel_top = None;
+                }
+            }
+            Some(Selected::Session(..)) | None => {}
+        }
+        Vec::new()
+    }
+
+    /// 開閉の印を押した。記録ではなく描いている開閉を反転し、押した行も選ぶ。開閉は選ぶ前に取る —
+    /// 選んだ後は選択が節そのものになり、中に選択があって開いて描いていたことが分からなくなる。
+    fn toggle_fold(&mut self, item: &Item) -> Vec<Effect> {
+        let changed = match item {
+            Item::Repo(root) => {
+                let (_, groups) = self.groups();
+                let open = groups
+                    .iter()
+                    .find(|g| self.foldable_root(g) == Some(root))
+                    .is_some_and(|g| self.is_group_open(g));
+                set_member(&mut self.fold.repos, root, open)
+            }
+            Item::Worktree(w) => match self.node_at(&w.path) {
+                Some((_, node)) if Self::can_fold(&node) => {
+                    let open = self.is_open(&node);
+                    set_member(&mut self.fold.worktrees, &w.path, open)
+                }
+                _ => false,
+            },
+            Item::Session(_) => false,
+        };
+        self.select(item, SystemTime::now());
+        if changed {
+            self.save_fold()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn select_line(&mut self, line: Selected) {
+        self.selected = Some(line);
+        self.wheel_top = None;
+    }
+
+    fn save_fold(&self) -> Vec<Effect> {
+        vec![Effect::SaveFleetFold(self.fold.clone())]
+    }
+
+    pub fn restore_fold(&mut self, fold: fold::Fold) {
+        self.fold = fold;
+    }
+
+    /// J / K の止まる先。開いた repo では見出しでなく、その下の main worktree の行。
+    fn section_landings(&self) -> Vec<usize> {
         self.sections()
             .iter()
             .scan(0, |start, section| {
                 let this = *start;
                 *start += section.len();
-                Some(this)
+                let past_header =
+                    matches!(section.first(), Some(Item::Repo(_))) && section.len() > 1;
+                Some(this + usize::from(past_header))
             })
             .collect()
     }
@@ -871,7 +1081,7 @@ impl FleetPanel {
             .into_iter()
             .filter_map(|item| match item {
                 Item::Session(row) => Some(row),
-                Item::Worktree(_) => None,
+                Item::Repo(_) | Item::Worktree(_) => None,
             })
             .collect()
     }
@@ -1043,13 +1253,13 @@ impl FleetPanel {
             Action::GoToTop => 0,
             Action::GoToBottom => last,
             Action::NextRepo => {
-                let starts = self.section_starts();
+                let starts = self.section_landings();
                 at.and_then(|i| starts.into_iter().find(|&s| s > i))
                     .or(at)
                     .unwrap_or(0)
             }
             Action::PrevRepo => {
-                let starts = self.section_starts();
+                let starts = self.section_landings();
                 at.and_then(|i| starts.into_iter().rev().find(|&s| s < i))
                     .unwrap_or(0)
             }
@@ -1076,6 +1286,8 @@ impl FleetPanel {
             }
             Action::ExitSubPanel => return Some(vec![Effect::LeaveFleet(self.came_from())]),
             Action::ExpandOrRight => return Some(vec![Effect::Focus(Focus::FleetSession)]),
+            Action::CollapseOrLeft => return Some(self.collapse()),
+            Action::ExpandNode => return Some(self.expand()),
             Action::StopSession => {
                 return Some(match self.selected_worktree() {
                     Some(worktree) => vec![self.ask_delete(worktree)],
@@ -1332,6 +1544,15 @@ pub fn branch_page(
     };
     let repo = repo.ok_or_else(|| format!("{reason}, and origin has no web URL to open."))?;
     Ok((repo, format!("{reason}; opened the repository.")))
+}
+
+/// 集合に入れるか外すか。変わったときだけ true。
+fn set_member(set: &mut BTreeSet<PathBuf>, path: &Path, present: bool) -> bool {
+    if present {
+        set.insert(path.to_path_buf())
+    } else {
+        set.remove(path)
+    }
 }
 
 fn key_order(a: &RowKey, b: &RowKey) -> std::cmp::Ordering {

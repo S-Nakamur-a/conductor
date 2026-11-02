@@ -96,7 +96,8 @@ fn state_spans(fleet: &FleetPanel, theme: &Theme, hide_zero: bool) -> Vec<Span<'
         State::Idle,
     ];
     let mut counts = [0usize; 4];
-    for row in fleet.visual_rows().iter().filter(|r| !r.pinned) {
+    let (_, groups) = fleet.groups();
+    for row in groups.iter().flat_map(super::Group::rows) {
         let slot = match row.state {
             State::Waiting(_) => 0,
             State::Working => 1,
@@ -232,16 +233,31 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
     }
     slots.resize(lines.len(), Slot::Other);
     let tree_start = lines.len();
+    let icon_set = ws.config.ui.icon_set();
     for group in &groups {
-        let smart = group.root.clone().filter(|root| fleet.is_tree_root(root));
+        let smart = fleet.foldable_root(group).cloned();
+        let group_open = fleet.is_group_open(group);
+        let selected = smart
+            .as_ref()
+            .is_some_and(|root| fleet.is_selected_repo(root));
+        if selected {
+            selected_line = lines.len();
+        }
         lines.push(repo_header(
             &group.name,
             theme,
             inner.width,
-            smart.is_some(),
+            smart
+                .is_some()
+                .then(|| icons::expand_arrow(group_open, icon_set)),
+            selected.then_some(focused),
         ));
         slots.push(Slot::Repo(smart));
+        if !group_open {
+            continue;
+        }
         for node in &group.nodes {
+            let open = fleet.is_open(node);
             let indent = match &node.worktree {
                 Some(worktree) => {
                     let selected = fleet.is_selected_worktree(worktree);
@@ -250,18 +266,21 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                     }
                     lines.push(worktree_line(
                         theme,
-                        ws.config.ui.icon_set(),
+                        icon_set,
                         worktree,
+                        FleetPanel::can_fold(node).then_some(open),
                         fleet.review_of(&worktree.path).map(|r: &Review| r.mark),
                         inner.width,
-                        selected,
-                        focused,
+                        selected.then_some(focused),
                     ));
                     slots.push(Slot::Worktree(worktree.clone()));
                     4
                 }
                 None => 0,
             };
+            if !open {
+                continue;
+            }
             for row in &node.rows {
                 if fleet.is_selected(row) {
                     selected_line = lines.len();
@@ -897,6 +916,9 @@ fn countdown_text(secs: i64) -> String {
 pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
 const BUTTON_WIDTH: u16 = 3;
+const MARKER_WIDTH: u16 = 2;
+/// worktree 行の頭の選択印 ` ❯` の幅。
+const LEAD_WIDTH: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -931,6 +953,17 @@ pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<(Button, &Slot)
     Some((button, slot))
 }
 
+/// 押した桁が、その行の開閉の印か。印は repo の見出しでは行頭、worktree 行では選択印の後ろ。
+pub fn on_marker(composed: &Composed, x: u16, y: u16) -> bool {
+    let start = match slot_at(composed, x, y) {
+        Some(Slot::Repo(Some(_))) => 0,
+        Some(Slot::Worktree(_)) => LEAD_WIDTH,
+        _ => return false,
+    };
+    let column = x - composed.body.x;
+    (start..start + MARKER_WIDTH).contains(&column)
+}
+
 pub fn slot_at(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
     let body = composed.body;
     if !body.contains(Position::new(x, y)) {
@@ -942,19 +975,41 @@ pub fn slot_at(composed: &Composed, x: u16, y: u16) -> Option<&Slot> {
 }
 
 /// worktree の名前 (info) とも題 (fg) とも全テーマで値が違うのが warning だけで、accent は github と
-/// kanagawa で info と同じ値になる。
-fn repo_header(name: &str, theme: &Theme, width: u16, smart: bool) -> Line<'static> {
-    if !smart {
+/// kanagawa で info と同じ値になる。開閉の印と [✧] は、木に載る repo の見出しだけに付く。
+fn repo_header(
+    name: &str,
+    theme: &Theme,
+    width: u16,
+    marker: Option<&str>,
+    selection: Option<bool>,
+) -> Line<'static> {
+    let Some(marker) = marker else {
         return header(name, theme.warning, width);
-    }
-    let name = clip(name, usize::from(width.saturating_sub(BUTTON_WIDTH + 2)));
-    let mut line = header(&name, theme.warning, width.saturating_sub(BUTTON_WIDTH + 1));
+    };
+    let rest = width.saturating_sub(MARKER_WIDTH);
+    let name = clip(name, usize::from(rest.saturating_sub(BUTTON_WIDTH + 2)));
+    let mut line = header(&name, theme.warning, rest.saturating_sub(BUTTON_WIDTH + 1));
+    line.spans.insert(
+        0,
+        Span::styled(
+            format!("{marker} "),
+            Style::default().fg(marker_fg(theme, selection.is_some())),
+        ),
+    );
     line.spans.push(Span::raw(" "));
     line.spans.push(Span::styled(
         SMART_BUTTON,
         Style::default().fg(theme.accent),
     ));
-    line
+    match selection {
+        Some(focused) => line.style(self::selection(theme, focused, true)),
+        None => line,
+    }
+}
+
+/// 選択の地は hint と明るさが近いので、選んだ行の印は fg に上げる (セッション行と同じ)。
+fn marker_fg(theme: &Theme, selected: bool) -> Color {
+    if selected { theme.fg } else { theme.hint }
 }
 
 fn header(text: &str, color: Color, width: u16) -> Line<'static> {
@@ -1003,11 +1058,16 @@ fn worktree_line(
     theme: &Theme,
     icons: IconSet,
     worktree: &Worktree,
+    open: Option<bool>,
     review: Option<Mark>,
     width: u16,
-    selected: bool,
-    focused: bool,
+    selection: Option<bool>,
 ) -> Line<'static> {
+    let selected = selection.is_some();
+    let marker = match open {
+        Some(open) => format!("{} ", icons::expand_arrow(open, icons)),
+        None => "  ".to_string(),
+    };
     let (badge, badge_fg) = match review {
         Some(Mark::Current) => (icons::REVIDERE_CURRENT.get(icons), theme.success),
         Some(Mark::Stale) => (icons::REVIDERE_STALE.get(icons), theme.warning),
@@ -1018,12 +1078,13 @@ fn worktree_line(
     } else {
         "   ".to_string()
     };
-    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5));
+    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5 + MARKER_WIDTH));
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
     let lead = if selected { " ❯" } else { "  " };
     let spans = vec![
         Span::styled(lead, Style::default().fg(theme.accent)),
+        Span::styled(marker, Style::default().fg(marker_fg(theme, selected))),
         Span::styled(label, Style::default().fg(theme.info)),
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(badge, Style::default().fg(badge_fg)),
@@ -1031,7 +1092,7 @@ fn worktree_line(
         Span::styled(revidere, Style::default().fg(theme.fg)),
         Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
     ];
-    Line::from(spans).style(selection(theme, focused, selected))
+    Line::from(spans).style(self::selection(theme, selection.unwrap_or(false), selected))
 }
 
 /// 打ちながら横目で探すので、他のリストの灰色の地では見落とす。

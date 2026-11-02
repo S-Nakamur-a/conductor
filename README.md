@@ -104,9 +104,17 @@ Claude redraws the status line, so an edit shows from the next redraw; its `padd
 and `refreshInterval` are not carried over. Usage appears once a session conductor
 started has drawn its status line.
 
-**j** / **k** move one line; **J** / **K** (or **Shift+↓** / **Shift+↑**) jump to the
-next repository, or back to the top of the current one. Clicking a worktree's or a
-session's line selects it, and a double click on a session does what **Tab** does.
+**j** / **k** move one line, repository headings included; **J** / **K** (or **Shift+↓** /
+**Shift+↑**) jump to the next repository, or back to the top of the current one. Clicking a
+repository's, a worktree's or a session's line selects it, and a double click on a session
+does what **Tab** does.
+
+Repositories and worktrees fold like the Explorer's file tree: **h** / **←** folds the selected
+heading or worktree (on a worktree with nothing to hide it moves up to the heading), **l** / **→**
+unfolds it or steps into it, and clicking the ⌄ / › mark toggles it. **h** on a session does
+nothing, and **l** never enters one — that is still **Tab** or **Enter**. A folded line opens again while the
+session selected is inside it, and the waiting box and the counts above the list ignore folding.
+What is folded is kept in `~/.config/conductor/sessions-fold.json` and comes back on the next start.
 The mouse wheel over the list scrolls it without moving the selection, so the session on
 the right stays put; the next key that moves the selection brings it back into view.
 

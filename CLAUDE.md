@@ -507,6 +507,18 @@ no session at all, so a PR worktree taken in there shows up. When a selected row
 between the waiting box and its worktree,
 the selection follows the session: re-selecting anything else would make
 `apply_fleet` pull the keyboard out of the session being typed into.
+**Folding** (`h` / `l`, the ⌄ / › mark; `fleet::fold`) hides a tree repository's worktrees or a
+worktree's sessions, and is kept in `sessions-fold.json` beside config.toml — not in it, because
+the config watcher reads every write back and would call it a restart change. Repositories and
+worktrees are separate sets: a repository's root *is* its main worktree's path. Folding is applied
+in `sections()` and `compose`, never in `groups()`, so the waiting box, the state counts and
+`group_of` see every session. A folded line is drawn open while the selected session (by key,
+pinned or not) or the selected worktree is inside it — the line itself does not count — because a
+folded selection would be re-selected away and pull the keyboard out of the right side. `h` on a
+session does nothing: moving to the worktree would turn a typed-in `D…y` from stopping a session
+into deleting the worktree. `l` is `expand_node`, not Tab / Enter's `expand_or_right`, so a typed `l` never
+moves the keyboard into a Claude. Selecting a repository heading (`Selected::Repo`) acts like its
+main worktree for every destination (Ctrl+o's detail screen included), and like nothing for D / A.
 **Whether the list is open is not derived from `Focus`**
 (`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
 remembered as where Esc returns (`Workspace::screen_focus`, which
@@ -639,6 +651,7 @@ Nothing else may follow it out: the rest of git stays on `git2`.
 - **Code index:** `<main worktree>/.conductor/index.<lang>[.<root>].<key>.scip` plus `.hashes` (provenance) and `.log`, one set per index root per tree content (4 generations kept), and a single `generate.lock` — one directory per repository, shared by every worktree. `index-history.log` records every generation
 - **PTY host log:** `<main worktree>/.conductor/pty-host.log` — the host's stderr; its socket sits beside the cc-notify one
 - **statusLine copies:** `<runtime dir>/statusline/<session id>.<transcript hash>.json` (an older conductor wrote `<session id>.json`) — the last statusLine input of each Claude conductor started, per account; the session list reads context use and 5h / 7d from them. Never cleaned up (about 2KB each, under `$TMPDIR`)
+- **Sessions folding:** `~/.config/conductor/sessions-fold.json` — the repositories and worktrees folded in the Sessions list, rewritten on every fold, read once at start
 - **Unknown tools:** `<repo-root>/.conductor/unknown-tools.log` — one line per tool name `claude_log::classify` did not recognise, so a transcript that renders thin is traceable to the tool the table is missing (`mcp__*` names are excluded)
 - **Worktree dir:** `<repo-parent>/<repo-name>-worktrees/<branch-dir-name>`
 
