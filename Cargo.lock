@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "conductor"
-version = "7.17.1"
+version = "7.17.2"
 dependencies = [
  "anyhow",
  "conductor-tui",
