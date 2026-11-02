@@ -482,6 +482,15 @@ impl FleetPanel {
         }
     }
 
+    /// 選んだ行が置かれている、木の worktree。
+    pub fn selected_tree_worktree(&self) -> Option<&WorktreeHead> {
+        let dir = self.selected_dir()?;
+        self.trees
+            .iter()
+            .flat_map(|t| &t.worktrees)
+            .find(|w| w.path == dir)
+    }
+
     pub fn note_page_opened(&mut self) {
         self.opening_page = false;
     }

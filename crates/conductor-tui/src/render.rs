@@ -666,7 +666,7 @@ mod tests {
         let long = "@".repeat(150);
         let mut prompt = crate::modal::Prompt::single("t", |_| Vec::new());
         prompt.input.set_text(&long);
-        let mut pr = crate::modal::pr::PrInput::default();
+        let mut pr = crate::modal::pr::PrInput::new("/r".into());
         pr.input.set_text(&long);
         let mut editor = crate::modal::CommentEditor::new_comment("a.rs".into(), 1, None);
         editor.input.set_text(&long);

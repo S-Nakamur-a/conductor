@@ -540,7 +540,11 @@ impl Workspace {
                 self.accept_update_check(outcome, announce)
             }
             TaskResult::UpdateProgress(stage) => self.accept_update_progress(stage),
-            TaskResult::PrIntake(outcome) => self.accept_pr_intake(outcome),
+            TaskResult::PrIntake {
+                repo,
+                other_repo,
+                outcome,
+            } => self.accept_pr_intake(&repo, other_repo, outcome),
             TaskResult::ReviewRound {
                 round,
                 in_window_repo,
@@ -683,38 +687,61 @@ impl Workspace {
 
     /// 取り込みは閉じたあとでも効かせる。gh も fetch も済んでいるので捨てない。
     /// 失敗のときだけ入力へ戻し、打ち直さずに直せるようにする。
-    fn accept_pr_intake(&mut self, outcome: Result<Box<IntakenPr>, String>) -> Vec<Effect> {
+    /// 窓のパネルを動かすのは窓の repo に取り込んだときだけ。別の repo の worktree は窓に出ない。
+    fn accept_pr_intake(
+        &mut self,
+        repo: &Path,
+        other_repo: Option<String>,
+        outcome: Result<Box<IntakenPr>, String>,
+    ) -> Vec<Effect> {
+        let prompt = match self.modals.last_mut() {
+            Some(Modal::PrInput(prompt)) if prompt.repo == repo => Some(prompt),
+            _ => None,
+        };
         match outcome {
             Ok(pr) => {
                 let IntakenPr {
                     pr_number,
                     worktree_path,
                     pulled,
+                    meta,
                     ..
                 } = *pr;
-                self.panels
-                    .worktree
-                    .select_when_listed(worktree_path.clone());
-                self.panels.explorer.show(BottomView::Comments);
-                let mut effects = vec![Effect::Spawn(crate::task::Task::ListWorktrees)];
-                if matches!(self.modals.last(), Some(Modal::PrInput(_))) {
+                let in_window = other_repo.is_none();
+                let mut effects = Vec::new();
+                if in_window {
+                    self.panels
+                        .worktree
+                        .select_when_listed(worktree_path.clone());
+                    self.panels.explorer.show(BottomView::Comments);
+                    effects.push(Effect::Spawn(crate::task::Task::ListWorktrees));
+                }
+                if prompt.is_some() {
                     effects.push(Effect::PopModal);
                 }
-                effects.push(Effect::Focus(Focus::Explorer));
-                if let Some(pulled) = pulled {
-                    effects.push(Effect::Status(
-                        StatusLevel::Info,
-                        format!("PR #{pr_number}: {pulled}"),
-                    ));
+                if in_window {
+                    effects.push(Effect::Focus(Focus::Explorer));
                 }
+                let head = match &other_repo {
+                    Some(name) => format!("PR #{pr_number} in {name}"),
+                    None => format!("PR #{pr_number}"),
+                };
+                let band = match pulled {
+                    Some(pulled) => Some(format!("{head}: {pulled}")),
+                    None if !in_window || self.chrome.fleet_open => {
+                        Some(format!("{head}: checked out '{}'", meta.branch))
+                    }
+                    None => None,
+                };
+                effects.extend(band.map(|band| Effect::Status(StatusLevel::Info, band)));
                 effects
             }
-            Err(e) => match self.modals.last_mut() {
-                Some(Modal::PrInput(prompt)) => {
+            Err(e) => match prompt {
+                Some(prompt) => {
                     prompt.failed(e);
                     Vec::new()
                 }
-                _ => vec![Effect::Status(StatusLevel::Error, e)],
+                None => vec![Effect::Status(StatusLevel::Error, e)],
             },
         }
     }
@@ -1142,7 +1169,8 @@ mod tests {
     fn 取り込んだprは選択もフォーカスも動かさずstatusで知らせる() {
         let mut ws = Workspace::for_test();
         ws.config.review.auto_review_repos = vec!["/r/webshop".into()];
-        ws.modals.push(Modal::PrInput(Default::default()));
+        ws.modals
+            .push(Modal::PrInput(crate::modal::pr::PrInput::new("/r".into())));
         let focus = ws.focus;
         ws.ask_review_requests();
 

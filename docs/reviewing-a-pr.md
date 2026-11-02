@@ -13,6 +13,11 @@ terminal keybindings keep working while you review:
    may have lost it, so those land on `pr-<N>` from GitHub's `pull/<N>/head`
    instead, and an existing `pr-<N>` is reused as it is.
 
+   From the Sessions list, the PR is taken into the repository of the selected
+   line, not the one the window was opened in. If that is another repository,
+   the window's own panels stay where they are and the status line names the
+   repository instead.
+
    To have this happen on its own, add the repository's main worktree to
    `[review] auto_review_repos` in the config. Whichever repository the window
    has open, Conductor asks GitHub once a minute, in each of those repositories,

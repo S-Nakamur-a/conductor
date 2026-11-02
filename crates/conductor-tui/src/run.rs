@@ -1786,9 +1786,11 @@ mod tests {
         type_text(&mut ws, &mut svc, "12345");
         on_key(&mut ws, &mut svc, key(KeyCode::Enter));
 
-        let effects = ws.accept(TaskResult::PrIntake(Err(
-            "Pull request #12345 not found.".into()
-        )));
+        let effects = ws.accept(TaskResult::PrIntake {
+            repo: ws.repo.root.clone(),
+            other_repo: None,
+            outcome: Err("Pull request #12345 not found.".into()),
+        });
         apply(&mut ws, &mut svc, effects);
 
         let Some(Modal::PrInput(prompt)) = ws.modals.last() else {
@@ -1821,12 +1823,16 @@ mod tests {
         let repo = crate::testing::TestRepo::new();
         let fetched = repo.worktree("feature/pr-head");
         let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        ws.modals.push(Modal::PrInput(Default::default()));
+        ws.modals
+            .push(Modal::PrInput(crate::modal::pr::PrInput::new(
+                ws.repo.root.clone(),
+            )));
 
-        let effects = ws.accept(TaskResult::PrIntake(Ok(intaken(
-            &fetched,
-            "feature/pr-head",
-        ))));
+        let effects = ws.accept(TaskResult::PrIntake {
+            repo: ws.repo.root.clone(),
+            other_repo: None,
+            outcome: Ok(intaken(&fetched, "feature/pr-head")),
+        });
         assert!(
             matches!(
                 effects.as_slice(),
@@ -1857,7 +1863,11 @@ mod tests {
         let mut pr = intaken(&fetched, "feature/pr-head");
         pr.pulled = Some("fast-forwarded".into());
 
-        let effects = ws.accept(TaskResult::PrIntake(Ok(pr)));
+        let effects = ws.accept(TaskResult::PrIntake {
+            repo: ws.repo.root.clone(),
+            other_repo: None,
+            outcome: Ok(pr),
+        });
         let band: Vec<&str> = effects
             .iter()
             .filter_map(|e| match e {
@@ -1866,6 +1876,184 @@ mod tests {
             })
             .collect();
         assert_eq!(band, ["PR #9: fast-forwarded"], "{effects:?}");
+    }
+
+    fn fleet_on(ws: &mut Workspace, svc: &mut Services<TaskResult>, root: &std::path::Path) {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        apply(ws, svc, vec![Effect::OpenFleet]);
+        ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: root.to_path_buf(),
+                    name: "other".into(),
+                    worktrees: vec![WorktreeHead {
+                        path: root.to_path_buf(),
+                        head: Head::Branch("feature/b".into()),
+                    }],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(ws.panels.fleet.selected_dir(), Some(root.to_path_buf()));
+    }
+
+    #[test]
+    fn 一覧の上ではprを選んだ行の_repo_に取り込む() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let other = std::path::PathBuf::from("/r/other");
+        fleet_on(&mut ws, &mut svc, &other);
+        run_command(
+            &mut ws,
+            &mut svc,
+            crate::command::CommandId::ReviewPullRequest,
+        );
+        let Some(Modal::PrInput(prompt)) = ws.modals.last() else {
+            panic!("{:?}", ws.modals);
+        };
+        assert_eq!(prompt.repo, other, "窓の repo に取り込もうとした");
+    }
+
+    #[test]
+    fn 一覧を閉じていればprは窓の_repo_に取り込む() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        run_command(
+            &mut ws,
+            &mut svc,
+            crate::command::CommandId::ReviewPullRequest,
+        );
+        let Some(Modal::PrInput(prompt)) = ws.modals.last() else {
+            panic!("{:?}", ws.modals);
+        };
+        assert_eq!(prompt.repo, ws.repo.root);
+    }
+
+    #[test]
+    fn 別の_repo_への取り込みは窓のパネルを動かさず帯で知らせる() {
+        let repo = crate::testing::TestRepo::new();
+        let fetched = repo.worktree("feature/pr");
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        let selected = ws.panels.worktree.selected().map(|w| w.path.clone());
+        let other = std::path::PathBuf::from("/r/other");
+        ws.modals
+            .push(Modal::PrInput(crate::modal::pr::PrInput::new(
+                other.clone(),
+            )));
+        let (focus, bottom) = (ws.focus, ws.panels.explorer.bottom());
+
+        let effects = ws.accept(TaskResult::PrIntake {
+            repo: other,
+            other_repo: Some("other".into()),
+            outcome: Ok(intaken(&fetched, "feature/pr")),
+        });
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::PopModal, Effect::Status(StatusLevel::Info, band)]
+                    if band == "PR #9 in other: checked out 'feature/pr'"
+            ),
+            "{effects:?}"
+        );
+        assert_eq!(ws.focus, focus);
+        assert_eq!(ws.panels.explorer.bottom(), bottom);
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(crate::task::Task::ListWorktrees)],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+        assert_eq!(
+            ws.panels.worktree.selected().map(|w| w.path.clone()),
+            selected,
+            "窓のパネルが取り込んだ worktree へ移った"
+        );
+    }
+
+    #[test]
+    fn 別の入力欄にはほかの_repo_の失敗を書かない() {
+        let mut ws = Workspace::for_test();
+        ws.modals
+            .push(Modal::PrInput(crate::modal::pr::PrInput::new(
+                "/r/c".into(),
+            )));
+        let effects = ws.accept(TaskResult::PrIntake {
+            repo: "/r/b".into(),
+            other_repo: Some("b".into()),
+            outcome: Err("Pull request #1 not found.".into()),
+        });
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Status(StatusLevel::Error, e)] if e == "Pull request #1 not found."
+            ),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 一覧の上では選んだ行の_worktree_を_pull_する() {
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::new();
+        let other = std::path::PathBuf::from("/r/other");
+        fleet_on(&mut ws, &mut svc, &other);
+        run_command(&mut ws, &mut svc, crate::command::CommandId::PullWorktree);
+        let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
+            panic!("{:?}", ws.modals);
+        };
+        assert_eq!(confirm.question, "Pull 'feature/b' (fast-forward only)?");
+        assert!(
+            matches!(
+                confirm.on_yes.as_slice(),
+                [Effect::Spawn(crate::task::Task::PullWorktree { worktree })] if *worktree == other
+            ),
+            "{:?}",
+            confirm.on_yes
+        );
+    }
+
+    #[test]
+    fn 一覧で何も選んでいなければ窓のパネルの選択を_pull_しない() {
+        let repo = crate::testing::TestRepo::new();
+        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
+        assert!(ws.panels.worktree.selected().is_some());
+        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
+        let effects = crate::command::execute(&mut ws, crate::command::CommandId::PullWorktree);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::Status(StatusLevel::Warning, _)]
+            ),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn pull_は_worktree_の_repo_の_origin_を取りに行く() {
+        let window = crate::testing::TestRepo::new();
+        let other = crate::testing::TestRepo::new();
+        other.commit_in(&other.root(), "b.txt", "b", "two");
+        other.git(&["push", "origin", "main"]);
+        let pushed = other.git(&["rev-parse", "HEAD"]);
+        other.git(&["reset", "--hard", "HEAD~1"]);
+        other.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        let (mut ws, mut svc) = crate::testing::workspace_for(&window);
+
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::Spawn(crate::task::Task::PullWorktree {
+                worktree: other.root(),
+            })],
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+
+        assert_eq!(
+            other.git(&["rev-parse", "HEAD"]),
+            pushed,
+            "窓の repo の origin を fetch した"
+        );
     }
 
     #[test]
