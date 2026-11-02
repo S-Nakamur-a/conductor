@@ -29,10 +29,6 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
             Region::MenuBar => {
                 frame.render_widget(Paragraph::new(crate::menu::bar_line(ws, rect)), rect)
             }
-            Region::WorktreeStrip => frame.render_widget(
-                Paragraph::new(crate::panels::worktree::render::strip(ws, rect)),
-                rect,
-            ),
             Region::StatusBar => frame.render_widget(Paragraph::new(status_line(ws)), rect),
             // Explorer の 2 区画は枠だけ先に描き、中身は 2 つ揃ったところで 1 回描く。
             Region::ExplorerTree | Region::ExplorerChanges => {
@@ -44,7 +40,6 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
                     Region::TerminalClaude | Region::TerminalShell => {
                         crate::panels::terminal::render::pane(frame, rect, ws, *panel)
                     }
-                    Region::Editor => crate::panels::terminal::render::editor(frame, rect, ws),
                     Region::Viewer => crate::panels::viewer::render::render(frame, rect, ws),
                     Region::ChangesList => crate::panels::changes::render::list(frame, rect, ws),
                     Region::Changes => crate::panels::changes::render::body(frame, rect, ws),
@@ -74,10 +69,6 @@ pub fn render(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
         crate::select::highlight(frame.buffer_mut(), selection, area, style);
     }
 
-    // worktree は全幅のストリップに収まらないので、フォーカス中だけ一覧を重ねる。
-    if ws.focus == Focus::Worktree {
-        crate::panels::worktree::render::list(frame, frame.area(), ws);
-    }
     let modal = ws
         .modals
         .last()
@@ -188,10 +179,6 @@ fn panel_block(ws: &Workspace, region: Region) -> Block<'static> {
         Region::ExplorerChanges => crate::panels::explorer::render::bottom_title(explorer, ws),
         Region::Viewer | Region::Changes => crate::panels::changes::render::tab_title(ws),
         Region::ChangesList => crate::panels::changes::render::list_title(ws).to_string(),
-        Region::Editor => match ws.panels.terminal.editor_name() {
-            Some(name) => format!(" Editor \u{2014} {name} "),
-            None => " Editor ".to_string(),
-        },
         Region::TerminalClaude => " Claude Code ".to_string(),
         Region::TerminalShell => " Shell ".to_string(),
         Region::FleetList => crate::panels::fleet::render::LIST_TITLE.to_string(),
@@ -277,18 +264,16 @@ fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
     }
 }
 
-/// フォーカスが枠を光らせる区画。Editor は Viewer の場所を借りる。
+/// フォーカスが枠を光らせる区画。
 fn focused_region(ws: &Workspace) -> Region {
     let pages = ws.center_tab() != crate::panels::changes::Tab::Code;
     match ws.focus {
         Focus::Explorer if pages => Region::ChangesList,
         Focus::Viewer if pages => Region::Changes,
-        Focus::Worktree => Region::WorktreeStrip,
         Focus::Explorer => match ws.panels.explorer.pane() {
             crate::panels::explorer::Pane::Tree => Region::ExplorerTree,
             crate::panels::explorer::Pane::Bottom => Region::ExplorerChanges,
         },
-        Focus::Editor => Region::Editor,
         Focus::Viewer => Region::Viewer,
         Focus::TerminalClaude => Region::TerminalClaude,
         Focus::TerminalShell => Region::TerminalShell,
@@ -377,13 +362,6 @@ fn key_hint(
             ("list", &[Action::LeaveTerminal]),
             ("changes", &[Action::OpenFileFromTerminal]),
         ],
-        Focus::Worktree => &[
-            ("nav", &[Action::NavigateDown, Action::NavigateUp]),
-            ("panel", &[Action::CycleFocusForward]),
-            ("open", &[Action::Select]),
-            ("new", &[Action::CreateWorktree]),
-            ("switch", &[Action::SwitchBranch]),
-        ],
         Focus::Explorer if context == KeyContext::ChangesList => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),
             ("panel", &[Action::CycleFocusForward]),
@@ -446,11 +424,6 @@ fn key_hint(
             ("panel", &[Action::CycleFocusForward]),
             ("new shell", &[Action::NewShell]),
             ("session", &[Action::NextSession]),
-        ],
-        Focus::Editor => &[
-            ("leave", &[Action::LeaveTerminal]),
-            ("zoom", &[Action::TogglePanelExpand]),
-            ("panel", &[Action::CycleFocusForward]),
         ],
     };
 
@@ -787,7 +760,7 @@ mod tests {
             Some("alt+h".to_string())
         );
         assert_eq!(
-            representative_chord(&ws.keymap, KeyContext::Worktree, Action::NavigateDown),
+            representative_chord(&ws.keymap, KeyContext::Fleet, Action::NavigateDown),
             Some("j".to_string()),
             "別名の down より素の j"
         );
@@ -796,13 +769,12 @@ mod tests {
     #[test]
     fn パネルごとのヒントは実際のキーだけを出す() {
         let mut ws = Workspace::for_test();
-        ws.focus = Focus::Worktree;
+        ws.focus = Focus::Explorer;
         let hint = status_line(&ws).to_string();
         assert!(
             hint.contains("j/k: nav") && hint.contains("tab: panel"),
             "{hint}"
         );
-        assert!(hint.contains("w: new"), "{hint}");
         assert!(hint.is_ascii(), "{hint}");
 
         ws.focus = Focus::TerminalClaude;
@@ -847,7 +819,7 @@ mod tests {
         let buffer = draw(&ws);
         assert!(text_of(&buffer, 0).contains("repo"));
         assert!(text_of(&buffer, 1).contains("Worktree"));
-        let panels = (3..40).map(|y| text_of(&buffer, y)).collect::<String>();
+        let panels = (2..40).map(|y| text_of(&buffer, y)).collect::<String>();
         for title in ["Explorer", "[1 Code]", "Claude Code", "Shell"] {
             assert!(panels.contains(title), "{title} の枠が無い");
         }

@@ -118,8 +118,6 @@ pub enum Effect {
         /// 会話を走らせた config dir。account が無ければこのアカウントで起こす。
         ran_in: Option<PathBuf>,
     },
-    /// 開いているファイルを埋め込みエディタで開く。パスは絶対。
-    OpenInEditor(PathBuf),
     Command(CommandId),
     /// メニューバーにキーボードフォーカスを移す。開くのはそこから。
     FocusMenuBar,
@@ -194,7 +192,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     ),
                 });
             }
-            Effect::ShowTab(tab) => queue.extend(show_tab(ws, tab)),
+            Effect::ShowTab(tab) => show_tab(ws, tab),
             Effect::ShowChange { path, line } => queue.extend(show_change(ws, path, line)),
             Effect::RevealInTree(path) => ws.panels.explorer.reveal_in_tree(&path),
             Effect::SearchInFile(query) => {
@@ -322,7 +320,6 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     ..ClaudeArgs::default()
                 },
             ),
-            Effect::OpenInEditor(path) => queue.extend(open_in_editor(ws, &path)),
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
             Effect::SwitchRepo(path) => queue.extend(switch_repo(ws, svc, &path)),
@@ -438,11 +435,6 @@ fn enter_detail(
     };
     if conductor_core::git_engine::GitEngine::open(&dir).is_err() {
         return warn(format!("{} is no longer a git worktree.", dir.display()));
-    }
-    if let Some(editor) = ws.panels.terminal.editor_name()
-        && ws.worktree_path() != dir
-    {
-        return warn(format!("Close {editor} first."));
     }
     let listed = ws.panels.worktree.list().iter().position(|w| w.path == dir);
     // 一覧を閉じてから worktree の一覧を待つと、届くまでの打鍵が今の worktree の Claude に入る。
@@ -564,27 +556,17 @@ fn open_file(
     effects
 }
 
-/// エディタは左と中央の列を併合して占めるので、開いている間はタブを動かさない。
-fn show_tab(ws: &mut Workspace, tab: Tab) -> Vec<Effect> {
-    if let Some(editor) = ws.panels.terminal.editor_name() {
-        return vec![Effect::Status(
-            StatusLevel::Warning,
-            format!("Close {editor} first."),
-        )];
-    }
+fn show_tab(ws: &mut Workspace, tab: Tab) {
     let root = ws.panels.explorer.root().to_path_buf();
     ws.panels.changes.choose(&root, tab);
-    Vec::new()
 }
 
 /// 写しは Explorer の作業ツリーの diff なので、Explorer がコミットを見ていれば作業ツリーへ戻し、
 /// 読み直している間は届くのを待つ。
 pub(crate) fn show_change(ws: &mut Workspace, path: String, line: Option<usize>) -> Vec<Effect> {
     use crate::panels::changes::Reveal;
-    let mut effects = show_tab(ws, Tab::Files);
-    if !effects.is_empty() {
-        return effects;
-    }
+    show_tab(ws, Tab::Files);
+    let mut effects = Vec::new();
     let git_changes = &mut ws.panels.explorer.changes;
     let reload = git_changes.return_to_working_tree();
     let loading = reload.is_some() || git_changes.is_loading();
@@ -636,29 +618,6 @@ fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
     match ws.panels.terminal.send_line(command) {
         Ok(()) => vec![Effect::Focus(Focus::TerminalShell)],
         Err(e) => vec![Effect::Status(StatusLevel::Error, format!("{e:#}"))],
-    }
-}
-
-/// $EDITOR を PTY で起こし、Explorer と Viewer を併合した区画に映す。
-fn open_in_editor(ws: &mut Workspace, path: &std::path::Path) -> Vec<Effect> {
-    let worktree = ws
-        .panels
-        .worktree
-        .selected()
-        .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone());
-    let argv = crate::panels::terminal::editor_argv();
-    match ws.panels.terminal.open_editor(path, &worktree, &argv) {
-        Ok(name) => vec![
-            Effect::Focus(Focus::Editor),
-            Effect::Status(
-                StatusLevel::Info,
-                format!("editing {name} \u{2014} :q to close"),
-            ),
-        ],
-        Err(e) => vec![Effect::Status(
-            StatusLevel::Error,
-            format!("could not launch the editor: {e:#}"),
-        )],
     }
 }
 

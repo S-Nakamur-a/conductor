@@ -37,7 +37,7 @@
 "˙" = "cycle_focus_backward"
 "¬" = "cycle_focus_forward"
 # Ctrl+Tab / Ctrl+Shift+Tab — switch the selected worktree (next/prev) from
-# anywhere, browser-tab style. The worktree strip follows the selection. This
+# anywhere, browser-tab style. The title bar shows the selected branch. This
 # is separate from Tab's panel-focus cycle.
 "ctrl+tab" = "next_worktree"
 "ctrl+shift+tab" = "prev_worktree"
@@ -46,21 +46,18 @@
 # for hunks in diff mode.
 "alt+]" = "next_worktree"
 "alt+[" = "prev_worktree"
-"ctrl+w" = "focus_worktree"
 "ctrl+n" = "new_claude_code"
 "ctrl+t" = "new_shell"
 "ctrl+o" = "open_repo"
 "ctrl+r" = "switch_repo"
 "super+1" = "focus_sessions"
 "super+2" = "focus_explorer"
-"super+3" = "focus_explorer_diff_list"
 "super+4" = "focus_viewer"
 "super+5" = "focus_terminal_claude"
 "super+6" = "focus_terminal_shell"
 # Alt+number fallback — Cmd+number is intercepted by most macOS terminals.
 "alt+1" = "focus_sessions"
 "alt+2" = "focus_explorer"
-"alt+3" = "focus_explorer_diff_list"
 "alt+4" = "focus_viewer"
 "alt+5" = "focus_terminal_claude"
 "alt+6" = "focus_terminal_shell"
@@ -69,7 +66,6 @@
 # macOS Option-produces-Unicode fallback (US layout): Option+1='¡' … Option+6='§'.
 "¡" = "focus_sessions"
 "™" = "focus_explorer"
-"£" = "focus_explorer_diff_list"
 "¢" = "focus_viewer"
 "∞" = "focus_terminal_claude"
 "§" = "focus_terminal_shell"
@@ -92,36 +88,6 @@
 # macOS Unicode fallback (Option+t = '†', dagger, US layout).
 "alt+t" = "open_theme_picker"
 "†" = "open_theme_picker"
-
-# ── Worktree ──────────────────────────────────────────────────────────────────
-[layers.worktree]
-"tab" = "cycle_focus_forward"
-"shift+tab" = "cycle_focus_backward"
-"j" = "navigate_down"
-"down" = "navigate_down"
-"k" = "navigate_up"
-"up" = "navigate_up"
-"enter" = "select"
-"w" = "create_worktree"
-"x" = "delete_worktree"
-"delete" = "delete_worktree"
-"s" = "switch_branch"
-# g/G are go_to_top/bottom in every other panel; keep them consistent here too.
-"g" = "go_to_top"
-"G" = "go_to_bottom"
-# Grab (checkout branch onto main) / ungrab (restore main) — b for "branch",
-# capital for the undo, mirroring the do/undo shift-pairing they had on g/G.
-"b" = "grab_branch"
-"B" = "ungrab_branch"
-"X" = "prune_worktrees"
-"m" = "merge_to_main"
-"r" = "refresh_worktrees"
-"R" = "reset_main_to_origin"
-"c" = "cherry_pick"
-"p" = "pull_worktree"
-"H" = "session_history"
-"o" = "open_pull_request"
-":" = "command_palette"
 
 # ── Sessions (every Claude on the machine) ─────────────────────────────────────
 [layers.fleet]
@@ -324,9 +290,6 @@
 "ctrl+f" = "search_filename"
 "c" = "add_comment"
 "C" = "open_comment_list"
-# 'e' for "edit": hand off to $VISUAL/$EDITOR for a quick manual touch-up,
-# then drop back into the viewer (the file reloads on return).
-"e" = "open_in_editor"
 # 'm' for "markdown": switch a .md/.markdown file between raw source and
 # rendered prose. Bound in this layer only — the rendered view resolves its keys
 # against it too, so one binding covers both directions.
@@ -399,9 +362,6 @@
 "t" = "next_viewer_tab"
 "T" = "prev_viewer_tab"
 "x" = "close_viewer_tab"
-# 'e' for "edit": open the file under review in $VISUAL/$EDITOR for a quick
-# manual fix without leaving the diff workflow (reloads on return).
-"e" = "open_in_editor"
 "space" = "toggle_inline_thread"
 # インラインスレッドの中だけで返信と解決を完結させる。
 "R" = "reply_to_comment"
@@ -488,12 +448,3 @@
 "ctrl+pageup" = "prev_session"
 "shift+right" = "next_session"
 "shift+left" = "prev_session"
-
-# ── Editor (embedded vim/emacs PTY) ───────────────────────────────────────────
-# Almost everything is forwarded to the inner editor — Esc (vim mode changes),
-# Ctrl+G, Shift+PageUp, etc. all reach the program. Only "leave focus" is stolen
-# back, on Ctrl+Esc, matching the terminal panel. (Ctrl+Esc requires the kitty
-# keyboard protocol; on terminals without it, quit the editor with `:q` — the
-# process exit closes the panel automatically. alt+l / alt+h also step away.)
-[layers.editor]
-"ctrl+esc" = "leave_terminal"

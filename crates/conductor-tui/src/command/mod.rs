@@ -11,7 +11,6 @@ use conductor_core::keymap::{Action, KeyContext, KeyMap};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandId {
     FocusSessions,
-    FocusWorktree,
     FocusExplorer,
     FocusViewer,
     FocusTerminalClaude,
@@ -149,7 +148,6 @@ macro_rules! commands {
 // 折りたたみの 2 打鍵目は再割り当てできる Action を持たないので、キーはラベルに書く。
 commands! {
     FocusSessions, "Focus: Sessions", Navigation, Some(Action::FocusSessions), "sessions claude list all repositories fleet waiting";
-    FocusWorktree, "Focus: Worktree Panel", Navigation, Some(Action::FocusWorktree), "panel switch";
     FocusExplorer, "Focus: Explorer Panel", Navigation, Some(Action::FocusExplorer), "panel files";
     FocusViewer, "Focus: Viewer Panel", Navigation, Some(Action::FocusViewer), "panel file view";
     FocusTerminalClaude, "Focus: Claude Code Terminal", Navigation, Some(Action::FocusTerminalClaude), "terminal claude";

@@ -1,26 +1,20 @@
 //! worktree の一覧と、そこへの選択。
 
-pub mod render;
-pub mod strip;
-
 use std::path::{Path, PathBuf};
 
 use conductor_core::git_engine::{GrabState, WorktreeInfo};
 use conductor_core::keymap::Action;
 
-use crate::click::ClickTracker;
 use crate::effect::Effect;
 use crate::modal::{Confirm, Modal, Mode, Prompt};
 use crate::task::{GrabDone, Task, TaskResult};
-use crate::workspace::{Ctx, Focus, StatusLevel};
+use crate::workspace::{Ctx, StatusLevel};
 
 #[derive(Debug, Default)]
 pub struct WorktreePanel {
     list: Vec<WorktreeInfo>,
     /// 選んでいる worktree のパス。添字ではないので、一覧を差し替えても指す先が動かない。
     selected: Option<PathBuf>,
-    /// 作成・削除の完了を待っている数。ストリップの回転マーカーが読む。
-    pending: usize,
     listing: bool,
     /// 件数を数えている最中の worktree。
     counting: std::collections::HashSet<PathBuf>,
@@ -29,8 +23,6 @@ pub struct WorktreePanel {
     pending_select: Option<PathBuf>,
     /// main worktree へ持ってきているブランチ。wt-grab の中身。
     grabbed: Option<GrabState>,
-    /// ストリップの空白へのクリック。
-    blank_clicks: ClickTracker,
 }
 
 impl WorktreePanel {
@@ -48,10 +40,6 @@ impl WorktreePanel {
             .as_ref()
             .and_then(|path| self.list.iter().position(|w| w.path == *path))
             .unwrap_or(0)
-    }
-
-    pub fn is_busy(&self) -> bool {
-        self.pending > 0
     }
 
     /// 取得中に周期の取り直しを重ねると、175k ファイルのリポジトリ(1 回 25 秒)で 8 本並走して互いを遅くする。
@@ -90,38 +78,11 @@ impl WorktreePanel {
         }
     }
 
-    pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
-        let index = self.selected_index();
-        let last = self.list.len().saturating_sub(1);
-        Some(match action {
-            Action::NavigateDown => vec![Effect::SelectWorktree((index + 1).min(last))],
-            Action::NavigateUp => vec![Effect::SelectWorktree(index.saturating_sub(1))],
-            Action::GoToTop => vec![Effect::SelectWorktree(0)],
-            Action::GoToBottom => vec![Effect::SelectWorktree(last)],
-            Action::Select => vec![
-                Effect::SelectWorktree(index),
-                Effect::Focus(ctx.focus.next()),
-            ],
-            Action::RefreshWorktrees => vec![Effect::Spawn(Task::ListWorktrees)],
+    /// メニューとパレットの作成・削除。対象は選択中の worktree。
+    pub fn update(&mut self, action: Action) -> Vec<Effect> {
+        match action {
             Action::CreateWorktree => vec![create_modal()],
-            Action::DeleteWorktree => vec![self.delete_modal(index)],
-            _ => return None,
-        })
-    }
-
-    /// ストリップの 1 クリック。区画の割り出しは呼び手が済ませている。
-    pub fn strip_click(&mut self, slots: &[strip::Slot], x: u16) -> Vec<Effect> {
-        match slots.iter().find(|slot| slot.contains(x)).map(|s| &s.kind) {
-            Some(strip::SlotKind::Select(i)) => vec![
-                Effect::SelectWorktree(*i),
-                Effect::Focus(Focus::TerminalClaude),
-            ],
-            // 送りはフォーカスを動かさない。帯を送っただけで端末へ飛ばされると送り続けられない。
-            Some(strip::SlotKind::Scroll(i)) => vec![Effect::SelectWorktree(*i)],
-            Some(strip::SlotKind::Delete(i)) => vec![self.delete_modal(*i)],
-            Some(strip::SlotKind::Add) => vec![create_modal()],
-            // 帯そのものはフォーカスを持たないので、空白のシングルには行き先が無い。
-            None if self.blank_clicks.is_double(0) => vec![create_modal()],
+            Action::DeleteWorktree => vec![self.delete_modal(self.selected_index())],
             _ => Vec::new(),
         }
     }
@@ -234,25 +195,21 @@ impl WorktreePanel {
                     format!("worktrees: {e}"),
                 )]
             }
-            TaskResult::WorktreeCreated(result) => {
-                self.pending = self.pending.saturating_sub(1);
-                match result {
-                    Ok(created) => {
-                        self.select_when_listed(created.path);
-                        let text = format!("created '{}'", created.branch);
-                        let status = match created.warning {
-                            Some(warning) => {
-                                Effect::Status(StatusLevel::Warning, format!("{text} ({warning})"))
-                            }
-                            None => Effect::Status(StatusLevel::Success, text),
-                        };
-                        vec![status, Effect::Spawn(Task::ListWorktrees)]
-                    }
-                    Err(e) => vec![Effect::Status(StatusLevel::Error, format!("create: {e}"))],
+            TaskResult::WorktreeCreated(result) => match result {
+                Ok(created) => {
+                    self.select_when_listed(created.path);
+                    let text = format!("created '{}'", created.branch);
+                    let status = match created.warning {
+                        Some(warning) => {
+                            Effect::Status(StatusLevel::Warning, format!("{text} ({warning})"))
+                        }
+                        None => Effect::Status(StatusLevel::Success, text),
+                    };
+                    vec![status, Effect::Spawn(Task::ListWorktrees)]
                 }
-            }
+                Err(e) => vec![Effect::Status(StatusLevel::Error, format!("create: {e}"))],
+            },
             TaskResult::SmartWorktreeCreated(result) => {
-                self.pending = self.pending.saturating_sub(1);
                 match result {
                     // 作った worktree へは移らない。書いた人は今見ているものを
                     // 見続けたいので、Claude だけを裏で起こす。
@@ -274,16 +231,13 @@ impl WorktreePanel {
                     )],
                 }
             }
-            TaskResult::WorktreeDeleted(result) => {
-                self.pending = self.pending.saturating_sub(1);
-                match result {
-                    Ok(branch) => vec![
-                        Effect::Status(StatusLevel::Success, format!("deleted '{branch}'")),
-                        Effect::Spawn(Task::ListWorktrees),
-                    ],
-                    Err(e) => vec![Effect::Status(StatusLevel::Error, format!("delete: {e}"))],
-                }
-            }
+            TaskResult::WorktreeDeleted(result) => match result {
+                Ok(branch) => vec![
+                    Effect::Status(StatusLevel::Success, format!("deleted '{branch}'")),
+                    Effect::Spawn(Task::ListWorktrees),
+                ],
+                Err(e) => vec![Effect::Status(StatusLevel::Error, format!("delete: {e}"))],
+            },
             _ => Vec::new(),
         }
     }
@@ -358,17 +312,7 @@ impl WorktreePanel {
         vec![Effect::SelectWorktree(index)]
     }
 
-    /// 走り始めた Task を数える。ストリップのマーカーと周期の取り直し以外は見ない。
     pub fn note_spawned(&mut self, task: &Task) {
-        if matches!(
-            task,
-            Task::CreateWorktree { .. }
-                | Task::SmartWorktree { .. }
-                | Task::DeleteWorktree { .. }
-                | Task::CreateWorktreeFromRemote { .. }
-        ) {
-            self.pending += 1;
-        }
         if matches!(task, Task::ListWorktrees) {
             self.listing = true;
         }
@@ -417,6 +361,7 @@ fn level_of(message: &str) -> StatusLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandId;
     use crate::workspace::Workspace;
     use conductor_core::git_engine::ChangeCounts;
 
@@ -432,10 +377,9 @@ mod tests {
         }
     }
 
-    /// 一覧を流し込んでから Action 列を当て、最後の状態を見る。
-    fn drive(actions: &[Action]) -> Workspace {
+    /// 一覧を流し込んでからコマンド列をメニューと同じ口で当て、最後の状態を見る。
+    fn drive(commands: &[CommandId]) -> Workspace {
         let mut ws = Workspace::for_test();
-        ws.focus = crate::workspace::Focus::Worktree;
         let list = vec![
             info("/tmp/repo", "main", true),
             info("/tmp/wt/a", "feature/a", false),
@@ -452,11 +396,17 @@ mod tests {
                 counts: Some(ChangeCounts::default()),
             });
         }
-        for action in actions {
-            let effects = ws.dispatch(*action).unwrap_or_default();
+        for command in commands {
+            let effects = crate::command::execute(&mut ws, *command);
             crate::effect::apply(&mut ws, &mut svc, effects);
         }
         ws
+    }
+
+    fn select_last(ws: &mut Workspace) {
+        let last = ws.panels.worktree.list().len() - 1;
+        let mut svc = conductor_svc::Services::new();
+        crate::effect::apply(ws, &mut svc, vec![Effect::SelectWorktree(last)]);
     }
 
     #[test]
@@ -467,25 +417,9 @@ mod tests {
     }
 
     #[test]
-    fn 移動は両端で止まる() {
-        use Action::{GoToBottom, GoToTop, NavigateDown, NavigateUp};
-        let cases: [(&[Action], &str); 5] = [
-            (&[NavigateDown], "feature/a"),
-            (&[NavigateDown, NavigateDown, NavigateDown], "feature/b"),
-            (&[NavigateUp], "main"),
-            (&[GoToBottom], "feature/b"),
-            (&[GoToBottom, GoToTop], "main"),
-        ];
-        for (actions, expected) in cases {
-            let ws = drive(actions);
-            let branch = &ws.panels.worktree.selected().unwrap().branch;
-            assert_eq!(branch, expected, "{actions:?}");
-        }
-    }
-
-    #[test]
     fn 選択は添字ではなくパスで覚える() {
-        let mut ws = drive(&[Action::GoToBottom]);
+        let mut ws = drive(&[]);
+        select_last(&mut ws);
         let shorter = vec![info("/tmp/wt/b", "feature/b", false)];
         let effects = ws.accept(TaskResult::Worktrees(Ok(shorter)));
         assert!(
@@ -607,7 +541,8 @@ mod tests {
 
     #[test]
     fn 消えた行を指していたら開いた場所へ戻る() {
-        let mut ws = drive(&[Action::GoToBottom]);
+        let mut ws = drive(&[]);
+        select_last(&mut ws);
         let mut svc = conductor_svc::Services::new();
         let remaining = vec![info("/tmp/repo", "main", true)];
         let effects = ws.accept(TaskResult::Worktrees(Ok(remaining)));
@@ -639,12 +574,11 @@ mod tests {
 
     #[test]
     fn mainは削除できず確認も出さない() {
-        let mut ws = drive(&[Action::DeleteWorktree]);
+        let mut ws = drive(&[CommandId::DeleteWorktree]);
         assert!(ws.modals.is_empty(), "main で確認が出た");
-        assert!(matches!(
-            ws.chrome.status.take().map(|s| s.level),
-            Some(StatusLevel::Error)
-        ));
+        let status = ws.chrome.status.take().expect("理由が出ていない");
+        assert_eq!(status.level, StatusLevel::Warning);
+        assert_eq!(status.text, "the main worktree cannot be deleted");
     }
 
     fn delete_question(worktree: WorktreeInfo) -> String {
@@ -655,7 +589,7 @@ mod tests {
         crate::effect::apply(&mut ws, &mut svc, effects);
         // 数え直しを終わらせる。最中だと確認文は件数を名指しできない。
         ws.accept(TaskResult::WorktreeCounts { path, counts });
-        let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
+        let effects = crate::command::execute(&mut ws, CommandId::DeleteWorktree);
         crate::effect::apply(&mut ws, &mut svc, effects);
         let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
             panic!("確認が出ていない: {:?}", ws.modals);
@@ -684,7 +618,7 @@ mod tests {
         // 数え終わって clean。ここで一覧が来ると数え直しが走る。
         let effects = ws.accept(TaskResult::Worktrees(Ok(clean)));
         crate::effect::apply(&mut ws, &mut svc, effects);
-        let effects = ws.dispatch(Action::DeleteWorktree).unwrap();
+        let effects = crate::command::execute(&mut ws, CommandId::DeleteWorktree);
         crate::effect::apply(&mut ws, &mut svc, effects);
 
         let Some(Modal::Confirm(confirm)) = ws.modals.last() else {
@@ -704,7 +638,7 @@ mod tests {
 
     #[test]
     fn 作成は入力を受けてからタスクになる() {
-        let ws = drive(&[Action::CreateWorktree]);
+        let ws = drive(&[CommandId::CreateWorktree]);
         let Some(Modal::Prompt(prompt)) = ws.modals.last() else {
             panic!("入力が出ていない");
         };
@@ -716,112 +650,5 @@ mod tests {
             (prompt.mode().on_submit)("feature/c".into()).as_slice(),
             [Effect::Spawn(Task::CreateWorktree { branch })] if branch == "feature/c"
         ));
-    }
-
-    /// 一覧を流し込んだ Workspace で帯の割り付けを取り、その中の 1 区画を押す。
-    fn strip_hit(kind: &strip::SlotKind) -> (Workspace, Vec<Effect>) {
-        let mut ws = drive(&[]);
-        let slots = strip::slots(&ws, 120);
-        let x = slots
-            .iter()
-            .find(|s| s.kind == *kind)
-            .unwrap_or_else(|| panic!("{kind:?} が帯に無い: {slots:?}"))
-            .start;
-        let effects = ws.panels.worktree.strip_click(&slots, x);
-        (ws, effects)
-    }
-
-    #[test]
-    fn チップを押すとその添字を選んでclaude端末へ移る() {
-        let (mut ws, effects) = strip_hit(&strip::SlotKind::Select(2));
-        assert_eq!(
-            effects,
-            vec![
-                Effect::SelectWorktree(2),
-                Effect::Focus(crate::workspace::Focus::TerminalClaude)
-            ]
-        );
-        let mut svc = conductor_svc::Services::new();
-        crate::effect::apply(&mut ws, &mut svc, effects);
-        assert_eq!(ws.panels.worktree.selected().unwrap().branch, "feature/b");
-    }
-
-    #[test]
-    fn 送り印を押すと隠れていたチップが見えるようになる() {
-        // 末尾の 1 つが収まらない幅。
-        const NARROW: u16 = 30;
-        let mut ws = drive(&[]);
-        let slots = strip::slots(&ws, NARROW);
-        let scroll = slots
-            .iter()
-            .find(|s| matches!(s.kind, strip::SlotKind::Scroll(_)))
-            .unwrap_or_else(|| panic!("送り印が出ていない: {slots:?}"));
-        assert_eq!(scroll.kind, strip::SlotKind::Scroll(2));
-
-        let effects = ws.panels.worktree.strip_click(&slots, scroll.start);
-        assert_eq!(
-            effects,
-            vec![Effect::SelectWorktree(2)],
-            "送り印が無反応、または端末へフォーカスを持っていった"
-        );
-
-        let mut svc = conductor_svc::Services::new();
-        crate::effect::apply(&mut ws, &mut svc, effects);
-        assert!(
-            strip::slots(&ws, NARROW)
-                .iter()
-                .any(|s| s.kind == strip::SlotKind::Select(2)),
-            "押しても窓が動いていない"
-        );
-    }
-
-    #[test]
-    fn 作成のチップは一覧ではなく入力を出す() {
-        let (_, effects) = strip_hit(&strip::SlotKind::Add);
-        assert!(
-            matches!(effects.as_slice(), [Effect::PushModal(Modal::Prompt(_))]),
-            "{effects:?}"
-        );
-    }
-
-    #[test]
-    fn 削除のチップは押した添字の確認を出す() {
-        let (_, effects) = strip_hit(&strip::SlotKind::Delete(2));
-        let [Effect::PushModal(Modal::Confirm(confirm))] = effects.as_slice() else {
-            panic!("確認が出ていない: {effects:?}");
-        };
-        assert!(confirm.question.contains("feature/b"), "選択中は main");
-    }
-
-    #[test]
-    fn mainのチップには削除の区画が無い() {
-        let ws = drive(&[]);
-        let slots = strip::slots(&ws, 120);
-        assert!(
-            !slots.iter().any(|s| s.kind == strip::SlotKind::Delete(0)),
-            "{slots:?}"
-        );
-    }
-
-    #[test]
-    fn 空白はダブルクリックだけが作成になる() {
-        let mut ws = drive(&[]);
-        let slots = strip::slots(&ws, 120);
-        let blank = slots.last().unwrap().end + 1;
-        assert!(ws.panels.worktree.strip_click(&slots, blank).is_empty());
-        assert!(matches!(
-            ws.panels.worktree.strip_click(&slots, blank).as_slice(),
-            [Effect::PushModal(Modal::Prompt(_))]
-        ));
-    }
-
-    #[test]
-    fn 描いた帯の幅と区画の列範囲が一致する() {
-        let ws = drive(&[]);
-        let area = ratatui::layout::Rect::new(0, 0, 120, 1);
-        let line = render::strip(&ws, area);
-        let slots = strip::slots(&ws, area.width);
-        assert_eq!(line.width() as u16, slots.last().unwrap().end);
-        assert_eq!(line.spans.len(), slots.len());
     }
 }

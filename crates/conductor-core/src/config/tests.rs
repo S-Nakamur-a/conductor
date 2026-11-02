@@ -323,6 +323,35 @@ fn 既定ファイルは読むと既定値になる() {
 }
 
 #[test]
+fn 既定ファイルが挙げる層名は今ある層と一致する() {
+    use crate::keymap::KeyContext;
+    let comment: String = DEFAULT_CONFIG
+        .lines()
+        .skip_while(|line| !line.contains("Context names:"))
+        .skip(1)
+        .map(|line| line.trim_start_matches('#').trim())
+        .take_while(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let listed: Vec<&str> = comment
+        .trim_end_matches('.')
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let current: Vec<&str> = KeyContext::PANELS.iter().map(|c| c.layer_name()).collect();
+    assert_eq!(listed, current);
+    for line in DEFAULT_CONFIG.lines() {
+        if let Some(layer) = line
+            .trim_start_matches("# ")
+            .strip_prefix("[keybinds.layers.")
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            assert!(current.contains(&layer), "{line}");
+        }
+    }
+}
+
+#[test]
 fn セクションごとに鍵を読む() {
     let d = Config::default();
     let cases = [
@@ -423,14 +452,14 @@ fn keybindsは生のテーブルのまま持つ() {
 [keybinds.keys]
 "ctrl+q" = "quit"
 
-[keybinds.layers.worktree]
+[keybinds.layers.fleet]
 "j" = "navigate_down"
 "#,
     );
     let keys = cfg.keybinds["keys"].as_table().unwrap();
     assert_eq!(keys["ctrl+q"].as_str(), Some("quit"));
-    let worktree = cfg.keybinds["layers"]["worktree"].as_table().unwrap();
-    assert_eq!(worktree["j"].as_str(), Some("navigate_down"));
+    let fleet = cfg.keybinds["layers"]["fleet"].as_table().unwrap();
+    assert_eq!(fleet["j"].as_str(), Some("navigate_down"));
 }
 
 #[test]

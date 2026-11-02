@@ -91,7 +91,6 @@ fn 既定のキーが解決する() {
         (Global, alt(']'), Action::NextWorktree),
         (Global, alt('['), Action::PrevWorktree),
         (Global, alt('1'), Action::FocusSessions),
-        (Global, ctrl('w'), Action::FocusWorktree),
         (
             Global,
             key(
@@ -136,20 +135,6 @@ fn 既定のキーが解決する() {
             key(KeyCode::Up, KeyModifiers::SHIFT),
             Action::PrevRepo,
         ),
-        (Worktree, ch('j'), Action::NavigateDown),
-        (
-            Worktree,
-            key(KeyCode::Tab, KeyModifiers::NONE),
-            Action::CycleFocusForward,
-        ),
-        (Worktree, ch('c'), Action::CherryPick),
-        (Worktree, ch('p'), Action::PullWorktree),
-        (Worktree, ch('o'), Action::OpenPullRequest),
-        (Worktree, shift('X'), Action::PruneWorktrees),
-        (Worktree, ch('g'), Action::GoToTop),
-        (Worktree, shift('G'), Action::GoToBottom),
-        (Worktree, ch('b'), Action::GrabBranch),
-        (Worktree, shift('B'), Action::UngrabBranch),
         (Explorer, ch('c'), Action::ShowCommentList),
         (
             Explorer,
@@ -217,15 +202,15 @@ fn 既定のキーが解決する() {
 fn チョードは正規化してから引く() {
     let km = KeyMap::default();
     let cases = [
-        (Worktree, shift('g'), Action::GoToTop),
-        (Worktree, shift('G'), Action::GoToBottom),
+        (Explorer, shift('g'), Action::GoToTop),
+        (Explorer, shift('G'), Action::GoToBottom),
         (
-            Worktree,
+            Explorer,
             key(KeyCode::BackTab, KeyModifiers::NONE),
             Action::CycleFocusBackward,
         ),
         (
-            Worktree,
+            Explorer,
             key(KeyCode::Tab, KeyModifiers::SHIFT),
             Action::CycleFocusBackward,
         ),
@@ -262,9 +247,9 @@ fn 割り当ての無いキーは素通しする() {
         // 中立な表現を持たないキーは KeyInput に変換できず、panic せずに通す。
         (Terminal, key(KeyCode::CapsLock, KeyModifiers::NONE)),
         (Terminal, key(KeyCode::Tab, KeyModifiers::NONE)),
-        (Worktree, ch('u')),
-        (Worktree, ch('v')),
-        (Worktree, shift('P')),
+        (Explorer, ch('u')),
+        (Explorer, ch('v')),
+        (Explorer, shift('P')),
     ];
     cases.extend((2..=7).map(|n| (Global, key(KeyCode::F(n), KeyModifiers::NONE))));
     for (context, event) in cases {
@@ -275,13 +260,11 @@ fn 割り当ての無いキーは素通しする() {
 #[test]
 fn ptyを持つ文脈が奪うのは発火するアクションだけ() {
     let km = KeyMap::default();
-    let esc = key(KeyCode::Esc, KeyModifiers::NONE);
     let ctrl_esc = key(KeyCode::Esc, KeyModifiers::CONTROL);
     let ctrl_alt_z = key(
         KeyCode::Char('z'),
         KeyModifiers::CONTROL | KeyModifiers::ALT,
     );
-    let shift_pgup = key(KeyCode::PageUp, KeyModifiers::SHIFT);
     let cases = [
         (Terminal, ctrl('q'), None),
         (Terminal, ctrl('r'), None),
@@ -290,12 +273,7 @@ fn ptyを持つ文脈が奪うのは発火するアクションだけ() {
         (Terminal, ctrl('p'), Some(Action::CommandPalette)),
         (Terminal, alt(']'), Some(Action::NextWorktree)),
         (Terminal, ctrl_esc, Some(Action::LeaveTerminal)),
-        (Editor, ctrl_esc, Some(Action::LeaveTerminal)),
-        (Editor, esc, None),
-        (Editor, ctrl('g'), None),
-        (Editor, shift_pgup, None),
-        (Editor, alt('l'), Some(Action::CycleFocusForward)),
-        (Editor, ctrl_alt_z, Some(Action::TogglePanelExpand)),
+        (Terminal, ctrl_alt_z, Some(Action::TogglePanelExpand)),
     ];
     for (context, event, expected) in cases {
         assert_eq!(
@@ -316,11 +294,6 @@ fn ヘルプの逆引きはfires_in_terminalと一致する() {
             !action.fires_in_terminal(),
             "{action:?} in terminal: {in_terminal:?}"
         );
-        let in_editor = km.keys_for_action(Editor, action);
-        assert!(
-            action.fires_in_terminal() || in_editor.is_empty(),
-            "{action:?} in editor: {in_editor:?}"
-        );
     }
 }
 
@@ -329,8 +302,8 @@ fn 逆引きは正規形の綴りを返す() {
     let km = KeyMap::default();
     let for_action = [
         (Viewer, Action::ScrollHalfPageDown, vec!["ctrl+d"]),
-        (Worktree, Action::NavigateDown, vec!["down", "j"]),
-        (Worktree, Action::CommandPalette, vec![":", "ctrl+p"]),
+        (Fleet, Action::NavigateDown, vec!["down", "j"]),
+        (Fleet, Action::CommandPalette, vec![":", "ctrl+p"]),
     ];
     for (context, action, expected) in for_action {
         assert_eq!(
@@ -341,8 +314,8 @@ fn 逆引きは正規形の綴りを返す() {
     }
     let in_layer = [
         (Global, Action::FocusMenuBar, vec!["f10"]),
-        (Worktree, Action::CommandPalette, vec![":"]),
-        (Worktree, Action::Quit, vec![]),
+        (Fleet, Action::CommandPalette, vec![":"]),
+        (Fleet, Action::Quit, vec![]),
     ];
     for (context, action, expected) in in_layer {
         assert_eq!(
@@ -401,23 +374,78 @@ fn revidereの設定が残っていても警告で済み_ほかのキーは効�
 }
 
 #[test]
+fn 消した区画のキーとalt_3は既定に無い() {
+    let km = KeyMap::default();
+    let super3 = key(KeyCode::Char('3'), KeyModifiers::SUPER);
+    for event in [ctrl('w'), alt('3'), super3, ch('£')] {
+        assert_eq!(km.resolve(&event, Global), None, "{event:?}");
+    }
+    assert_eq!(km.resolve(&ch('e'), Viewer), None);
+    let layers: Vec<&str> = KeyContext::PANELS.iter().map(|c| c.layer_name()).collect();
+    for gone in ["worktree", "editor"] {
+        assert!(!layers.contains(&gone), "{layers:?}");
+    }
+}
+
+#[test]
+fn 消した区画の設定が残っていても警告で済み_ほかのキーは効く() {
+    let leftover = user(
+        "[keys]\n\"ctrl+w\" = \"focus_worktree\"\n\"alt+3\" = \"focus_explorer_diff_list\"\n\"f9\" = \"quit\"\n\
+         [layers.viewer]\n\"e\" = \"open_in_editor\"\n\"f8\" = \"navigate_down\"\n\
+         [layers.worktree]\n\"j\" = \"navigate_down\"\n\
+         [layers.editor]\n\"j\" = \"navigate_down\"",
+    );
+    let (km, warnings) = KeyMap::with_warnings(&leftover);
+    for gone in [
+        "focus_worktree",
+        "focus_explorer_diff_list",
+        "open_in_editor",
+    ] {
+        assert!(
+            warnings.iter().any(
+                |w| matches!(w, KeybindWarning::UnknownAction { action, .. } if action == gone)
+            ),
+            "{gone}: {warnings:?}"
+        );
+    }
+    for gone in ["worktree", "editor"] {
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, KeybindWarning::UnknownLayer { layer } if layer == gone)),
+            "{gone}: {warnings:?}"
+        );
+    }
+    let f = |n| key(KeyCode::F(n), KeyModifiers::NONE);
+    assert_eq!(km.resolve(&f(9), Global), Some(Action::Quit));
+    assert_eq!(km.resolve(&f(8), Viewer), Some(Action::NavigateDown));
+}
+
+#[test]
+fn ctrl_wを外す設定は警告を出さない() {
+    let (km, warnings) = KeyMap::with_warnings(&user("[keys]\n\"ctrl+w\" = false"));
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(km.resolve(&ctrl('w'), Global), None);
+}
+
+#[test]
 fn ユーザ設定は既定に重なる() {
     let cases = [
         (
-            "[layers.worktree]\n\"n\" = \"navigate_down\"",
-            Worktree,
+            "[layers.fleet]\n\"n\" = \"navigate_down\"",
+            Fleet,
             ch('n'),
             Some(Action::NavigateDown),
         ),
         (
-            "[layers.worktree]\n\"n\" = \"navigate_down\"",
-            Worktree,
+            "[layers.fleet]\n\"n\" = \"navigate_down\"",
+            Fleet,
             ch('j'),
             Some(Action::NavigateDown),
         ),
         (
-            "[layers.worktree]\n\"g\" = \"grab_branch\"",
-            Worktree,
+            "[layers.fleet]\n\"g\" = \"grab_branch\"",
+            Fleet,
             ch('g'),
             Some(Action::GrabBranch),
         ),
@@ -428,7 +456,7 @@ fn ユーザ設定は既定に重なる() {
             ctrl('n'),
             Some(Action::NewClaudeCode),
         ),
-        ("[layers.worktree]\n\"c\" = false", Worktree, ch('c'), None),
+        ("[layers.fleet]\n\"j\" = false", Fleet, ch('j'), None),
     ];
     for (toml, context, event, expected) in cases {
         let (km, warnings) = KeyMap::with_warnings(&user(toml));

@@ -52,8 +52,6 @@ make dev                  # cargo run, for development
 ```
 ┌────────────────────────────────────────────────────────┐
 │ Title bar                                               │
-├────────────────────────────────────────────────────────┤
-│ Worktree monitor strip (full width)                     │
 ├──────────────┬──────────────┬──────────────────────────┤
 │              │              │ Claude Code              │
 │  Explorer    │   Viewer     ├──────────────────────────┤
@@ -98,12 +96,13 @@ line numbers and the whole panel width is copied, gutter and all; start on the
 code and only the code comes along — no line numbers, no fold markers, no
 scrollbar.
 
-The worktree list is not a column. Every worktree — branch, dirty count,
-ahead/behind, and Claude Code waiting/active state — sits in the full-width
-monitor strip along the top, so parallel sessions can be watched at a glance.
-Click one to jump to it, or `[+]` to create one. The dirty count is filled in
-after the list appears — `~?` means it is still being counted, and deleting a
-worktree in that state asks as if there were uncommitted changes.
+The main screen shows one worktree, whose branch is in the title bar, and lists no
+others: no uncommitted-change counts, ahead/behind or waiting/active state per
+worktree. Every worktree and its sessions are in Sessions (**Alt+1**).
+**Ctrl+Tab** / **Ctrl+Shift+Tab** step to the next / previous worktree, and
+*Worktree ▸ Delete Worktree…* acts on the one shown. While its
+uncommitted changes are still being counted, deleting it asks as if there were
+some.
 
 ### Sessions
 
@@ -256,8 +255,8 @@ Claude with a state file has ended (a Claude with no state file yet has its tab 
 but is not waited for) and a second count finds no new commit, no more uncommitted
 changes and no newly started Claude; otherwise nothing is deleted. It refuses up
 front, stopping nothing, for the main worktree, a directory git does not list as a
-worktree, a locked worktree, one with another worktree inside it, one with an editor
-open in it, and the worktree this window has open as its repository. A worktree on the default branch is deleted but the
+worktree, a locked worktree, one with another worktree inside it, and the worktree
+this window has open as its repository. A worktree on the default branch is deleted but the
 branch is kept.
 
 ### Keybindings
@@ -272,7 +271,7 @@ command by name.
 | **Alt+h / Alt+l** | cycle panel focus from anywhere, terminals included |
 | **Alt+1** (or **⌘+1**) | Sessions — every Claude on the machine |
 | **Enter** · **Ctrl+o** | in the Sessions list: step into the session on the right · open the selected line's worktree in the main screen |
-| **Alt+2…6** (or **⌘+2…6**) | focus a specific panel (**Ctrl+w** the worktree strip) |
+| **Alt+2 / Alt+4…6** (or **⌘+2 / ⌘+4…6**) | focus the Explorer, Viewer, Claude Code or shell |
 | **Ctrl+Alt+Z** / **Ctrl+Alt+Arrow** | maximize / resize the focused panel |
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |
 | **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell (in the Sessions list, Ctrl+n opens its own menu and Ctrl+t the selected worktree's shell under the list) |
@@ -293,8 +292,10 @@ Quitting (Ctrl+q) does not stop the Claude Code and shell sessions: a background
 `conductor pty-host` holds them, so a turn that is mid-task keeps working and the
 next window you open on the repository shows each one where it has got to. To end
 them as you leave, use *Repo ▸ Quit and Stop Sessions*, or **D** on one line of
-Sessions. Deleting a worktree stops the sessions in it; a `$EDITOR` pane still
-closes with the window.
+Sessions. Deleting a worktree stops the sessions in it.
+
+There is no editor pane. To change a file by hand, run your editor in the shell
+(**Ctrl+t**) or ask Claude.
 
 ## Reviewing a Pull Request
 
@@ -402,8 +403,7 @@ refresh FIFO — likewise assumes a single owner per repository. To try a build 
 the window you already have, start the second one with `--second-window`. It takes no lock and
 *declines* those per-repository channels rather than taking them over, so the first
 window keeps working. The trade is that the second window has no MCP refresh and no
-Claude Code session hooks — its monitor strip stays blank and a panel's `/clear` is
-not followed — and its sessions end with it, while the review database and the code
+Claude Code session hooks — a panel's `/clear` is not followed — and its sessions end with it, while the review database and the code
 index stay shared as usual.
 
 CI checks formatting and clippy on every pull request. `.githooks/pre-commit`

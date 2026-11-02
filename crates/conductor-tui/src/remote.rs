@@ -33,9 +33,10 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
     let shown = ws.worktree_path() == root;
     match request {
         UiRequest::OpenFile { path, line, diff } => {
-            let mut effects = match show(ws, index, &root, shown) {
-                Ok(effects) => effects,
-                Err(refusal) => return refusal,
+            let mut effects = if shown {
+                Vec::new()
+            } else {
+                crate::effect::select_worktree(ws, index)
             };
             effects.push(match (diff, relative(&root, &path)) {
                 (true, Some(rel)) => Effect::ShowChange { path: rel, line },
@@ -60,29 +61,6 @@ pub fn effects(ws: &mut Workspace, cwd: &Path, request: UiRequest) -> Vec<Effect
                 )]
             }),
     }
-}
-
-/// worktree を移るとエディタは閉じられる。保存していない編集を Claude の都合で
-/// 失わせないよう、開いている間は移らずに断る。
-fn show(
-    ws: &mut Workspace,
-    index: usize,
-    root: &Path,
-    shown: bool,
-) -> Result<Vec<Effect>, Vec<Effect>> {
-    if shown {
-        return Ok(Vec::new());
-    }
-    if let Some(editor) = ws.panels.terminal.editor_name() {
-        return Err(vec![Effect::Status(
-            StatusLevel::Warning,
-            format!(
-                "Claude asked to show {}; close {editor} first.",
-                root.display()
-            ),
-        )]);
-    }
-    Ok(crate::effect::select_worktree(ws, index))
 }
 
 /// worktree はネストしうるので、cwd を含むうち最も深いもの。
@@ -189,25 +167,6 @@ mod tests {
         pump(&mut ws, &mut svc);
 
         assert_shows_change(&ws, "a.txt");
-    }
-
-    #[test]
-    fn エディタを開いている間は別のworktreeへ移らない() {
-        let repo = TestRepo::new();
-        let feat = repo.worktree("feat");
-        let (mut ws, mut svc) = workspace_for(&repo);
-        let root = ws.worktree_path();
-        let argv = ["/bin/sh", "-c", "sleep 30"].map(String::from);
-        ws.panels
-            .terminal
-            .open_editor(&root.join("a.txt"), &root, &argv)
-            .unwrap();
-
-        let asked = effects(&mut ws, &feat, open_diff(&feat.join("a.txt")));
-        apply(&mut ws, &mut svc, asked);
-
-        assert!(ws.panels.terminal.editor_name().is_some());
-        assert_eq!(ws.worktree_path(), root);
     }
 
     #[test]

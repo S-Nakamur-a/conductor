@@ -152,7 +152,7 @@ pub fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// このパネルが作業中か入力待ちかを Conductor へ伝える。worktree 監視ストリップが読む。
+/// このパネルが作業中か入力待ちかを Conductor へ伝える。
 ///
 /// フックは Claude の cwd を継ぐので、どの worktree の話かは自分の cwd がそのまま答え。
 /// [run] と同じく常に Ok。

@@ -407,8 +407,8 @@ Commands:
 
   cc-signal    Claude Code prompt/stop/notification hook. Tells the running
                conductor whether the panel in this directory is working or
-               waiting for you, which drives the worktree monitor strip. Wired
-               up the same way as cc-hook; not usually run by hand.
+               waiting for you. Wired up the same way as cc-hook; not usually
+               run by hand.
 
   cc-statusline
                Claude Code statusLine. Keeps a copy of the status JSON (context
@@ -426,8 +426,8 @@ Options:
                    For verifying a build, not for working in. A repository has
                    one set of .conductor/ channels and the first window keeps
                    them, so this window has no MCP refresh, no Claude Code
-                   session hooks (the monitor strip stays blank and a panel's
-                   /clear is not followed) and writes no claude-hooks.json.
+                   session hooks (a panel's /clear is not followed) and writes
+                   no claude-hooks.json.
                    The review database and the code index are shared as usual.
 
   -V, --version    Print version and exit

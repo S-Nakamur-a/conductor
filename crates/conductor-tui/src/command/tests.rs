@@ -83,20 +83,20 @@ fn コマンドを持つactionはグローバルの解釈で拾われる() {
 
 #[test]
 fn 絞り込みはグローバルと今の層を分ける() {
-    let hits = filter("", &keymap(), KeyContext::Worktree);
+    let hits = filter("", &keymap(), KeyContext::Viewer);
     let scope_of = |action: Action| {
         hits.iter()
             .find(|h| COMMANDS[h.index].action == Some(action))
             .map(|h| h.scope)
     };
-    assert_eq!(scope_of(Action::CreateWorktree), Some(Scope::Current));
+    assert_eq!(scope_of(Action::SearchInFile), Some(Scope::Current));
     assert_eq!(scope_of(Action::Quit), Some(Scope::Global));
-    assert_eq!(scope_of(Action::SearchInFile), Some(Scope::Other));
+    assert_eq!(scope_of(Action::ShowCommentList), Some(Scope::Other));
 }
 
 #[test]
 fn 結果は今の層グローバルその他の順にまとまる() {
-    let hits = filter("", &keymap(), KeyContext::Worktree);
+    let hits = filter("", &keymap(), KeyContext::Viewer);
     assert_eq!(hits.len(), COMMANDS.len(), "空クエリは全件");
     assert!(hits.windows(2).all(|w| w[0].scope <= w[1].scope));
 }
@@ -149,7 +149,6 @@ fn フォーカスのコマンドはフォーカスを動かす() {
     let mut ws = Workspace::for_test();
     for (id, focus) in [
         (CommandId::FocusViewer, Focus::Viewer),
-        (CommandId::FocusWorktree, Focus::Worktree),
         (CommandId::FocusTerminalShell, Focus::TerminalShell),
     ] {
         let effects = execute(&mut ws, id);
@@ -157,6 +156,19 @@ fn フォーカスのコマンドはフォーカスを動かす() {
             panic!("{id:?}: {effects:?}");
         };
         assert_eq!(*moved, focus);
+    }
+}
+
+#[test]
+fn 新しいworktreeは一覧を開いていても入力を出す() {
+    for fleet_open in [false, true] {
+        let mut ws = Workspace::for_test();
+        ws.chrome.fleet_open = fleet_open;
+        let effects = execute(&mut ws, CommandId::CreateWorktree);
+        assert!(
+            matches!(effects.as_slice(), [Effect::PushModal(Modal::Prompt(_))]),
+            "{fleet_open}: {effects:?}"
+        );
     }
 }
 
@@ -222,7 +234,9 @@ fn 幅が動いたときだけ設定に書き戻す() {
         ),
         "{effects:?}"
     );
-    ws.focus = Focus::Worktree;
+    for _ in 0..40 {
+        execute(&mut ws, CommandId::ResizePaneLeft);
+    }
     assert!(execute(&mut ws, CommandId::ResizePaneLeft).is_empty());
 }
 

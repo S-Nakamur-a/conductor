@@ -199,7 +199,6 @@ pub fn run(
         dirty |= tick_modals(ws, svc);
         dirty |= tick_index(ws, svc);
         dirty |= ws.tick_viewer();
-        dirty |= tick_editor(ws, svc);
         dirty |= tick_fs_refresh(ws, svc, &mut debounces.fs, Instant::now());
         dirty |= tick_git_refresh(ws, svc, &mut debounces.git, Instant::now());
         dirty |= tick_config_reload(ws, svc, &mut debounces.config, Instant::now());
@@ -227,24 +226,6 @@ pub fn run(
             return Ok(());
         }
     }
-}
-
-/// エディタが終わっていたら Viewer へ戻し、編集直後のファイルを読み直す。
-/// ファイルウォッチャーのデバウンスを待たせない。
-fn tick_editor(ws: &mut Workspace, svc: &mut Services<TaskResult>) -> bool {
-    let Some(path) = ws.panels.terminal.poll_editor_exit() else {
-        return false;
-    };
-    // 編集で差分も動くので、本文と一緒に変更ファイル一覧も取り直す。
-    let mut effects = ws.panels.explorer.refresh();
-    effects.push(Effect::OpenFile {
-        path,
-        line: None,
-        diff: None,
-        preview: false,
-    });
-    apply(ws, svc, effects);
-    true
 }
 
 /// 締切を持つモーダルを一押しする。何か動いたら true。
@@ -621,20 +602,6 @@ fn on_mouse(
                     // None (ガター等) はそのまま区画まるごと — 行番号ごと持っていきたい選択もある。
                     columns.map_or(selection, |c| selection.within_columns(c))
                 });
-            // 帯はフォーカスを持たない。ここで Focus::Worktree にすると、押した先の
-            // 代わりに中央の一覧が開く。
-            if region == Region::WorktreeStrip {
-                let Some(rect) = layout.rect(region) else {
-                    return;
-                };
-                let slots = crate::panels::worktree::strip::slots(ws, rect.width);
-                let effects = ws
-                    .panels
-                    .worktree
-                    .strip_click(&slots, mouse.column - rect.x);
-                apply(ws, svc, effects);
-                return;
-            }
             let Some(focus) = focus_for(region) else {
                 return;
             };
@@ -932,7 +899,7 @@ fn scroll_region(
         }
         // 端末はホイールの行き先が中身次第 (子プロセス / トランスクリプト /
         // スクロールバック) なので、判断はパネルが持つ。
-        Region::TerminalClaude | Region::TerminalShell | Region::Editor | Region::FleetSession => {
+        Region::TerminalClaude | Region::TerminalShell | Region::FleetSession => {
             let Some(rect) = layout.rect(region) else {
                 return;
             };
@@ -953,12 +920,10 @@ fn scroll_region(
 
 fn focus_for(region: Region) -> Option<Focus> {
     match region {
-        Region::WorktreeStrip => Some(Focus::Worktree),
         Region::ExplorerTree | Region::ExplorerChanges | Region::ChangesList => {
             Some(Focus::Explorer)
         }
         Region::Viewer | Region::Changes => Some(Focus::Viewer),
-        Region::Editor => Some(Focus::Editor),
         Region::TerminalClaude => Some(Focus::TerminalClaude),
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::FleetList => Some(Focus::Fleet),
@@ -1489,68 +1454,6 @@ mod tests {
 
         press(&mut ws, &[key(KeyCode::Char('j'))]);
         assert_eq!(ws.chrome.selection, None, "キーを押したら消える");
-    }
-
-    /// Viewer の e から埋め込みエディタを起こし、プロセスが終わったら Viewer に戻って
-    /// 読み直すまでを 1 本で通す。どのエディタかは環境が決めるので、ここは即座に
-    /// 終わるコマンドを直接渡す。
-    #[test]
-    fn eでエディタを起こし終了したらviewerへ戻って読み直す() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("a.txt"), "ALPHA\n").unwrap();
-
-        let mut ws = Workspace::for_test();
-        let mut svc = Services::new();
-        crate::testing::select_only_worktree(&mut ws, &mut svc, dir.path());
-        apply(
-            &mut ws,
-            &mut svc,
-            vec![Effect::OpenFile {
-                path: dir.path().join("a.txt"),
-                line: None,
-                diff: None,
-                preview: false,
-            }],
-        );
-        crate::testing::pump(&mut ws, &mut svc);
-        assert_eq!(ws.panels.viewer.active_path(), Some("a.txt"));
-
-        // Viewer の e は「このファイルをエディタで」だけを言う。
-        let effects = ws
-            .dispatch(conductor_core::keymap::Action::OpenInEditor)
-            .unwrap();
-        assert_eq!(
-            effects,
-            vec![Effect::OpenInEditor(dir.path().join("a.txt"))],
-            "{effects:?}"
-        );
-
-        let argv: Vec<String> = ["/bin/sh", "-c", "exit 0"].map(String::from).to_vec();
-        ws.panels
-            .terminal
-            .open_editor(&dir.path().join("a.txt"), dir.path(), &argv)
-            .unwrap();
-        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::Editor)]);
-
-        // エディタは Explorer と Viewer の列を併合した 1 区画を占める。
-        let l = layout(&ws, Rect::new(0, 0, 120, 40));
-        assert!(l.rect(Region::Editor).is_some());
-        assert!(l.rect(Region::Viewer).is_none() && l.rect(Region::ExplorerTree).is_none());
-
-        crate::testing::wait_for(|| tick_editor(&mut ws, &mut svc));
-        assert_eq!(ws.focus, Focus::Viewer, "終了したら Viewer へ戻る");
-        crate::testing::pump(&mut ws, &mut svc);
-        assert_eq!(
-            ws.panels.viewer.content.lines,
-            ["ALPHA"],
-            "読み直していない"
-        );
-        assert!(
-            layout(&ws, Rect::new(0, 0, 120, 40))
-                .rect(Region::Editor)
-                .is_none(),
-            "区画が残っている"
-        );
     }
 
     /// Explorer で Enter を押してから Viewer に中身が出るまでを、実キーと svc の
@@ -2724,7 +2627,7 @@ needle here
     #[test]
     fn ctrl_nはパネルからは新規セッションターミナルからはptyへ() {
         let ctrl_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
-        for focus in [Focus::Explorer, Focus::Worktree, Focus::Viewer] {
+        for focus in [Focus::Explorer, Focus::Viewer] {
             let mut ws = Workspace::for_test();
             ws.focus = focus;
             let Routed::Action(action) = route(&mut ws, ctrl_n) else {

@@ -10,7 +10,6 @@ use crate::workspace::{Focus, Workspace};
 pub enum Region {
     TitleBar,
     MenuBar,
-    WorktreeStrip,
     ExplorerTree,
     ExplorerChanges,
     Viewer,
@@ -18,8 +17,6 @@ pub enum Region {
     ChangesList,
     /// Files changed / Commits タブの縦並びの diff。Viewer の列を占める。
     Changes,
-    /// 埋め込み $EDITOR。Explorer と Viewer の列を併合して占める。
-    Editor,
     TerminalClaude,
     TerminalShell,
     FleetList,
@@ -34,7 +31,7 @@ pub enum Region {
 pub struct Layout {
     /// 画面全体。モーダルは区画の上に重なるので、区画からは引けない。
     pub area: Rect,
-    /// 帯を除いた中央の行。境界のドラッグは、この幅と高さに対する割合で比率を決める。
+    /// メニューとステータス行の間。境界のドラッグは、この幅と高さに対する割合で比率を決める。
     pub main: Rect,
     pub regions: Vec<(Region, Rect)>,
 }
@@ -163,10 +160,6 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
     };
     push_row(Region::TitleBar, 1, &mut y);
     push_row(Region::MenuBar, 1, &mut y);
-    // 一覧は全 repo のものなので、今の repo の worktree の帯は出さない。
-    if !ws.chrome.maximized && !ws.chrome.fleet_open {
-        push_row(Region::WorktreeStrip, 1, &mut y);
-    }
     let status_y = area.y + area.height.saturating_sub(1);
     let main = Rect::new(area.x, y, area.width, status_y.saturating_sub(y));
 
@@ -204,12 +197,9 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         push_fleet(&mut regions, main, cfg);
     } else if ws.chrome.maximized {
         match ws.focus {
-            Focus::Worktree
-            | Focus::Explorer
-            | Focus::Fleet
-            | Focus::FleetSession
-            | Focus::FleetShell => push_explorer(&mut regions, main),
-            Focus::Editor => regions.push((Region::Editor, main)),
+            Focus::Explorer | Focus::Fleet | Focus::FleetSession | Focus::FleetShell => {
+                push_explorer(&mut regions, main)
+            }
             Focus::Viewer => regions.push((center, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
             Focus::TerminalShell => regions.push((Region::TerminalShell, main)),
@@ -219,22 +209,14 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         let viewer_w = main.width * cfg.viewer_width_pct / 100;
         let terminal_w = main.width.saturating_sub(explorer_w + viewer_w);
         let claude_h = main.height * cfg.terminal_split_pct / 100;
-        // エディタは Explorer と Viewer の 2 列を併合して 1 区画になる。
-        if ws.focus == Focus::Editor {
-            regions.push((
-                Region::Editor,
-                Rect::new(main.x, main.y, explorer_w + viewer_w, main.height),
-            ));
-        } else {
-            push_explorer(
-                &mut regions,
-                Rect::new(main.x, main.y, explorer_w, main.height),
-            );
-            regions.push((
-                center,
-                Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
-            ));
-        }
+        push_explorer(
+            &mut regions,
+            Rect::new(main.x, main.y, explorer_w, main.height),
+        );
+        regions.push((
+            center,
+            Rect::new(main.x + explorer_w, main.y, viewer_w, main.height),
+        ));
         let tx = main.x + explorer_w + viewer_w;
         regions.push((
             Region::TerminalClaude,
@@ -263,12 +245,7 @@ mod tests {
     #[test]
     fn 全ての区画は_hitで自分に戻る() {
         let mut ws = Workspace::for_test();
-        for (maximized, focus) in [
-            (false, Focus::Explorer),
-            (true, Focus::Explorer),
-            (false, Focus::Editor),
-            (true, Focus::Editor),
-        ] {
+        for (maximized, focus) in [(false, Focus::Explorer), (true, Focus::Explorer)] {
             ws.chrome.maximized = maximized;
             ws.focus = focus;
             let l = layout(&ws, Rect::new(0, 0, 120, 40));
@@ -285,13 +262,17 @@ mod tests {
 
     #[test]
     fn 区画は重ならず画面を埋める() {
-        let mut ws = Workspace::for_test();
-        for focus in [Focus::Explorer, Focus::Editor] {
-            ws.focus = focus;
-            let l = layout(&ws, Rect::new(0, 0, 120, 40));
-            let total: u32 = l.regions.iter().map(|(_, r)| r.area()).sum();
-            assert_eq!(total, 120 * 40, "{focus:?}");
-        }
+        let ws = Workspace::for_test();
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        let total: u32 = l.regions.iter().map(|(_, r)| r.area()).sum();
+        assert_eq!(total, 120 * 40);
+    }
+
+    #[test]
+    fn 詳細画面の本体はメニューのすぐ下から始まる() {
+        let ws = Workspace::for_test();
+        let l = layout(&ws, Rect::new(0, 0, 120, 40));
+        assert_eq!((l.main.y, l.main.height), (2, 37));
     }
 
     #[test]
@@ -302,7 +283,6 @@ mod tests {
         let l = layout(&ws, Rect::new(0, 0, 120, 40));
         assert!(l.rect(Region::TerminalShell).is_some());
         assert!(l.rect(Region::ExplorerTree).is_none());
-        assert!(l.rect(Region::WorktreeStrip).is_none());
 
         ws.focus = Focus::Explorer;
         let l = layout(&ws, Rect::new(0, 0, 120, 40));

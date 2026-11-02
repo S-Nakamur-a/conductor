@@ -12,7 +12,6 @@ keymap_suite::actions! {
         CycleFocusBackward => "cycle_focus_backward",
         NextWorktree => "next_worktree",
         PrevWorktree => "prev_worktree",
-        FocusWorktree => "focus_worktree",
         FocusSessions => "focus_sessions",
         StopSession => "stop_session",
         NewSessionMenu => "new_session_menu",
@@ -25,7 +24,6 @@ keymap_suite::actions! {
         GoToWaiting => "go_to_waiting",
         ExpandNode => "expand_node",
         FocusExplorer => "focus_explorer",
-        FocusExplorerDiffList => "focus_explorer_diff_list",
         FocusViewer => "focus_viewer",
         FocusTerminalClaude => "focus_terminal_claude",
         FocusTerminalShell => "focus_terminal_shell",
@@ -83,7 +81,6 @@ keymap_suite::actions! {
         PrevSearchMatch => "prev_search_match",
         AddComment => "add_comment",
         ExitToExplorer => "exit_to_explorer",
-        OpenInEditor => "open_in_editor",
         NextViewerTab => "next_viewer_tab",
         PrevViewerTab => "prev_viewer_tab",
         CloseViewerTab => "close_viewer_tab",
@@ -158,7 +155,6 @@ impl Action {
             Action::CycleFocusBackward => "Focus previous panel",
             Action::NextWorktree => "Next worktree",
             Action::PrevWorktree => "Previous worktree",
-            Action::FocusWorktree => "Open worktree switcher",
             Action::FocusSessions => "Open the session list",
             Action::StopSession => "Stop the selected session, or delete the selected worktree",
             Action::NewSessionMenu => "Start a session in the selected worktree",
@@ -173,7 +169,6 @@ impl Action {
             Action::GoToWaiting => "Select the first session waiting for input",
             Action::ExpandNode => "Expand the selected line, or move into it",
             Action::FocusExplorer => "Focus Explorer (file tree)",
-            Action::FocusExplorerDiffList => "Focus Git Changes",
             Action::FocusViewer => "Focus Viewer",
             Action::FocusTerminalClaude => "Focus Claude Code panel",
             Action::FocusTerminalShell => "Focus Shell panel",
@@ -227,7 +222,6 @@ impl Action {
             Action::PrevSearchMatch => "Previous search match",
             Action::AddComment => "Add comment on line",
             Action::ExitToExplorer => "Back to Explorer",
-            Action::OpenInEditor => "Open in $EDITOR",
             Action::NextViewerTab => "Next file tab",
             Action::PrevViewerTab => "Previous file tab",
             Action::CloseViewerTab => "Close file tab",
@@ -281,10 +275,8 @@ impl Action {
                 | Action::OpenFileFromTerminal
                 | Action::NextSession
                 | Action::PrevSession
-                | Action::FocusWorktree
                 | Action::FocusSessions
                 | Action::FocusExplorer
-                | Action::FocusExplorerDiffList
                 | Action::FocusViewer
                 | Action::FocusTerminalClaude
                 | Action::FocusTerminalShell

@@ -8,17 +8,17 @@ pub(crate) mod reflow;
 pub mod render;
 pub(crate) mod tabs;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use conductor_core::cc_hook::Notification;
 use conductor_core::claude_log::LogEntry;
 use conductor_core::config::Config;
 use conductor_core::keymap::Action;
 use conductor_core::theme::Theme;
 use conductor_svc::pty::{Attached, Conversation, Launch, PtyStore, SessionKind, Spawn};
-use conductor_svc::watch::{CcState, WatchEvent};
+use conductor_svc::watch::WatchEvent;
 use crossterm::event::KeyEvent;
 
 use crate::click::ClickTracker;
@@ -87,14 +87,6 @@ impl Pane {
     }
 }
 
-/// 1 ファイルに対して起こした $EDITOR。プロセスが終われば畳む。
-struct Editor {
-    session: String,
-    /// 編集中の絶対パス。閉じたときに読み直す先。
-    path: PathBuf,
-    size: (u16, u16),
-}
-
 /// シェルを起こすときは読まれない。
 #[derive(Default)]
 pub struct ClaudeArgs<'a> {
@@ -141,12 +133,9 @@ pub struct TerminalPanel {
     fleet_size: (u16, u16),
     /// 一覧から別の repo のセッションへ入った。その worktree が選ばれたら Claude 区画に映す。
     pending_show: Option<String>,
-    editor: Option<Editor>,
     wants_clear: bool,
     /// 選択中の worktree。セッションの絞り込みと spawn の作業ディレクトリ。
     worktree: Option<PathBuf>,
-    waiting: HashSet<PathBuf>,
-    active: HashSet<PathBuf>,
     /// 起こしたセッションの id と、受け取れるようになったら送るプロンプト。
     deferred: HashMap<String, String>,
     /// 2 つ目のウィンドウは先客の宛先を奪わないよう、フックを仕掛けずに降りる。
@@ -166,11 +155,8 @@ impl TerminalPanel {
             pending_transcript: None,
             fleet_size: (24, 80),
             pending_show: None,
-            editor: None,
             wants_clear: false,
             worktree: None,
-            waiting: HashSet::new(),
-            active: HashSet::new(),
             deferred: HashMap::new(),
             session_hooks: true,
         }
@@ -274,22 +260,16 @@ impl TerminalPanel {
         })
     }
 
-    /// エディタを除いた、動いているセッションの数。
+    /// 動いているセッションの数。
     pub fn session_count(&self) -> usize {
-        self.pty
-            .sessions()
-            .iter()
-            .enumerate()
-            .filter(|(i, s)| s.kind != SessionKind::Editor && self.pty.is_session_alive(*i))
+        (0..self.pty.sessions().len())
+            .filter(|&i| self.pty.is_session_alive(i))
             .count()
     }
 
     pub fn stop_sessions(&mut self, worktree: Option<&Path>) {
         for index in (0..self.pty.sessions().len()).rev() {
-            let session = &self.pty.sessions()[index];
-            if session.kind != SessionKind::Editor
-                && worktree.is_none_or(|w| session.working_dir == w)
-            {
+            if worktree.is_none_or(|w| self.pty.sessions()[index].working_dir == w) {
                 self.pty.remove_session(index);
             }
         }
@@ -304,14 +284,6 @@ impl TerminalPanel {
         let was_running = self.pty.is_session_alive(index);
         self.close_session(Focus::TerminalClaude, id);
         was_running
-    }
-
-    pub fn is_waiting(&self, worktree: &Path) -> bool {
-        self.waiting.contains(worktree)
-    }
-
-    pub fn is_active(&self, worktree: &Path) -> bool {
-        self.active.contains(worktree)
     }
 
     /// 新しい PTY 出力が届いていたか。届いていれば描き直す理由になる。
@@ -447,7 +419,6 @@ impl TerminalPanel {
         // 他人のログを見せることになる。
         self.transcript = None;
         self.pending_transcript = None;
-        self.discard_editor();
         self.wants_clear = true;
         for kind in [SessionKind::ClaudeCode, SessionKind::Shell] {
             let sessions = self.sessions(kind);
@@ -747,11 +718,6 @@ impl TerminalPanel {
         fleet_session: Option<String>,
     ) -> Vec<Effect> {
         let (focus, content, session) = match region {
-            Region::Editor => (
-                Focus::Editor,
-                render::editor_area(rect),
-                self.editor.as_ref().map(|e| e.session.clone()),
-            ),
             // 他の窓や外の端末の行は、右にセッションを映していない。
             Region::FleetSession if fleet_session.is_none() => return Vec::new(),
             Region::FleetSession => (
@@ -781,9 +747,6 @@ impl TerminalPanel {
             }
         }
 
-        if focus == Focus::Editor {
-            return Vec::new();
-        }
         if self.reading(session.as_deref()) {
             return self.transcript_wheel(delta);
         }
@@ -828,71 +791,6 @@ impl TerminalPanel {
             reflow.prepare(theme, highlighter, size, overlay_open);
             self.wants_clear |= reflow.take_clear_request();
         }
-    }
-
-    /// エディタを PTY で起こす。返すのは区画の見出しに出すファイル名。
-    /// どのエディタかは環境が決めるので、argv は呼び出し側から受け取る。
-    pub fn open_editor(&mut self, path: &Path, worktree: &Path, argv: &[String]) -> Result<String> {
-        anyhow::ensure!(self.editor.is_none(), "an editor is already open");
-        let (program, args) = argv.split_first().context("the editor command is empty")?;
-        let (rows, cols) = DEFAULT_PTY_SIZE;
-        let worktree_name = worktree
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        let index = self.pty.spawn(Spawn {
-            launch: Launch::Editor {
-                program,
-                args,
-                file: path,
-            },
-            worktree: &worktree_name,
-            label: "ED",
-            working_dir: worktree,
-            rows,
-            cols,
-        })?;
-        self.pty.activate_session(index);
-        self.editor = Some(Editor {
-            session: self.pty.sessions()[index].id.clone(),
-            path: path.to_path_buf(),
-            size: (rows, cols),
-        });
-        // 置き換える区画の上にエディタの代替画面を一から描かせる。
-        self.wants_clear = true;
-        Ok(self.editor_name().unwrap_or_default())
-    }
-
-    /// エディタの PTY を落として畳む。読み直しは呼び出し側がどのみち行う。
-    fn discard_editor(&mut self) {
-        let Some(editor) = self.editor.take() else {
-            return;
-        };
-        if let Some(index) = self.index_of(Some(editor.session.as_str())) {
-            let _ = self.pty.kill_session(index);
-            self.pty.remove_session(index);
-        }
-    }
-
-    /// エディタが終わっていれば畳んで、編集していたパスを返す。毎フレーム呼ぶ —
-    /// 停止セッションの掃除タイマーを待つと、閉じた後も区画が残って見える。
-    pub fn poll_editor_exit(&mut self) -> Option<PathBuf> {
-        let session = self.editor.as_ref()?.session.clone();
-        match self.index_of(Some(session.as_str())) {
-            Some(index) if self.pty.is_session_alive(index) => return None,
-            Some(index) => self.pty.remove_session(index),
-            None => {}
-        }
-        self.wants_clear = true;
-        self.editor.take().map(|editor| editor.path)
-    }
-
-    /// 開いているファイルの名前。区画の見出しが読む。
-    pub fn editor_name(&self) -> Option<String> {
-        let path = &self.editor.as_ref()?.path;
-        Some(path.file_name().map_or_else(
-            || path.display().to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        ))
     }
 
     pub fn take_clear_request(&mut self) -> bool {
@@ -1229,7 +1127,6 @@ impl TerminalPanel {
         match focus {
             Focus::TerminalClaude => self.claude.session.clone(),
             Focus::TerminalShell => self.shell.session.clone(),
-            Focus::Editor => self.editor.as_ref().map(|e| e.session.clone()),
             _ => None,
         }
     }
@@ -1286,17 +1183,6 @@ impl TerminalPanel {
             let content = render::editor_area(rect);
             self.fit(index, (content.height.max(1), content.width.max(1)));
         }
-        if let (Some(rect), Some(editor)) = (layout.rect(Region::Editor), self.editor.as_mut()) {
-            let content = render::editor_area(rect);
-            let size = (content.height.max(1), content.width.max(1));
-            if editor.size != size {
-                editor.size = size;
-                let session = editor.session.clone();
-                if let Some(index) = self.index_of(Some(session.as_str())) {
-                    self.pty.resize_session(index, size.0, size.1);
-                }
-            }
-        }
         if let Some(rect) = layout.rect(Region::FleetSession) {
             let content = render::editor_area(rect);
             self.fleet_size = (content.height.max(1), content.width.max(1));
@@ -1337,19 +1223,6 @@ impl TerminalPanel {
     /// Claude Code のフックとソケットが伝えてくる事実を取り込む。
     pub fn on_watch(&mut self, event: &WatchEvent) -> Vec<Effect> {
         match event {
-            WatchEvent::CcState { kind, cwd } => {
-                match kind {
-                    CcState::Active => {
-                        self.active.insert(cwd.clone());
-                        self.waiting.remove(cwd);
-                    }
-                    CcState::Waiting => {
-                        self.waiting.insert(cwd.clone());
-                        self.active.remove(cwd);
-                    }
-                }
-                Vec::new()
-            }
             WatchEvent::CcSessionRotated {
                 panel_id,
                 session_id,
@@ -1396,12 +1269,6 @@ impl TerminalPanel {
     }
 }
 
-/// $EDITOR が見つからないときに使う。POSIX がどの環境にも置いている。
-const EDITOR_FALLBACK: &str = "vi";
-
-/// レイアウトが決まる前の暫定。次のフレームの [TerminalPanel::sync_sizes] が直す。
-const DEFAULT_PTY_SIZE: (u16, u16) = (24, 80);
-
 fn same_dir(a: &Path, b: &Path) -> bool {
     a == b
         || matches!(
@@ -1410,38 +1277,11 @@ fn same_dir(a: &Path, b: &Path) -> bool {
         )
 }
 
-/// 環境が指すエディタ。
-pub(crate) fn editor_argv() -> Vec<String> {
-    editor_command(
-        std::env::var("VISUAL").ok().as_deref(),
-        std::env::var("EDITOR").ok().as_deref(),
-        EDITOR_FALLBACK,
-    )
-}
-
-/// $VISUAL → $EDITOR → 既定 の順。空白だけの値は空のコマンドを生まないよう飛ばす。
-/// 分割は素朴で、シェル風のクォート解釈はしない (意図的な制限)。
-fn editor_command(visual: Option<&str>, editor: Option<&str>, fallback: &str) -> Vec<String> {
-    let chosen = [visual, editor]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .unwrap_or(fallback);
-    let parts: Vec<String> = chosen.split_whitespace().map(str::to_string).collect();
-    if parts.is_empty() {
-        vec![fallback.to_string()]
-    } else {
-        parts
-    }
-}
-
 /// 端末の区画をその Focus に対応づける。呼び出し側は端末の区画しか渡さない。
 pub(super) fn focus_of(region: Region) -> Focus {
     match region {
         Region::TerminalClaude => Focus::TerminalClaude,
         Region::TerminalShell => Focus::TerminalShell,
-        Region::Editor => Focus::Editor,
         _ => unreachable!("focus_of: 端末以外の region {region:?}"),
     }
 }
@@ -1741,35 +1581,7 @@ mod tests {
         assert!(text.contains("conductor-ran-a-test"), "{text}");
     }
 
-    /// $VISUAL > $EDITOR > 既定。空白だけの値は飛ばし、分割は空白での素朴なもの。
-    #[test]
-    fn エディタのコマンドは優先順で選び素朴に分割する() {
-        let cases: [(Option<&str>, Option<&str>, &[&str]); 10] = [
-            (None, None, &["vi"]),
-            (Some("vim"), Some("nano"), &["vim"]),
-            (None, Some("nano"), &["nano"]),
-            (Some("code -w"), None, &["code", "-w"]),
-            (Some("code\t-w  -n"), None, &["code", "-w", "-n"]),
-            (Some(""), None, &["vi"]),
-            (Some("   "), None, &["vi"]),
-            (Some(""), Some("nano"), &["nano"]),
-            (Some("  vim  "), None, &["vim"]),
-            (
-                Some("vim -c 'set ft=rust'"),
-                None,
-                &["vim", "-c", "'set", "ft=rust'"],
-            ),
-        ];
-        for (visual, editor, want) in cases {
-            assert_eq!(
-                editor_command(visual, editor, EDITOR_FALLBACK),
-                want,
-                "visual={visual:?} editor={editor:?}"
-            );
-        }
-    }
-
-    /// エディタはタブ行を持たないので、枠の 2 行 2 桁だけを引く。
+    /// 一覧の右はタブ行を持たないので、枠の 2 行 2 桁だけを引く。
     #[test]
     fn エディタの内容領域は枠だけを引く() {
         assert_eq!(

@@ -1913,12 +1913,6 @@ pub(crate) mod fleet_delete {
             ));
         }
         let inside = |dir: &Path| canonical(dir).starts_with(path);
-        if own
-            .iter()
-            .any(|p| p.kind == SessionKind::Editor && inside(&p.working_dir))
-        {
-            return Inspected::Refused(format!("Close the editor in {label} first."));
-        }
         let check = match GitEngine::open(repo).and_then(|git| git.deletion_check(path)) {
             Ok(Ok(check)) => check,
             Ok(Err(refusal)) => return Inspected::Refused(refusal_text(&refusal, &label)),
@@ -1940,10 +1934,7 @@ pub(crate) mod fleet_delete {
                 }),
             })
             .collect();
-        let closing: Vec<&OwnPty> = own
-            .iter()
-            .filter(|p| p.kind != SessionKind::Editor && inside(&p.working_dir))
-            .collect();
+        let closing: Vec<&OwnPty> = own.iter().filter(|p| inside(&p.working_dir)).collect();
         Inspected::Ready(Box::new(Inspection {
             repo: repo.to_path_buf(),
             path: path.to_path_buf(),
@@ -2392,19 +2383,12 @@ mod fleet_delete_tests {
     }
 
     #[test]
-    fn 窓が開いている_worktree_とエディタのある_worktree_は何も止めずに断る() {
+    fn 窓が開いている_worktree_は何も止めずに断る() {
         let (_dir, main, wt) = repo();
-        let refused = |outcome: Inspected| matches!(outcome, Inspected::Refused(_));
-        assert!(refused(inspect(&main, &wt, "wt".into(), &[], &wt, &[])));
-        let editor = [pty("e", SessionKind::Editor, &wt, None)];
-        assert!(refused(inspect(
-            &main,
-            &wt,
-            "wt".into(),
-            &editor,
-            &main,
-            &[]
-        )));
+        assert!(matches!(
+            inspect(&main, &wt, "wt".into(), &[], &wt, &[]),
+            Inspected::Refused(_)
+        ));
     }
 
     #[test]

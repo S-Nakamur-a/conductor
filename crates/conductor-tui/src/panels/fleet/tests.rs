@@ -1343,30 +1343,6 @@ mod screen {
         assert!(same_dir(&ws.worktree_path(), &feat));
         assert_eq!(ws.focus, Focus::Viewer);
     }
-
-    #[test]
-    fn エディタを開いていれば別の_worktree_のセッションには入らない() {
-        let repo = crate::testing::TestRepo::new();
-        let feat = repo.worktree("feat");
-        let (mut ws, mut svc) = crate::testing::workspace_for(&repo);
-        crate::testing::pump(&mut ws, &mut svc);
-        let root = ws.worktree_path();
-        ws.panels
-            .terminal
-            .open_editor(&root.join("a.txt"), &root, &["/bin/sh".to_string()])
-            .unwrap();
-        ws.panels.terminal.show_shell_as_claude_for_test(&feat);
-        let id = ws.panels.terminal.visible_claude().unwrap().to_string();
-        apply(&mut ws, &mut svc, vec![Effect::OpenFleet]);
-        apply(
-            &mut ws,
-            &mut svc,
-            vec![Effect::EnterDetail(DetailTarget::Panel(id))],
-        );
-        assert!(ws.chrome.fleet_open);
-        assert_eq!(ws.worktree_path(), root);
-        assert!(ws.panels.terminal.editor_name().is_some());
-    }
 }
 
 mod pane {
