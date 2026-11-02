@@ -1024,7 +1024,21 @@ fn worktree_line(
         Span::styled(revidere, Style::default().fg(theme.fg)),
         Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
     ];
-    crate::list::row_line(spans, theme, selected, focused)
+    Line::from(spans).style(selection(theme, focused, selected))
+}
+
+/// 打ちながら横目で探すので、他のリストの灰色の地では見落とす。
+fn selection(theme: &Theme, focused: bool, selected: bool) -> Style {
+    let tint = match (selected, focused) {
+        (false, _) => return Style::default(),
+        (true, true) => 0.45,
+        (true, false) => 0.3,
+    };
+    let style = Style::default().bg(Theme::lerp(theme.selected_bg_inactive, theme.accent, tint));
+    match focused {
+        true => style.add_modifier(Modifier::BOLD),
+        false => style,
+    }
 }
 
 /// 行の Claude のアカウントの名前と色。accounts に無い dir の行は None。
@@ -1047,8 +1061,17 @@ fn row_line(
 ) -> Line<'static> {
     let theme = &ws.theme;
     let account = account(ws, row);
+    // 選択の地は hint と明るさが近いので、hint で描く文字と印はその行だけ fg に上げる。
+    let lift = |c: Color| {
+        if selected && c == theme.hint {
+            theme.fg
+        } else {
+            c
+        }
+    };
     let (glyph, color) = look(theme, &row.state);
-    // 選択は地の色だけだと薄く、地を明るくすると hint の文字とバーの空きが沈むので印で示す。
+    let color = lift(color);
+    let hint = lift(theme.hint);
     let (edge, edge_fg) = if selected {
         ("❯", theme.accent)
     } else if row.place == Place::Outside {
@@ -1071,10 +1094,7 @@ fn row_line(
             ));
             spans
         }
-        (None, Some(tokens)) => vec![Span::styled(
-            tokens_text(tokens),
-            Style::default().fg(theme.hint),
-        )],
+        (None, Some(tokens)) => vec![Span::styled(tokens_text(tokens), Style::default().fg(hint))],
         (None, None) => Vec::new(),
     };
     let right_width: usize = right.iter().map(|s| s.content.width()).sum();
@@ -1090,11 +1110,7 @@ fn row_line(
         .saturating_sub(indent + 2 + left.width() + account_width + right_width + 2);
     let title = clip(&title, room);
     let pad = room.saturating_sub(title.width());
-    let title_fg = if row.title.is_some() {
-        theme.fg
-    } else {
-        theme.hint
-    };
+    let title_fg = if row.title.is_some() { theme.fg } else { hint };
     let mut spans = vec![
         Span::raw(" ".repeat(indent)),
         Span::styled(
@@ -1105,7 +1121,7 @@ fn row_line(
             glyph,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(left, Style::default().fg(theme.hint)),
+        Span::styled(left, Style::default().fg(hint)),
     ];
     spans.extend(account);
     spans.extend([
@@ -1113,7 +1129,7 @@ fn row_line(
         Span::raw(" ".repeat(pad + 2)),
     ]);
     spans.extend(right);
-    crate::list::row_line(spans, theme, selected, focused)
+    Line::from(spans).style(selection(theme, focused, selected))
 }
 
 fn pinned_box(
@@ -1139,11 +1155,7 @@ fn pinned_box(
         tag(row.place),
     );
     let title = row.title.clone().unwrap_or_else(|| UNTITLED.to_string());
-    let base = if selected {
-        crate::list::selection(theme, focused)
-    } else {
-        Style::default()
-    };
+    let base = selection(theme, focused, selected);
     let body = |parts: Vec<(String, Style)>| {
         let mut room = inner_w;
         let mut spans = vec![Span::styled("│", border)];
