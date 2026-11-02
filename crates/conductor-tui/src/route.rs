@@ -171,6 +171,31 @@ mod tests {
     }
 
     #[test]
+    fn 一覧の_ctrl_o_は詳細へ行き右の区画と左下のシェルでは端末へ届く() {
+        let mut ws = Workspace::for_test();
+        ws.focus = Focus::Fleet;
+        assert_eq!(route(&mut ws, ctrl('o')), Routed::Action(Action::Select));
+        for focus in [Focus::FleetSession, Focus::FleetShell] {
+            ws.focus = focus;
+            assert_eq!(
+                route(&mut ws, ctrl('o')),
+                Routed::ForwardToPty(ctrl('o')),
+                "{focus:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn 一覧の_enter_は右の区画へ入り右の区画では端末へ届く() {
+        let mut ws = Workspace::for_test();
+        let enter = key(KeyCode::Enter);
+        ws.focus = Focus::Fleet;
+        assert_eq!(route(&mut ws, enter), Routed::Action(Action::ExpandOrRight));
+        ws.focus = Focus::FleetSession;
+        assert_eq!(route(&mut ws, enter), Routed::ForwardToPty(enter));
+    }
+
+    #[test]
     fn パネルフォーカスでは_keymapで解決する() {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;

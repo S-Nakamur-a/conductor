@@ -136,10 +136,13 @@ panel alike. Scrolling up over it (the wheel works without stepping in, **Shift+
 once you have) opens the transcript view of that session, the same one the Claude panel
 uses; scrolling down past the end or **Esc** goes back to it live, and so does
 **Ctrl+Esc** once you have stepped in.
-`Enter` opens that session's worktree in the main screen with the session in
-the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. Sessions that
-a plain terminal runs, or that a window of an older version still holds, are listed with
-their state, but cannot be opened or typed into from here. The states come from the files
+**Enter** does the same as **Tab**. **Ctrl+o** opens the selected line's worktree in
+the main screen, with the cursor on the Viewer and the session, if it is this
+window's, in the Claude panel; **Alt+1** (or **⌘+1**) comes back from anywhere. In the
+list, Ctrl+o does this instead of *Open Repository*, which stays in the Repo menu.
+Sessions that a plain terminal runs, or that a window of an older version still holds,
+are listed with their state, and Ctrl+o opens the worktree they run in, but they
+cannot be typed into from here. The states come from the files
 Claude Code writes under `~/.claude/sessions/`. With more than one Claude Code account
 (one `CLAUDE_CONFIG_DIR` each), list them as `[[claude.accounts]]`
 ([docs/configuration.md](docs/configuration.md)): every account's sessions are read, and
@@ -237,6 +240,7 @@ command by name.
 | **Tab / Shift+Tab** | cycle panel focus (non-terminal panels) |
 | **Alt+h / Alt+l** | cycle panel focus from anywhere, terminals included |
 | **Alt+1** (or **⌘+1**) | Sessions — every Claude on the machine |
+| **Enter** · **Ctrl+o** | in the Sessions list: step into the session on the right · open the selected line's worktree in the main screen |
 | **Alt+2…6** (or **⌘+2…6**) | focus a specific panel (**Ctrl+w** the worktree strip) |
 | **Ctrl+Alt+Z** / **Ctrl+Alt+Arrow** | maximize / resize the focused panel |
 | **Ctrl+Tab / Ctrl+Shift+Tab** (or **Alt+] / Alt+[**) | switch worktree |

@@ -51,8 +51,8 @@ pub enum Effect {
     OpenFleet,
     /// 一覧を開いていれば閉じて、そのフォーカスへ。人が押したフォーカスのキーの行き先。
     LeaveFleet(Focus),
-    /// そのセッションの worktree を開いた今の画面に入る。
-    EnterSession(crate::panels::fleet::RowKey),
+    /// その worktree を開いた詳細の画面に入る。
+    EnterDetail(crate::panels::fleet::DetailTarget),
     /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
     StopFleetSession(crate::panels::fleet::StopTarget),
     /// この窓のセッションを止め、終わったら同じ会話を選んだアカウントで開き直す。
@@ -342,7 +342,7 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 close_fleet(ws);
                 queue.push_front(Effect::Focus(focus));
             }
-            Effect::EnterSession(key) => queue.extend(enter_session(ws, svc, key)),
+            Effect::EnterDetail(target) => queue.extend(enter_detail(ws, svc, target)),
             Effect::StopFleetSession(target) => queue.extend(stop_fleet_session(ws, target)),
             Effect::ReopenAs(reopen) => queue.extend(reopen_as(ws, reopen)),
             Effect::LaunchReopened(reopen) => queue.push_back(launch_reopened(ws, &reopen)),
@@ -390,18 +390,20 @@ fn close_fleet(ws: &mut Workspace) {
     }
 }
 
-/// 一覧から今の画面に入る。別の repo なら開き直し、worktree はその一覧が届いてから選ぶ。
-fn enter_session(
+/// 一覧から詳細の画面に入る。別の repo なら開き直し、worktree はその一覧が届いてから選ぶ。
+fn enter_detail(
     ws: &mut Workspace,
     svc: &mut Services<TaskResult>,
-    key: crate::panels::fleet::RowKey,
+    target: crate::panels::fleet::DetailTarget,
 ) -> Vec<Effect> {
+    use crate::panels::fleet::DetailTarget;
     let warn = |text: String| vec![Effect::Status(StatusLevel::Warning, text)];
-    let crate::panels::fleet::RowKey::Panel(id) = key else {
-        return warn("This Claude runs outside this window; it cannot be opened from here.".into());
-    };
-    let Some(dir) = ws.panels.terminal.session_dir(&id) else {
-        return warn("That session has ended.".into());
+    let (dir, panel) = match target {
+        DetailTarget::Panel(id) => match ws.panels.terminal.session_dir(&id) {
+            Some(dir) => (dir, Some(id)),
+            None => return warn("That session has ended.".into()),
+        },
+        DetailTarget::Dir(dir) => (dir, None),
     };
     if conductor_core::git_engine::GitEngine::open(&dir).is_err() {
         return warn(format!("{} is no longer a git worktree.", dir.display()));
@@ -420,15 +422,19 @@ fn enter_session(
     let mut effects = match listed {
         Some(index) => select_worktree(ws, index),
         None => {
-            ws.focus = Focus::TerminalClaude;
+            ws.focus = Focus::Viewer;
             let effects = switch_repo(ws, svc, &dir);
             // switch_repo が worktree のパネルを作り直すので、待ちはその後に立てる。
             ws.panels.worktree.select_when_listed(dir);
             effects
         }
     };
-    ws.panels.terminal.show_claude_when_selected(&id);
-    effects.push(Effect::Focus(Focus::TerminalClaude));
+    if let Some(id) = panel {
+        ws.panels.terminal.show_claude_when_selected(&id);
+    }
+    // Claude へ入るのは一覧の Enter の役なので、ここは diff を読む側に置く。
+    // 一覧へ漏れた打ちかけの文の残りが、選んでいない Claude へ送られないためでもある。
+    effects.push(Effect::Focus(Focus::Viewer));
     effects
 }
 

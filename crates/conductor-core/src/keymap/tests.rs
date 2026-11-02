@@ -111,8 +111,9 @@ fn 既定のキーが解決する() {
         (
             Fleet,
             key(KeyCode::Enter, KeyModifiers::NONE),
-            Action::Select,
+            Action::ExpandOrRight,
         ),
+        (Fleet, ctrl('o'), Action::Select),
         (
             Fleet,
             key(KeyCode::Esc, KeyModifiers::NONE),

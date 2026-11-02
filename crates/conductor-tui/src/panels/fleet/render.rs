@@ -382,8 +382,8 @@ pub fn hint(ws: &Workspace) -> String {
     let fleet = &ws.panels.fleet;
     let items: &[(Action, &str)] = match fleet.selected_row().map(|row| row.place) {
         Some(Place::Mine) => &[
-            (Action::Select, "開く"),
             (Action::ExpandOrRight, "返事"),
+            (Action::Select, "詳細"),
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::NewShell, "シェル"),
@@ -391,12 +391,14 @@ pub fn hint(ws: &Workspace) -> String {
             (Action::OpenBranchPage, "PR を開く"),
         ],
         Some(Place::OtherConductor | Place::Outside) => &[
+            (Action::Select, "詳細"),
             (Action::StopSession, "止める"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::ExitSubPanel, "閉じる"),
             (Action::OpenBranchPage, "PR を開く"),
         ],
         None if fleet.selected_worktree().is_some() => &[
+            (Action::Select, "詳細"),
             (Action::NewSessionMenu, "新しいセッション"),
             (Action::NewShell, "シェル"),
             (Action::StopSession, "worktree を消す"),
@@ -567,7 +569,12 @@ pub fn detail(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     lines.push(Line::from(""));
     lines.push(Line::styled(
         match row.place {
-            Place::Mine => "Enter でこの worktree の画面に入る".to_string(),
+            Place::Mine => {
+                crate::render::representative_chord(&ws.keymap, ws.key_context(), Action::Select)
+                    .map_or_else(String::new, |key| {
+                        format!("{key} でこの worktree の画面に入る")
+                    })
+            }
             Place::OtherConductor => format!(
                 "この窓の外で動いています ({})。ここからは打てません",
                 ws.panels.fleet.group_of(&row)
