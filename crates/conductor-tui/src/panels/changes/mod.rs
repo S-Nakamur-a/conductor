@@ -9,7 +9,7 @@ pub(crate) mod tests;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use conductor_core::diff_state::{DiffSource, DiffState, FileDiff};
+use conductor_core::diff_state::{DiffSource, DiffState, FileDiff, FileStatus};
 use conductor_core::keymap::Action;
 use conductor_core::review_store::ReviewComment;
 
@@ -19,7 +19,8 @@ use crate::layout::{Layout, Region};
 use crate::list::{ListCursor, Viewport};
 use crate::modal::{CommentEditor, Modal};
 use crate::panels::viewer::diff::{DiffPane, Entry, SideRow, side_by_side};
-use crate::panels::viewer::render::MARK;
+use crate::panels::viewer::render::{MARK, digit_count};
+use crate::panels::viewer::syntax::Highlighter;
 use crate::panels::viewer::thread::{self, ThreadFolds};
 use crate::review::{anchor_for, anchors, innermost};
 use crate::task::{ReviewWrite, Task};
@@ -76,10 +77,23 @@ pub enum Row {
 }
 
 #[derive(Debug)]
+pub enum Source {
+    Unread,
+    /// 削除・ハンクの無いファイルと、読めなかったファイル。
+    Absent,
+    Lines(Vec<String>),
+}
+
+#[derive(Debug)]
 pub struct Section {
     pub entries: Vec<Entry>,
     pub digits: usize,
     pub rows: Vec<Row>,
+    pub source: Source,
+    /// 本文を読んだ generation。差分が届くたびに見えているファイルを読み直すのに使う。
+    /// 同じ差分でも基点が動けば (rebase) 新しい側は変わる。
+    read_at: u64,
+    pub highlighted: Vec<Vec<(ratatui::style::Style, String)>>,
     collapsed: bool,
     /// rows と同じ並びの、新しい側の行番号。
     lines: Vec<Option<usize>>,
@@ -87,16 +101,35 @@ pub struct Section {
 
 impl Section {
     fn build(file: &FileDiff) -> Self {
-        let mut pane = DiffPane::default();
-        pane.build(file, 0);
-        let digits = crate::panels::viewer::render::digit_count(pane.max_line_no);
-        Self {
-            entries: pane.entries,
-            digits,
+        let mut section = Self {
+            digits: 0,
+            entries: Vec::new(),
             rows: Vec::new(),
+            source: Source::Unread,
+            read_at: 0,
+            highlighted: Vec::new(),
             collapsed: false,
             lines: Vec::new(),
+        };
+        section.reload(file, Source::Unread);
+        if file.status == FileStatus::Deleted || file.hunks.is_empty() {
+            section.source = Source::Absent;
         }
+        section
+    }
+
+    /// entries と本文だけを差し替える。rows は組み直すまで前のまま残し、一番上を探す元にする。
+    fn reload(&mut self, file: &FileDiff, source: Source) {
+        let total = match &source {
+            Source::Lines(lines) => lines.len(),
+            _ => 0,
+        };
+        let mut pane = DiffPane::default();
+        pane.build(file, total);
+        self.digits = digit_count(pane.max_line_no);
+        self.entries = pane.entries;
+        self.source = source;
+        self.highlighted.clear();
     }
 
     fn lay_out(
@@ -169,12 +202,19 @@ pub struct ChangesPanel {
     parked: HashMap<PathBuf, Anchor>,
     folds: Folds,
     parked_folds: HashMap<PathBuf, Folds>,
+    /// 開いた塊と読んだ本文も worktree ごとに預ける。戻って届いた差分と比べて持ち越す。
+    parked_sections: HashMap<PathBuf, (DiffState, Vec<Section>)>,
     side_by_side: bool,
     cursor: ListCursor,
     list_view: Viewport,
     body_height: usize,
     body_width: usize,
     pending_reveal: Option<Anchor>,
+    /// 差分が届くたびに上げ、それより前に投げた本文の読みを捨てる。
+    generation: u64,
+    /// 読んでいる本文の generation。結果が捨てられても、generation が上がれば次を投げられる。
+    reading: Option<u64>,
+    highlighted_by: String,
 }
 
 impl ChangesPanel {
@@ -188,12 +228,16 @@ impl ChangesPanel {
             parked: HashMap::new(),
             folds: Folds::default(),
             parked_folds: HashMap::new(),
+            parked_sections: HashMap::new(),
             side_by_side,
             cursor: ListCursor::default(),
             list_view: Viewport::default(),
             body_height: 0,
             body_width: 0,
             pending_reveal: None,
+            generation: 0,
+            reading: None,
+            highlighted_by: String::new(),
         }
     }
 
@@ -257,6 +301,11 @@ impl ChangesPanel {
         if let Some(anchor) = self.anchor() {
             self.parked.insert(self.root.clone(), anchor);
         }
+        if let Some(diff) = self.diff.take() {
+            let sections = std::mem::take(&mut self.sections);
+            self.parked_sections
+                .insert(self.root.clone(), (diff, sections));
+        }
         let folds = std::mem::take(&mut self.folds);
         self.parked_folds.insert(self.root.clone(), folds);
         self.folds = self.parked_folds.remove(root).unwrap_or_default();
@@ -278,7 +327,11 @@ impl ChangesPanel {
             Some(_) => self.anchor(),
             None => self.parked.remove(root),
         };
-        self.sections = diff.files.iter().map(Section::build).collect();
+        let mut kept = self.unchanged_sections(diff);
+        self.sections = (diff.files.iter())
+            .map(|file| (kept.remove(&file.path)).unwrap_or_else(|| Section::build(file)))
+            .collect();
+        self.generation += 1;
         self.diff = Some(diff.clone());
         self.lay_out(ctx);
         self.top = anchor.map_or_else(Top::default, |anchor| self.locate(&anchor));
@@ -311,6 +364,12 @@ impl ChangesPanel {
     /// (スレッドの途中や削除行も)。その行が無くなれば (パス, 新しい側の行番号) で探し、
     /// この組み直しで畳む・開くが変わったファイルなら見出しへ。
     pub fn relayout(&mut self, ctx: &Ctx) {
+        self.relayout_from(ctx, false);
+    }
+
+    /// by_line: 一番上のファイルの本文が別の中身に変わり、開いた塊が閉じた。Body の添字の
+    /// 指す行が変わるので、同じ Row の値ではなく (パス, 行番号) で探す。
+    fn relayout_from(&mut self, ctx: &Ctx, by_line: bool) {
         let anchor = self.anchor();
         let held = (self.sections.get(self.top.file))
             .map(|section| (section.collapsed, section.rows.get(self.top.row).copied()));
@@ -320,8 +379,8 @@ impl ChangesPanel {
             let same = row.and_then(|row| section.rows.iter().position(|r| *r == row));
             match same {
                 _ if section.collapsed != was_collapsed => self.top.row = 0,
-                Some(row) => self.top.row = row,
-                None => {
+                Some(row) if !by_line => self.top.row = row,
+                _ => {
                     if let Some(anchor) = anchor {
                         self.top = self.locate(&anchor);
                     }
@@ -360,6 +419,175 @@ impl ChangesPanel {
         if !self.folds.files.remove(&path) {
             self.folds.files.insert(path);
         }
+    }
+
+    /// 差分が前と同じファイルは、読んだ本文・色・開いた塊を持ち越す。差分はファイルを
+    /// 保存するたびに届き直すので、作り直すと色と開いた塊が毎回消える。
+    fn unchanged_sections(&mut self, diff: &DiffState) -> HashMap<String, Section> {
+        let (old, sections) = match self.diff.take() {
+            Some(old) => (old, std::mem::take(&mut self.sections)),
+            None => match self.parked_sections.remove(&self.root) {
+                Some((old, mut sections)) => {
+                    sections.iter_mut().for_each(|s| s.highlighted.clear());
+                    (old, sections)
+                }
+                None => return HashMap::new(),
+            },
+        };
+        let new: HashMap<&str, &FileDiff> =
+            (diff.files.iter()).map(|f| (f.path.as_str(), f)).collect();
+        (old.files.into_iter().zip(sections))
+            .filter(|(file, _)| new.get(file.path.as_str()) == Some(&file))
+            .map(|(file, section)| (file.path, section))
+            .collect()
+    }
+
+    pub fn wanted(&mut self) -> Option<Task> {
+        if self.reading == Some(self.generation) {
+            return None;
+        }
+        let diff = self.diff.as_ref()?;
+        let file = (self.visible_files()).find(|file| {
+            let section = &self.sections[*file];
+            match section.source {
+                Source::Unread => true,
+                Source::Lines(_) => section.read_at != self.generation,
+                Source::Absent => false,
+            }
+        })?;
+        self.reading = Some(self.generation);
+        Some(Task::LoadChangeSource {
+            root: self.root.clone(),
+            path: diff.files[file].path.clone(),
+            generation: self.generation,
+        })
+    }
+
+    pub fn accept_source(
+        &mut self,
+        root: &Path,
+        path: &str,
+        generation: u64,
+        lines: Result<Vec<String>, String>,
+        ctx: &Ctx,
+    ) {
+        if self.reading == Some(generation) {
+            self.reading = None;
+        }
+        if root != self.root || generation != self.generation {
+            return;
+        }
+        let Some(file) = self.position(path) else {
+            return;
+        };
+        let section = &mut self.sections[file];
+        section.read_at = generation;
+        let lines = lines.ok();
+        let changed = match (&section.source, &lines) {
+            (Source::Lines(old), Some(new)) if old == new => return,
+            (old, _) => matches!(old, Source::Lines(_)),
+        };
+        let source = lines.map_or(Source::Absent, Source::Lines);
+        let diff = (self.diff.as_ref()).expect("position found the file in the diff");
+        self.sections[file].reload(&diff.files[file], source);
+        self.relayout_from(ctx, changed && file == self.top.file);
+    }
+
+    /// Highlighter は作るのが重いので、要るときだけ作る。
+    pub fn shows_source(&self) -> bool {
+        (self.visible_files()).any(|file| matches!(self.sections[file].source, Source::Lines(_)))
+    }
+
+    pub fn highlight(&mut self, highlighter: &Highlighter) {
+        if self.highlighted_by != highlighter.id() {
+            self.sections.iter_mut().for_each(|s| s.highlighted.clear());
+            self.highlighted_by = highlighter.id().to_string();
+        }
+        let Some(diff) = &self.diff else {
+            return;
+        };
+        for file in self.visible_files() {
+            let section = &mut self.sections[file];
+            if let Source::Lines(lines) = &section.source
+                && section.highlighted.is_empty()
+            {
+                section.highlighted = highlighter.highlight(Some(&diff.files[file].path), lines);
+            }
+        }
+    }
+
+    fn visible_files(&self) -> std::ops::Range<usize> {
+        let mut end = self.top.file;
+        let mut shown = 0;
+        while end < self.sections.len() && shown < self.body_height.max(1) {
+            let skipped = if end == self.top.file {
+                self.top.row
+            } else {
+                0
+            };
+            shown += self.height(end) - skipped;
+            end += 1;
+        }
+        self.top.file..end
+    }
+
+    fn expand(&mut self, all: bool, ctx: &Ctx) -> Vec<Effect> {
+        let Some((file, start)) = self.first_visible_block() else {
+            return Vec::new();
+        };
+        let Some(path) = self.diff.as_ref().map(|d| d.files[file].path.clone()) else {
+            return Vec::new();
+        };
+        let Section {
+            entries,
+            source,
+            digits,
+            ..
+        } = &mut self.sections[file];
+        let lines = match source {
+            Source::Lines(lines) => lines,
+            Source::Unread => return status(format!("{path} is still loading")),
+            Source::Absent => return status(format!("{path} could not be read")),
+        };
+        let mut pane = DiffPane {
+            entries: std::mem::take(entries),
+            ..DiffPane::default()
+        };
+        if let Some(idx) = pane.expandable_at(start) {
+            pane.expand(idx, all, lines);
+        }
+        *entries = pane.entries;
+        *digits = digit_count(pane.max_line_no);
+        self.relayout(ctx);
+        Vec::new()
+    }
+
+    /// (ファイル, 塊の先頭の行番号)。
+    fn first_visible_block(&self) -> Option<(usize, usize)> {
+        let mut left = self.body_height.max(1);
+        for file in self.visible_files() {
+            let section = &self.sections[file];
+            let start = if file == self.top.file {
+                self.top.row
+            } else {
+                0
+            };
+            for row in start..section.rows.len() {
+                if left == 0 {
+                    return None;
+                }
+                left -= 1;
+                let Some(line) = section.line_of(row) else {
+                    continue;
+                };
+                if (section.entries.iter()).any(|e| {
+                    matches!(e, Entry::ExpandableContext { new_line_start, .. } if *new_line_start == line)
+                }) {
+                    return Some((file, line));
+                }
+            }
+        }
+        None
     }
 
     /// viewed を切り替えたファイルは、手で開閉した分を忘れて viewed のとおりに畳む。
@@ -405,6 +633,9 @@ impl ChangesPanel {
     pub fn update_body(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         if let Some(effects) = self.comment_key(action, ctx) {
             return Some(effects);
+        }
+        if matches!(action, Action::ExpandContext | Action::ExpandAllContext) {
+            return Some(self.expand(action == Action::ExpandAllContext, ctx));
         }
         let half = (self.body_height / 2).max(1) as isize;
         match action {
@@ -695,9 +926,20 @@ impl ChangesPanel {
         }
     }
 
-    /// 新しい側でその行番号以上の最初の行。無ければ区切りの空行の手前。畳んでいれば見出し。
+    /// 新しい側でその行番号以上の最初の行。隠れた塊の中の行なら塊の行。無ければ区切りの
+    /// 空行の手前。畳んでいれば見出し。
     fn row_of_line(&self, file: usize, line: usize) -> usize {
-        let lines = &self.sections[file].lines;
+        let Section { entries, lines, .. } = &self.sections[file];
+        let line = (entries.iter())
+            .find_map(|e| match e {
+                Entry::ExpandableContext {
+                    new_line_start,
+                    new_line_end,
+                    ..
+                } if (*new_line_start..=*new_line_end).contains(&line) => Some(*new_line_start),
+                _ => None,
+            })
+            .unwrap_or(line);
         lines
             .iter()
             .position(|n| n.is_some_and(|n| n >= line))
@@ -705,9 +947,10 @@ impl ChangesPanel {
     }
 }
 
+fn status(text: String) -> Vec<Effect> {
+    vec![Effect::Status(StatusLevel::Info, text)]
+}
+
 fn no_comment_here() -> Vec<Effect> {
-    vec![Effect::Status(
-        StatusLevel::Info,
-        "no comment on this line".into(),
-    )]
+    status("no comment on this line".into())
 }

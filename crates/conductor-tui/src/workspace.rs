@@ -558,6 +558,19 @@ impl Workspace {
             | TaskResult::GitStatus { .. }
             | TaskResult::HeadLog { .. }
             | TaskResult::CommitOverview(_) => self.panels.explorer.apply_result(result),
+            TaskResult::ChangeSource {
+                root,
+                path,
+                generation,
+                lines,
+            } => {
+                let viewer_root = self.panels.viewer.root().to_path_buf();
+                let (panels, _, ctx) = self.split(&viewer_root);
+                panels
+                    .changes
+                    .accept_source(&root, &path, generation, lines, &ctx);
+                Vec::new()
+            }
             TaskResult::FileLoaded { .. } | TaskResult::MediaRendered { .. } => {
                 self.panels.viewer.apply_result(result)
             }
@@ -970,7 +983,10 @@ impl Workspace {
 
     /// 描く直前に、本文から導かれる重い成果物を整える。
     pub fn prepare(&mut self) -> Vec<Effect> {
-        let effects = self.panels.viewer.prepare(&self.config, &self.theme);
+        let mut effects = self.panels.viewer.prepare(&self.config, &self.theme);
+        if self.center_tab() == Tab::Files && !self.chrome.fleet_open {
+            effects.extend(self.prepare_changes());
+        }
         // Highlighter は初回参照で SyntaxSet を構築する。読んでいない間は触らせない。
         if !self.panels.terminal.has_transcript() {
             return effects;
@@ -993,6 +1009,16 @@ impl Workspace {
             fleet_session.as_deref(),
         );
         effects
+    }
+
+    fn prepare_changes(&mut self) -> Option<Effect> {
+        let Panels {
+            viewer, changes, ..
+        } = &mut self.panels;
+        if changes.shows_source() {
+            changes.highlight(viewer.highlighter(&self.config));
+        }
+        changes.wanted().map(Effect::Spawn)
     }
 
     /// レイアウトから区画の窓を引き直す。描画より前に呼ぶ。

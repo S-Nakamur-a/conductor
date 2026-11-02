@@ -771,7 +771,7 @@ pub(crate) fn unified_line(
 }
 
 /// 構文トークンは新ファイル本文から取ったものなので、削除行には無い。
-fn syntax_for(
+pub(crate) fn syntax_for(
     highlighted: &[Vec<(Style, String)>],
     new_line_no: Option<usize>,
 ) -> Option<&[(Style, String)]> {

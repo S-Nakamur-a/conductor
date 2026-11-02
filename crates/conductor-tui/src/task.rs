@@ -139,6 +139,12 @@ pub enum Task {
         seq: u64,
         diff_of: Option<DiffSource>,
     },
+    /// Files changed の 1 ファイルの本文 (作業ツリー)。generation で照合する。
+    LoadChangeSource {
+        root: PathBuf,
+        path: String,
+        generation: u64,
+    },
     /// 画像を升目に描く。鍵は (パス, 桁, 行) で、区画の大きさが変われば描き直す。
     RenderMedia {
         root: PathBuf,
@@ -441,6 +447,12 @@ pub enum TaskResult {
         seq: u64,
         loaded: Result<content::Loaded, String>,
     },
+    ChangeSource {
+        root: PathBuf,
+        path: String,
+        generation: u64,
+        lines: Result<Vec<String>, String>,
+    },
     MediaRendered {
         key: media::Key,
         rendered: Result<Box<media::Rendered>, String>,
@@ -727,6 +739,24 @@ impl Task {
                         (seq, loaded)
                     },
                     |(seq, loaded)| TaskResult::FileLoaded { seq, loaded },
+                );
+            }
+            Task::LoadChangeSource {
+                root,
+                path,
+                generation,
+            } => {
+                svc.spawn(
+                    move || {
+                        let lines = content::read_lines(&root, &path, env.tab_width);
+                        (root, path, generation, lines)
+                    },
+                    |(root, path, generation, lines)| TaskResult::ChangeSource {
+                        root,
+                        path,
+                        generation,
+                        lines,
+                    },
                 );
             }
             Task::RenderMedia {

@@ -447,6 +447,9 @@
 "r" = "toggle_resolve"
 "}" = "next_comment"
 "{" = "prev_comment"
+# 見えている最初の隠れた行の塊を開く。
+"enter" = "expand_context"
+"shift+enter" = "expand_all_context"
 ":" = "command_palette"
 
 # ── Overlay (shared popup navigation) ──────────────────────────────────────────
