@@ -1,7 +1,7 @@
 {
   "name": "conductor",
-  "version": "0.11.0",
-  "description": "Hooks, MCP tools, and skills for Claude Code sessions running inside Conductor TUI",
+  "version": "0.12.0",
+  "description": "MCP tools and skills for Claude Code sessions running inside Conductor TUI",
   "author": {
     "name": "S-Nakamur-a"
   },

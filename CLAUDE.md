@@ -54,7 +54,7 @@ the Claude Code sessions inside the TUI, resolving the DB from
   commentary.
 - **The window tools** (`open_file` / `close_file`) ride the
   cc-notify socket as one `ui <json>` line (`cc_hook::UiRequest`), relayed by the
-  PTY host like `cc-signal`. They can only answer *sent*: a host with no window
+  PTY host like the session id. They can only answer *sent*: a host with no window
   drops the line, and it is deliberately not replayed on attach. An open_file
   request from another worktree switches the window there first; close_file does not, and
   only acts on the worktree being shown. With `diff` it lands in the Files changed tab
@@ -67,25 +67,20 @@ the Claude Code sessions inside the TUI, resolving the DB from
 - **Never print to stdout** from anything reachable by `mcp-serve`; it would
   corrupt the protocol. Logging goes to stderr, and `conductor-mcp/tests/no_stdout.rs` guards it.
 
-### Session hooks (`conductor cc-hook` / `cc-signal`, `crates/conductor-core/src/cc_hook/`)
+### Session hooks (`conductor cc-hook`, `crates/conductor-core/src/cc_hook/`)
 
 `/clear` rotates Claude Code's log to a **new session id** and nothing on disk
 links the old file to the new one, so a panel pinned to its spawn-time
 `--session-id` would show the pre-clear transcript forever. A `SessionStart` hook
 runs inside the panel's own Claude process and reports the current id back over a
 Unix socket, which the PTY host (below) listens on through `conductor-svc`'s
-`watch/cc_notify.rs` and relays to the window. `cc-signal`
-rides the same socket with the panel's waiting/active state. Nothing in the window
-reads it; the host still relays and replays it.
+`watch/cc_notify.rs` and relays to the window.
 `pty/spawn.rs` writes `.conductor/claude-hooks.json` and passes it as `--settings`
 on every spawn (that *adds a layer*, so the user's own settings keep working),
 plus `CONDUCTOR_PANEL_ID` and `CONDUCTOR_NOTIFY_SOCK`.
-They live in the binary rather than `plugins/` for the same reason `mcp-serve`
-does: a separately released plugin drifts, and the failure is silent — and
-waiting/active used to be plugin-only, so anyone without it had no state at all.
-`PostToolUse` is declared on top of the plugin's three events because it is the
-only one that fires after a permission dialog is approved; without it the state
-stays "waiting" while the panel is working. **There is no hook-less fallback** —
+`cc-hook` lives in the binary rather than `plugins/` for the same reason `mcp-serve`
+does: a separately released plugin drifts, and the failure is silent.
+**There is no hook-less fallback** —
 the old log-shape inference is gone, so a panel whose hook stays quiet keeps its
 spawn-time session id.
 
@@ -110,9 +105,7 @@ the relayed child, so a user command that calls conductor back is not relayed tw
 it sits under `$XDG_RUNTIME_DIR` / `$TMPDIR` (falling back to `/tmp/conductor-<uid>`),
 in a 0700 directory, named by a hash of the repository's `conductor_dir`. Keying
 it off `conductor_dir` rather than the worktree root is what makes every linked
-worktree share the one listener. Clients that cannot read the environment — the
-plugin's shell scripts — find the path in `.conductor/cc-notify.path`, written
-before the `bind`.
+worktree share the one listener.
 
 ### PTY host (`conductor pty-host`, `crates/conductor-svc/src/pty/host.rs`)
 
@@ -134,9 +127,8 @@ with no window open, and the window opened later showed it mid-tool.
   always comes last.
 - **The host answers what nobody else can while the window is away:** cursor-position
   queries (`CSI 6 n`), the alternate-screen SIGWINCH nudge, and cc-notify. It keeps
-  each panel's session id and the last active/waiting for each cwd that still has a
-  live Claude, and replays them on attach, which is what keeps the transcript right
-  across a reopen.
+  each panel's session id and hands it over on attach, which is what keeps the
+  transcript right across a reopen.
 - **Lock order is window → each session's parser.** Building the handshake under the
   window lock is what makes snapshot and stream meet with no gap and no repeat.
 - **The child's environment is the window's, sent whole with each spawn.** The host's
@@ -517,9 +509,10 @@ hides it), and the commit picked is kept per worktree.
 the screen conductor opens on: every Claude on the machine, built from the state
 files Claude Code writes itself (`~/.claude/sessions/<pid>.json`, read by
 `claude_sessions::registry` once a second on a worker) joined with this window's
-PtyStore by conversation id. The hooks' waiting/active cannot be the source: they
-stay "waiting" after a permission is approved until the tool finishes, and after an
-Esc refusal until the next prompt (measured on 2.1.309). **Every account's state
+PtyStore by conversation id. Claude Code's hook events cannot be the source of the
+state: a waiting/active pair driven by them stayed "waiting" after a permission
+is approved until the tool finishes, and after an Esc refusal until the next prompt
+(measured on 2.1.309). **Every account's state
 files are read** (`Config::claude_dirs`: each `[[claude.accounts]]` config dir, then the
 window's own `CLAUDE_CONFIG_DIR`), because a window reading only its own env's dir showed
 the other account's Claudes, its own panels included, with no state at all (measured with
@@ -587,8 +580,8 @@ not repaint its history after a SIGWINCH (measured on 2.1.x: 60 printed lines, t
 100→80 columns, brought back 1245 bytes of prompt area and none of the lines). The
 transcript view belongs to the panel id it was opened for (`TerminalPanel::transcript_of`),
 so whichever region shows that session draws it, and a region showing another one stays
-live. Host notifications (Claude's
-state, session ids) are sent with `send_watch_unscoped` so a repository switch does
+live. Host notifications (session ids, window tool requests) are sent with
+`send_watch_unscoped` so a repository switch does
 not drop them; every other watch event keeps its generation.
 
 The list is `min(main × 61%, 125)` columns wide (`layout.rs`'s `FLEET_LIST_PCT` /

@@ -74,7 +74,7 @@ pub(super) enum ToWindow {
         version: String,
         protocol: u32,
         sessions: Vec<SessionInfo>,
-        /// ウィンドウが居ない間に届いた cc-notify のうち、今も効いているもの。
+        /// 常に空。古い版の窓はこの欄が無いと挨拶を読めない。
         notifications: Vec<String>,
     },
     Spawned {

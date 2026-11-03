@@ -30,8 +30,6 @@ pub enum WatchEvent {
     GitChanged,
     /// 設定ファイルが作成・変更・置換された。
     ConfigChanged,
-    /// Claude Code パネルの active/waiting 状態が変わった。
-    CcState { kind: CcState, cwd: PathBuf },
     /// パネルが書き込んでいる Claude セッションの id が変わった (起動、/resume、/clear)。
     CcSessionRotated {
         panel_id: String,
@@ -46,24 +44,10 @@ pub enum WatchEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CcState {
-    Active,
-    Waiting,
-}
-
 impl From<conductor_core::cc_hook::Notification> for WatchEvent {
     fn from(notification: conductor_core::cc_hook::Notification) -> Self {
         use conductor_core::cc_hook::Notification;
         match notification {
-            Notification::Active { cwd } => Self::CcState {
-                kind: CcState::Active,
-                cwd,
-            },
-            Notification::Waiting { cwd } => Self::CcState {
-                kind: CcState::Waiting,
-                cwd,
-            },
             Notification::Session {
                 panel_id,
                 session_id,

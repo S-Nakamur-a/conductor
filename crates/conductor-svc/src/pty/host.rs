@@ -7,7 +7,7 @@
 //! 端末からの問い合わせ (CSI 6 n) とオルタネート画面のナッジもここで捌く。ウィンドウが
 //! 居ない間に答えられるのはホストだけ。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -64,8 +64,6 @@ struct Shared {
     /// ロックの順序は window → 各セッションの parser。pump もこの順で取る。
     window: Mutex<Option<Window>>,
     generation: Mutex<u64>,
-    /// 最後に届いた active / waiting を cwd ごとに。つなぎ直したウィンドウへ再生する。
-    states: Mutex<HashMap<PathBuf, String>>,
     scrollback: usize,
     version: String,
     /// 退くときに片付けるもの。ウィンドウと同じプロセスで動くときは持たない。
@@ -164,7 +162,7 @@ impl Host {
             version: self.shared.version.clone(),
             protocol: wire::PROTOCOL,
             sessions: sessions.iter().map(|s| lock(&s.info).clone()).collect(),
-            notifications: self.live_states(&sessions),
+            notifications: Vec::new(),
         };
         wire::write_control(&mut stream, &welcome)?;
         for session in &sessions {
@@ -182,23 +180,6 @@ impl Host {
             let _ = old.stream.shutdown(std::net::Shutdown::Both);
         }
         Ok(Some(generation))
-    }
-
-    /// 生きた Claude が居る cwd の状態だけ。閉じたタブの waiting をホストの寿命の間
-    /// 出し続けないため。
-    fn live_states(&self, sessions: &[Arc<HostSession>]) -> Vec<String> {
-        let live: Vec<PathBuf> = sessions
-            .iter()
-            .filter(|s| !s.exited.load(Ordering::Relaxed))
-            .map(|s| lock(&s.info))
-            .filter(|info| info.kind == SessionKind::ClaudeCode)
-            .map(|info| info.working_dir.clone())
-            .collect();
-        lock(&self.shared.states)
-            .iter()
-            .filter(|(cwd, _)| live.contains(cwd))
-            .map(|(_, line)| line.clone())
-            .collect()
     }
 
     fn detach(&self, generation: u64) {
@@ -440,9 +421,6 @@ impl Host {
                     lock(&session.info).claude_session_id = Some(session_id.clone());
                 }
             }
-            Notification::Active { cwd } | Notification::Waiting { cwd } => {
-                lock(&self.shared.states).insert(cwd.clone(), line.clone());
-            }
             // 覚えない。次に繋いだウィンドウで再生すると、昔の頼みごとが今の画面を動かす。
             Notification::Ui { .. } => {}
         }
@@ -487,7 +465,6 @@ fn snapshot(history: Option<&VecDeque<u8>>, screen: &vt100::Screen) -> Vec<u8> {
 struct HostPaths {
     socket: PathBuf,
     cc_socket: PathBuf,
-    cc_pointer: PathBuf,
 }
 
 fn exit_host(paths: &HostPaths) -> ! {
@@ -495,7 +472,6 @@ fn exit_host(paths: &HostPaths) -> ! {
     // 起こしてもらう。
     let _ = std::fs::remove_file(&paths.socket);
     let _ = std::fs::remove_file(&paths.cc_socket);
-    let _ = std::fs::remove_file(&paths.cc_pointer);
     std::process::exit(0)
 }
 
@@ -547,7 +523,6 @@ pub fn run(repo_root: &Path, version: &str, scrollback: usize) -> Result<()> {
     let paths = HostPaths {
         socket: cc_hook::pty_host_socket_path(repo_root),
         cc_socket: cc_hook::socket_path(repo_root),
-        cc_pointer: cc_hook::socket_pointer_path(repo_root),
     };
     // ロックを取れた以上、残っているソケットは前のホストの亡骸。
     let _ = std::fs::remove_file(&paths.socket);
@@ -568,8 +543,6 @@ pub fn run(repo_root: &Path, version: &str, scrollback: usize) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
-
     use super::*;
     use crate::pty::client::Detached;
     use crate::pty::{Launch, PtyStore, Spawn};
@@ -783,41 +756,43 @@ mod tests {
     }
 
     #[test]
-    fn ウィンドウが居ない間の通知は_claudeが居るcwdの分だけ次のウィンドウに届く() {
+    fn ウィンドウが居ない間に変わったセッションidは次のウィンドウに届く() {
         let dir = tempfile::tempdir().unwrap();
         let (host, socket) = serve(dir.path());
         let mut first = window(&socket);
         let idx = launch(&mut first, dir.path(), Launch::Shell { program: "/bin/sh" });
         let id = first.sessions()[idx].id.clone();
         drop(first);
-        // 本物の claude は起こせないので、居るセッションを Claude ということにする。
-        lock(&host.find(&id).unwrap().info).kind = SessionKind::ClaudeCode;
 
-        let closed_tab = PathBuf::from("/closed-tab");
-        host.on_notification(Notification::Waiting { cwd: closed_tab });
-        host.on_notification(Notification::Waiting {
-            cwd: dir.path().to_path_buf(),
-        });
         host.on_notification(Notification::Session {
             panel_id: id,
             session_id: "after-clear".to_string(),
         });
 
-        let (tx, rx) = mpsc::channel();
-        let second = window_with(&socket, move |n| {
-            let _ = tx.send(n);
-        });
-        let replayed: Vec<Notification> = rx.try_iter().collect();
-        assert_eq!(
-            replayed,
-            [Notification::Waiting {
-                cwd: dir.path().to_path_buf()
-            }]
-        );
+        let second = window(&socket);
         assert_eq!(
             second.claude_session_ref(0).map(|(_, id, _)| id).as_deref(),
             Some("after-clear")
         );
+    }
+
+    #[test]
+    fn 挨拶の返事は古い窓が読む通知の欄を空で持つ() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_host, socket) = serve(dir.path());
+        let mut stream = UnixStream::connect(&socket).unwrap();
+        let hello = ToHost::Hello {
+            version: "older".into(),
+            protocol: wire::PROTOCOL,
+        };
+        wire::write_control(&mut stream, &hello).unwrap();
+
+        let Frame::Control(welcome) = wire::read_frame::<serde_json::Value>(&mut stream).unwrap()
+        else {
+            panic!("the host answered with bytes before the welcome");
+        };
+        assert_eq!(welcome["type"], "Welcome");
+        assert_eq!(welcome["notifications"], serde_json::json!([]));
     }
 
     #[test]

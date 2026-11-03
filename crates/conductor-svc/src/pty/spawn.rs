@@ -191,9 +191,7 @@ pub(super) fn build_command(
             // --settings はレイヤーを足す形なので、ユーザ自身の settings は生き残る (実測)。
             // 書けば先客のパネルが次に読む claude-hooks.json をこちらの exe に差し替えてしまう。
             //
-            // PANEL_ID は仕掛けない場合も渡す。プラグインのフックはこれの有無だけで自分が
-            // 黙るかを決めるので、無いと .conductor/cc-notify.path から先客のソケットを
-            // 自力で見つけて active/waiting を送り、先客の状態を上書きする。
+            // PANEL_ID は仕掛けない場合も渡す。古い版のプラグインのフックは、これがあると黙る。
             //
             // 宛先は逆に、先に消してから仕掛けた枝だけが入れ直す。2 つ目のウィンドウを
             // 先客のパネルの中から起動すると環境変数でここまで継がれてくるので、渡さない
@@ -206,7 +204,7 @@ pub(super) fn build_command(
                     cmd.arg(&path);
                     cmd.env(cc_hook::NOTIFY_SOCK_ENV, cc_hook::socket_path(repo_root));
                 }
-                // 書けなくてもパネルは動かす。ローテーション追跡はログからの推測に落ちる。
+                // 書けなくてもパネルは動かす。/clear を追えず、起動時の session id のまま残る。
                 Some(Err(e)) => log::warn!("could not install the Claude session hook: {e}"),
                 None => {}
             }
