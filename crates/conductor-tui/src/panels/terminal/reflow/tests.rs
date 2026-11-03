@@ -1442,3 +1442,56 @@ fn 長い回答は切らずに折り返す() {
         "末尾が落ちている: {shown:?}"
     );
 }
+
+#[test]
+fn 折り返さずに描き直した文字で見た目の行の区切りが決まる() {
+    let prompt = format!("please open https://example.com/{} now", "p".repeat(30));
+    let mut reflow = Reflow::new(
+        vec![
+            entry(
+                Role::Assistant,
+                vec![DisplayBlock::Text(
+                    "alpha beta gamma delta epsilon zeta eta theta\n\nnext paragraph".into(),
+                )],
+            ),
+            entry(Role::User, vec![DisplayBlock::Text(prompt.clone())]),
+        ],
+        0,
+    );
+    reflow.prepare(&Theme::default(), highlighter(), (30, 24), false);
+    let rows: Vec<String> = reflow.lines.iter().map(|l| l.to_string()).collect();
+    let source = reflow.unwrapped_text(0..30, &Theme::default(), highlighter());
+    let picked = crate::select::Picked {
+        rows: rows.clone(),
+        top: 0,
+        first: 0,
+        parts: rows.clone(),
+    };
+    let text = picked.join(&crate::rejoin::breaks(&rows, &source));
+    assert!(
+        text.contains("alpha beta gamma delta epsilon zeta eta theta\n\n"),
+        "{rows:#?}\n{text}"
+    );
+    assert!(text.contains(&prompt), "{rows:#?}\n{text}");
+}
+
+#[test]
+fn 表のセルの中の折り返しは繋がない() {
+    let mut reflow = Reflow::new(
+        vec![entry(
+            Role::Assistant,
+            vec![DisplayBlock::Text(
+                "| col a | col b |\n|---|---|\n| one | a cell with enough text to wrap inside the narrow table |".into(),
+            )],
+        )],
+        0,
+    );
+    reflow.prepare(&Theme::default(), highlighter(), (30, 40), false);
+    let rows: Vec<String> = reflow.lines.iter().map(|l| l.to_string()).collect();
+    let source = reflow.unwrapped_text(0..30, &Theme::default(), highlighter());
+    let breaks = crate::rejoin::breaks(&rows, &source);
+    assert!(
+        breaks.iter().all(|&b| b == crate::rejoin::Break::Newline),
+        "{rows:#?}\n{breaks:?}"
+    );
+}

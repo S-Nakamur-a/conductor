@@ -7,6 +7,7 @@
 pub mod click;
 pub mod command;
 pub mod comment_list;
+pub mod copy;
 pub mod effect;
 pub mod entry;
 pub mod fx;
@@ -18,6 +19,7 @@ pub mod markdown;
 pub mod menu;
 pub mod modal;
 pub mod panels;
+pub mod rejoin;
 pub mod remote;
 pub mod render;
 pub mod resume;

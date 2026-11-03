@@ -95,6 +95,13 @@ line numbers and the whole panel width is copied, gutter and all; start on the
 code and only the code comes along — no line numbers, no fold markers, no
 scrollbar.
 
+In a shell the lines the terminal wrapped come back as one line. For a Claude
+panel the copy is matched against the session's log and a wrapped line is
+rejoined — with a space between words, with nothing inside a URL or Japanese
+text. A line the log cannot vouch for, such as the input box or the status
+lines, keeps its line break. On a live panel the plain copy lands first and is
+replaced once the log has been read.
+
 The main screen shows one worktree, whose branch is in the title bar, and lists no
 others: no uncommitted-change counts, ahead/behind or waiting/active state per
 worktree. Every worktree and its sessions are in Sessions (**Alt+1**).

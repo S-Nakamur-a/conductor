@@ -161,6 +161,8 @@ pub enum Task {
         seq: u64,
         cancel: Arc<AtomicBool>,
     },
+    /// コピーした行の区切りを、会話ログの本文で決め直す。
+    RejoinCopy(crate::copy::FromLog),
     /// パネルが pin している Claude セッションの .jsonl。数 MB になるので UI では読まない。
     ReadTranscript {
         working_dir: PathBuf,
@@ -476,6 +478,11 @@ pub enum TaskResult {
         session_id: String,
         entries: Result<Vec<LogEntry>, String>,
     },
+    /// `copy::from_log` の答え。`seq` は何回目のコピーのものか。
+    Rejoined {
+        seq: u64,
+        text: Option<String>,
+    },
     Persisted(Result<(), String>),
     History {
         /// 直前に保存したかどうか。ステータスに出す。
@@ -712,6 +719,17 @@ impl Task {
                         skip,
                         page,
                     },
+                );
+            }
+            Task::RejoinCopy(job) => {
+                svc.spawn(
+                    move || {
+                        let text = read_transcript(&env, &job.working_dir, &job.session_id)
+                            .ok()
+                            .and_then(|entries| crate::copy::from_log(&job, &entries));
+                        (job.seq, text)
+                    },
+                    |(seq, text)| TaskResult::Rejoined { seq, text },
                 );
             }
             Task::ReadTranscript {
