@@ -1,6 +1,6 @@
-//! 変更ファイルを explorer に出すディレクトリツリーに平坦化し、行とファイルを相互に引く。
+//! 変更ファイルをディレクトリツリーの行に平坦化し、行とファイルを相互に引く。
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use super::{DiffListEntry, DiffState, FileDiff};
 
@@ -22,45 +22,20 @@ impl Dir {
         }
     }
 
-    fn emit(
-        &self,
-        prefix: &str,
-        depth: usize,
-        collapsed_dirs: &HashSet<String>,
-        out: &mut Vec<DiffListEntry>,
-    ) {
+    fn emit(&self, depth: usize, out: &mut Vec<DiffListEntry>) {
         for (name, dir) in &self.subdirs {
-            let mut path = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}/{name}")
-            };
             let mut name = name.clone();
             let mut dir = dir;
             // 子が 1 つしかない階層は 1 行に畳む。深い一本道が行と字下げを食い潰すため。
-            // 畳んだ行のパスは最深のものになる。途中が折りたたみ済みならそこで止める。
-            // 畳むと閉じた指定が消えてしまう。
-            while !collapsed_dirs.contains(&path)
-                && dir.file_indices.is_empty()
-                && dir.subdirs.len() == 1
-            {
+            while dir.file_indices.is_empty() && dir.subdirs.len() == 1 {
                 let Some((child, only)) = dir.subdirs.iter().next() else {
                     break;
                 };
                 name = format!("{name}/{child}");
-                path = format!("{path}/{child}");
                 dir = only;
             }
-            let collapsed = collapsed_dirs.contains(&path);
-            out.push(DiffListEntry::Directory {
-                name,
-                path: path.clone(),
-                depth,
-                collapsed,
-            });
-            if !collapsed {
-                dir.emit(&path, depth + 1, collapsed_dirs, out);
-            }
+            out.push(DiffListEntry::Directory { name, depth });
+            dir.emit(depth + 1, out);
         }
         for &file_index in &self.file_indices {
             out.push(DiffListEntry::File { file_index, depth });
@@ -85,7 +60,7 @@ impl DiffState {
         for (index, path) in sorted {
             root.insert(path, index);
         }
-        root.emit("", 0, &self.collapsed_dirs, &mut self.display_list);
+        root.emit(0, &mut self.display_list);
     }
 
     /// ディレクトリ行、サマリー行、範囲外は None。
@@ -96,7 +71,7 @@ impl DiffState {
         }
     }
 
-    /// [Self::resolve_file] の逆引き。折りたたまれたディレクトリの中のファイルは見えない。
+    /// [Self::resolve_file] の逆引き。
     pub fn display_index_for_path(&self, path: &str) -> Option<usize> {
         (0..self.display_list.len())
             .find(|&idx| self.resolve_file(idx).is_some_and(|f| f.path == path))

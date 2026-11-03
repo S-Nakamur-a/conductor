@@ -92,16 +92,11 @@ pub fn lines(
                     Style::default().fg(theme.accent),
                 )]
             }
-            DiffListEntry::Directory {
-                name,
-                depth,
-                collapsed,
-                ..
-            } => {
+            DiffListEntry::Directory { name, depth } => {
                 let indent = "  ".repeat(*depth);
                 vec![
                     Span::styled(
-                        format!("  {indent}{} ", expand_arrow(!*collapsed, icons)),
+                        format!("  {indent}{} ", expand_arrow(true, icons)),
                         Style::default().fg(theme.info),
                     ),
                     Span::styled(name.clone(), Style::default().fg(theme.info)),

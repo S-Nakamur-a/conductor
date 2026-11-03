@@ -10,8 +10,6 @@ mod source;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 pub use source::{DiffSource, short_oid};
@@ -28,11 +26,9 @@ pub enum DiffView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffListEntry {
     Directory {
-        path: String,
-        /// パスの最後の要素。
+        /// パスの最後の要素。子が 1 つだけの階層は `core/src` のように畳んで 1 行にする。
         name: String,
         depth: usize,
-        collapsed: bool,
     },
     /// file_index は [DiffState::files] への添字。
     File { file_index: usize, depth: usize },
@@ -113,8 +109,6 @@ pub struct DiffState {
     /// パス順。
     pub files: Vec<FileDiff>,
     pub display_list: Vec<DiffListEntry>,
-    /// リポジトリ相対のディレクトリパス。
-    pub collapsed_dirs: HashSet<String>,
     pub source: DiffSource,
     /// diff 全体を計算できなかった理由、またはベースを解決できず HEAD 基準に落ちた理由。
     pub error: Option<String>,
@@ -129,7 +123,6 @@ impl DiffState {
         Self {
             files: Vec::new(),
             display_list: Vec::new(),
-            collapsed_dirs: HashSet::new(),
             source,
             error: None,
             has_summary: false,
