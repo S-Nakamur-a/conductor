@@ -133,7 +133,8 @@ and `refreshInterval` are not carried over. Usage appears once a session conduct
 started has drawn its status line. The two states that wait for you to pick them up —
 finished and not yet looked at, and not asked anything yet (counted as idle above) — are
 drawn in red. A Claude started by the `[api] command` program (one whose parent process is
-that executable) is not listed; stopping or deleting a worktree still stops it.
+that executable) is not listed, so **D** on a line cannot reach it; deleting a worktree still
+stops one running in it.
 
 **j** / **k** move one line, repository headings included; **J** / **K** (or **Shift+↓** /
 **Shift+↑**) jump to the next repository, or back to the top of the current one. Clicking a

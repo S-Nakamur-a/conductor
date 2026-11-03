@@ -216,8 +216,8 @@ fn 起動してから動いていない_claude_は選んでも未依頼() {
         ..status(vec![unstirred(7, "s1", Status::Idle)])
     };
     // 1 行だけなので最初の apply で選ばれ、次の apply では見た後になる。
-    fleet.apply(snapshot(), Vec::new(), None, false, at(200));
-    fleet.apply(snapshot(), Vec::new(), None, false, at(201));
+    fleet.apply(snapshot(), Vec::new(), None, true, at(200));
+    fleet.apply(snapshot(), Vec::new(), None, true, at(201));
     assert_eq!(only_state(&fleet), State::Unasked);
 }
 

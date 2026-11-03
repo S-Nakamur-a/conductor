@@ -1034,8 +1034,10 @@ mod tests {
         assert!(info.started <= SystemTime::now());
         assert!(info.started > SystemTime::now() - Duration::from_secs(24 * 3600));
         assert_eq!(
-            SystemProcesses.program(std::process::id()),
-            Some(std::env::current_exe().unwrap())
+            SystemProcesses
+                .program(std::process::id())
+                .map(|p| p.canonicalize().unwrap()),
+            Some(std::env::current_exe().unwrap().canonicalize().unwrap())
         );
     }
 
