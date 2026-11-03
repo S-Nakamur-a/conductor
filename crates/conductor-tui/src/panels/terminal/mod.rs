@@ -140,6 +140,7 @@ pub struct TerminalPanel {
     deferred: HashMap<String, String>,
     /// 2 つ目のウィンドウは先客の宛先を奪わないよう、フックを仕掛けずに降りる。
     session_hooks: bool,
+    pub log_urls: crate::link::LogUrls,
 }
 
 impl TerminalPanel {
@@ -158,6 +159,7 @@ impl TerminalPanel {
             wants_clear: false,
             worktree: None,
             deferred: HashMap::new(),
+            log_urls: Default::default(),
             session_hooks: true,
         }
     }

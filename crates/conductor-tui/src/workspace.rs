@@ -610,6 +610,16 @@ impl Workspace {
                 }
                 Vec::new()
             }
+            TaskResult::LogUrls { session_id, scan } => {
+                let shown = crate::link::shown_claude_log(self).map(|(_, id)| id);
+                self.panels.terminal.log_urls.install(
+                    session_id,
+                    scan,
+                    shown.as_deref(),
+                    Instant::now(),
+                );
+                Vec::new()
+            }
             TaskResult::Transcript {
                 session_id,
                 entries,

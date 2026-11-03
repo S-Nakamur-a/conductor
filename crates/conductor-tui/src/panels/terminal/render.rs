@@ -141,6 +141,19 @@ fn snapshot_screen(
 
 /// シェルを映す区画のうち、端末が次の行へ自動で折り返した行 (画面の行)。
 pub fn soft_wrapped_rows(ws: &Workspace, region: Region, rect: Rect) -> Vec<u16> {
+    shell_wraps(ws, region, rect)
+        .map(|(rows, _, _)| rows)
+        .unwrap_or_default()
+}
+
+/// リンクを張るための折り返し。PTY が区画より広い間は行の右が切れていて、
+/// 繋ぐと字の抜けた URL になるので None。
+pub fn link_wrapped_rows(ws: &Workspace, region: Region, rect: Rect) -> Option<(Vec<u16>, Rect)> {
+    let (rows, cols, content) = shell_wraps(ws, region, rect)?;
+    (cols <= content.width).then_some((rows, content))
+}
+
+fn shell_wraps(ws: &Workspace, region: Region, rect: Rect) -> Option<(Vec<u16>, u16, Rect)> {
     let panel = &ws.panels.terminal;
     let (session, scroll, content) = match region {
         Region::TerminalShell => {
@@ -148,29 +161,34 @@ pub fn soft_wrapped_rows(ws: &Workspace, region: Region, rect: Rect) -> Vec<u16>
             (pane.session.clone(), pane.scroll, content_area(rect))
         }
         Region::FleetChanges => (ws.fleet_shell(), 0, pty_area(rect)),
-        _ => return Vec::new(),
+        _ => return None,
     };
-    let Some(screen) = panel
-        .index_of(session.as_deref())
-        .and_then(|index| panel.pty.screen(index))
-    else {
-        return Vec::new();
-    };
+    let screen = panel.pty.screen(panel.index_of(session.as_deref())?)?;
     let banner = region == Region::TerminalShell;
-    wrapped_rows(&screen, scroll, content.height, banner)
-        .into_iter()
-        .map(|row| content.y + row)
-        .collect()
+    let (rows, cols) = wrapped_rows(&screen, scroll, content.height, banner);
+    let rows = rows.into_iter().map(|row| content.y + row).collect();
+    Some((rows, cols, content))
 }
 
-/// スクロールバックを当てた画面で、次の行へ折り返している行 (内容領域の上から)。
+/// Claude の区画が映しているセッションと、その中身を描く領域。
+pub fn claude_shown(ws: &Workspace, region: Region, rect: Rect) -> (Option<String>, Rect) {
+    match region {
+        Region::TerminalClaude => (
+            ws.panels.terminal.session_in(Focus::TerminalClaude),
+            content_area(rect),
+        ),
+        _ => (ws.fleet_session(), pty_area(rect)),
+    }
+}
+
+/// スクロールバックを当てた画面で、次の行へ折り返している行 (内容領域の上から) と、画面の桁数。
 /// `banner` なら、遡っている間に帯が重なる最上行は繋がない。
 fn wrapped_rows(
     screen: &Arc<Mutex<vt100::Parser>>,
     scroll: usize,
     max_rows: u16,
     banner: bool,
-) -> Vec<u16> {
+) -> (Vec<u16>, u16) {
     let mut parser = lock(screen);
     let wanted = if parser.screen().alternate_screen() {
         0
@@ -179,12 +197,12 @@ fn wrapped_rows(
     };
     parser.set_scrollback(wanted);
     let covered = banner && parser.screen().scrollback() > 0;
-    let (rows, _) = parser.screen().size();
+    let (rows, cols) = parser.screen().size();
     let wrapped = (0..rows.min(max_rows))
         .filter(|&row| parser.screen().row_wrapped(row) && !(covered && row == 0))
         .collect();
     parser.set_scrollback(0);
-    wrapped
+    (wrapped, cols)
 }
 
 /// 端末のカーソルをその区画へ置く。IME の変換窓はこれを見て出る場所を決めるので、
@@ -440,14 +458,14 @@ mod tests {
     fn 端末が折り返した行だけを折り返しとして返す() {
         let screen = Arc::new(Mutex::new(vt100::Parser::new(5, 10, 100)));
         lock(&screen).process(b"short\r\nabcdefghijKLMNO\r\nend");
-        assert_eq!(wrapped_rows(&screen, 0, 5, true), vec![1]);
+        assert_eq!(wrapped_rows(&screen, 0, 5, true).0, vec![1]);
     }
 
     #[test]
     fn 遡った画面でも見えている行の折り返しを返す() {
         let screen = Arc::new(Mutex::new(vt100::Parser::new(3, 10, 100)));
         lock(&screen).process(b"x\r\nabcdefghijKLMNO\r\n1\r\n2\r\n3\r\n4");
-        assert_eq!(wrapped_rows(&screen, 4, 3, false), vec![1]);
+        assert_eq!(wrapped_rows(&screen, 4, 3, false).0, vec![1]);
         assert_eq!(lock(&screen).screen().scrollback(), 0);
     }
 
@@ -455,9 +473,9 @@ mod tests {
     fn オルタネート画面でも端末が折り返した行を返す() {
         let screen = Arc::new(Mutex::new(vt100::Parser::new(3, 10, 100)));
         lock(&screen).process(b"\x1b[?1049habcdefghijKLMNO\r\n1");
-        assert_eq!(wrapped_rows(&screen, 0, 3, true), vec![0]);
+        assert_eq!(wrapped_rows(&screen, 0, 3, true).0, vec![0]);
         assert_eq!(
-            wrapped_rows(&screen, 2, 3, true),
+            wrapped_rows(&screen, 2, 3, true).0,
             vec![0],
             "オルタネート画面に遡りは当てない"
         );
@@ -467,8 +485,8 @@ mod tests {
     fn 遡っている間は帯の重なる最上行を繋がない() {
         let screen = Arc::new(Mutex::new(vt100::Parser::new(3, 10, 100)));
         lock(&screen).process(b"abcdefghijKLMNO\r\n1\r\n2\r\n3\r\n4");
-        assert_eq!(wrapped_rows(&screen, 3, 3, true), Vec::<u16>::new());
-        assert_eq!(wrapped_rows(&screen, 3, 3, false), vec![0]);
+        assert_eq!(wrapped_rows(&screen, 3, 3, true).0, Vec::<u16>::new());
+        assert_eq!(wrapped_rows(&screen, 3, 3, false).0, vec![0]);
     }
 
     #[test]

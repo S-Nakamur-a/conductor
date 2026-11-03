@@ -377,6 +377,9 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::Spawn(task) => {
                 ws.panels.fleet.note_spawned(&task);
                 ws.panels.worktree.note_spawned(&task);
+                if matches!(task, Task::ScanLogUrls { .. }) {
+                    ws.panels.terminal.log_urls.note_fetching();
+                }
                 task.spawn(svc, &ws.task_env());
             }
             Effect::StopSessions(worktree) => ws.panels.terminal.stop_sessions(worktree.as_deref()),
@@ -738,6 +741,7 @@ fn switch_repo(
         ws.index.semantic.abort_regeneration(&repo);
     }
     ws.panels.fleet.forget_in_flight();
+    ws.panels.terminal.log_urls.forget_in_flight();
     let known = std::mem::take(&mut ws.repo.known);
     let name = opened.name.clone();
     ws.repo = RepoState { known, ..opened };
@@ -817,6 +821,28 @@ mod tests {
         assert_eq!(
             ws.panels.fleet.selected_row().map(|r| r.key),
             Some(RowKey::Panel("p1".into()))
+        );
+    }
+
+    #[test]
+    fn repo_を切り替えると会話ログの_url_の読み込み中の印が下りる() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        let mut ws = Workspace::for_test();
+        let mut svc = Services::<TaskResult>::new();
+        ws.panels.terminal.log_urls.note_fetching();
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::SwitchRepo(dir.path().to_path_buf())],
+        );
+        let target = Some((PathBuf::from("/r"), "s".to_string()));
+        assert!(
+            ws.panels
+                .terminal
+                .log_urls
+                .wanted(target, std::time::Instant::now())
+                .is_some()
         );
     }
 

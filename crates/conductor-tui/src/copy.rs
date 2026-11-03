@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use ratatui::layout::Rect;
 
 use crate::layout::{Layout, Region};
-use crate::panels::terminal::render::{content_area, pty_area, soft_wrapped_rows};
+use crate::panels::terminal::render::{claude_shown, soft_wrapped_rows};
 use crate::rejoin::{self, Break};
 use crate::select::Picked;
-use crate::workspace::{Focus, Workspace};
+use crate::workspace::Workspace;
 
 /// `Task::RejoinCopy` に渡すもの。ログは数十 MB になるので UI では読まない。
 #[derive(Debug, Clone)]
@@ -56,13 +56,7 @@ fn claude(
     rect: Rect,
     picked: Picked,
 ) -> (String, Option<FromLog>) {
-    let (session, content) = match region {
-        Region::TerminalClaude => (
-            ws.panels.terminal.session_in(Focus::TerminalClaude),
-            content_area(rect),
-        ),
-        _ => (ws.fleet_session(), pty_area(rect)),
-    };
+    let (session, content) = claude_shown(ws, region, rect);
     let panel = &ws.panels.terminal;
     if let Some(reflow) = panel.transcript_of(session.as_deref()) {
         let Some(highlighter) = ws.panels.viewer.highlighter_ref() else {
