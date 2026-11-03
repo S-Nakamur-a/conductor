@@ -753,3 +753,8 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   exec'd directly sat in that queue for 36–170s while `/bin/sh` and `git` answered in 0.02s
   (measured while other worktrees were building). That is what failed the `semantic_index`
   and sheaf-core `regenerate` producer tests, a few runs in six.
+- **A rule that rejoins a Claude panel's rows (copy, links) is tested on recorded real screens,
+  both ways.** Claude Code leaves no wrap mark, so every such rule is a guess, and the guesses
+  that broke here were all joins that must not happen: a table cell's two lines, the "2." of a
+  numbered list after a URL ending in a digit, the status rows, the URL after "PR is here:".
+  Record a real screen holding those forms and pin "not joined" on it before claiming the rule.
