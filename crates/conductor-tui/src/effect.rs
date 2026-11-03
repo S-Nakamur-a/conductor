@@ -55,10 +55,14 @@ pub enum Effect {
     EnterDetail(crate::panels::fleet::DetailTarget),
     /// 一覧で選んだ 1 つを止める。[Effect::StopSessions] はこの窓のものをまとめて止める方。
     StopFleetSession(crate::panels::fleet::StopTarget),
-    /// この窓のセッションを止め、終わったら同じ会話を選んだアカウントで開き直す。
+    /// この窓のセッションを止め、終わったらログを選んだアカウントへ共有して同じ会話を開き直す。
     ReopenAs(crate::panels::fleet::Reopen),
     /// 止まったのを確かめた会話を選んだアカウントで起こす。裏で届くので選択もフォーカスも動かさない。
-    LaunchReopened(crate::panels::fleet::Reopen),
+    /// aside は共有で退けた、移す先のアカウントにだけあった続き。
+    LaunchReopened {
+        reopen: crate::panels::fleet::Reopen,
+        aside: Option<PathBuf>,
+    },
     /// 一覧の左下を選んだ worktree のシェルにして入る。無ければ起こす。
     OpenFleetShell,
     /// 一覧で選んだ worktree を消す前に、消せるかと失うものを worker で調べる。
@@ -284,18 +288,21 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 chrome,
                 account,
                 ran_in,
-            } => new_session(
-                ws,
-                SessionKind::ClaudeCode,
-                worktree,
-                ClaudeArgs {
-                    resume: Some(&id),
-                    chrome,
-                    account: account.as_deref(),
-                    ran_in: ran_in.as_deref(),
-                    ..ClaudeArgs::default()
-                },
-            ),
+            } => match share_before_resume(ws, &id, &worktree, chrome, &account, &ran_in) {
+                Some(request) => queue.push_back(Effect::Spawn(Task::ShareThenResume(request))),
+                None => new_session(
+                    ws,
+                    SessionKind::ClaudeCode,
+                    worktree,
+                    ClaudeArgs {
+                        resume: Some(&id),
+                        chrome,
+                        account: account.as_deref(),
+                        ran_in: ran_in.as_deref(),
+                        ..ClaudeArgs::default()
+                    },
+                ),
+            },
             Effect::Command(id) => queue.extend(crate::command::execute(ws, id)),
             Effect::FocusMenuBar => ws.chrome.menu = crate::menu::MenuBar::Bar { index: 0 },
             Effect::SwitchRepo(path) => queue.extend(switch_repo(ws, svc, &path)),
@@ -349,7 +356,9 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
             Effect::EnterDetail(target) => queue.extend(enter_detail(ws, svc, target)),
             Effect::StopFleetSession(target) => queue.extend(stop_fleet_session(ws, target)),
             Effect::ReopenAs(reopen) => queue.extend(reopen_as(ws, reopen)),
-            Effect::LaunchReopened(reopen) => queue.push_back(launch_reopened(ws, &reopen)),
+            Effect::LaunchReopened { reopen, aside } => {
+                queue.push_back(launch_reopened(ws, &reopen, aside));
+            }
             Effect::InspectFleetWorktree { repo, path, label } => {
                 queue.push_back(Effect::Spawn(Task::InspectFleetWorktree {
                     repo,
@@ -476,7 +485,11 @@ fn reopen_as(ws: &mut Workspace, reopen: crate::panels::fleet::Reopen) -> Vec<Ef
     vec![Effect::Spawn(Task::AwaitReopen(reopen))]
 }
 
-fn launch_reopened(ws: &mut Workspace, reopen: &crate::panels::fleet::Reopen) -> Effect {
+fn launch_reopened(
+    ws: &mut Workspace,
+    reopen: &crate::panels::fleet::Reopen,
+    aside: Option<PathBuf>,
+) -> Effect {
     let claude = ClaudeArgs {
         resume: Some(&reopen.session_id),
         account: Some(&reopen.account),
@@ -487,7 +500,10 @@ fn launch_reopened(ws: &mut Workspace, reopen: &crate::panels::fleet::Reopen) ->
         .terminal
         .launch_claude_in(&reopen.dir, &ws.config, claude)
     {
-        Ok(_) => Effect::Status(StatusLevel::Info, format!("Reopened as {}", reopen.account)),
+        Ok(_) => aside.map_or_else(
+            || Effect::Status(StatusLevel::Info, format!("Reopened as {}", reopen.account)),
+            crate::workspace::set_aside_warning,
+        ),
         Err(e) => Effect::Status(StatusLevel::Error, format!("{e:#}")),
     }
 }
@@ -673,13 +689,46 @@ fn smart_session(
     }
 }
 
-fn new_session(ws: &mut Workspace, kind: SessionKind, at: Option<PathBuf>, claude: ClaudeArgs<'_>) {
-    let worktree = at.unwrap_or_else(|| {
+/// 会話を走らせたのと別のアカウントを選んだときだけ、起動の前にログをそのアカウントへ共有する。
+/// 結果が届くまでに worktree を替えても、押した時点の起動先で開く。
+fn share_before_resume(
+    ws: &Workspace,
+    id: &str,
+    worktree: &Option<PathBuf>,
+    chrome: bool,
+    account: &Option<String>,
+    ran_in: &Option<PathBuf>,
+) -> Option<crate::task::ResumeRequest> {
+    let (name, from) = (account.as_ref()?, ran_in.as_ref()?);
+    let chosen = ws.config.claude.accounts.iter().find(|a| &a.name == name)?;
+    let to = ws.config.claude_dir_of(chosen).filter(|dir| dir.is_dir())?;
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        std::fs::canonicalize(a).ok() == std::fs::canonicalize(b).ok()
+    };
+    if same(&to, from) {
+        return None;
+    }
+    Some(crate::task::ResumeRequest {
+        id: id.to_string(),
+        worktree: launch_dir(ws, worktree.clone()),
+        chrome,
+        account: name.clone(),
+        from: from.clone(),
+        to,
+    })
+}
+
+fn launch_dir(ws: &Workspace, at: Option<PathBuf>) -> PathBuf {
+    at.unwrap_or_else(|| {
         ws.panels
             .worktree
             .selected()
             .map_or_else(|| ws.repo.root.clone(), |w| w.path.clone())
-    });
+    })
+}
+
+fn new_session(ws: &mut Workspace, kind: SessionKind, at: Option<PathBuf>, claude: ClaudeArgs<'_>) {
+    let worktree = launch_dir(ws, at);
     let result = ws
         .panels
         .terminal
@@ -767,6 +816,160 @@ mod tests {
 
     use super::*;
     use crate::panels::fleet::StopTarget;
+
+    fn two_accounts() -> ([tempfile::TempDir; 2], Workspace) {
+        use conductor_core::config::ClaudeAccount;
+        let dirs = [(); 2].map(|_| tempfile::tempdir().unwrap());
+        let mut ws = Workspace::for_test();
+        ws.config.claude.accounts = ["work", "personal"]
+            .into_iter()
+            .zip(&dirs)
+            .map(|(name, dir)| ClaudeAccount {
+                name: name.into(),
+                config_dir: Some(dir.path().to_path_buf()),
+                ..Default::default()
+            })
+            .collect();
+        (dirs, ws)
+    }
+
+    #[test]
+    fn 会話を走らせたのと別のアカウントでresumeするときだけ押した時点の起動先で先に共有する() {
+        let (dirs, mut ws) = two_accounts();
+        let work = Some(dirs[0].path().to_path_buf());
+        let at = Some(PathBuf::from("/r/a"));
+        let personal = Some("personal".to_string());
+
+        let request = share_before_resume(&ws, "s1", &at, true, &personal, &work).unwrap();
+        assert_eq!(request.worktree, PathBuf::from("/r/a"));
+        assert_eq!(request.from, dirs[0].path());
+        assert_eq!(request.to, dirs[1].path());
+        assert!(request.chrome);
+
+        let pressed_here = share_before_resume(&ws, "s1", &None, false, &personal, &work).unwrap();
+        assert_eq!(pressed_here.worktree, ws.repo.root);
+
+        let same = Some("work".to_string());
+        assert!(share_before_resume(&ws, "s1", &at, false, &same, &work).is_none());
+        assert!(share_before_resume(&ws, "s1", &at, false, &None, &work).is_none());
+        assert!(share_before_resume(&ws, "s1", &at, false, &personal, &None).is_none());
+        ws.config.claude.accounts[1].config_dir = Some(dirs[1].path().join("never-used"));
+        assert!(share_before_resume(&ws, "s1", &at, false, &personal, &work).is_none());
+    }
+
+    #[test]
+    fn 別のアカウントを選んだresumeは裏でログを共有してから結果を返す() {
+        let (dirs, mut ws) = two_accounts();
+        let root = ws.repo.root.clone();
+        let logs = dirs[0].path().join("projects").join(
+            std::fs::canonicalize(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace(['/', '.'], "-"),
+        );
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(logs.join("s1.jsonl"), "one\n").unwrap();
+        let mut svc = Services::<TaskResult>::new();
+        apply(
+            &mut ws,
+            &mut svc,
+            vec![Effect::ResumeSession {
+                id: "s1".into(),
+                worktree: None,
+                chrome: false,
+                account: Some("personal".into()),
+                ran_in: Some(dirs[0].path().to_path_buf()),
+            }],
+        );
+        let mut got = None;
+        crate::testing::wait_for(|| {
+            if let Some(event) = svc.try_recv() {
+                got = Some(event.kind);
+            }
+            got.is_some()
+        });
+        assert!(
+            matches!(
+                got,
+                Some(conductor_svc::EventKind::Task(TaskResult::ResumeShared {
+                    ref request,
+                    outcome: Ok(None),
+                })) if request.worktree == root
+            ),
+            "{got:?}"
+        );
+        let shared = dirs[1]
+            .path()
+            .join("projects")
+            .join(logs.file_name().unwrap())
+            .join("s1.jsonl");
+        assert!(shared.symlink_metadata().unwrap().is_symlink());
+    }
+
+    #[test]
+    fn 共有で退けたファイルは開き直すときに帯で名指す() {
+        let (dirs, mut ws) = two_accounts();
+        let effects = ws.accept(TaskResult::ResumeShared {
+            request: crate::task::ResumeRequest {
+                id: "s1".into(),
+                worktree: PathBuf::from("/r/a"),
+                chrome: false,
+                account: "personal".into(),
+                from: dirs[0].path().to_path_buf(),
+                to: dirs[1].path().to_path_buf(),
+            },
+            outcome: Ok(Some(PathBuf::from("/p/s1.jsonl.replaced-1"))),
+        });
+        assert!(
+            matches!(effects.as_slice(),
+                [Effect::ResumeSession { .. }, Effect::Status(StatusLevel::Warning, why)]
+                    if why.contains("/p/s1.jsonl.replaced-1")),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn 共有できたら共有先のアカウントとして開き直し_もう共有しない_できなければ起こさない() {
+        let (dirs, mut ws) = two_accounts();
+        let request = crate::task::ResumeRequest {
+            id: "s1".into(),
+            worktree: PathBuf::from("/r/a"),
+            chrome: false,
+            account: "personal".into(),
+            from: dirs[0].path().to_path_buf(),
+            to: dirs[1].path().to_path_buf(),
+        };
+        let effects = ws.accept(TaskResult::ResumeShared {
+            request: request.clone(),
+            outcome: Ok(None),
+        });
+        let [
+            Effect::ResumeSession {
+                id,
+                worktree,
+                chrome,
+                account,
+                ran_in,
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(id, "s1");
+        assert_eq!(worktree.as_deref(), Some(std::path::Path::new("/r/a")));
+        assert_eq!(account.as_deref(), Some("personal"));
+        assert_eq!(ran_in.as_deref(), Some(dirs[1].path()));
+        assert!(share_before_resume(&ws, id, worktree, *chrome, account, ran_in).is_none());
+
+        let effects = ws.accept(TaskResult::ResumeShared {
+            request,
+            outcome: Err("no log".into()),
+        });
+        assert!(
+            matches!(effects.as_slice(), [Effect::Status(StatusLevel::Error, why)] if why.contains("no log")),
+            "{effects:?}"
+        );
+    }
 
     #[test]
     fn 畳みの保存は書き先があれば書き_書けなければ警告し_無ければ何もしない() {

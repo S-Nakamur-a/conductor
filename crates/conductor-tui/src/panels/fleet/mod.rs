@@ -1372,8 +1372,8 @@ impl FleetPanel {
         Some(Effect::Spawn(crate::task::Task::OpenBranchPage { dir }))
     }
 
-    /// この窓のセッションを止め、同じ会話を別のアカウントで開き直す。移り先は会話のログが
-    /// 見えるアカウントだけ並べ、動いている最中なら止める前に確かめる。
+    /// この窓のセッションを止め、同じ会話を別のアカウントで開き直す。移り先は config dir の在る
+    /// アカウントだけ並べ、動いている最中なら止める前に確かめる。
     fn ask_reopen(&self, config: &Config) -> Vec<Effect> {
         let warn = |why: &str| vec![Effect::Status(StatusLevel::Warning, why.into())];
         let Some(row) = self.selected_row() else {
@@ -1392,6 +1392,15 @@ impl FleetPanel {
         if self.reopening.contains(&live.session_id) {
             return warn("This session is already being reopened");
         }
+        let Some(from) = live.sessions_dir.parent() else {
+            return Vec::new();
+        };
+        if ClaudeHome::of(vec![from.to_path_buf()])
+            .session_log(&live.cwd, &live.session_id)
+            .is_none()
+        {
+            return warn("This conversation has no log to reopen yet");
+        }
         let current = config
             .account_of(&live.sessions_dir)
             .map(|a| a.name.as_str());
@@ -1400,14 +1409,11 @@ impl FleetPanel {
             .accounts
             .iter()
             .filter(|account| Some(account.name.as_str()) != current)
-            .filter(|account| {
-                config.claude_dir_of(account).is_some_and(|dir| {
-                    ClaudeHome::of(vec![dir])
-                        .session_log(&live.cwd, &live.session_id)
-                        .is_some()
-                })
+            .filter_map(|account| {
+                let to = config.claude_dir_of(account).filter(|dir| dir.is_dir())?;
+                Some((account, to))
             })
-            .map(|account| {
+            .map(|(account, to)| {
                 let reopen = Effect::ReopenAs(Reopen {
                     panel: panel.clone(),
                     pid: live.pid,
@@ -1415,6 +1421,8 @@ impl FleetPanel {
                     session_id: live.session_id.clone(),
                     dir: live.cwd.clone(),
                     account: account.name.clone(),
+                    from: from.to_path_buf(),
+                    to,
                 });
                 let effect = if live.status == Status::Idle {
                     reopen
@@ -1432,7 +1440,7 @@ impl FleetPanel {
             })
             .collect();
         if choices.is_empty() {
-            return warn("No other account can see this conversation's log");
+            return warn("No other account has a config dir yet");
         }
         vec![Effect::PushModal(Modal::Popup(Popup::numbered(
             "Reopen as",
@@ -1489,6 +1497,9 @@ pub struct Reopen {
     pub session_id: String,
     pub dir: PathBuf,
     pub account: String,
+    /// 会話のログが今ある config dir と、開き直す前にそこへログを共有する config dir。
+    pub from: PathBuf,
+    pub to: PathBuf,
 }
 
 /// 選べるアカウントがあれば、アカウントごとに Chrome なし / ありを並べる。Smart Worktree は repo の root が分かるときだけ。

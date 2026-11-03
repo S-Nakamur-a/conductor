@@ -250,10 +250,21 @@ session elsewhere there: it reports the session as already ended and leaves it r
 
 **A** (Shift+a) moves one of this window's sessions to another of the
 `[[claude.accounts]]`, for when one account's usage has run out. It offers each other
-account whose config dir has the conversation's log, answers to a digit, ↑/↓ with Enter, or a click, and
+account whose config dir exists, answers to a digit, ↑/↓ with Enter, or a click, and
 asks again first unless the list last read the session as idle (it reads once a second).
-It then stops the session, waits up to 5s for it to end, and resumes the same
-conversation in the same directory as the account chosen. The reopened session does not
+It then stops the session, waits up to 5s for it to end, makes the conversation's log
+visible to the chosen account, and resumes the same conversation in the same directory as
+that account. Making it visible puts a symbolic link to the log file in that account's
+`projects/`, so the conversation stays one file whichever account carries it on (seen on
+Claude Code 2.1.317: with `claude -p` across turns, `/compact` and `/clear`, and
+interactively across turns; whether a later version keeps writing through the link is not
+known). If that account already had its own copy of the
+log, the longer of the two is kept and the other becomes the link; if neither starts with
+the other, its copy is kept beside the log as `<id>.jsonl.replaced-<ms>` and the status
+line names it. Nothing under `memory/` is touched. If the log cannot be linked, nothing
+is started and the status line says so; the old session has already stopped by then, and
+the Resume list can open it again. Choosing **Resume as** another account in the Resume
+list links the log the same way before it starts. The reopened session does not
 carry over --chrome or --name. The new session starts in the background: the selection
 and the keyboard stay where they are, and the status line says when it has started. If the
 old one does not end in time, nothing is started and the status line says to resume it

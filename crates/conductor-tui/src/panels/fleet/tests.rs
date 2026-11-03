@@ -4927,15 +4927,12 @@ mod reopen {
 
     use super::*;
 
-    /// work の Claude が /r/a で s1 を開いている。work の projects にはログがあり、
-    /// personal にもあるかは選べる。
-    fn setup(
-        state: Status,
-        personal_has_log: bool,
-    ) -> ([tempfile::TempDir; 2], FleetPanel, Workspace) {
+    /// work の Claude が /r/a で s1 を開いている。work の projects にログがあるかは選べ、
+    /// personal にはログが無い。
+    fn setup(state: Status, work_has_log: bool) -> ([tempfile::TempDir; 2], FleetPanel, Workspace) {
         let [work, personal] = [(); 2].map(|_| tempfile::tempdir().unwrap());
-        for dir in std::iter::once(&work).chain(personal_has_log.then_some(&personal)) {
-            let logs = dir.path().join("projects/-r-a");
+        if work_has_log {
+            let logs = work.path().join("projects/-r-a");
             std::fs::create_dir_all(&logs).unwrap();
             std::fs::write(logs.join("s1.jsonl"), "").unwrap();
         }
@@ -5004,7 +5001,10 @@ mod reopen {
                 session_id: "s1".into(),
                 dir: PathBuf::from("/r/a"),
                 account: "personal".into(),
-            }
+                from: _dirs[0].path().to_path_buf(),
+                to: _dirs[1].path().to_path_buf(),
+            },
+            "移す先にログが無くても並び、共有元と共有先の config dir を持つ"
         );
     }
 
@@ -5046,12 +5046,22 @@ mod reopen {
     }
 
     #[test]
-    fn 移り先から会話のログが見えなければ止めずに断る() {
+    fn 今のアカウントに会話のログがまだ無ければ止めずに断る() {
         let (_dirs, mut fleet, ws) = setup(Status::Idle, false);
         let effects = press_a(&mut fleet, &ws);
         assert_eq!(
             warning(&effects),
-            Some("No other account can see this conversation's log")
+            Some("This conversation has no log to reopen yet")
+        );
+    }
+
+    #[test]
+    fn config_dirがまだ無いアカウントは移り先に並べない() {
+        let (dirs, mut fleet, mut ws) = setup(Status::Idle, true);
+        ws.config.claude.accounts[1].config_dir = Some(dirs[1].path().join("never-used"));
+        assert_eq!(
+            warning(&press_a(&mut fleet, &ws)),
+            Some("No other account has a config dir yet")
         );
     }
 
@@ -5084,23 +5094,25 @@ mod reopen {
         );
     }
 
+    fn reopen_of(dirs: &[tempfile::TempDir; 2]) -> Reopen {
+        Reopen {
+            panel: "CC:1".into(),
+            pid: 7,
+            started: at(7),
+            session_id: "s1".into(),
+            dir: PathBuf::from("/r/a"),
+            account: "personal".into(),
+            from: dirs[0].path().to_path_buf(),
+            to: dirs[1].path().to_path_buf(),
+        }
+    }
+
     #[test]
     fn 開き直すと区画を一覧から外し_待ちに入れて終わるのを待つ() {
-        let (_dirs, fleet, mut ws) = setup(Status::Idle, true);
+        let (dirs, fleet, mut ws) = setup(Status::Idle, true);
         ws.panels.fleet = fleet;
         let mut svc = conductor_svc::Services::<crate::task::TaskResult>::new();
-        crate::effect::apply(
-            &mut ws,
-            &mut svc,
-            vec![Effect::ReopenAs(Reopen {
-                panel: "CC:1".into(),
-                pid: 7,
-                started: at(7),
-                session_id: "s1".into(),
-                dir: PathBuf::from("/r/a"),
-                account: "personal".into(),
-            })],
-        );
+        crate::effect::apply(&mut ws, &mut svc, vec![Effect::ReopenAs(reopen_of(&dirs))]);
         assert!(ws.panels.fleet.reopening.contains("s1"));
         assert!(ws.panels.fleet.selected_row().is_none());
         let mut waited = None;
@@ -5113,49 +5125,63 @@ mod reopen {
         assert!(
             matches!(
                 waited,
-                Some(conductor_svc::EventKind::Task(crate::task::TaskResult::Reopened { ref reopen, .. })) if reopen.session_id == "s1"
+                Some(conductor_svc::EventKind::Task(crate::task::TaskResult::Reopened {
+                    ref reopen,
+                    outcome: crate::task::ReopenOutcome::Shared(None),
+                })) if reopen.session_id == "s1"
             ),
             "{waited:?}"
+        );
+        assert!(
+            dirs[1]
+                .path()
+                .join("projects/-r-a/s1.jsonl")
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink(),
+            "止まったのを確かめてから移す先にログのリンクを置く"
         );
     }
 
     #[test]
-    fn 止まったら同じ会話を選んだアカウントで開き直し_止まらなければ帯で知らせる() {
-        let (_dirs, fleet, mut ws) = setup(Status::Idle, true);
+    fn 止まって共有できたら開き直し_共有できないか止まらなければ起こさずに帯で知らせる() {
+        use crate::task::{ReopenOutcome, TaskResult};
+        let (dirs, fleet, mut ws) = setup(Status::Idle, true);
         ws.panels.fleet = fleet;
-        let reopen = Reopen {
-            panel: "CC:1".into(),
-            pid: 7,
-            started: at(7),
-            session_id: "s1".into(),
-            dir: PathBuf::from("/r/a"),
-            account: "personal".into(),
-        };
-        ws.panels.fleet.note_reopening("s1".into());
-
-        let effects = ws.accept(crate::task::TaskResult::Reopened {
-            reopen: reopen.clone(),
-            ended: true,
-        });
-        assert!(
-            matches!(effects.as_slice(), [Effect::LaunchReopened(launched)] if launched == &reopen),
-            "{effects:?}"
-        );
-
-        ws.panels.fleet.note_reopening("s1".into());
-        let effects = ws.accept(crate::task::TaskResult::Reopened {
-            reopen,
-            ended: false,
-        });
-        assert!(
-            matches!(effects.as_slice(), [Effect::Status(StatusLevel::Warning, why)] if why.contains("Resume list as personal")),
-            "{effects:?}"
-        );
-        let mut fleet = std::mem::take(&mut ws.panels.fleet);
-        assert!(
-            warning(&press_a(&mut fleet, &ws)).is_none(),
-            "結果を受けたら同じ会話をまた受ける"
-        );
+        let reopen = reopen_of(&dirs);
+        let aside = PathBuf::from("/p/s1.jsonl.replaced-1");
+        let outcomes = [
+            ReopenOutcome::Shared(None),
+            ReopenOutcome::Shared(Some(aside.clone())),
+            ReopenOutcome::ShareFailed("disk full".into()),
+            ReopenOutcome::NotEnded,
+        ];
+        for outcome in outcomes {
+            ws.panels.fleet.note_reopening("s1".into());
+            let label = format!("{outcome:?}");
+            let effects = ws.accept(TaskResult::Reopened {
+                reopen: reopen.clone(),
+                outcome,
+            });
+            let ok = match label.as_str() {
+                "Shared(None)" => matches!(effects.as_slice(),
+                    [Effect::LaunchReopened { reopen: r, aside: None }] if r == &reopen),
+                "NotEnded" => matches!(effects.as_slice(),
+                    [Effect::Status(StatusLevel::Warning, why)] if why.contains("Resume list as personal")),
+                "ShareFailed(\"disk full\")" => matches!(effects.as_slice(),
+                    [Effect::Status(StatusLevel::Error, why)]
+                        if why.contains("disk full") && why.contains("Resume list")),
+                _ => matches!(effects.as_slice(),
+                    [Effect::LaunchReopened { aside: Some(p), .. }] if p == &aside),
+            };
+            assert!(ok, "{label}: {effects:?}");
+            let mut fleet = std::mem::take(&mut ws.panels.fleet);
+            assert!(
+                warning(&press_a(&mut fleet, &ws)).is_none(),
+                "{label}: 結果を受けたら同じ会話をまた受ける"
+            );
+            ws.panels.fleet = fleet;
+        }
     }
 }
 
