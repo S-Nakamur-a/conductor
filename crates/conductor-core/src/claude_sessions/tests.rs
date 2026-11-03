@@ -473,3 +473,303 @@ fn 戻すとき実体に置き換わったものは移行元へコピーする()
     assert!(subagents.join("agent-1.jsonl").exists());
     assert!(subagents.join("agent-2.jsonl").exists());
 }
+
+// アカウントを跨ぐ resume のためのログの共有
+
+struct Accounts {
+    _dirs: [tempfile::TempDir; 2],
+    work: PathBuf,
+    personal: PathBuf,
+    project: PathBuf,
+}
+
+impl Accounts {
+    fn new() -> Self {
+        let dirs = [(); 2].map(|_| tempfile::tempdir().unwrap());
+        let [work, personal] = [0, 1].map(|i| canonical(dirs[i].path()));
+        Self {
+            _dirs: dirs,
+            work,
+            personal,
+            project: PathBuf::from("/r/a"),
+        }
+    }
+
+    fn log(&self, root: &Path) -> PathBuf {
+        ClaudeHome::projects_dir_in(root, &self.project).join("sess.jsonl")
+    }
+
+    fn write(&self, root: &Path, content: &str) -> PathBuf {
+        let path = self.log(root);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn share(&self, from: &Path, to: &Path) -> anyhow::Result<Option<PathBuf>> {
+        ClaudeHome::share_session_log(from, to, &self.project, "sess")
+    }
+}
+
+fn inode(path: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).unwrap().ino()
+}
+
+fn is_link(path: &Path) -> bool {
+    path.symlink_metadata().unwrap().is_symlink()
+}
+
+#[test]
+fn 移す先にログが無ければ元の実ファイルへのリンクを置き_元とmemoryには触らない() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    fs::create_dir_all(real.parent().unwrap().join("memory")).unwrap();
+    let before = inode(&real);
+
+    assert_eq!(a.share(&a.work, &a.personal).unwrap(), None);
+
+    assert!(is_link(&a.log(&a.personal)));
+    assert_eq!(canonical(&a.log(&a.personal)), real);
+    assert_eq!(inode(&real), before);
+    assert_eq!(fs::read_to_string(&real).unwrap(), "one\n");
+    assert!(!a.log(&a.personal).with_file_name("memory").exists());
+}
+
+#[test]
+fn 共有した後に元のアカウントで続けても移す先から同じ中身が読める() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    a.share(&a.work, &a.personal).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&real)
+        .unwrap()
+        .write_all(b"two\n")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(a.log(&a.personal)).unwrap(),
+        "one\ntwo\n"
+    );
+}
+
+#[test]
+fn projectsを共有していれば何も書かない() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    std::os::unix::fs::symlink(a.work.join("projects"), a.personal.join("projects")).unwrap();
+    let before = inode(&real);
+
+    assert_eq!(a.share(&a.work, &a.personal).unwrap(), None);
+
+    assert_eq!(inode(&real), before);
+    assert!(!is_link(&real));
+    assert_eq!(fs::read_to_string(&real).unwrap(), "one\n");
+}
+
+#[test]
+fn 二度目も_リンクの側から戻すときも何も書かない() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    a.share(&a.work, &a.personal).unwrap();
+    a.share(&a.work, &a.personal).unwrap();
+    a.share(&a.personal, &a.work).unwrap();
+    assert!(!is_link(&real));
+    assert_eq!(canonical(&a.log(&a.personal)), real);
+    assert_eq!(fs::read_to_string(&real).unwrap(), "one\n");
+}
+
+#[test]
+fn 移す先の古い写しは元へのリンクに置き換える() {
+    for stale in ["one\n", "one\ntwo\n", ""] {
+        let a = Accounts::new();
+        let real = a.write(&a.work, "one\ntwo\n");
+        a.write(&a.personal, stale);
+        assert_eq!(a.share(&a.work, &a.personal).unwrap(), None, "{stale:?}");
+        assert_eq!(canonical(&a.log(&a.personal)), real, "{stale:?}");
+    }
+}
+
+#[test]
+fn 移す先の方が進んでいれば元をそちらへのリンクにして先は変えない() {
+    let a = Accounts::new();
+    let old = a.write(&a.work, "one\n");
+    let ahead = a.write(&a.personal, "one\ntwo\n");
+
+    assert_eq!(a.share(&a.work, &a.personal).unwrap(), None);
+
+    assert!(!is_link(&ahead));
+    assert_eq!(canonical(&old), ahead);
+    assert_eq!(fs::read_to_string(&old).unwrap(), "one\ntwo\n");
+}
+
+#[test]
+fn 分かれていれば移す先を退けてから元へのリンクにする() {
+    for theirs in ["one\nmine\n", "one\nxxxx\nmore\n", "one\n3\n"] {
+        let a = Accounts::new();
+        let real = a.write(&a.work, "one\ntwo\n");
+        a.write(&a.personal, theirs);
+
+        let aside = a.share(&a.work, &a.personal).unwrap().expect(theirs);
+
+        assert_eq!(fs::read_to_string(&aside).unwrap(), theirs);
+        assert_eq!(canonical(&a.log(&a.personal)), real);
+        assert_eq!(fs::read_to_string(&real).unwrap(), "one\ntwo\n");
+    }
+}
+
+#[test]
+fn 退けるとき前に退けたファイルを潰さない() {
+    let a = Accounts::new();
+    a.write(&a.work, "one\ntwo\n");
+    a.write(&a.personal, "one\nmine\n");
+    let first = a.share(&a.work, &a.personal).unwrap().unwrap();
+    fs::remove_file(a.log(&a.personal)).unwrap();
+    a.write(&a.personal, "one\nagain\n");
+    let second = a.share(&a.work, &a.personal).unwrap().unwrap();
+
+    assert_ne!(first, second);
+    assert_eq!(fs::read_to_string(&first).unwrap(), "one\nmine\n");
+    assert_eq!(fs::read_to_string(&second).unwrap(), "one\nagain\n");
+}
+
+#[test]
+fn 壊れたリンクと前に落ちた一時リンクが残っていても置き換える() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    let target = a.log(&a.personal);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("/nonexistent/sess.jsonl", &target).unwrap();
+    std::os::unix::fs::symlink(
+        "/nonexistent/x",
+        target.with_file_name(".sess.jsonl.conductor-link"),
+    )
+    .unwrap();
+
+    a.share(&a.work, &a.personal).unwrap();
+
+    assert_eq!(canonical(&target), real);
+}
+
+#[test]
+fn 元のアカウントにログが無ければ失敗して何も作らない() {
+    let a = Accounts::new();
+    assert!(a.share(&a.work, &a.personal).is_err());
+    assert!(!a.personal.join("projects").exists());
+}
+
+#[test]
+fn 移す先に書けなければ失敗して元は変えない() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    fs::write(a.personal.join("projects"), "not a directory").unwrap();
+
+    assert!(a.share(&a.work, &a.personal).is_err());
+
+    assert_eq!(fs::read_to_string(&real).unwrap(), "one\n");
+    assert!(!is_link(&real));
+}
+
+#[test]
+fn 元のログが起動するディレクトリと別のプロジェクトにあってもidで見つける() {
+    let a = Accounts::new();
+    let real = a.write(&a.work, "one\n");
+    assert_eq!(
+        ClaudeHome::share_session_log(&a.work, &a.personal, Path::new("/elsewhere"), "sess")
+            .unwrap(),
+        None
+    );
+    assert_eq!(canonical(&a.log(&a.personal)), real);
+}
+
+#[test]
+fn grabした会話を別のアカウントへ共有してから戻すと_そのアカウントでもworktreeから辿れる() {
+    let m = Migration::new();
+    let work = m.home.roots[0].clone();
+    let (_p, personal) = home();
+    let personal = canonical(&personal.roots[0]);
+    m.migrate();
+    let real = canonical(&m.src("sess.jsonl"));
+    ClaudeHome::share_session_log(&work, &personal, &m.dest, "sess").unwrap();
+    let stale = ClaudeHome::projects_dir_in(&personal, &m.source).join("sess.jsonl");
+    fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    fs::write(&stale, "").unwrap();
+
+    ClaudeHome::of(vec![work, personal.clone()])
+        .unmigrate_session("sess", &m.source, &m.dest)
+        .unwrap();
+
+    assert_eq!(canonical(&stale), real);
+    assert!(
+        !ClaudeHome::projects_dir_in(&personal, &m.dest)
+            .join("sess.jsonl")
+            .exists()
+    );
+    assert_eq!(transcript_texts(&m.src(""), "sess"), ["hello"]);
+}
+
+#[test]
+fn 戻す先のディレクトリが無くても実体を戻し_ほかのrootも戻す() {
+    let m = Migration::new();
+    let (_p, personal) = home();
+    let personal_root = personal.roots[0].clone();
+    write_log(
+        &ClaudeHome::projects_dir_in(&personal_root, &m.dest),
+        "sess",
+        &["there"],
+        Duration::ZERO,
+    );
+    m.migrate();
+
+    ClaudeHome::of(vec![personal_root.clone(), m.home.roots[0].clone()])
+        .unmigrate_session("sess", &m.source, &m.dest)
+        .unwrap();
+
+    assert_eq!(
+        transcript_texts(
+            &ClaudeHome::projects_dir_in(&personal_root, &m.source),
+            "sess"
+        ),
+        ["there"]
+    );
+    assert!(!m.dst("sess.jsonl").exists());
+}
+
+#[test]
+fn 戻すとき壊れたリンクは外すだけ() {
+    let m = Migration::new();
+    m.migrate();
+    fs::remove_file(m.src("sess.jsonl")).unwrap();
+
+    m.unmigrate();
+
+    assert!(m.dst("sess.jsonl").symlink_metadata().is_err());
+    assert!(m.src("sess.jsonl").symlink_metadata().is_err());
+}
+
+#[test]
+fn 戻すのに失敗したrootがあっても残りのrootは戻してから失敗を返す() {
+    let m = Migration::new();
+    let (_p, personal) = home();
+    let personal_root = personal.roots[0].clone();
+    write_log(
+        &ClaudeHome::projects_dir_in(&personal_root, &m.dest),
+        "sess",
+        &["there"],
+        Duration::ZERO,
+    );
+    fs::create_dir_all(personal_root.join("projects")).unwrap();
+    fs::write(
+        ClaudeHome::projects_dir_in(&personal_root, &m.source),
+        "not a dir",
+    )
+    .unwrap();
+    m.migrate();
+
+    assert!(
+        ClaudeHome::of(vec![personal_root, m.home.roots[0].clone()])
+            .unmigrate_session("sess", &m.source, &m.dest)
+            .is_err()
+    );
+    assert!(m.dst("sess.jsonl").symlink_metadata().is_err());
+}
