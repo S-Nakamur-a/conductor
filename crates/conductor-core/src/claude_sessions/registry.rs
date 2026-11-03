@@ -431,7 +431,7 @@ fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<Si
         status_since: record
             .status_updated_at
             .map(|ms| UNIX_EPOCH + Duration::from_millis(ms)),
-        // 時刻が読めない写しは、動いたものとして扱う (未依頼の誤判定は目立たない側に倒す)
+        // 時刻が読めない写しは、起動直後か分からないので動いたものとして扱い、未依頼にしない
         stirred: match (record.started_at, record.status_updated_at) {
             (Some(started), Some(updated)) => started.abs_diff(updated) >= UNSTIRRED_WITHIN,
             _ => true,
