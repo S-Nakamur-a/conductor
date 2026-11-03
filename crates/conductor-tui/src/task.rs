@@ -165,6 +165,12 @@ pub enum Task {
     },
     /// コピーした行の区切りを、会話ログの本文で決め直す。
     RejoinCopy(crate::copy::FromLog),
+    /// 映している Claude の会話ログの URL。from の続きから読む。
+    ScanLogUrls {
+        working_dir: PathBuf,
+        session_id: String,
+        from: conductor_core::claude_log::urls::Scan,
+    },
     /// パネルが pin している Claude セッションの .jsonl。数 MB になるので UI では読まない。
     ReadTranscript {
         working_dir: PathBuf,
@@ -485,6 +491,11 @@ pub enum TaskResult {
         seq: u64,
         text: Option<String>,
     },
+    /// 読めなかったときの scan は None。
+    LogUrls {
+        session_id: String,
+        scan: Option<conductor_core::claude_log::urls::Scan>,
+    },
     Persisted(Result<(), String>),
     History {
         /// 直前に保存したかどうか。ステータスに出す。
@@ -732,6 +743,19 @@ impl Task {
                         (job.seq, text)
                     },
                     |(seq, text)| TaskResult::Rejoined { seq, text },
+                );
+            }
+            Task::ScanLogUrls {
+                working_dir,
+                session_id,
+                from,
+            } => {
+                svc.spawn(
+                    move || {
+                        let scan = log_urls(&env.claude_home(), &working_dir, &session_id, from);
+                        (session_id, scan)
+                    },
+                    |(session_id, scan)| TaskResult::LogUrls { session_id, scan },
                 );
             }
             Task::ReadTranscript {
@@ -1451,6 +1475,21 @@ fn session_artifacts(
         return Some(artifacts::Scan::default());
     };
     artifacts::scan(&path, from)
+        .inspect_err(|e| log::warn!("could not read {}: {e}", path.display()))
+        .ok()
+}
+
+fn log_urls(
+    home: &ClaudeHome,
+    working_dir: &Path,
+    session_id: &str,
+    from: conductor_core::claude_log::urls::Scan,
+) -> Option<conductor_core::claude_log::urls::Scan> {
+    use conductor_core::claude_log::urls;
+    let Some(path) = home.session_log(working_dir, session_id) else {
+        return Some(urls::Scan::default());
+    };
+    urls::scan(&path, from)
         .inspect_err(|e| log::warn!("could not read {}: {e}", path.display()))
         .ok()
 }

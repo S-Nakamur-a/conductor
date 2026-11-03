@@ -438,7 +438,8 @@ than results return piles up one thread per second — measured 476 threads at 3
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
 under one guard), the per-worktree change counts, the Sessions list's
-`poll_fleet_changes` and `poll_fleet_artifacts`, and the review-request poll
+`poll_fleet_changes` and `poll_fleet_artifacts`, the Claude panel's log URLs
+(`poll_log_urls`), and the review-request poll
 (`Workspace::ask_review_requests`); each one grew this same hole independently.
 
 **PTY output is deliberately asymmetric.** Bytes are too frequent for the event

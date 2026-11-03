@@ -102,6 +102,14 @@ text. A line the log cannot vouch for, such as the input box or the status
 lines, keeps its line break. On a live panel the plain copy lands first and is
 replaced once the log has been read.
 
+A URL wrapped over several lines is wrapped whole in an OSC 8 hyperlink, so
+terminals that follow OSC 8 (such as iTerm2) can open it from any of its lines. In a
+shell the terminal's own wrap decides; in a Claude panel the joined text must match a
+URL in the session's log, so a URL with non-ASCII characters, a markdown link whose
+URL is not on screen, and one written after the last read (every 2s) stay as they
+were. tmux passes OSC 8 through only when its `terminal-features` allow `hyperlinks`
+(not checked here).
+
 The main screen shows one worktree, whose branch is in the title bar, and lists no
 others: no uncommitted-change counts, ahead/behind or waiting/active state per
 worktree. Every worktree and its sessions are in Sessions (**Alt+1**).

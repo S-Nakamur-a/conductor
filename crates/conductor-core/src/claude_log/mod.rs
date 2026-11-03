@@ -14,6 +14,7 @@ pub mod summary;
 #[cfg(test)]
 mod tests;
 mod tool_class;
+pub mod urls;
 
 pub use model::{DisplayBlock, LogEntry, Role};
 pub use session::{load_session, parse_jsonl};

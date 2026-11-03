@@ -114,6 +114,7 @@ pub fn run(
         config: Debounce::new(CONFIG_DEBOUNCE),
     };
     let mut file_watch = FileWatch::default();
+    let mut link_painter = crate::link::Painter::default();
 
     let mut startup = vec![
         Effect::Spawn(Task::ListWorktrees),
@@ -150,13 +151,18 @@ pub fn run(
             }
             ws.fx.start_pending();
             let mut picked = None;
-            terminal.draw(|frame| {
+            let mut links = Vec::new();
+            let drawn = terminal.draw(|frame| {
                 render(frame, ws, &last_layout);
                 if ws.chrome.copy_requested {
                     picked = picked_selection(ws, &last_layout, frame.buffer_mut());
                 }
+                links = crate::link::on_screen(ws, &last_layout, frame.buffer_mut());
             })?;
-            let _ = execute!(io::stdout(), EndSynchronizedUpdate);
+            let linked = link_painter.paint(drawn.buffer, &links);
+            let mut stdout = io::stdout();
+            let _ = stdout.write_all(&linked).and_then(|_| stdout.flush());
+            let _ = execute!(stdout, EndSynchronizedUpdate);
             ws.chrome.copy_requested = false;
             if let Some((region, picked)) = picked {
                 let (text, from_log) = crate::copy::resolve(ws, &last_layout, region, picked);
@@ -228,6 +234,7 @@ pub fn run(
         }
         poll_fleet_changes(ws, svc, Instant::now());
         poll_fleet_artifacts(ws, svc, Instant::now());
+        poll_log_urls(ws, svc, Instant::now());
         dirty |= ws.fx.tick();
 
         if ws.should_quit {
@@ -401,6 +408,18 @@ fn poll_fleet_artifacts(ws: &mut Workspace, svc: &mut Services<TaskResult>, now:
     }
     if let Some((conversation, from)) = fleet.artifacts.wanted(fleet.selected_conversation(), now) {
         let task = Task::FleetArtifacts { conversation, from };
+        apply(ws, svc, vec![Effect::Spawn(task)]);
+    }
+}
+
+fn poll_log_urls(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: Instant) {
+    let target = crate::link::shown_claude_log(ws);
+    if let Some((working_dir, session_id, from)) = ws.panels.terminal.log_urls.wanted(target, now) {
+        let task = Task::ScanLogUrls {
+            working_dir,
+            session_id,
+            from,
+        };
         apply(ws, svc, vec![Effect::Spawn(task)]);
     }
 }

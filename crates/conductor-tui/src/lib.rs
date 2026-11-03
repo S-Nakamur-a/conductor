@@ -13,6 +13,7 @@ pub mod entry;
 pub mod fx;
 pub mod index;
 pub mod layout;
+pub mod link;
 pub mod list;
 pub mod liveness;
 pub mod markdown;
