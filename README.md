@@ -123,14 +123,18 @@ state, and at its right end shows the 5h and 7d usage limits with the time left 
 each resets — one pair per `[[claude.accounts]]` that has one, after its name in its
 color; a Claude running under a config dir not listed there is left out, when accounts
 are listed. A line shows the state (waiting / working / finished and not yet looked at
-/ idle), how long it has been in it, the session's title and how much context it
+/ idle / not asked anything since it started), how long it has been in it, the session's title and how much context it
 holds — as a bar and a percentage for sessions conductor started, as a token count for
 the rest. Both come from Claude Code's statusLine: sessions conductor starts run
 `conductor cc-statusline` as theirs, which keeps a copy and then runs your own
 statusLine command with the same input. It is re-read from your settings every time
 Claude redraws the status line, so an edit shows from the next redraw; its `padding`
 and `refreshInterval` are not carried over. Usage appears once a session conductor
-started has drawn its status line.
+started has drawn its status line. The two states that wait for you to pick them up —
+finished and not yet looked at, and not asked anything yet (counted as idle above) — are
+drawn in red. A Claude started by the `[api] command` program (one whose parent process is
+that executable) is not listed, so **D** on a line cannot reach it; deleting a worktree still
+stops one running in it.
 
 **j** / **k** move one line, repository headings included; **J** / **K** (or **Shift+↓** /
 **Shift+↑**) jump to the next repository, or back to the top of the current one. Clicking a

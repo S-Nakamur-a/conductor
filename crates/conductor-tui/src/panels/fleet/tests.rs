@@ -41,6 +41,7 @@ fn live(pid: u32, cwd: &str, session: &str, status: Status, owner: Owner) -> Liv
         session_id: session.to_string(),
         status,
         status_since: Some(at(100)),
+        stirred: true,
         owner,
         started: at(u64::from(pid)),
         sessions_dir: PathBuf::from("/c/sessions"),
@@ -181,6 +182,135 @@ fn 止まったものは選ぶか映すまで完了_未確認() {
     let ws = Workspace::for_test();
     fleet.update(Action::NavigateDown, &ws.ctx());
     assert_eq!(state_of(&fleet, 8), State::Idle, "選んだら待機");
+}
+
+fn unstirred(pid: u32, session: &str, status: Status) -> LiveSession {
+    LiveSession {
+        stirred: false,
+        ..live(pid, "/r/a", session, status, Owner::Elsewhere)
+    }
+}
+
+fn summary(session: &str, context_tokens: Option<u64>) -> (String, SystemTime, Summary) {
+    (
+        session.to_string(),
+        at(0),
+        Summary {
+            title: Title::None,
+            context_tokens,
+        },
+    )
+}
+
+fn only_state(fleet: &FleetPanel) -> State {
+    let rows = fleet.visual_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    rows[0].state.clone()
+}
+
+#[test]
+fn 起動してから動いていない_claude_は選んでも未依頼() {
+    let mut fleet = FleetPanel::default();
+    let snapshot = || FleetStatus {
+        summaries: vec![summary("s1", None)],
+        ..status(vec![unstirred(7, "s1", Status::Idle)])
+    };
+    // 1 行だけなので最初の apply で選ばれ、次の apply では見た後になる。
+    fleet.apply(snapshot(), Vec::new(), None, true, at(200));
+    fleet.apply(snapshot(), Vec::new(), None, true, at(201));
+    assert_eq!(only_state(&fleet), State::Unasked);
+}
+
+#[test]
+fn ログがまだ無くても起動してから動いていなければ未依頼() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![unstirred(7, "s1", Status::Idle)]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    assert_eq!(only_state(&fleet), State::Unasked);
+}
+
+#[test]
+fn resume_して動いていない_claude_は前の返事があるので未依頼でない() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        FleetStatus {
+            summaries: vec![summary("s1", Some(12_000))],
+            ..status(vec![unstirred(7, "s1", Status::Idle)])
+        },
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    assert_eq!(only_state(&fleet), State::Finished);
+}
+
+#[test]
+fn 一度動いた_claude_は返事が無くても未依頼でない() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        FleetStatus {
+            summaries: vec![summary("s1", None)],
+            ..status(vec![live(7, "/r/a", "s1", Status::Idle, Owner::Elsewhere)])
+        },
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    assert_eq!(only_state(&fleet), State::Finished);
+}
+
+#[test]
+fn 動いていなくても作業中と入力待ちはそのまま() {
+    for (status_now, want) in [
+        (Status::Working, State::Working),
+        (
+            Status::Waiting(Waiting::Permission),
+            State::Waiting(Ask::Permission),
+        ),
+        (Status::Other("shell".into()), State::Other("shell".into())),
+    ] {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            status(vec![unstirred(7, "s1", status_now)]),
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        assert_eq!(fleet.visual_rows()[0].state, want);
+    }
+}
+
+#[test]
+fn 未依頼は本数で待機に数え_止める確認では未依頼と書く() {
+    let mut fleet = FleetPanel::default();
+    fleet.apply(
+        status(vec![
+            unstirred(7, "s1", Status::Idle),
+            live(8, "/r/a", "s2", Status::Working, Owner::Elsewhere),
+        ]),
+        Vec::new(),
+        None,
+        false,
+        at(200),
+    );
+    let theme = conductor_core::theme::Theme::from_name("catppuccin-mocha");
+    let line = render::summary_lines(&fleet, &theme, &[], at(300), 60).remove(0);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text.trim_end(), "入力待ち 0 · 作業中 1 · 完了 0 · 待機 1");
+    let row = fleet
+        .visual_rows()
+        .into_iter()
+        .find(|r| r.key == RowKey::Pid(7))
+        .unwrap();
+    assert_eq!(render::stop_detail(&row)[2], "状態: 未依頼");
 }
 
 #[test]
@@ -888,6 +1018,46 @@ mod hint {
                 line
             })
             .collect()
+    }
+
+    #[test]
+    fn 未依頼と完了_未確認は記号と題を赤くし_選んだ行の題だけ本文の色に戻す() {
+        let ws = listing(
+            vec![
+                unstirred(7, "s1", Status::Idle),
+                live(8, "/r/a", "s2", Status::Idle, Owner::Elsewhere),
+            ],
+            Vec::new(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(95, 12)).unwrap();
+        terminal
+            .draw(|frame| render::list(frame, frame.area(), &ws))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let lines = drawn(&ws, 95, 12);
+        let style_at = |glyph: &str, text: &str| {
+            let y = lines
+                .iter()
+                .position(|l| l.contains(glyph) && l.contains(text))
+                .unwrap_or_else(|| panic!("{glyph} の行が無い: {lines:#?}"));
+            let x = (0..95u16)
+                .find(|&x| buffer[(x, y as u16)].symbol() == glyph)
+                .unwrap();
+            let title_x = (x..95u16)
+                .find(|&x| buffer[(x, y as u16)].symbol() == "(")
+                .unwrap();
+            (
+                buffer[(x, y as u16)].fg,
+                buffer[(title_x, y as u16)].fg,
+                buffer[(title_x, y as u16)].modifier,
+            )
+        };
+        let theme = &ws.theme;
+        let (glyph, title, _) = style_at("*", "(");
+        assert_eq!((glyph, title), (theme.error, theme.fg), "選んだ行");
+        let (glyph, title, modifier) = style_at("✓", "(");
+        assert_eq!((glyph, title), (theme.error, theme.error), "選んでいない行");
+        assert!(modifier.contains(ratatui::style::Modifier::BOLD));
     }
 
     #[test]

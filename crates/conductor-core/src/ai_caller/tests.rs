@@ -74,6 +74,35 @@ fn 使えないプロバイダは値と行き先を返す() {
 }
 
 #[test]
+fn commandで起こすプログラム名() {
+    let api = |provider: &str, command: &[&str]| ApiConfig {
+        provider: provider.to_string(),
+        command: argv(command),
+        ..Default::default()
+    };
+    let cases = [
+        (
+            api(" Command ", &["/opt/bin/helper", "-w", "{workdir}"]),
+            Some("helper"),
+        ),
+        (api("command", &["helper"]), Some("helper")),
+        (api("command", &[]), None),
+        (api("command", &["zsh", "-c", "helper {prompt}"]), None),
+        (api("command", &["/bin/sh", "-c", "x"]), None),
+        (api("gemini", &["helper"]), None),
+    ];
+    for (cfg, want) in cases {
+        assert_eq!(
+            command_program(&cfg).as_deref(),
+            want,
+            "{} {:?}",
+            cfg.provider,
+            cfg.command
+        );
+    }
+}
+
+#[test]
 fn tail_charsは末尾n文字を取る() {
     let cases = [
         ("hello", 3, "llo"),

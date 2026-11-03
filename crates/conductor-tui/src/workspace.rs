@@ -398,6 +398,7 @@ impl Workspace {
             account_dirs: (self.config.claude.accounts.iter())
                 .map(|account| self.config.claude_dir_of(account))
                 .collect(),
+            ai_program: conductor_core::ai_caller::command_program(&self.config.api),
         }
     }
 
@@ -1264,6 +1265,14 @@ mod tests {
             queried: Vec::new(),
             failures: Vec::new(),
         }
+    }
+
+    #[test]
+    fn タスクに渡す隠す名前は_api_command_の先頭のファイル名() {
+        let mut ws = Workspace::for_test();
+        ws.config.api.provider = "command".into();
+        ws.config.api.command = vec!["/opt/bin/my-cli".into(), "{prompt}".into()];
+        assert_eq!(ws.task_env().ai_program.as_deref(), Some("my-cli"));
     }
 
     fn statuses(effects: &[Effect]) -> Vec<(StatusLevel, String)> {
