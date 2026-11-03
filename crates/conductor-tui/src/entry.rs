@@ -72,7 +72,7 @@ pub fn run(version: &'static str) -> Result<()> {
     // リポジトリにつき 1 つしかない口は、2 つ目のウィンドウでは先客に譲る。FIFO は
     // 作り直しが先客の読み口を消し、ソケットは宛先を奪う。どちらも黙って壊れる。
     let repo_channels = !options.second_window;
-    // Claude Code のフックが送る active/waiting とセッション id もホストが受けて中継する。
+    // Claude Code のフックが送るセッション id もホストが受けて中継する。
     if repo_channels {
         attach_pty_host(&mut ws, &svc, version);
     }
@@ -324,13 +324,9 @@ fn cli_fast_path(version: &str) -> Option<Result<()>> {
         }
         "mcp-serve" => Some(conductor_mcp::run(std::env::args(), version)),
         "cc-hook" => Some(cc_hook::run()),
-        "cc-signal" => Some(match std::env::args().nth(2).as_deref() {
-            Some("active") => cc_hook::run_signal(cc_hook::CcSignal::Active),
-            Some("waiting") => cc_hook::run_signal(cc_hook::CcSignal::Waiting),
-            other => Err(anyhow::anyhow!(
-                "cc-signal expects active or waiting, got {other:?}"
-            )),
-        }),
+        // 版上げ前に起動したパネルは、古いフック設定のままこれを呼び続ける。
+        // 消すと引数がパスと読まれて exit 1 になり、フックのたびにエラーが出る。
+        "cc-signal" => Some(Ok(())),
         "cc-statusline" => Some(cc_hook::statusline::run().map(|code| {
             if code != 0 {
                 std::process::exit(code);
@@ -379,7 +375,6 @@ Usage: conductor [REPO_PATH] [--second-window]
        conductor index [REPO_PATH]
        conductor mcp-serve [--db <PATH>]
        conductor cc-hook
-       conductor cc-signal <active|waiting>
        conductor cc-statusline
        conductor pty-host [REPO_PATH]
 
@@ -404,11 +399,6 @@ Commands:
                and reports the panel's current session id back to the running
                conductor. Wired up automatically via --settings when conductor
                spawns a Claude panel; not usually run by hand.
-
-  cc-signal    Claude Code prompt/stop/notification hook. Tells the running
-               conductor whether the panel in this directory is working or
-               waiting for you. Wired up the same way as cc-hook; not usually
-               run by hand.
 
   cc-statusline
                Claude Code statusLine. Keeps a copy of the status JSON (context

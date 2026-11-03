@@ -7,7 +7,7 @@
     {
       "name": "conductor",
       "source": "./plugins/conductor",
-      "description": "Hooks, MCP tools, and skills for Claude Code sessions running inside Conductor TUI"
+      "description": "MCP tools and skills for Claude Code sessions running inside Conductor TUI"
     }
   ]
 }

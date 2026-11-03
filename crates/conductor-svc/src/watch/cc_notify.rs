@@ -1,4 +1,4 @@
-//! Claude Code の状態通知を受ける Unix ドメインソケットのリスナ。
+//! Claude Code のパネルからの通知を受ける Unix ドメインソケットのリスナ。
 //!
 //! ソケットのパスと電文の書式は [conductor_core::cc_hook] が定める
 //! (フック側とここが同じ規約を共有する必要があるため)。ここはバックグラウンド
@@ -20,10 +20,9 @@ const MAX_MESSAGE_BYTES: usize = 8 * 1024;
 /// 終了時に accept ループの終了を待つ上限。
 const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Claude Code の状態通知を Unix ドメインソケットで待ち受ける。
+/// Claude Code のパネルからの通知を Unix ドメインソケットで待ち受ける。
 pub struct CcNotifyListener {
     socket_path: PathBuf,
-    pointer_path: PathBuf,
     shutdown: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -48,13 +47,6 @@ impl CcNotifyListener {
             }
         }
 
-        // bind より先に書く。後回しだと、書けなかったときに誰も片付けないソケットが残る。
-        let pointer_path = conductor_core::cc_hook::socket_pointer_path(repo_path);
-        if let Some(dir) = pointer_path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&pointer_path, format!("{}\n", socket_path.display()))?;
-
         let listener = UnixListener::bind(&socket_path)?;
 
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -66,7 +58,6 @@ impl CcNotifyListener {
 
         Ok(Self {
             socket_path,
-            pointer_path,
             shutdown,
             thread: Some(thread),
         })
@@ -128,7 +119,6 @@ impl Drop for CcNotifyListener {
             crate::join_or_abandon(thread, SHUTDOWN_JOIN_TIMEOUT);
         }
         let _ = std::fs::remove_file(&self.socket_path);
-        let _ = std::fs::remove_file(&self.pointer_path);
     }
 }
 
@@ -154,17 +144,33 @@ mod tests {
     }
 
     #[test]
-    fn 状態のメッセージが届く() {
+    fn 古い版のフックの行は捨てて次の行を受ける() {
         let repo = tempfile::tempdir().unwrap();
         let (listener, rx) = listen(repo.path());
 
         send(&listener.socket_path, "waiting /tmp/wt");
+        send(&listener.socket_path, "session panel-1 sess-2");
 
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(2)).unwrap(),
-            Notification::Waiting {
-                cwd: PathBuf::from("/tmp/wt")
+            Notification::Session {
+                panel_id: "panel-1".to_string(),
+                session_id: "sess-2".to_string()
             }
+        );
+    }
+
+    #[test]
+    fn 宛先を書き残すファイルを作らない() {
+        let repo = tempfile::tempdir().unwrap();
+        let (_listener, _rx) = listen(repo.path());
+
+        assert!(
+            !repo
+                .path()
+                .join(".conductor")
+                .join("cc-notify.path")
+                .exists()
         );
     }
 

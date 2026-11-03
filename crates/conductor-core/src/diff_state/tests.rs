@@ -643,11 +643,9 @@ fn 表示リストはディレクトリを先にファイルを後に深さ付�
     ds.has_summary = true;
     ds.rebuild_display_list();
 
-    let dir = |path: &str, name: &str, depth| DiffListEntry::Directory {
-        path: path.to_string(),
+    let dir = |name: &str, depth| DiffListEntry::Directory {
         name: name.to_string(),
         depth,
-        collapsed: false,
     };
     let file_at = |path: &str, depth| DiffListEntry::File {
         file_index: ds.files.iter().position(|f| f.path == path).unwrap(),
@@ -657,8 +655,8 @@ fn 表示リストはディレクトリを先にファイルを後に深さ付�
         ds.display_list,
         vec![
             DiffListEntry::Summary,
-            dir("src", "src", 0),
-            dir("src/deep", "deep", 1),
+            dir("src", 0),
+            dir("deep", 1),
             file_at("src/deep/c.rs", 2),
             file_at("src/a.rs", 1),
             file_at("src/b.rs", 1),
@@ -807,7 +805,7 @@ fn dir_rows(ds: &DiffState) -> Vec<(String, usize)> {
     ds.display_list
         .iter()
         .filter_map(|e| match e {
-            DiffListEntry::Directory { name, depth, .. } => Some((name.clone(), *depth)),
+            DiffListEntry::Directory { name, depth } => Some((name.clone(), *depth)),
             _ => None,
         })
         .collect()
@@ -824,32 +822,5 @@ fn 子が1つだけの階層は1行に畳まれる() {
             ("tui/src".to_string(), 1),
         ],
         "crates は子が 2 つあるので畳まない"
-    );
-}
-
-#[test]
-fn 畳んだ行の折りたたみはその単位で効く() {
-    let mut ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
-    assert!(
-        ds.display_list.iter().any(
-            |e| matches!(e, DiffListEntry::Directory { path, .. } if path == "crates/core/src")
-        ),
-        "畳んだ行のパスは最深のもの"
-    );
-    ds.collapsed_dirs.insert("crates/core/src".to_string());
-    ds.rebuild_display_list();
-    assert!(ds.display_index_for_path("crates/core/src/a.rs").is_none());
-    assert!(ds.display_index_for_path("crates/tui/src/b.rs").is_some());
-}
-
-#[test]
-fn 途中が折りたたまれていれば畳まずそこで止める() {
-    let mut ds = diff_state_with(&["crates/core/src/a.rs", "crates/tui/src/b.rs"]);
-    ds.collapsed_dirs.insert("crates/core".to_string());
-    ds.rebuild_display_list();
-    assert!(
-        dir_rows(&ds).contains(&("core".to_string(), 1)),
-        "閉じた指定を畳んで消さない: {:?}",
-        dir_rows(&ds)
     );
 }

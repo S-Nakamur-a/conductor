@@ -23,23 +23,11 @@ pub fn install_settings(repo_root: &Path) -> Result<PathBuf> {
     let path = dir.join("claude-hooks.json");
 
     let hook = |sub: &str| serde_json::json!([{ "hooks": [{ "type": "command", "command": format!("{exe} {sub}") }] }]);
-    // active/waiting をプラグインでなく本体から宣言するのは、あれが別途インストール
-    // した人にしか無いため。PostToolUse は承認ダイアログの waiting から抜ける唯一の口。
     // statusLine は 5h / 7d の使用量が来る唯一の口。
     let settings = serde_json::json!({
         "statusLine": { "type": "command", "command": format!("{exe} cc-statusline") },
         "hooks": {
             "SessionStart": hook("cc-hook"),
-            "UserPromptSubmit": hook("cc-signal active"),
-            "PostToolUse": hook("cc-signal active"),
-            "Stop": hook("cc-signal waiting"),
-            "Notification": [{
-                "matcher": "permission_prompt|elicitation_dialog|idle_prompt",
-                "hooks": [{
-                    "type": "command",
-                    "command": format!("{exe} cc-signal waiting"),
-                }],
-            }],
         },
     });
     std::fs::write(&path, serde_json::to_vec_pretty(&settings)?)
@@ -78,12 +66,6 @@ pub fn pty_host_sockets(dir: &Path) -> Vec<PathBuf> {
         .collect();
     sockets.sort();
     sockets
-}
-
-/// ソケットの居場所を書き残す先。環境変数を受け取れないクライアント (プラグインの
-/// シェルスクリプト) はここを読んで宛先を知る。
-pub fn socket_pointer_path(repo_root: &Path) -> PathBuf {
-    conductor_dir(repo_root).join("cc-notify.path")
 }
 
 /// ソケットを置く自分専用のディレクトリ。共有の /tmp に落ちうるので 0700 を強制する。
@@ -206,27 +188,14 @@ mod tests {
     }
 
     #[test]
-    fn 設定にactiveとwaitingのフックが宣言される() {
+    fn 宣言するフックはsession_startだけ() {
         let repo = tempfile::tempdir().expect("tmp repo");
         let path = install_settings(repo.path()).expect("write settings");
         let v: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("valid json");
 
-        let command = |event: &str| {
-            v["hooks"][event][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string()
-        };
-        assert!(command("UserPromptSubmit").ends_with(" cc-signal active"));
-        assert!(command("Stop").ends_with(" cc-signal waiting"));
-        assert!(command("PostToolUse").ends_with(" cc-signal active"));
-        assert!(command("Notification").ends_with(" cc-signal waiting"));
-        // 待ちの合図になる Notification だけを拾う。
-        assert_eq!(
-            v["hooks"]["Notification"][0]["matcher"],
-            "permission_prompt|elicitation_dialog|idle_prompt"
-        );
+        let events: Vec<&String> = v["hooks"].as_object().expect("hooks").keys().collect();
+        assert_eq!(events, ["SessionStart"]);
     }
 
     #[test]
@@ -302,15 +271,6 @@ mod tests {
         let (a, b) = (Path::new(DEEP_REPO), Path::new("/tmp/other"));
         assert_eq!(socket_path(a), socket_path(a));
         assert_ne!(socket_path(a), socket_path(b));
-    }
-
-    #[test]
-    fn 宛先を書き残す先はリポジトリの中() {
-        let repo = tempfile::tempdir().expect("tmp repo");
-        assert_eq!(
-            socket_pointer_path(repo.path()),
-            repo.path().join(".conductor").join("cc-notify.path")
-        );
     }
 
     #[test]

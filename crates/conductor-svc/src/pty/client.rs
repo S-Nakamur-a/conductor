@@ -196,7 +196,6 @@ struct Welcome {
     version: String,
     protocol: u32,
     sessions: Vec<SessionInfo>,
-    notifications: Vec<String>,
 }
 
 fn handshake(mut stream: UnixStream, version: &str) -> Result<(UnixStream, Welcome)> {
@@ -215,12 +214,11 @@ fn handshake(mut stream: UnixStream, version: &str) -> Result<(UnixStream, Welco
             version,
             protocol,
             sessions,
-            notifications,
+            ..
         }) => Welcome {
             version,
             protocol,
             sessions,
-            notifications,
         },
         Frame::Control(ToWindow::Busy) => return Err(HostBusy.into()),
         _ => bail!("the PTY host answered out of turn"),
@@ -327,12 +325,6 @@ impl PtyStore {
             welcome.protocol,
             wire::PROTOCOL
         );
-        // 受信を始める前に流す。後にすると、届いたばかりの通知を古い再生が上書きしうる。
-        for line in &welcome.notifications {
-            if let Some(notification) = Notification::parse(line) {
-                (detached.on_notify)(notification);
-            }
-        }
         // 張り直す前の写しは、もう誰も更新しない。残すと同じ id が 2 つになり、
         // 古い方を片付ける Remove が新しい接続越しに生きた子を殺す。
         self.sessions.retain(|s| s.host != socket);

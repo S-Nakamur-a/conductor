@@ -1,9 +1,9 @@
-//! Claude Code のパネルから Conductor へ事実を送り返す 2 つのコマンド
-//! (conductor cc-hook / cc-signal) と、cc-notify ソケットの電文。
+//! Claude Code のパネルから Conductor へ事実を送り返すコマンド (conductor cc-hook) と、
+//! cc-notify ソケットの電文。
 //!
-//! どちらもパネル自身の Claude プロセスの子として走るので、spawn 時に PTY へ注入した
+//! パネル自身の Claude プロセスの子として走るので、spawn 時に PTY へ注入した
 //! CONDUCTOR_PANEL_ID / CONDUCTOR_NOTIFY_SOCK がそのまま見える。どのパネルがいま
-//! どの .jsonl を書いているかも、作業中か入力待ちかも、ログの推測でなく事実で届く。
+//! どの .jsonl を書いているかが、ログの推測でなく事実で届く。
 //!
 //! バイナリに同居させるのは、プラグイン側に置くと別リリースチャネルになり、ずれた
 //! 組み合わせで黙って効かなくなるため (mcp-serve と同じ理由)。
@@ -22,7 +22,6 @@ pub mod statusline;
 
 pub use settings::{
     ensure_runtime_dir, install_settings, pty_host_socket_path, pty_host_sockets, socket_path,
-    socket_pointer_path,
 };
 
 pub const PANEL_ID_ENV: &str = "CONDUCTOR_PANEL_ID";
@@ -30,26 +29,16 @@ pub const NOTIFY_SOCK_ENV: &str = "CONDUCTOR_NOTIFY_SOCK";
 
 /// cc-notify ソケットを流れる 1 行。書く側 (フック) と聞く側 (リスナ) の共通語彙。
 ///
-/// どの id も UUID、cwd は行末まで丸ごとなので、空白区切りで曖昧にならない。
-/// ui だけは行末が JSON。
+/// session の id はどちらも UUID なので、空白区切りで曖昧にならない。ui は行末が JSON。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notification {
-    Active {
-        cwd: PathBuf,
-    },
-    Waiting {
-        cwd: PathBuf,
-    },
     /// このパネルが書き込んでいる Claude セッションが変わった (起動、/resume、/clear)。
     Session {
         panel_id: String,
         session_id: String,
     },
     /// パネルの Claude が MCP 越しに頼んだ画面操作。cwd はどの worktree の話か。
-    Ui {
-        cwd: PathBuf,
-        request: UiRequest,
-    },
+    Ui { cwd: PathBuf, request: UiRequest },
 }
 
 /// Claude から画面への頼みごと。パスは絶対パス。
@@ -83,12 +72,6 @@ impl Notification {
                     request,
                 })
             }
-            "active" => Some(Self::Active {
-                cwd: PathBuf::from(rest),
-            }),
-            "waiting" => Some(Self::Waiting {
-                cwd: PathBuf::from(rest),
-            }),
             "session" => {
                 let (panel_id, session_id) = rest.split_once(' ')?;
                 let (panel_id, session_id) = (panel_id.trim(), session_id.trim());
@@ -103,8 +86,6 @@ impl Notification {
 
     pub fn to_line(&self) -> String {
         match self {
-            Self::Active { cwd } => format!("active {}\n", cwd.display()),
-            Self::Waiting { cwd } => format!("waiting {}\n", cwd.display()),
             Self::Session {
                 panel_id,
                 session_id,
@@ -150,28 +131,6 @@ pub fn run() -> anyhow::Result<()> {
         },
     );
     Ok(())
-}
-
-/// このパネルが作業中か入力待ちかを Conductor へ伝える。
-///
-/// フックは Claude の cwd を継ぐので、どの worktree の話かは自分の cwd がそのまま答え。
-/// [run] と同じく常に Ok。
-pub fn run_signal(state: CcSignal) -> anyhow::Result<()> {
-    let (Ok(sock_path), Ok(cwd)) = (std::env::var(NOTIFY_SOCK_ENV), std::env::current_dir()) else {
-        return Ok(());
-    };
-    let message = match state {
-        CcSignal::Active => Notification::Active { cwd },
-        CcSignal::Waiting => Notification::Waiting { cwd },
-    };
-    notify(Path::new(&sock_path), &message);
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CcSignal {
-    Active,
-    Waiting,
 }
 
 /// 届いたかは答えない — ソケットに書けても、ウィンドウが閉じていれば読まれない。
@@ -226,18 +185,6 @@ mod tests {
     fn 電文は往復する() {
         let cases = [
             (
-                "waiting /tmp/wt",
-                Notification::Waiting {
-                    cwd: PathBuf::from("/tmp/wt"),
-                },
-            ),
-            (
-                "active /tmp/my worktree",
-                Notification::Active {
-                    cwd: PathBuf::from("/tmp/my worktree"),
-                },
-            ),
-            (
                 "session panel-1 sess-2",
                 Notification::Session {
                     panel_id: "panel-1".to_string(),
@@ -259,6 +206,13 @@ mod tests {
         for (line, want) in cases {
             assert_eq!(Notification::parse(line).as_ref(), Some(&want), "{line}");
             assert_eq!(want.to_line(), format!("{line}\n"));
+        }
+    }
+
+    #[test]
+    fn 古い版のフックが送る作業中と入力待ちの行は読まない() {
+        for line in ["active /tmp/wt", "waiting /tmp/my worktree"] {
+            assert!(Notification::parse(line).is_none(), "{line}");
         }
     }
 

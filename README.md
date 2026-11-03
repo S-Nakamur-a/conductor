@@ -32,10 +32,10 @@ Then, in a Claude Code session:
 /plugin install conductor@conductor-marketplace
 ```
 
-That sets up the MCP server (review comment DB and change summaries), the hooks
-that detect a waiting Claude Code session, and the `/address-conductor-comment`,
-`/explain-comment` and `/revidere` skills. `/revidere` sorts the branch's changes
-into sections by importance, checks that no changed line is left unexplained (and
+That sets up the MCP server (review comment DB and change summaries) and the
+`/address-conductor-comment`, `/explain-comment` and `/revidere` skills.
+`/revidere` sorts the branch's changes into sections by importance, checks that no
+changed line is left unexplained (and
 shows any that are), and publishes the result as a review page (an Artifact) with
 diff excerpts and links to GitHub.
 
