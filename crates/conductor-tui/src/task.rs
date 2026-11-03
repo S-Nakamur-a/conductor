@@ -51,6 +51,29 @@ pub struct TaskEnv {
     pub ai_program: Option<String>,
 }
 
+/// 止めた Claude が終わったか、終わってログを共有できたか。共有で退けたファイルがあれば持つ。
+#[derive(Debug)]
+pub enum ReopenOutcome {
+    NotEnded,
+    Shared(Option<PathBuf>),
+    ShareFailed(String),
+}
+
+/// Resume 一覧で選んだ、別のアカウントで開き直す会話。worktree は押した時点で決めた起動先。
+#[derive(Debug, Clone)]
+pub struct ResumeRequest {
+    pub id: String,
+    pub worktree: PathBuf,
+    pub chrome: bool,
+    pub account: String,
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+fn share_log(from: &Path, to: &Path, dir: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+    ClaudeHome::share_session_log(from, to, dir, id).map_err(|e| format!("{e:#}"))
+}
+
 impl TaskEnv {
     fn claude_home(&self) -> ClaudeHome {
         ClaudeHome::of(self.claude_dirs.clone())
@@ -104,8 +127,10 @@ pub enum Task {
     },
     /// 中の Claude が終わったのを確かめ、点検のときから増えていなければ消す。
     DeleteFleetWorktree(Box<crate::panels::fleet::Inspection>),
-    /// 止めた Claude が終わるのを待つ。開き直すのは結果を受けた側。
+    /// 止めた Claude が終わるのを待ち、移す先のアカウントへログを共有する。開き直すのは結果を受けた側。
     AwaitReopen(crate::panels::fleet::Reopen),
+    /// Resume 一覧で別のアカウントを選んだ会話のログを、そのアカウントへ共有する。
+    ShareThenResume(ResumeRequest),
     LoadTree {
         root: PathBuf,
         expanded: Vec<String>,
@@ -417,10 +442,13 @@ pub enum TaskResult {
     WorktreeCreated(Result<Created, String>),
     SmartWorktreeCreated(Result<SmartWorktree, String>),
     WorktreeDeleted(Result<String, String>),
-    /// 開き直す Claude が止まったか。止まっていれば選んだアカウントで開き直す。
     Reopened {
         reopen: crate::panels::fleet::Reopen,
-        ended: bool,
+        outcome: ReopenOutcome,
+    },
+    ResumeShared {
+        request: ResumeRequest,
+        outcome: Result<Option<PathBuf>, String>,
     },
     FleetWorktreeInspected {
         path: PathBuf,
@@ -637,9 +665,33 @@ impl Task {
                             &registry::SystemProcesses,
                             fleet_delete::OWN_WAIT,
                         );
-                        (reopen, ended)
+                        let outcome = if !ended {
+                            ReopenOutcome::NotEnded
+                        } else {
+                            match share_log(
+                                &reopen.from,
+                                &reopen.to,
+                                &reopen.dir,
+                                &reopen.session_id,
+                            ) {
+                                Ok(aside) => ReopenOutcome::Shared(aside),
+                                Err(e) => ReopenOutcome::ShareFailed(e),
+                            }
+                        };
+                        (reopen, outcome)
                     },
-                    |(reopen, ended)| TaskResult::Reopened { reopen, ended },
+                    |(reopen, outcome)| TaskResult::Reopened { reopen, outcome },
+                );
+            }
+            // repo を切り替えても開く。押した時点の dir で開くので、切り替え後の窓に引きずられない。
+            Task::ShareThenResume(request) => {
+                svc.spawn_unscoped(
+                    move || {
+                        let outcome =
+                            share_log(&request.from, &request.to, &request.worktree, &request.id);
+                        (request, outcome)
+                    },
+                    |(request, outcome)| TaskResult::ResumeShared { request, outcome },
                 );
             }
             // repo を切り替えても、消したかどうかは知らせる。

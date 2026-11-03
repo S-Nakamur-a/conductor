@@ -504,21 +504,45 @@ impl Workspace {
                 let undisturbed = self.focus == Focus::Fleet && self.modals.is_empty();
                 self.panels.fleet.inspected(&path, outcome, undisturbed)
             }
-            TaskResult::Reopened { reopen, ended } => {
+            TaskResult::Reopened { reopen, outcome } => {
+                use crate::task::ReopenOutcome;
                 self.panels.fleet.reopened(&reopen.session_id);
-                vec![if ended {
-                    Effect::LaunchReopened(reopen)
-                } else {
-                    Effect::Status(
+                match outcome {
+                    ReopenOutcome::Shared(aside) => vec![Effect::LaunchReopened { reopen, aside }],
+                    ReopenOutcome::ShareFailed(why) => vec![Effect::Status(
+                        StatusLevel::Error,
+                        format!(
+                            "The session stopped, but its log could not be shared with {}: {why}. Resume it from the Resume list",
+                            reopen.account
+                        ),
+                    )],
+                    ReopenOutcome::NotEnded => vec![Effect::Status(
                         StatusLevel::Warning,
                         format!(
                             "The session did not end within {}s: once it has, resume it from the Resume list as {}",
                             crate::task::fleet_delete::OWN_WAIT.as_secs(),
                             reopen.account
                         ),
-                    )
-                }]
+                    )],
+                }
             }
+            TaskResult::ResumeShared { request, outcome } => match outcome {
+                Ok(aside) => {
+                    let mut effects = vec![Effect::ResumeSession {
+                        id: request.id,
+                        worktree: Some(request.worktree),
+                        chrome: request.chrome,
+                        account: Some(request.account),
+                        ran_in: Some(request.to),
+                    }];
+                    effects.extend(aside.map(set_aside_warning));
+                    effects
+                }
+                Err(why) => vec![Effect::Status(
+                    StatusLevel::Error,
+                    format!("Could not share the log with {}: {why}", request.account),
+                )],
+            },
             TaskResult::FleetWorktreeDeleted {
                 path,
                 in_window_repo,
@@ -1224,6 +1248,16 @@ pub(crate) fn not_in_diff(path: String) -> Effect {
     Effect::Status(
         StatusLevel::Warning,
         format!("{path} has no changes against the base."),
+    )
+}
+
+pub(crate) fn set_aside_warning(aside: std::path::PathBuf) -> Effect {
+    Effect::Status(
+        StatusLevel::Warning,
+        format!(
+            "That account had its own continuation of this conversation; it is kept in {}",
+            aside.display()
+        ),
     )
 }
 
