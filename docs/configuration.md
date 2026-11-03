@@ -86,12 +86,13 @@ beside this file in `sessions-fold.json`, rewritten on every fold, and read at s
 # (automatic resume, grab, and Resume / Resume + Chrome in the Resume menu) starts
 # as the account whose history.jsonl last ran the conversation, so a conversation
 # moved to another account for a while stays there; a conversation from a config
-# dir that is not one of the accounts follows `paths`. conductor does not check
-# that an account chosen with "as <name>" can open the conversation. The Resume
+# dir that is not one of the accounts follows `paths`. Choosing "as <name>" for an
+# account other than the one that ran the conversation links the log into that
+# account first (README: A). The Resume
 # menu refuses a conversation whose Claude is open in this window; automatic
 # resume skips a worktree that already has a Claude, and grab does not check.
 # A (Shift+a) in the Sessions list stops one of this window's sessions and
-# resumes it as another account whose config dir has the conversation's log.
+# resumes it as another account whose config dir exists, after linking the log into it.
 # Shells keep conductor's own
 # environment, so `claude` typed in one runs as the account conductor was started
 # with.

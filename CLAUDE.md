@@ -529,7 +529,16 @@ counting only rows whose log is in that config dir) unless one is chosen by hand
 conversation moved to another account stays there. **A** in the list moves one of this
 window's sessions to another account (`Effect::ReopenAs`): it stops the panel, waits on
 `registry::ended_within`, and resumes only once the old process is gone; if it is not
-gone in 5s nothing is started. A row of this window is
+gone in 5s nothing is started. Each account has its own `projects/` (a symlinked one sends
+every memory write through a permission prompt), so before resuming it links the log into
+the chosen account's (`ClaudeHome::share_session_log`); the Resume list's **Resume as**
+another account does the same on a worker first. The link is to the one real file, and
+Claude Code appends through it (seen on 2.1.317 with -p across turns, `/compact` and
+`/clear`, and interactively across turns; a version that rewrote the file would split it
+again). Two copies already there (the 2026-11-03
+clone) become one — the longer kept, or the target's set aside as `.replaced-<ms>` when neither
+is a prefix. Only these two entries share a log across accounts; a plain resume, the restore at start and grab
+read whichever copy `session_log` finds first. A row of this window is
 keyed by its panel id, not the conversation id, because `/clear` changes the
 latter. Rows hang under repository → worktree. The same worker lists the worktrees
 (`GitEngine::worktree_heads`: path and HEAD only) and places each session dir under
