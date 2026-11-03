@@ -11,6 +11,7 @@ mod tests;
 mod tool;
 mod wrap;
 
+use std::ops::Range;
 use std::time::Instant;
 
 use conductor_core::claude_log::LogEntry;
@@ -27,6 +28,9 @@ pub(crate) use render::render;
 
 /// 入場の枠色遷移にかける時間。これ以上長いと読みモードへ入る操作がもたつく。
 const TRANSITION_MS: u64 = 500;
+
+/// これより長い論理行は無いとみなす幅。コードの行はこの幅まで空白で埋まるので大きすぎない値。
+const UNWRAPPED_WIDTH: usize = 4096;
 
 /// キーを処理した結果。ビューを畳むかどうかだけを持ち主へ返す。
 pub(super) enum Handled {
@@ -80,6 +84,38 @@ impl Reflow {
     /// 組み直した行の数と、先頭に出ている行。
     pub(crate) fn extent(&self) -> (usize, usize) {
         (self.lines.len(), self.scroll)
+    }
+
+    /// ビューポートの `rows` 行目に映っているエントリを、折り返さない幅で描き直した文字。
+    /// 見た目の行の境目が折り返しかどうかを、描いた本人の出力と照らすために使う。
+    pub(crate) fn unwrapped_text(
+        &self,
+        rows: Range<usize>,
+        theme: &Theme,
+        highlighter: &Highlighter,
+    ) -> String {
+        let shown = self
+            .meta
+            .iter()
+            .skip(self.scroll + rows.start)
+            .take(rows.len());
+        let (lo, hi) = shown.fold((usize::MAX, 0), |(lo, hi), m| {
+            (lo.min(m.entry), hi.max(m.entry))
+        });
+        let Some(entries) = self.entries.get(lo..=hi) else {
+            return String::new();
+        };
+        let ctx = build::Ctx {
+            theme,
+            highlighter,
+            expanded: self.expanded,
+        };
+        build::build(&ctx, entries, UNWRAPPED_WIDTH)
+            .lines
+            .iter()
+            .map(|line| line.to_string().trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub(crate) fn border_color(&self, theme: &Theme) -> ratatui::style::Color {

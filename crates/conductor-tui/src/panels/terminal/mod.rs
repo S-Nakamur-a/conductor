@@ -409,6 +409,12 @@ impl TerminalPanel {
         self.pty.sessions().iter().position(|s| s.id == id)
     }
 
+    /// Claude Code が会話ログを書いている (作業ディレクトリ, 会話の id)。
+    pub(crate) fn claude_log_of(&self, session: Option<&str>) -> Option<(PathBuf, String)> {
+        let (working_dir, id, _) = self.pty.claude_session_ref(self.index_of(session)?)?;
+        Some((working_dir, id))
+    }
+
     /// 選択中の worktree が変わったとき、両パネルの表示をその worktree のものへ移す。
     pub fn follow_worktree(&mut self, worktree: Option<PathBuf>) {
         if self.worktree == worktree {

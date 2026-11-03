@@ -149,32 +149,40 @@ pub fn run(
                 terminal.clear()?;
             }
             ws.fx.start_pending();
-            let mut clipboard = None;
+            let mut picked = None;
             terminal.draw(|frame| {
                 render(frame, ws, &last_layout);
                 if ws.chrome.copy_requested {
-                    clipboard = selected_text(ws, &last_layout, frame.buffer_mut())
-                        .filter(|text| !text.is_empty());
+                    picked = picked_selection(ws, &last_layout, frame.buffer_mut());
                 }
             })?;
             let _ = execute!(io::stdout(), EndSynchronizedUpdate);
             ws.chrome.copy_requested = false;
-            if let Some(text) = clipboard {
-                let mut stdout = io::stdout();
-                let _ = stdout
-                    .write_all(&select::osc52(&text))
-                    .and_then(|_| stdout.flush());
-                select::system_copy(&text);
-                apply(
-                    ws,
-                    svc,
-                    vec![Effect::Status(
-                        StatusLevel::Info,
-                        "Copied to clipboard".into(),
-                    )],
-                );
+            if let Some((region, picked)) = picked {
+                let (text, from_log) = crate::copy::resolve(ws, &last_layout, region, picked);
+                if !text.is_empty() {
+                    ws.chrome.clipboard = Some(text);
+                    if let Some(job) = from_log {
+                        apply(ws, svc, vec![Effect::Spawn(Task::RejoinCopy(job))]);
+                    }
+                }
             }
             dirty = false;
+        }
+        if let Some(text) = ws.chrome.clipboard.take() {
+            let mut stdout = io::stdout();
+            let _ = stdout
+                .write_all(&select::osc52(&text))
+                .and_then(|_| stdout.flush());
+            select::system_copy(&text);
+            apply(
+                ws,
+                svc,
+                vec![Effect::Status(
+                    StatusLevel::Info,
+                    "Copied to clipboard".into(),
+                )],
+            );
         }
 
         if drain_input(
@@ -529,10 +537,14 @@ fn dropped_file(text: &str) -> Option<PathBuf> {
     (path.is_absolute() && path.is_file()).then_some(path)
 }
 
-fn selected_text(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Option<String> {
+fn picked_selection(
+    ws: &Workspace,
+    layout: &Layout,
+    buffer: &Buffer,
+) -> Option<(Region, select::Picked)> {
     let selection = ws.chrome.selection.as_ref()?;
     let area = select::area(layout, selection.region)?;
-    Some(select::text(buffer, selection, area))
+    Some((selection.region, select::pick(buffer, selection, area)))
 }
 
 /// クリックした区画へフォーカスを移し、その区画に行を渡す。ホイールは
@@ -1277,7 +1289,10 @@ mod tests {
             terminal
                 .draw(|frame| crate::render::render(frame, ws, &l))
                 .unwrap();
-            selected_text(ws, &l, terminal.backend().buffer()).unwrap()
+            picked_selection(ws, &l, terminal.backend().buffer())
+                .unwrap()
+                .1
+                .plain()
         };
 
         // 枠の内側から、行番号 1 桁 + 畳みの印 + 仕切り " │ " を越えた先が本文。

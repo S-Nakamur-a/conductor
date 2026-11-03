@@ -121,6 +121,10 @@ pub struct Chrome {
     pub selection: Option<crate::select::Selection>,
     /// 離した選択をクリップボードへ渡す番。文字は描いた画面から拾うので、次の描画の後に済ませる。
     pub copy_requested: bool,
+    /// 何回目のコピーか。ログを読み終えた結果は、これが変わっていなければ書く。
+    pub copy_seq: u64,
+    /// まだクリップボードへ書いていない文字。
+    pub clipboard: Option<String>,
     /// 走っているものより新しいリリース。タイトルバーのバッジが読む。
     pub update: Option<UpdateInfo>,
     /// 一覧が main を占めている。開いているかはフォーカスから導かない — 今の画面の
@@ -597,6 +601,12 @@ impl Workspace {
             }
             TaskResult::IndexLoaded(_) => {
                 crate::index::accept(self, result);
+                Vec::new()
+            }
+            TaskResult::Rejoined { seq, text } => {
+                if seq == self.chrome.copy_seq && text.is_some() {
+                    self.chrome.clipboard = text;
+                }
                 Vec::new()
             }
             TaskResult::Transcript {

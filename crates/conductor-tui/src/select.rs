@@ -17,6 +17,7 @@ use ratatui::style::Style;
 use unicode_width::UnicodeWidthStr;
 
 use crate::layout::{Layout, Region};
+use crate::rejoin::Break;
 
 /// 画面座標で持つ。区画の中身が動いても選択は動かない — 端末の選択と同じ。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,13 +99,57 @@ pub fn highlight(buffer: &mut Buffer, selection: &Selection, area: Rect, style: 
     }
 }
 
-/// 全角の字形は描いたときに次のセルが空白に潰されているので、幅の分だけ飛ばす。
-pub fn text(buffer: &Buffer, selection: &Selection, area: Rect) -> String {
-    let mut lines = Vec::new();
-    for y in selection.rows() {
-        if !(area.y..area.bottom()).contains(&y) {
-            continue;
+/// 選択を写した文字。行の区切りを決める材料に、選んでいない行も区画の全行ぶん持つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picked {
+    /// 区画の上から順の各行の全体。
+    pub rows: Vec<String>,
+    /// 区画の最上行の画面の行。
+    pub top: u16,
+    /// `rows` の何行目から選んでいるか。
+    pub first: usize,
+    /// 選んだ各行の、選んだ部分。
+    pub parts: Vec<String>,
+}
+
+impl Picked {
+    /// 各行のあいだに `breaks[行]` を入れて繋ぐ。`breaks` は `rows` の境目ごと。
+    pub fn join(&self, breaks: &[Break]) -> String {
+        let between = |i: usize| breaks.get(self.first + i).copied();
+        let last = self.parts.len().saturating_sub(1);
+        let mut out = String::new();
+        for (i, part) in self.parts.iter().enumerate() {
+            let before = i.checked_sub(1).and_then(between);
+            let after = (i < last).then(|| between(i)).flatten();
+            let part = match before {
+                Some(Break::Space | Break::Glue) => part.trim_start(),
+                _ => part,
+            };
+            let part = match after {
+                Some(Break::SoftWrap) => part,
+                _ => part.trim_end(),
+            };
+            out.push_str(part);
+            if i < last {
+                out.push_str(match after {
+                    Some(Break::Space) => " ",
+                    Some(Break::Glue | Break::SoftWrap) => "",
+                    Some(Break::Newline) | None => "\n",
+                });
+            }
         }
+        out
+    }
+
+    /// 区切りが分からないときの写し方。見た目の行をそのまま改行で結ぶ。
+    pub fn plain(&self) -> String {
+        self.join(&[])
+    }
+}
+
+/// 全角の字形は描いたときに次のセルが空白に潰されているので、幅の分だけ飛ばす。
+pub fn pick(buffer: &Buffer, selection: &Selection, area: Rect) -> Picked {
+    let row_text = |y: u16, picked: &dyn Fn(u16) -> bool| {
         let mut line = String::new();
         let mut skip = 0usize;
         for x in area.x..area.right() {
@@ -112,16 +157,30 @@ pub fn text(buffer: &Buffer, selection: &Selection, area: Rect) -> String {
                 skip -= 1;
                 continue;
             }
-            if !selection.contains(x, y) {
+            if !picked(x) {
                 continue;
             }
             let symbol = buffer[(x, y)].symbol();
             skip = symbol.width().saturating_sub(1);
             line.push_str(symbol);
         }
-        lines.push(line.trim_end().to_string());
+        line
+    };
+    let selected: Vec<u16> = selection
+        .rows()
+        .filter(|y| (area.y..area.bottom()).contains(y))
+        .collect();
+    Picked {
+        rows: (area.y..area.bottom())
+            .map(|y| row_text(y, &|_| true))
+            .collect(),
+        top: area.y,
+        first: selected.first().map_or(0, |&y| usize::from(y - area.y)),
+        parts: selected
+            .iter()
+            .map(|&y| row_text(y, &|x| selection.contains(x, y)))
+            .collect(),
     }
-    lines.join("\n")
 }
 
 /// 端末のクリップボードへ書く OSC 52。tmux や SSH 越しでも端末まで届く。
@@ -193,6 +252,10 @@ pub fn system_copy(text: &str) {
 mod tests {
     use super::*;
 
+    fn text(buffer: &Buffer, selection: &Selection, area: Rect) -> String {
+        pick(buffer, selection, area).plain()
+    }
+
     fn buffer(lines: &[&str]) -> Buffer {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 12, lines.len() as u16));
         for (y, line) in lines.iter().enumerate() {
@@ -217,6 +280,66 @@ mod tests {
         let mut selection = Selection::begin(Region::Viewer, 2, 1);
         selection.extend(4, 0, area);
         assert_eq!(text(&buffer, &selection, area), "ef\nghi");
+    }
+
+    fn picked_of(lines: &[&str], from: (u16, u16), to: (u16, u16)) -> Picked {
+        let buffer = buffer(lines);
+        let area = Rect::new(0, 0, 12, lines.len() as u16);
+        let mut selection = Selection::begin(Region::TerminalClaude, from.0, from.1);
+        selection.extend(to.0, to.1, area);
+        pick(&buffer, &selection, area)
+    }
+
+    #[test]
+    fn 語の切れ目の折り返しは字下げを落として空白で繋ぐ() {
+        let picked = picked_of(&["⏺ one two", "  three"], (0, 0), (11, 1));
+        assert_eq!(picked.join(&[Break::Space]), "⏺ one two three");
+    }
+
+    #[test]
+    fn 語の途中の折り返しは区切りなしで繋ぐ() {
+        let picked = picked_of(&["  https://ex", "  ample.com"], (2, 0), (11, 1));
+        assert_eq!(picked.join(&[Break::Glue]), "https://example.com");
+    }
+
+    #[test]
+    fn 端末の折り返しは行末の空白も中身として残す() {
+        let picked = picked_of(&["echo a     ", "b"], (0, 0), (11, 1));
+        assert_eq!(picked.join(&[Break::SoftWrap]), "echo a      b");
+    }
+
+    #[test]
+    fn 区切りは選んでいない行も含めた区画の行の並びで引く() {
+        let picked = picked_of(&["head", "one two", "  three", "tail"], (4, 1), (3, 2));
+        assert_eq!(picked.first, 1);
+        assert_eq!(
+            picked.join(&[Break::Newline, Break::Space, Break::Newline]),
+            "two th"
+        );
+    }
+
+    #[test]
+    fn 区切りが分からなければ見た目の行を改行で結ぶ() {
+        let picked = picked_of(&["one two ", "  three"], (0, 0), (11, 1));
+        assert_eq!(picked.plain(), "one two\n  three");
+    }
+
+    #[test]
+    fn 空白だけを選ぶと空の文字になる() {
+        let picked = picked_of(&["a    b"], (1, 0), (4, 0));
+        assert_eq!(picked.plain(), "");
+    }
+
+    #[test]
+    fn 空白だけの複数行は区切りどおりに繋ぐ() {
+        let picked = picked_of(&["a", "", " c"], (1, 0), (0, 2));
+        assert_eq!(picked.join(&[Break::Space, Break::Newline]), " \n");
+        assert_eq!(picked.join(&[Break::Glue, Break::Glue]), "");
+        let soft = picked.join(&[Break::SoftWrap, Break::SoftWrap]);
+        assert!(
+            !soft.is_empty() && soft.chars().all(|c| c == ' '),
+            "{soft:?}"
+        );
     }
 
     #[test]
