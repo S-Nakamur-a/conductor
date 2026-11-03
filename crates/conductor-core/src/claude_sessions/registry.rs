@@ -431,6 +431,7 @@ fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<Si
         status_since: record
             .status_updated_at
             .map(|ms| UNIX_EPOCH + Duration::from_millis(ms)),
+        // 時刻が読めない写しは、動いたものとして扱う (未依頼の誤判定は目立たない側に倒す)
         stirred: match (record.started_at, record.status_updated_at) {
             (Some(started), Some(updated)) => started.abs_diff(updated) >= UNSTIRRED_WITHIN,
             _ => true,
@@ -872,6 +873,32 @@ mod tests {
             .collect();
 
         assert_eq!(listed, vec![10]);
+    }
+
+    #[test]
+    fn 状態が起動から5秒以内のまま動いていない写しだけ_stirred_でない() {
+        let started = 1792634755219u64;
+        let cases = [
+            (Some(started + 130), false),
+            (Some(started - 130), false),
+            (Some(started + 4_999), false),
+            (Some(started + 5_000), true),
+            (None, true),
+        ];
+        for (updated, want) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_str(&record(10, "a", "idle", None)).unwrap();
+            match updated {
+                Some(ms) => value["statusUpdatedAt"] = json!(ms),
+                None => {
+                    value.as_object_mut().unwrap().remove("statusUpdatedAt");
+                }
+            }
+            write(dir.path(), "10.json", &value.to_string());
+            let procs = Fake::new().with(10, alive(started_utc()));
+            assert_eq!(live(dir.path(), &procs)[0].stirred, want, "{updated:?}");
+        }
     }
 
     #[test]

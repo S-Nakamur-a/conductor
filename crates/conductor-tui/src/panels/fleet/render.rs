@@ -1035,7 +1035,6 @@ fn look(theme: &Theme, state: &State) -> (&'static str, Color) {
     }
 }
 
-/// 終わって誰も見ていないか、まだ何も頼まれていない。人が手を付けるのを待っている。
 fn unattended(state: &State) -> bool {
     matches!(state, State::Finished | State::Unasked)
 }
