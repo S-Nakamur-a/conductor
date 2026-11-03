@@ -47,6 +47,8 @@ pub struct TaskEnv {
     pub claude_dirs: Vec<PathBuf>,
     /// `[[claude.accounts]]` と同じ並びの config dir。5h / 7d をアカウントごとに分ける。
     pub account_dirs: Vec<Option<PathBuf>>,
+    /// AI 呼び出しのコマンドのファイル名。これが親の Claude は Sessions に出さない。
+    pub ai_program: Option<String>,
 }
 
 impl TaskEnv {
@@ -1386,6 +1388,7 @@ fn fleet_status(
     let live = registry::read_live(
         &registry::sessions_dirs(&env.claude_dirs),
         &registry::SystemProcesses,
+        env.ai_program.as_deref(),
     );
     let home = env.claude_home();
     let mut asked = std::collections::HashSet::new();
@@ -2267,6 +2270,7 @@ mod fleet_delete_tests {
             session_id: session.into(),
             status: Status::Idle,
             status_since: None,
+            stirred: true,
             owner: Owner::Conductor,
             sessions_dir: PathBuf::from("/c/sessions"),
         }
@@ -2302,8 +2306,8 @@ mod fleet_delete_tests {
                 started: started(),
             })
         }
-        fn is_conductor(&self, _pid: u32) -> bool {
-            false
+        fn program(&self, _pid: u32) -> Option<PathBuf> {
+            None
         }
         fn signal(&self, pid: u32, _signal: Signal) -> std::io::Result<()> {
             self.alive
@@ -2742,6 +2746,7 @@ mod resumable_tests {
             branch: "main".into(),
             claude_dirs,
             account_dirs: Vec::new(),
+            ai_program: None,
         }
     }
 

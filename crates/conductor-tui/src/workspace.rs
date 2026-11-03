@@ -398,6 +398,7 @@ impl Workspace {
             account_dirs: (self.config.claude.accounts.iter())
                 .map(|account| self.config.claude_dir_of(account))
                 .collect(),
+            ai_program: conductor_core::ai_caller::command_program(&self.config.api),
         }
     }
 

@@ -69,7 +69,7 @@ pub struct TaskEnv {
 /// gemini は素の HTTP なのでリポジトリを読めない。リポジトリを読ませるタスクは、
 /// エージェント型の CLI を指した command の下でのみ動く。
 pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>, String> {
-    match api.provider.trim().to_lowercase().as_str() {
+    match provider(api).as_str() {
         "gemini" => Ok(Box::new(GeminiCaller {
             model: api.model.clone(),
             max_tokens: gemini::MAX_TOKENS,
@@ -91,6 +91,23 @@ pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>,
             "unknown AI provider '{other}' (expected: gemini, command)"
         )),
     }
+}
+
+fn provider(api: &ApiConfig) -> String {
+    api.provider.trim().to_lowercase()
+}
+
+/// provider = "command" で起こすプログラムのファイル名。シェルは端末の Claude の親でもあるので返さない。
+pub fn command_program(api: &ApiConfig) -> Option<String> {
+    const SHELLS: [&str; 6] = ["sh", "bash", "zsh", "fish", "dash", "ksh"];
+    if provider(api) != "command" {
+        return None;
+    }
+    let name = std::path::Path::new(api.command.first()?)
+        .file_name()?
+        .to_str()?
+        .to_string();
+    (!SHELLS.contains(&name.as_str())).then_some(name)
 }
 
 #[cfg(test)]

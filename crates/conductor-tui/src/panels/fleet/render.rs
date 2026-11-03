@@ -102,7 +102,7 @@ fn state_spans(fleet: &FleetPanel, theme: &Theme, hide_zero: bool) -> Vec<Span<'
             State::Waiting(_) => 0,
             State::Working => 1,
             State::Finished => 2,
-            State::Idle => 3,
+            State::Idle | State::Unasked => 3,
             State::Other(_) | State::Unknown => continue,
         };
         counts[slot] += 1;
@@ -1028,10 +1028,16 @@ fn look(theme: &Theme, state: &State) -> (&'static str, Color) {
     match state {
         State::Waiting(_) => ("!", theme.waiting_primary),
         State::Working => ("›", theme.accent),
-        State::Finished => ("✓", theme.success),
+        State::Finished => ("✓", theme.error),
+        State::Unasked => ("*", theme.error),
         State::Idle => ("z", theme.hint),
         State::Other(_) | State::Unknown => ("·", theme.hint),
     }
+}
+
+/// 終わって誰も見ていないか、まだ何も頼まれていない。人が手を付けるのを待っている。
+fn unattended(state: &State) -> bool {
+    matches!(state, State::Finished | State::Unasked)
 }
 
 fn state_text(state: &State) -> String {
@@ -1042,6 +1048,7 @@ fn state_text(state: &State) -> String {
         State::Working => "作業中".into(),
         State::Finished => "完了・未確認".into(),
         State::Idle => "待機".into(),
+        State::Unasked => "未依頼".into(),
         State::Other(raw) => raw.clone(),
         State::Unknown => "状態不明".into(),
     }
@@ -1178,7 +1185,14 @@ fn row_line(
         .saturating_sub(indent + 2 + left.width() + account_width + right_width + 2);
     let title = clip(&title, room);
     let pad = room.saturating_sub(title.width());
-    let title_fg = if row.title.is_some() { theme.fg } else { hint };
+    let title_style = match (unattended(&row.state), selected) {
+        (true, false) => Style::default()
+            .fg(theme.error)
+            .add_modifier(Modifier::BOLD),
+        (true, true) => Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        (false, _) if row.title.is_some() => Style::default().fg(theme.fg),
+        (false, _) => Style::default().fg(hint),
+    };
     let mut spans = vec![
         Span::raw(" ".repeat(indent)),
         Span::styled(
@@ -1193,7 +1207,7 @@ fn row_line(
     ];
     spans.extend(account);
     spans.extend([
-        Span::styled(title, Style::default().fg(title_fg)),
+        Span::styled(title, title_style),
         Span::raw(" ".repeat(pad + 2)),
     ]);
     spans.extend(right);

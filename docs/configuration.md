@@ -159,6 +159,10 @@ beside this file in `sessions-fold.json`, rewritten on every fold, and read at s
 # command = ["my-cli", "-w", "{workdir}", "{prompt}"]    # prompt as a positional argument
 # command = ["ollama", "run", "llama3"]                  # reads stdin, no placeholder needed
 #
+# A Claude Code session whose parent process is the `command` program (matched
+# by file name) is left out of Sessions; a shell (sh, bash, zsh, …) as the
+# program hides nothing. A change to [api] takes effect when the window reopens.
+#
 # You do not need a wrapper script: what a task requires — that the model must
 # not use tools, the output format, which directory to read — is part of the
 # prompt Conductor builds for that task.

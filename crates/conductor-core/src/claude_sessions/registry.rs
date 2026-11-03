@@ -15,6 +15,8 @@ use serde::Deserialize;
 const START_TOLERANCE: Duration = Duration::from_secs(2);
 const STOP_POLL: Duration = Duration::from_millis(50);
 const KILL_WAIT: Duration = Duration::from_secs(1);
+/// 起動直後の状態は startedAt の前後 0.2s に書かれていた (実測)。
+const UNSTIRRED_WITHIN: u64 = 5_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
@@ -25,6 +27,8 @@ pub struct LiveSession {
     pub session_id: String,
     pub status: Status,
     pub status_since: Option<SystemTime>,
+    /// 写しの startedAt から状態が変わったか。変わっていなければ、まだ何も頼まれていない。
+    pub stirred: bool,
     pub owner: Owner,
     /// 写しを読んだ sessions dir。止めるときはこの dir の写しで照合する。
     pub sessions_dir: PathBuf,
@@ -69,8 +73,8 @@ pub enum Signal {
 pub trait Processes {
     /// pid のプロセス。居なければ None。
     fn info(&self, pid: u32) -> Option<ProcInfo>;
-    /// その pid の実行ファイル名が `conductor` か。
-    fn is_conductor(&self, pid: u32) -> bool;
+    /// その pid の実行ファイルのパス。
+    fn program(&self, pid: u32) -> Option<PathBuf>;
     fn signal(&self, pid: u32, signal: Signal) -> io::Result<()>;
 }
 
@@ -102,7 +106,7 @@ impl Processes for SystemProcesses {
         })
     }
 
-    fn is_conductor(&self, pid: u32) -> bool {
+    fn program(&self, pid: u32) -> Option<PathBuf> {
         let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
         // SAFETY: buf は渡した長さぶん確保済み
         let len = unsafe {
@@ -113,10 +117,10 @@ impl Processes for SystemProcesses {
             )
         };
         if len <= 0 {
-            return false;
+            return None;
         }
         buf.truncate(len as usize);
-        is_conductor_path(Path::new(&String::from_utf8_lossy(&buf).into_owned()))
+        Some(PathBuf::from(String::from_utf8_lossy(&buf).into_owned()))
     }
 
     fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
@@ -143,8 +147,8 @@ impl Processes for SystemProcesses {
         })
     }
 
-    fn is_conductor(&self, pid: u32) -> bool {
-        std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| is_conductor_path(&exe))
+    fn program(&self, pid: u32) -> Option<PathBuf> {
+        std::fs::read_link(format!("/proc/{pid}/exe")).ok()
     }
 
     fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
@@ -158,8 +162,8 @@ impl Processes for SystemProcesses {
         None
     }
 
-    fn is_conductor(&self, _pid: u32) -> bool {
-        false
+    fn program(&self, _pid: u32) -> Option<PathBuf> {
+        None
     }
 
     fn signal(&self, _pid: u32, _signal: Signal) -> io::Result<()> {
@@ -167,9 +171,8 @@ impl Processes for SystemProcesses {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn is_conductor_path(exe: &Path) -> bool {
-    exe.file_name().is_some_and(|name| name == "conductor")
+fn file_name_is(exe: Option<&Path>, name: &str) -> bool {
+    exe.and_then(Path::file_name).is_some_and(|n| n == name)
 }
 
 /// kill(2) は 0 と負の pid をプロセスグループ宛てに読み、1 は init。どれも一覧の Claude ではない。
@@ -249,9 +252,19 @@ pub fn sessions_dirs(config_dirs: &[PathBuf]) -> Vec<PathBuf> {
 
 /// 一覧に出す写し。同じ dir で同じ会話が 2 つ動いていれば後から起きた方だけ。別の
 /// アカウント (dir) で同じ会話を開いているのは別の Claude なので両方残す。pid の昇順。
-pub fn read_live(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<LiveSession> {
+/// 親の実行ファイル名が `hidden_parent` の Claude は載せない。
+pub fn read_live(
+    dirs: &[PathBuf],
+    procs: &dyn Processes,
+    hidden_parent: Option<&str>,
+) -> Vec<LiveSession> {
     let mut newest: HashMap<(PathBuf, String), (u64, LiveSession)> = HashMap::new();
-    for (started_at, session) in read_all(dirs, procs) {
+    for (started_at, session, parent) in read_all(dirs, procs) {
+        let hidden = session.owner == Owner::Elsewhere
+            && hidden_parent.is_some_and(|name| file_name_is(parent.as_deref(), name));
+        if hidden {
+            continue;
+        }
         let key = (session.sessions_dir.clone(), session.session_id.clone());
         let keep = newest.get(&key).is_none_or(|(seen, _)| started_at > *seen);
         if keep {
@@ -271,10 +284,16 @@ pub fn read_live(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<LiveSession> {
 
 /// 止める・消すの判定に使う写し。同じ会話でも隠さない。
 pub fn read_every(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<LiveSession> {
-    read_all(dirs, procs).into_iter().map(|(_, s)| s).collect()
+    read_all(dirs, procs)
+        .into_iter()
+        .map(|(_, s, _)| s)
+        .collect()
 }
 
-fn read_all(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<(u64, LiveSession)> {
+/// 写しごとに、写しの startedAt と、親の実行ファイルのパス。
+type Sighting = (u64, LiveSession, Option<PathBuf>);
+
+fn read_all(dirs: &[PathBuf], procs: &dyn Processes) -> Vec<Sighting> {
     dirs.iter()
         .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
@@ -329,7 +348,7 @@ pub fn stop(
                 .is_some()
         })
         .and_then(|record| live_session(&path, record, procs))
-        .is_some_and(|(_, session)| session.pid == pid && session.started == started);
+        .is_some_and(|(_, session, _)| session.pid == pid && session.started == started);
     if !confirmed {
         return Stopped::AlreadyGone;
     }
@@ -374,7 +393,7 @@ pub fn ended_within(pid: u32, started: SystemTime, procs: &dyn Processes, limit:
     }
 }
 
-fn read_one(path: &Path, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
+fn read_one(path: &Path, procs: &dyn Processes) -> Option<Sighting> {
     live_session(path, read_record(path)?, procs)
 }
 
@@ -389,7 +408,7 @@ fn read_record(path: &Path) -> Option<Record> {
         })
 }
 
-fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<(u64, LiveSession)> {
+fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<Sighting> {
     let (Some(pid), Some(cwd), Some(session_id), Some(status)) =
         (record.pid, record.cwd, record.session_id, record.status)
     else {
@@ -402,6 +421,7 @@ fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<(u
     {
         return None;
     }
+    let parent = procs.program(info.parent);
     let session = LiveSession {
         pid,
         started: info.started,
@@ -411,14 +431,18 @@ fn live_session(path: &Path, record: Record, procs: &dyn Processes) -> Option<(u
         status_since: record
             .status_updated_at
             .map(|ms| UNIX_EPOCH + Duration::from_millis(ms)),
-        owner: if procs.is_conductor(info.parent) {
+        stirred: match (record.started_at, record.status_updated_at) {
+            (Some(started), Some(updated)) => started.abs_diff(updated) >= UNSTIRRED_WITHIN,
+            _ => true,
+        },
+        owner: if file_name_is(parent.as_deref(), "conductor") {
             Owner::Conductor
         } else {
             Owner::Elsewhere
         },
         sessions_dir: path.parent().map(Path::to_path_buf).unwrap_or_default(),
     };
-    Some((record.started_at.unwrap_or(0), session))
+    Some((record.started_at.unwrap_or(0), session, parent))
 }
 
 fn parse_status(status: &str, waiting_for: Option<String>) -> Status {
@@ -449,7 +473,6 @@ fn abs_diff(a: SystemTime, b: SystemTime) -> Duration {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::HashSet;
 
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -460,7 +483,7 @@ mod tests {
 
     struct Fake {
         infos: RefCell<HashMap<u32, ProcInfo>>,
-        conductors: HashSet<u32>,
+        programs: HashMap<u32, PathBuf>,
         sent: RefCell<Vec<Signal>>,
         refuse: Option<i32>,
         /// 信号を受けた後のプロセス。None は消える。
@@ -471,7 +494,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 infos: RefCell::new(HashMap::new()),
-                conductors: HashSet::new(),
+                programs: HashMap::new(),
                 sent: RefCell::new(Vec::new()),
                 refuse: None,
                 after: Vec::new(),
@@ -499,8 +522,8 @@ mod tests {
             self.infos.borrow().get(&pid).copied()
         }
 
-        fn is_conductor(&self, pid: u32) -> bool {
-            self.conductors.contains(&pid)
+        fn program(&self, pid: u32) -> Option<PathBuf> {
+            self.programs.get(&pid).cloned()
         }
 
         fn signal(&self, pid: u32, signal: Signal) -> io::Result<()> {
@@ -560,7 +583,7 @@ mod tests {
     }
 
     fn live(dir: &Path, procs: &Fake) -> Vec<LiveSession> {
-        read_live(&[dir.to_path_buf()], procs)
+        read_live(&[dir.to_path_buf()], procs, None)
     }
 
     #[test]
@@ -770,7 +793,9 @@ mod tests {
                     ..alive(started_utc())
                 },
             );
-        procs.conductors.insert(500);
+        procs
+            .programs
+            .insert(500, PathBuf::from("/usr/local/bin/conductor"));
 
         let owners: Vec<Owner> = live(dir.path(), &procs)
             .into_iter()
@@ -778,6 +803,75 @@ mod tests {
             .collect();
 
         assert_eq!(owners, vec![Owner::Conductor, Owner::Elsewhere]);
+    }
+
+    fn child_of(parent: u32) -> ProcInfo {
+        ProcInfo {
+            parent,
+            ..alive(started_utc())
+        }
+    }
+
+    #[test]
+    fn 親の実行ファイル名が隠す名前の_claude_は一覧に載らず止める側には残る() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "idle", None));
+        write(dir.path(), "11.json", &record(11, "b", "idle", None));
+        write(dir.path(), "12.json", &record(12, "c", "idle", None));
+        let mut procs = Fake::new()
+            .with(10, child_of(500))
+            .with(11, child_of(600))
+            .with(12, child_of(700));
+        procs.programs.insert(500, PathBuf::from("/opt/bin/helper"));
+        procs
+            .programs
+            .insert(600, PathBuf::from("/opt/bin/helperx"));
+        let dirs = [dir.path().to_path_buf()];
+
+        let listed: Vec<u32> = read_live(&dirs, &procs, Some("helper"))
+            .iter()
+            .map(|s| s.pid)
+            .collect();
+        let every: Vec<u32> = read_every(&dirs, &procs).iter().map(|s| s.pid).collect();
+
+        assert_eq!(
+            listed,
+            vec![11, 12],
+            "名前の完全一致だけを隠す。親が引けなければ隠さない"
+        );
+        assert_eq!(every.len(), 3);
+    }
+
+    #[test]
+    fn 親がconductorなら隠す名前と同じでも載る() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "10.json", &record(10, "a", "idle", None));
+        let mut procs = Fake::new().with(10, child_of(500));
+        procs
+            .programs
+            .insert(500, PathBuf::from("/usr/local/bin/conductor"));
+
+        let listed = read_live(&[dir.path().to_path_buf()], &procs, Some("conductor"));
+
+        assert_eq!(listed.len(), 1);
+    }
+
+    #[test]
+    fn 隠す_claude_は同じ会話の見せる_claude_を重ねで消さない() {
+        let dir = tempfile::tempdir().unwrap();
+        let older = record(10, "a", "idle", None);
+        let newer = record(11, "a", "idle", None).replace("1792634755219", "1792634755999");
+        write(dir.path(), "10.json", &older);
+        write(dir.path(), "11.json", &newer);
+        let mut procs = Fake::new().with(10, child_of(1)).with(11, child_of(500));
+        procs.programs.insert(500, PathBuf::from("/opt/bin/helper"));
+
+        let listed: Vec<u32> = read_live(&[dir.path().to_path_buf()], &procs, Some("helper"))
+            .iter()
+            .map(|s| s.pid)
+            .collect();
+
+        assert_eq!(listed, vec![10]);
     }
 
     #[test]
@@ -820,6 +914,7 @@ mod tests {
         let dirs: Vec<(String, PathBuf)> = read_live(
             &[work.path().to_path_buf(), personal.path().to_path_buf()],
             &procs,
+            None,
         )
         .into_iter()
         .map(|s| (s.session_id, s.sessions_dir))
@@ -851,7 +946,10 @@ mod tests {
             .with(11, alive(started_utc()));
         let dirs = [dir.path().to_path_buf()];
 
-        let listed: Vec<u32> = read_live(&dirs, &procs).iter().map(|s| s.pid).collect();
+        let listed: Vec<u32> = read_live(&dirs, &procs, None)
+            .iter()
+            .map(|s| s.pid)
+            .collect();
         let mut every: Vec<u32> = read_every(&dirs, &procs).iter().map(|s| s.pid).collect();
         every.sort();
 
@@ -871,6 +969,7 @@ mod tests {
         let listed: Vec<u32> = read_live(
             &[work.path().to_path_buf(), personal.path().to_path_buf()],
             &procs,
+            None,
         )
         .iter()
         .map(|s| s.pid)
@@ -890,7 +989,7 @@ mod tests {
         write(&real, "10.json", &record(10, "a", "idle", None));
         let procs = Fake::new().with(10, alive(started_utc()));
 
-        let listed: Vec<u32> = read_live(&[real, linked], &procs)
+        let listed: Vec<u32> = read_live(&[real, linked], &procs, None)
             .iter()
             .map(|s| s.pid)
             .collect();
@@ -907,7 +1006,10 @@ mod tests {
         assert!(!info.zombie);
         assert!(info.started <= SystemTime::now());
         assert!(info.started > SystemTime::now() - Duration::from_secs(24 * 3600));
-        assert!(!SystemProcesses.is_conductor(std::process::id()));
+        assert_eq!(
+            SystemProcesses.program(std::process::id()),
+            Some(std::env::current_exe().unwrap())
+        );
     }
 
     #[test]

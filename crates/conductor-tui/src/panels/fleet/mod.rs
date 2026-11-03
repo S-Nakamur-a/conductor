@@ -58,6 +58,8 @@ pub enum State {
     /// 止まってから、まだ一覧で選んでも区画に映してもいない。
     Finished,
     Idle,
+    /// 起動してから一度も動いていない。何か送るまで、見ても Idle に落ちない。
+    Unasked,
     /// 状態ファイルが知らない値をそのまま持つ (実物に `shell` があった)。
     Other(String),
     Unknown,
@@ -1194,6 +1196,11 @@ impl FleetPanel {
             Some(Status::Waiting(Waiting::Permission)) => State::Waiting(Ask::Permission),
             Some(Status::Waiting(Waiting::Other(raw))) => State::Waiting(Ask::Other(raw.clone())),
             Some(Status::Other(raw)) => State::Other(raw.clone()),
+            Some(Status::Idle)
+                if live.is_some_and(|l| !l.stirred) && !summary.is_some_and(answered) =>
+            {
+                State::Unasked
+            }
             Some(Status::Idle) => {
                 let seen_after = self
                     .seen
@@ -1544,6 +1551,11 @@ pub fn branch_page(
     };
     let repo = repo.ok_or_else(|| format!("{reason}, and origin has no web URL to open."))?;
     Ok((repo, format!("{reason}; opened the repository.")))
+}
+
+/// resume した会話は起動後に動いていなくても、前の返事がログにある。
+fn answered(summary: &Summary) -> bool {
+    summary.context_tokens.is_some()
 }
 
 /// 集合に入れるか外すか。変わったときだけ true。

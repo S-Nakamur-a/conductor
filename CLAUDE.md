@@ -539,6 +539,16 @@ no session at all, so a PR worktree taken in there shows up. When a selected row
 between the waiting box and its worktree,
 the selection follows the session: re-selecting anything else would make
 `apply_fleet` pull the keyboard out of the session being typed into.
+**Unasked** is an idle Claude whose `statusUpdatedAt` is still within 5s of its own
+`startedAt` (`LiveSession::stirred`) and whose log holds no usage — the state file's
+`startedAt`, not the process start, which ran up to 48s earlier under load. A log is not
+required: a Claude with no plugin noise writes none until the first prompt. The usage check
+keeps a resumed conversation out. Unasked and Finished are drawn in `theme.error`; the
+counts put Unasked under idle. **A Claude whose parent executable has the file name of
+`[api] command[0]`** (`ai_caller::command_program`, none for a shell) is dropped in
+`read_live` before the per-conversation dedup — not in `read_every`, so stopping and
+deleting still find it. It is read from `ws.config`, so a change to `[api]` waits for the
+restart it already needed.
 **Folding** (`h` / `l`, the ⌄ / › mark; `fleet::fold`) hides a tree repository's worktrees or a
 worktree's sessions, and is kept in `sessions-fold.json` beside config.toml — not in it, because
 the config watcher reads every write back and would call it a restart change. Repositories and
