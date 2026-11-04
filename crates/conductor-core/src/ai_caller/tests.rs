@@ -128,6 +128,7 @@ mod external_command {
             cmd: argv(cmd),
             timeout_secs,
             working_dir: None,
+            config_dir: ConfigDirEnv::Inherit,
         }
     }
 
@@ -179,10 +180,33 @@ mod external_command {
                 cmd: argv(&cmd),
                 timeout_secs: 5,
                 working_dir: Some(dir.path().to_path_buf()),
+                config_dir: ConfigDirEnv::Inherit,
             };
             let out = run(&caller).unwrap();
             assert_eq!(std::fs::canonicalize(out.trim()).unwrap(), want, "{cmd:?}");
         }
+    }
+
+    #[test]
+    fn コマンドのclaude_config_dirはタスクが決めたとおりに付け替える_外す_触らない() {
+        let env_of = |config_dir| {
+            let caller = CommandCaller {
+                config_dir,
+                ..cmd_caller(&["true"], 5)
+            };
+            let command = caller.command(&argv(&["true"]));
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "CLAUDE_CONFIG_DIR")
+                .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+        };
+
+        assert_eq!(
+            env_of(ConfigDirEnv::Set("/home/me/.claude-personal/".into())),
+            Some(Some("/home/me/.claude-personal/".into()))
+        );
+        assert_eq!(env_of(ConfigDirEnv::Remove), Some(None), "外す");
+        assert_eq!(env_of(ConfigDirEnv::Inherit), None, "窓の env のまま");
     }
 
     #[test]
@@ -255,7 +279,7 @@ mod external_command {
             &cfg,
             &TaskEnv {
                 timeout_secs: Some(1),
-                working_dir: None,
+                ..Default::default()
             },
         )
         .unwrap();

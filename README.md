@@ -211,8 +211,9 @@ line offers the same rows without Smart Worktree, and the `[✧]` beside a repos
 Worktree there. With two `[[claude.accounts]]` or more, rows 1 and 2 are replaced by each
 account's pair ("Claude Code as <name>", "Claude Code as <name> + Chrome"), so Smart
 Worktree moves down after them, and a session otherwise starts as the account whose
-`paths` contain its directory. The result of a Smart Worktree started before switching to another
-repository still arrives.
+`paths` contain its directory, unless conductor was started with `CLAUDE_CONFIG_DIR` set; Smart
+Worktree's AI command follows the same rule for its repository. The result of a Smart Worktree
+started before switching to another repository still arrives.
 
 The checklist button left of `[+]` asks, then starts Claude in that worktree running
 `/conductor:revidere`. The mark left of it says whether a revidere page exists for the

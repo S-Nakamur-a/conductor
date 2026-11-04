@@ -9,7 +9,7 @@ use std::time::Duration;
 use conductor_core::cc_hook::statusline;
 use conductor_core::claude_log::{self, LogEntry};
 use conductor_core::claude_sessions::{ClaudeHome, ResumableSession};
-use conductor_core::config::{self, ApiConfig, LayoutConfig};
+use conductor_core::config::{self, ApiConfig, ConfigDirEnv, LayoutConfig};
 use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::status_map::GitStatusMap;
 use conductor_core::git_engine::{
@@ -107,11 +107,12 @@ pub enum Task {
         branch: String,
     },
     /// 自由記述のタスクから worktree を組み立てる。ブランチ名とセッション名は
-    /// AI が決め、Claude へは説明文をそのまま流す。`repo` は作る先の repo。
+    /// AI が決め、Claude へは説明文をそのまま流す。`repo` は作る先の repo で、AI もそこで走る。
     SmartWorktree {
         description: String,
         api: ApiConfig,
         repo: PathBuf,
+        config_dir: ConfigDirEnv,
     },
     DeleteWorktree {
         path: PathBuf,
@@ -621,9 +622,10 @@ impl Task {
                 description,
                 api,
                 repo,
+                config_dir,
             } => {
                 svc.spawn_unscoped(
-                    move || smart_worktree(&env, &repo, &description, &api),
+                    move || smart_worktree(&env, &repo, &description, &api, config_dir),
                     TaskResult::SmartWorktreeCreated,
                 );
             }
@@ -1908,8 +1910,9 @@ fn smart_worktree(
     repo: &Path,
     description: &str,
     api: &ApiConfig,
+    config_dir: ConfigDirEnv,
 ) -> Result<SmartWorktree, String> {
-    let plan = smart_worktree::generate(description, api, repo)?;
+    let plan = smart_worktree::generate(description, api, repo, config_dir)?;
     let git = GitEngine::open(repo).map_err(|e| e.to_string())?;
     // リモートを持たないリポジトリで origin/main を掴んで作成ごと失敗しないよう、
     // 実在する ref へ解決してから渡す。
@@ -2281,6 +2284,7 @@ mod tests {
             description: "x".into(),
             api,
             repo: PathBuf::from("/nonexistent/repo"),
+            config_dir: Default::default(),
         }
         .spawn(&mut svc, &ws.task_env());
         svc.bump_generation();
@@ -2296,6 +2300,33 @@ mod tests {
             event.kind,
             conductor_svc::EventKind::Task(TaskResult::SmartWorktreeCreated(Err(_)))
         ));
+    }
+
+    #[test]
+    fn smart_worktree_のaiコマンドはtaskが運んだclaude_config_dirで走る() {
+        let ws = crate::workspace::Workspace::for_test();
+        let mut svc = conductor_svc::Services::<TaskResult>::new();
+        let repo = tempfile::tempdir().unwrap();
+        let api = ApiConfig {
+            provider: "command".into(),
+            command: [
+                "/bin/sh",
+                "-c",
+                r#"printf '%s' "$CLAUDE_CONFIG_DIR" > seen; exit 1"#,
+            ]
+            .map(String::from)
+            .to_vec(),
+            ..ApiConfig::default()
+        };
+        Task::SmartWorktree {
+            description: "x".into(),
+            api,
+            repo: repo.path().to_path_buf(),
+            config_dir: ConfigDirEnv::Set("/p/".into()),
+        }
+        .spawn(&mut svc, &ws.task_env());
+        let seen = repo.path().join("seen");
+        crate::testing::wait_for(|| std::fs::read_to_string(&seen).is_ok_and(|v| v == "/p/"));
     }
 }
 

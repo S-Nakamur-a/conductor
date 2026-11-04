@@ -311,6 +311,13 @@ fn user_settings_の置き場は_claude_config_dir_を先に_空なら_home_を�
 }
 
 #[test]
+fn 渡されたclaude_config_dirは空なら渡していない扱い() {
+    assert_eq!(explicit(Some("/c".into())), Some(PathBuf::from("/c")));
+    assert_eq!(explicit(Some("".into())), None);
+    assert_eq!(explicit(None), None);
+}
+
+#[test]
 fn ユーザの_statusline_は_stdin_の_project_dir_の_settings_から書き換えのたびに引き直す() {
     let project = tempfile::tempdir().unwrap();
     let config = tempfile::tempdir().unwrap();

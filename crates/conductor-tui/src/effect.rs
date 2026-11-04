@@ -610,10 +610,12 @@ fn send_to_shell(ws: &mut Workspace, command: &str) -> Vec<Effect> {
 }
 
 fn smart_worktree(ws: &Workspace, repo: PathBuf, description: String) -> Vec<Effect> {
+    let account = ws.config.claude_account_to_launch(None, None, &repo);
     vec![
         Effect::Spawn(Task::SmartWorktree {
             description,
             api: ws.config.api.clone(),
+            config_dir: conductor_core::config::ConfigDirEnv::of(account),
             repo,
         }),
         Effect::Status(
@@ -1081,6 +1083,41 @@ mod tests {
             effects.first(),
             Some(Effect::Spawn(Task::SmartWorktree { repo, .. })) if repo == std::path::Path::new("/r/other")
         ));
+    }
+
+    #[test]
+    fn smart_worktree_のaiはrepoのpathsで決めたアカウントで走り_窓のenvが渡されていればそれに従う()
+    {
+        use conductor_core::config::{ClaudeAccount, ConfigDirEnv};
+        let mut ws = Workspace::for_test();
+        ws.config.claude.accounts = vec![
+            ClaudeAccount {
+                name: "work".into(),
+                ..Default::default()
+            },
+            ClaudeAccount {
+                name: "personal".into(),
+                config_dir: Some(PathBuf::from("/p/")),
+                paths: vec![PathBuf::from("/src/me")],
+                ..Default::default()
+            },
+        ];
+        let config_dir_for =
+            |ws: &Workspace, repo: &str| match smart_worktree(ws, PathBuf::from(repo), "x".into())
+                .first()
+            {
+                Some(Effect::Spawn(Task::SmartWorktree { config_dir, .. })) => config_dir.clone(),
+                other => panic!("{other:?}"),
+            };
+
+        assert_eq!(
+            config_dir_for(&ws, "/src/me/app"),
+            ConfigDirEnv::Set(PathBuf::from("/p/"))
+        );
+        assert_eq!(config_dir_for(&ws, "/src/work"), ConfigDirEnv::Remove);
+
+        ws.config.claude.started_with = Some(PathBuf::from("/p"));
+        assert_eq!(config_dir_for(&ws, "/src/me/app"), ConfigDirEnv::Inherit);
     }
 
     #[test]

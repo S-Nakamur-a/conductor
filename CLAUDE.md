@@ -533,7 +533,10 @@ re-checks `<pid>.json` there, the row's account label is looked up from it, and
 read `read_every`, so an older process on the same conversation is not hidden. A Claude starts as
 the account whose `paths` hold its directory (`config::account_for`, else the first one), set
 on the child alone (`spawn.rs`'s `use_account`): the default account gets `CLAUDE_CONFIG_DIR`
-*removed*, because spelling out `~/.claude` reads as logged out. A resume starts as the
+*removed*, because spelling out `~/.claude` reads as logged out (`config::ConfigDirEnv`). A window
+started with a non-empty `CLAUDE_CONFIG_DIR` (`ClaudeConfig::started_with`, read by `Config::load`)
+skips `paths` and the fallback and leaves the child's as it is. Smart Worktree's `[api] command`
+gets the same account, decided by the repository it runs in. A resume starts as the
 account whose `history.jsonl` last ran the conversation (`ResumableSession::config_dir`,
 counting only rows whose log is in that config dir) unless one is chosen by hand, so a
 conversation moved to another account stays there. **A** in the list moves one of this

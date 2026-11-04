@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 use serde::Deserialize;
 
 use crate::ai_caller::{self, TaskEnv};
-use crate::config::ApiConfig;
+use crate::config::{ApiConfig, ConfigDirEnv};
 
 /// ツールを禁じる一文は、[api] command が claude -p のようなエージェント型 CLI の
 /// ときに効く。放っておくと Bash に手を伸ばして会話的に答え、パースに失敗する。
@@ -37,10 +37,16 @@ pub struct Plan {
 const ATTEMPTS: usize = 3;
 
 /// 設定された AI に訊いて [Plan] にする。[api] の command_timeout_secs をそのまま使う。
-pub fn generate(description: &str, api: &ApiConfig, working_dir: &Path) -> Result<Plan, String> {
+pub fn generate(
+    description: &str,
+    api: &ApiConfig,
+    working_dir: &Path,
+    config_dir: ConfigDirEnv,
+) -> Result<Plan, String> {
     let env = TaskEnv {
         timeout_secs: None,
         working_dir: Some(working_dir.to_path_buf()),
+        config_dir,
     };
     let caller = ai_caller::build_caller(api, &env)?;
     let cancel = Arc::new(AtomicBool::new(false));
@@ -85,6 +91,27 @@ pub fn parse(raw: &str) -> Result<Plan, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aiのコマンドへ決めたclaude_config_dirを渡す() {
+        let api = ApiConfig {
+            provider: "command".into(),
+            command: [
+                "sh",
+                "-c",
+                r#"printf '{"branch":"%s"}' "${CLAUDE_CONFIG_DIR-unset}""#,
+            ]
+            .map(String::from)
+            .to_vec(),
+            command_timeout_secs: 10,
+            ..ApiConfig::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let branch = |config_dir| generate("x", &api, dir.path(), config_dir).unwrap().branch;
+
+        assert_eq!(branch(ConfigDirEnv::Set("/p/".into())), "/p/");
+        assert_eq!(branch(ConfigDirEnv::Remove), "unset");
+    }
 
     /// この制約はタスクに属するもので、そのときの [api] command が何かに依らない。
     /// 以前はユーザが保守するラッパースクリプト側に書く必要があった。

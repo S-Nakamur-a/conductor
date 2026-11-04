@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 use conductor_core::cc_hook;
-use conductor_core::config::ClaudeAccount;
+use conductor_core::config::{ClaudeAccount, ConfigDirEnv};
 use portable_pty::CommandBuilder;
 use uuid::Uuid;
 
@@ -134,13 +134,12 @@ pub(super) fn relay_statusline(cmd: &mut CommandBuilder) {
     cmd.env(statusline::DIR_ENV, statusline::dir());
 }
 
-/// 既定の ~/.claude を綴りで渡すと、Claude Code はログインしていない扱いにする (実測) ので外す。
 pub(super) fn use_account(cmd: &mut CommandBuilder, account: Option<&ClaudeAccount>) {
     use cc_hook::statusline::CONFIG_DIR_ENV;
-    match account.map(|account| account.config_dir.as_deref()) {
-        Some(Some(dir)) => cmd.env(CONFIG_DIR_ENV, dir),
-        Some(None) => cmd.env_remove(CONFIG_DIR_ENV),
-        None => {}
+    match ConfigDirEnv::of(account) {
+        ConfigDirEnv::Set(dir) => cmd.env(CONFIG_DIR_ENV, dir),
+        ConfigDirEnv::Remove => cmd.env_remove(CONFIG_DIR_ENV),
+        ConfigDirEnv::Inherit => {}
     }
 }
 
