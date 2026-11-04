@@ -172,8 +172,8 @@ class Check(MonstrareTest):
             "files が空でない文字列の配列でない": lambda s: s["themes"][0].update(files="a.py"),
             "figures[0] に svg と caption が無い": lambda s: s["themes"][0].update(figures=[{"svg": SVG}]),
             "before_after.after が空でない文字列の配列でない": lambda s: s["themes"][0].update(before_after={"before": ["x"]}),
-            "concerns.blocking が配列でない": lambda s: s.update(concerns={"blocking": None}),
-            "how が": lambda s: s.update(concerns={"nonblocking": [{"text": "t", "how": "たぶん"}]}),
+            "notes が配列でない": lambda s: s.update(notes=None),
+            "how が": lambda s: s.update(notes=[{"text": "t", "how": "たぶん"}]),
             "行範囲が壊れている": lambda s: s["themes"][0].update(excerpts=[{"path": "a.py", "side": "new", "start": "5"}]),
         }
         for want, mutate in cases.items():
@@ -184,9 +184,9 @@ class Check(MonstrareTest):
                 self.assertEqual(code, 2, err)
                 self.assertIn(want, err)
 
-    def test_図とconcernsは省いてよくhowは4つの値を受ける(self):
+    def test_図とnotesは省いてよくhowは4つの値を受ける(self):
         s = story_of([{"title": "A", "body": "", "files": ["a.py", "new.txt"]}])
-        s["concerns"] = {"nonblocking": [{"text": "未計測", "how": h} for h in mo.HOW]}
+        s["notes"] = [{"text": "未計測", "how": h} for h in mo.HOW]
         code, _, err = self.check(self.d, s)
         self.assertEqual(code, 0, err)
 
@@ -271,25 +271,20 @@ class Render(MonstrareTest):
         self.assertIn("line5", page)
         self.assertNotIn("changed15", page)
 
-    def test_止めるものが無ければそう出し止めない欄は中身があるときだけ(self):
+    def test_知っておくとよいことの欄は中身があるときだけ出て合否は出さない(self):
         page = self.render(self.d, story_of([theme("A", ["a.py", "new.txt"])]))
-        self.assertIn("止めるものは無い", page)
-        self.assertNotIn("止めないが", page)
-        s = story_of([theme("A", ["a.py", "new.txt"])], concerns={
-            "blocking": [{"text": "落ちる", "how": "走らせた"}],
-            "nonblocking": [{"text": "遅いかも", "how": "確かめられなかった"}],
-        })
+        self.assertNotIn("知っておくとよいこと", page)
+        s = story_of([theme("A", ["a.py", "new.txt"])], notes=[{"text": "遅いかも", "how": "確かめられなかった"}])
         page = self.render(self.d, s)
-        self.assertIn("LGTM を止めるもの 1", page)
-        self.assertIn("止めないが、知っておくとよいもの 1", page)
-        self.assertNotIn("止めるものは無い", page)
+        self.assertIn("知っておくとよいこと 1", page)
         self.assertIn("確かめられなかった", page)
+        self.assertNotIn("LGTM", page)
+        self.assertNotIn("止める", page)
 
-    def test_主題に入っていないファイルは冒頭と地図と懸念の欄に出る(self):
+    def test_主題に入っていないファイルは冒頭と地図に出る(self):
         page = self.render(self.d, story_of([theme("A", ["a.py"])]))
         self.assertIn("どの主題にも入っていないファイル 1 件", page)
         self.assertIn("主題なし", page)
-        self.assertIn("は読んでいない", page)
 
     def test_地図は主題の番号を並べる(self):
         page = self.render(self.d, story_of([theme("A", ["a.py"]), theme("B", ["a.py", "new.txt"])]))
