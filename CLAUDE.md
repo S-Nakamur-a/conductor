@@ -575,7 +575,8 @@ worktree's sessions, and is kept in `sessions-fold.json` beside config.toml — 
 the config watcher reads every write back and would call it a restart change. Repositories and
 worktrees are separate sets: a repository's root *is* its main worktree's path. Folding is applied
 in `sections()` and `compose`, never in `groups()`, so the waiting box, the state counts and
-`group_of` see every session. A folded line is drawn open while the selected session (by key,
+`group_of` see every session. A line drawn folded shows what it hides as each row glyph with its
+count (`!1 ›2 z3`, zeros left out). A folded line is drawn open while the selected session (by key,
 pinned or not) or the selected worktree is inside it — the line itself does not count — because a
 folded selection would be re-selected away and pull the keyboard out of the right side. `h` on a
 session does nothing: moving to the worktree would turn a typed-in `D…y` from stopping a session

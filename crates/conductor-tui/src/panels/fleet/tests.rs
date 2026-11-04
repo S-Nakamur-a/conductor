@@ -2912,6 +2912,46 @@ mod tree {
                 .to_string()
         }
 
+        fn drawn(fleet: FleetPanel) -> Vec<String> {
+            let mut ws = Workspace::for_test();
+            ws.panels.fleet = fleet;
+            render::compose(&ws, ratatui::layout::Rect::new(0, 0, 95, 12))
+                .unwrap()
+                .lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect()
+        }
+
+        fn line_of<'a>(lines: &'a [String], label: &str) -> &'a str {
+            lines
+                .iter()
+                .find(|line| line.contains(label))
+                .unwrap_or_else(|| panic!("{label} is not in {lines:?}"))
+        }
+
+        #[test]
+        fn 畳んだ_worktree_の行は隠れたセッションの本数を状態の記号ごとに出し_開いた行は出さない() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&[], &["/r/app-b"]));
+            pick(&mut fleet, "feature/a");
+            let lines = drawn(fleet);
+            assert!(
+                line_of(&lines, "feature/b").contains("feature/b ✓1 "),
+                "{lines:?}"
+            );
+            assert!(!line_of(&lines, "main").contains("›1"), "{lines:?}");
+        }
+
+        #[test]
+        fn 畳んだ_repo_の見出しは配下の全セッションの本数を状態の記号ごとに出す() {
+            let mut fleet = app();
+            fleet.restore_fold(folded(&["/r/app"], &[]));
+            pick(&mut fleet, "# /r/app");
+            let lines = drawn(fleet);
+            assert!(line_of(&lines, "app ").contains("app ›1 ✓1 ─"), "{lines:?}");
+        }
+
         #[test]
         fn 開いた_worktree_で_h_を押すと畳まれ_そのセッションは一覧から消えても本数には残る() {
             let mut fleet = app();
