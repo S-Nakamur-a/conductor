@@ -20,8 +20,8 @@ pub use persist::{
     persist_ui_icons, persist_ui_theme,
 };
 pub use sections::{
-    ApiConfig, ClaudeAccount, ClaudeConfig, DiffConfig, GeneralConfig, LayoutConfig, ReviewConfig,
-    TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
+    ApiConfig, ClaudeAccount, ClaudeConfig, ConfigDirEnv, DiffConfig, GeneralConfig, LayoutConfig,
+    ReviewConfig, TerminalConfig, UiConfig, UpdatesConfig, ViewerConfig,
 };
 pub use snapshot::{AppearanceSnapshot, has_restart_changes};
 
@@ -55,7 +55,9 @@ impl Config {
 
     /// ~/.config/conductor/config.toml を読む。無ければ既定のファイルを生成して既定値を返す。
     pub fn load() -> Result<Self> {
-        Self::load_from(&config_file_path())
+        let mut config = Self::load_from(&config_file_path())?;
+        config.claude.started_with = crate::cc_hook::statusline::explicit_config_dir();
+        Ok(config)
     }
 
     pub fn load_from(path: &Path) -> Result<Self> {
@@ -119,7 +121,8 @@ impl Config {
     }
 
     /// dir で Claude を起こすアカウント。手で選んだ名前、resume する会話を走らせた config dir、
-    /// paths の規則の順。accounts が空なら None (窓の env のまま起こす)。
+    /// paths の規則の順。accounts が空か、規則まで来て conductor が CLAUDE_CONFIG_DIR 付きで
+    /// 起動されていれば None (窓の env のまま起こす)。
     pub fn claude_account_to_launch(
         &self,
         chosen: Option<&str>,
@@ -127,10 +130,14 @@ impl Config {
         dir: &Path,
     ) -> Option<&ClaudeAccount> {
         let accounts = &self.claude.accounts;
+        let by_paths = || match self.claude.started_with {
+            Some(_) => None,
+            None => account_for(accounts, dir),
+        };
         chosen
             .and_then(|name| accounts.iter().find(|account| account.name == name))
             .or_else(|| ran_in.and_then(|dir| self.account_of(&dir.join("sessions"))))
-            .or_else(|| account_for(accounts, dir))
+            .or_else(by_paths)
     }
 
     /// 起動時に知らせる accounts の書き損じ。重なりは先に書いた方が使われる。

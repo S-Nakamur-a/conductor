@@ -18,6 +18,7 @@
 //!   プロンプトを stdin へ書いて閉じる。
 //! - 子プロセスはタスクのディレクトリで動くので、パスを相対に解決するツールは
 //!   {workdir} 無しでも正しい場所に着地する。
+//! - 子の CLAUDE_CONFIG_DIR は、タスクが決めたアカウントのものに付け替えるか外すことがある。
 //! - stdout がモデルの補完そのもの。整形も JSON 抽出もコマンド側でしない。
 //! - 終了コード 0 が成功。非ゼロは stderr をエラーに載せる。stderr は診断のみ。
 //! - タイムアウトとキャンセルでは子プロセスを kill する。通知はしない。
@@ -32,7 +33,7 @@ use std::sync::atomic::AtomicBool;
 pub use command::CommandCaller;
 pub use gemini::GeminiCaller;
 
-use crate::config::ApiConfig;
+use crate::config::{ApiConfig, ConfigDirEnv};
 
 /// プロンプトを生の補完テキストに変えるプロバイダ。
 ///
@@ -56,6 +57,7 @@ pub struct TaskEnv {
     pub timeout_secs: Option<u64>,
     /// 外部コマンドを実行するディレクトリ。タスクが対象とする worktree。
     pub working_dir: Option<PathBuf>,
+    pub config_dir: ConfigDirEnv,
 }
 
 /// タスク向けに、設定された AI 呼び出しを組み立てる。
@@ -85,6 +87,7 @@ pub fn build_caller(api: &ApiConfig, env: &TaskEnv) -> Result<Box<dyn AiCaller>,
                 cmd: api.command.clone(),
                 timeout_secs: env.timeout_secs.unwrap_or(api.command_timeout_secs),
                 working_dir: env.working_dir.clone(),
+                config_dir: env.config_dir.clone(),
             }))
         }
         other => Err(format!(

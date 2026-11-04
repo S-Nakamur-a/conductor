@@ -10,6 +10,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::AiCaller;
+use crate::cc_hook::statusline::CONFIG_DIR_ENV;
+use crate::config::ConfigDirEnv;
 
 const PROMPT_PLACEHOLDER: &str = "{prompt}";
 const WORKDIR_PLACEHOLDER: &str = "{workdir}";
@@ -24,6 +26,23 @@ pub struct CommandCaller {
     pub timeout_secs: u64,
     /// 実行するディレクトリ。{workdir} の展開先でもある。None なら Conductor の cwd。
     pub working_dir: Option<PathBuf>,
+    pub config_dir: ConfigDirEnv,
+}
+
+impl CommandCaller {
+    pub(super) fn command(&self, argv: &[String]) -> Command {
+        let mut command = Command::new(&argv[0]);
+        command.args(&argv[1..]);
+        if let Some(dir) = &self.working_dir {
+            command.current_dir(dir);
+        }
+        match &self.config_dir {
+            ConfigDirEnv::Set(dir) => command.env(CONFIG_DIR_ENV, dir),
+            ConfigDirEnv::Remove => command.env_remove(CONFIG_DIR_ENV),
+            ConfigDirEnv::Inherit => &mut command,
+        };
+        command
+    }
 }
 
 /// 展開後の argv と、{prompt} が見つかったか。「どこにも無い」はプロンプトを
@@ -66,12 +85,8 @@ impl AiCaller for CommandCaller {
             if prompt_in_argv { "argv" } else { "stdin" }
         );
 
-        let mut command = Command::new(&program);
-        command.args(&argv[1..]);
-        if let Some(dir) = &self.working_dir {
-            command.current_dir(dir);
-        }
-        let mut child = command
+        let mut child = self
+            .command(&argv)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

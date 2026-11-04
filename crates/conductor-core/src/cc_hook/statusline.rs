@@ -118,10 +118,17 @@ pub fn claude_config_dir() -> Option<PathBuf> {
     config_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::home_dir())
 }
 
+/// このプロセスに渡された CLAUDE_CONFIG_DIR。空は渡していない扱い。
+pub fn explicit_config_dir() -> Option<PathBuf> {
+    explicit(std::env::var_os(CONFIG_DIR_ENV))
+}
+
+fn explicit(var: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    var.filter(|dir| !dir.is_empty()).map(PathBuf::from)
+}
+
 fn config_dir_from(var: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    var.filter(|dir| !dir.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home.map(|home| home.join(".claude")))
+    explicit(var).or_else(|| home.map(|home| home.join(".claude")))
 }
 
 /// その dir で起こす Claude が使う statusLine のコマンド。local → project → user の順。

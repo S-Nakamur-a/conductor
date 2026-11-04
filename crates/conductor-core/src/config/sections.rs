@@ -135,6 +135,9 @@ pub struct ReviewConfig {
 #[serde(default)]
 pub struct ClaudeConfig {
     pub accounts: Vec<ClaudeAccount>,
+    /// conductor 自身が起動時に渡された CLAUDE_CONFIG_DIR。ファイルではなく [super::Config::load] が env から読む。
+    #[serde(skip)]
+    pub started_with: Option<PathBuf>,
 }
 
 /// [[claude.accounts]] の 1 つ。アカウントは Claude Code の config dir で分かれる。
@@ -153,6 +156,28 @@ pub struct ClaudeAccount {
 impl ClaudeAccount {
     pub fn color(&self) -> Option<ratatui::style::Color> {
         self.color.as_deref()?.parse().ok()
+    }
+}
+
+/// 起こす子の CLAUDE_CONFIG_DIR をどうするか。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ConfigDirEnv {
+    /// 窓の env のまま。
+    #[default]
+    Inherit,
+    Set(PathBuf),
+    /// 既定の ~/.claude を綴りで渡すと、Claude Code はログインしていない扱いにする (実測) ので外す。
+    Remove,
+}
+
+impl ConfigDirEnv {
+    /// None はアカウントを決めなかった (accounts が空か、窓の env に従う)。
+    pub fn of(account: Option<&ClaudeAccount>) -> Self {
+        match account.map(|account| account.config_dir.as_ref()) {
+            Some(Some(dir)) => Self::Set(dir.clone()),
+            Some(None) => Self::Remove,
+            None => Self::Inherit,
+        }
     }
 }
 

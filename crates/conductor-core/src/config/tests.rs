@@ -93,6 +93,7 @@ fn non_default() -> Config {
                 config_dir: Some(PathBuf::from("/c")),
                 paths: vec![PathBuf::from("/src/me")],
             }],
+            started_with: None,
         },
     }
 }
@@ -191,6 +192,76 @@ fn 起こすアカウントは手で選んだ名前_会話を走らせたdir_規
         ),
         None
     );
+}
+
+#[test]
+fn 窓がclaude_config_dir付きで起動されたらpathsの規則に代えて窓のenvで起こす() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.claude.accounts = vec![
+        account("work", None),
+        ClaudeAccount {
+            paths: vec![root.path().to_path_buf()],
+            ..account("personal", Some(Path::new("/p")))
+        },
+    ];
+    config.claude.started_with = Some(PathBuf::from("/p"));
+    let work_dir = home().join(".claude");
+    fn launched(
+        config: &Config,
+        chosen: Option<&str>,
+        ran_in: Option<&Path>,
+        dir: &Path,
+    ) -> Option<String> {
+        config
+            .claude_account_to_launch(chosen, ran_in, dir)
+            .map(|a| a.name.clone())
+    }
+
+    assert_eq!(
+        launched(&config, None, None, root.path()),
+        None,
+        "paths に当たる"
+    );
+    assert_eq!(
+        launched(&config, None, None, Path::new("/elsewhere")),
+        None,
+        "どれにも当たらない"
+    );
+    assert_eq!(
+        launched(&config, Some("work"), None, root.path()).as_deref(),
+        Some("work")
+    );
+    assert_eq!(launched(&config, Some("gone"), None, root.path()), None);
+    assert_eq!(
+        launched(&config, None, Some(&work_dir), root.path()).as_deref(),
+        Some("work")
+    );
+    assert_eq!(
+        launched(&config, None, Some(Path::new("/elsewhere")), root.path()),
+        None,
+        "アカウントでない config dir の会話"
+    );
+
+    config.claude.accounts.truncate(1);
+    assert_eq!(
+        launched(&config, None, None, root.path()),
+        None,
+        "accounts が 1 つ"
+    );
+}
+
+#[test]
+fn アカウントはconfig_dirがあれば付け替え_既定なら外し_決めなければ触らない() {
+    assert_eq!(
+        ConfigDirEnv::of(Some(&account("personal", Some(Path::new("/p/"))))),
+        ConfigDirEnv::Set(PathBuf::from("/p/"))
+    );
+    assert_eq!(
+        ConfigDirEnv::of(Some(&account("work", None))),
+        ConfigDirEnv::Remove
+    );
+    assert_eq!(ConfigDirEnv::of(None), ConfigDirEnv::Inherit);
 }
 
 #[test]

@@ -80,14 +80,18 @@ beside this file in `sessions-fold.json`, rewritten on every fold, and read at s
 # first account when none does. Worktrees are made outside the repository (by
 # default beside it in <repo>-worktrees/, or under worktree_dir), so a path that
 # lists only the repository does not match them: list the directory that holds
-# them as well. With two accounts or more, the
-# new-session menus (Ctrl+n and [+] in the Sessions list, [+] on the Claude panel)
-# and the Resume menu also offer "as <name>" for each account. Resuming
-# (automatic resume, grab, and Resume / Resume + Chrome in the Resume menu) starts
-# as the account whose history.jsonl last ran the conversation, so a conversation
-# moved to another account for a while stays there; a conversation from a config
-# dir that is not one of the accounts follows `paths`. Choosing "as <name>" for an
-# account other than the one that ran the conversation links the log into that
+# them as well. Started with CLAUDE_CONFIG_DIR set (and not empty), conductor
+# skips `paths` and the first-account fallback: a Claude not given an account by
+# hand or by the conversation it resumes, and the Smart Worktree command, keep
+# that CLAUDE_CONFIG_DIR as conductor got it. Unset or empty counts as not given.
+# With two accounts or more, the new-session menus (Ctrl+n and [+] in the
+# Sessions list, [+] on the Claude panel) and the Resume menu also offer
+# "as <name>" for each account. Resuming (automatic resume, grab, and Resume /
+# Resume + Chrome in the Resume menu) starts as the account whose history.jsonl
+# last ran the conversation, so a conversation moved to another account for a
+# while stays there; a conversation from a config dir that is not one of the
+# accounts follows `paths` (or CLAUDE_CONFIG_DIR, as above). Choosing "as <name>"
+# for an account other than the one that ran the conversation links the log into that
 # account first (README: A). The Resume
 # menu refuses a conversation whose Claude is open in this window; automatic
 # resume skips a worktree that already has a Claude, and grab does not check.
@@ -155,6 +159,12 @@ beside this file in `sessions-fold.json`, rewritten on every fold, and read at s
 #   {prompt}   the assembled prompt. Leave it out for tools that read stdin,
 #              which is then used.
 #   {workdir}  the directory the task is about. The command also runs there.
+#
+# With [[claude.accounts]], the command runs with CLAUDE_CONFIG_DIR set to (or,
+# for an account with no config_dir, cleared of) the account that `paths` gives
+# the repository Smart Worktree is started in, the same rule a Claude started
+# there follows (see [[claude.accounts]] above), including its exception: started
+# with CLAUDE_CONFIG_DIR set, conductor leaves the command's as it is.
 #
 # command = ["claude", "-p", "{prompt}"]                 # Claude Code, one-shot
 # command = ["my-cli", "-w", "{workdir}", "{prompt}"]    # prompt as a positional argument
