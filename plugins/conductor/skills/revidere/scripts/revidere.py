@@ -456,6 +456,9 @@ def validate(r) -> None:
         concerns = s.get("concerns", [])
         if not isinstance(concerns, list) or not all(nonblank(c) for c in concerns):
             raise Failure(f"{where}（{s['title']}）の concerns が空でない文字列の配列でない")
+        notes = s.get("notes", [])
+        if not isinstance(notes, list) or not all(nonblank(c) for c in notes):
+            raise Failure(f"{where}（{s['title']}）の notes が空でない文字列の配列でない")
     impacts = r.get("impacts", [])
     if not isinstance(impacts, list):
         raise Failure("impacts が配列でない")
@@ -765,17 +768,27 @@ def verdict_chip(s: dict) -> str:
     return '<span class="chip lgtm">LGTM</span>' if s["importance"] == "core" else ""
 
 
-def verdict(sections: list[dict], complete: bool) -> str:
-    items = [
+def listed(sections: list[dict], key: str) -> list[str]:
+    return [
         f'<li><a href="#s{i}">{esc(s["title"])}</a>{prose(c)}</li>'
         for i, s in enumerate(sections)
-        for c in s.get("concerns", [])
+        for c in s.get(key, [])
     ]
+
+
+def verdict(sections: list[dict], complete: bool) -> str:
+    items, held = listed(sections, "concerns"), listed(sections, "notes")
     if items:
-        return f'<span class="chip concern">懸念あり {len(items)}</span><ul class="concerns">{"".join(items)}</ul>'
-    if not complete:
-        return '<span class="chip warnchip">判定できない</span><p class="note">説明もれ検査が通っていない。</p>'
-    return '<span class="chip lgtm">LGTM</span><p class="note">どの節にも懸念は無い。</p>'
+        head = f'<span class="chip concern">懸念あり {len(items)}</span><ul class="concerns">{"".join(items)}</ul>'
+    elif not complete:
+        head = '<span class="chip warnchip">判定できない</span><p class="note">説明もれ検査が通っていない。</p>'
+    elif held:
+        head = '<span class="chip lgtm">LGTM</span><p class="note">LGTM を止める懸念は無い。</p>'
+    else:
+        head = '<span class="chip lgtm">LGTM</span><p class="note">どの節にも懸念は無い。</p>'
+    if not held:
+        return head
+    return head + f'<span class="chip warnchip">止めないもの {len(held)}</span><ul class="notes">{"".join(held)}</ul>'
 
 
 def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> str:
@@ -793,6 +806,7 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
             f'<li><a href="#s{i}"><span class="chip {imp}">{IMPORTANCE_JA[imp]}</span>{verdict_chip(s)}{esc(s["title"])}</a></li>'
         )
         concerns = "".join(f"<li>{prose(c)}</li>" for c in s.get("concerns", []))
+        held = "".join(f"<li>{prose(c)}</li>" for c in s.get("notes", []))
         rels, primary_seen = [], False
         for rel in s.get("relations", []):
             j = anchor.get(rel["to"])
@@ -812,6 +826,7 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
             f'{verdict_chip(s)}<h3>{esc(s["title"])}</h3></header>'
             f'<div class="why"><span class="label">理由</span>{prose(s["reason"])}</div>'
             + (f'<ul class="concerns">{concerns}</ul>' if concerns else "")
+            + (f'<ul class="notes">{held}</ul>' if held else "")
             + f"{prose(s['body'])}"
             + (f'<ul class="rels">{"".join(rels)}</ul>' if rels else "")
             + "".join(notes)
@@ -968,6 +983,9 @@ dl {{ margin: 0; }}
 .verdict .concerns {{ justify-self: stretch; }}
 .verdict .concerns a {{ font-weight: 700; margin-right: .5em; }}
 .sec .concerns {{ color: var(--core); }}
+.notes {{ margin: 0; padding-left: 1.4em; display: grid; gap: 6px; color: var(--warn); }}
+.verdict .notes {{ justify-self: stretch; }}
+.verdict .notes a {{ font-weight: 700; margin-right: .5em; }}
 .sec {{ background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--minor); border-radius: 6px;
   padding: 16px; display: grid; gap: 12px; min-width: 0; scroll-margin-top: 16px; }}
 .sec.core {{ border-left-color: var(--core); }} .sec.ripple {{ border-left-color: var(--ripple); }}

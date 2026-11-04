@@ -466,6 +466,9 @@ class Validate(unittest.TestCase):
             "confidence が無効": (lambda r: r["impacts"][0].update(confidence="maybe"), "confidence"),
             "concerns が文字列": (lambda r: s(r).update(concerns="c"), "concerns"),
             "concerns に空白": (lambda r: s(r).update(concerns=["c", " "]), "concerns"),
+            "notes が文字列": (lambda r: s(r).update(notes="n"), "notes"),
+            "notes に空白": (lambda r: s(r).update(notes=["n", " "]), "notes"),
+            "notes が null": (lambda r: s(r).update(notes=None), "notes"),
         }
         for name, (mutate, needle) in cases.items():
             with self.subTest(name):
@@ -512,6 +515,26 @@ class CheckCommand(RepoTest):
         self.assertEqual(code, 0, out)
         self.assertEqual(rv.load_review(os.path.join(self.d, "review.json"))["sections"][0]["title"], "better")
         self.assertTrue(os.path.exists(os.path.join(self.d, "review.first.json")))
+
+    def test_止めないものが壊れた直しは漏れを減らしても採らない(self):
+        write_review(self.d, [section("first", [rng("a.txt", "new", 1)])])
+        better = section("better", [rng("a.txt", "new", 1, 2)])
+        better["notes"] = "文字列"
+        with open(os.path.join(self.d, "review.retry.json"), "w", encoding="utf-8") as fh:
+            json.dump(review_of([better]), fh, ensure_ascii=False)
+        code, out, _ = self.r.run("check", self.d, "--retry")
+        self.assertEqual(code, 1)
+        self.assertIn("直した答えを採らない", out)
+
+    def test_止めないものがある直しも漏れが減れば採る(self):
+        write_review(self.d, [section("first", [rng("a.txt", "new", 1)])])
+        better = section("better", [rng("a.txt", "new", 1, 2)])
+        better["notes"] = ["読む人へ"]
+        with open(os.path.join(self.d, "review.retry.json"), "w", encoding="utf-8") as fh:
+            json.dump(review_of([better]), fh, ensure_ascii=False)
+        code, out, _ = self.r.run("check", self.d, "--retry")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(rv.load_review(os.path.join(self.d, "review.json"))["sections"][0]["title"], "better")
 
     def test_直した答えが読めなければ最初の答えで進む(self):
         write_review(self.d, [section("first", [rng("a.txt", "new", 1)])])
@@ -797,6 +820,78 @@ class RenderPage(RepoTest):
         verdict = self.render(d).split('class="verdict"')[1].split("</section>")[0]
         self.assertNotIn("LGTM", verdict)
         self.assertIn("判定できない", verdict)
+
+    def notes_page(self, *sections):
+        self.r.write("a.txt", "a\nb\n")
+        d, _ = self.r.prepare()
+        write_review(d, list(sections))
+        page = self.render(d)
+        return page, page.split('class="verdict"')[1].split("</section>")[0]
+
+    def test_止めないものだけなら本題はLGTMのまま冒頭に別に集まる(self):
+        core = section("x", [rng("a.txt", "new", 1, 2)])
+        core["notes"] = ["一つ目", "二つ目"]
+        page, verdict = self.notes_page(core)
+        self.assertIn("LGTM を止める懸念は無い", verdict)
+        self.assertIn("止めないもの 2", verdict)
+        self.assertNotIn("懸念あり", page)
+        self.assertIn('class="chip lgtm">LGTM', page.split('id="s0"')[1].split("</header>")[0])
+        self.assertIn("一つ目", page.split('id="s0"')[1])
+
+    def test_懸念と止めないものは別々に数える(self):
+        core = section("x", [rng("a.txt", "new", 1, 2)])
+        core["concerns"], core["notes"] = ["止める"], ["止めない"]
+        page, verdict = self.notes_page(core)
+        self.assertIn("懸念あり 1", verdict)
+        self.assertIn("止めないもの 1", verdict)
+        self.assertIn("懸念あり 1", page.split('id="s0"')[1].split("</header>")[0])
+
+    def test_本題以外の止めないものは札を付けずに出す(self):
+        core = section("x", [rng("a.txt", "new", 1)])
+        for importance in ("ripple", "follow", "minor"):
+            with self.subTest(importance):
+                other = section("y", [rng("a.txt", "new", 2)], importance=importance)
+                other["notes"] = ["読む人へ"]
+                page, verdict = self.notes_page(core, other)
+                header = page.split('id="s1"')[1].split("</header>")[0]
+                self.assertNotIn("LGTM", header)
+                self.assertNotIn("懸念あり", header)
+                self.assertIn("読む人へ", page.split('id="s1"')[1])
+                self.assertIn("止めないもの 1", verdict)
+
+    def test_説明もれがあれば止めないものがあっても判定できない(self):
+        core = section("x", [rng("a.txt", "new", 1)])
+        core["notes"] = ["読む人へ"]
+        _, verdict = self.notes_page(core)
+        self.assertIn("判定できない", verdict)
+        self.assertNotIn("LGTM", verdict)
+        self.assertIn("止めないもの 1", verdict)
+
+    def test_止めないものが無ければ判定と節は今までどおり(self):
+        page, verdict = self.notes_page(section("x", [rng("a.txt", "new", 1, 2)]))
+        self.assertIn("どの節にも懸念は無い", verdict)
+        self.assertNotIn("止めないもの", page)
+        self.assertNotIn('<ul class="notes">', page)
+
+    def test_節の止めないものは懸念と別の一覧で別の色になる(self):
+        core = section("x", [rng("a.txt", "new", 1, 2)])
+        core["concerns"], core["notes"] = ["止める"], ["止めない"]
+        page, _ = self.notes_page(core)
+        sec = page.split('id="s0"')[1]
+        concerns = sec.split('<ul class="concerns">')[1].split("</ul>")[0]
+        held = sec.split('<ul class="notes">')[1].split("</ul>")[0]
+        self.assertIn("止める", concerns)
+        self.assertNotIn("止めない", concerns)
+        self.assertIn("止めない", held)
+        self.assertRegex(page, r"\.notes \{[^}]*color: var\(--warn\)")
+
+    def test_止めないものが空配列なら無いときと同じ(self):
+        core = section("x", [rng("a.txt", "new", 1, 2)])
+        core["notes"] = []
+        page, verdict = self.notes_page(core)
+        self.assertIn("どの節にも懸念は無い", verdict)
+        self.assertNotIn("止めないもの", page)
+        self.assertNotIn('<ul class="notes">', page)
 
     def render(self, d):
         code, out, err = self.r.run("render", d)
