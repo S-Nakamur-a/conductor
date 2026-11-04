@@ -159,6 +159,8 @@ heading or worktree (on a worktree with nothing to hide it moves up to the headi
 unfolds it or steps into it, and clicking the ⌄ / › mark toggles it. **h** on a session does
 nothing, and **l** never enters one — that is still **Tab** or **Enter**. A folded line opens again while the
 session selected is inside it, and the waiting box and the counts above the list ignore folding.
+A folded line shows how many sessions it hides, per state, with the same marks the session lines
+start with (`!1 ›2 z3`; a state with none is left out).
 What is folded is kept in `~/.config/conductor/sessions-fold.json` and comes back on the next start.
 The mouse wheel over the list scrolls it without moving the selection, so the session on
 the right stays put; the next key that moves the selection brings it back into view.
