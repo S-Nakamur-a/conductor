@@ -250,6 +250,11 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
             smart
                 .is_some()
                 .then(|| icons::expand_arrow(group_open, icon_set)),
+            if group_open {
+                Vec::new()
+            } else {
+                hidden_counts(theme, group.rows())
+            },
             selected.then_some(focused),
         ));
         slots.push(Slot::Repo(smart));
@@ -268,7 +273,10 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                         theme,
                         icon_set,
                         worktree,
-                        FleetPanel::can_fold(node).then_some(open),
+                        FleetPanel::can_fold(node).then(|| match open {
+                            true => Foldable::Open,
+                            false => Foldable::Folded(hidden_counts(theme, node.rows.iter())),
+                        }),
                         badge_of(fleet, &worktree.path),
                         inner.width,
                         selected.then_some(focused),
@@ -981,14 +989,31 @@ fn repo_header(
     theme: &Theme,
     width: u16,
     marker: Option<&str>,
+    hidden: Vec<Span<'static>>,
     selection: Option<bool>,
 ) -> Line<'static> {
     let Some(marker) = marker else {
         return header(name, theme.warning, width);
     };
     let rest = width.saturating_sub(MARKER_WIDTH);
-    let name = clip(name, usize::from(rest.saturating_sub(BUTTON_WIDTH + 2)));
-    let mut line = header(&name, theme.warning, rest.saturating_sub(BUTTON_WIDTH + 1));
+    let hidden_width = match spans_width(&hidden) {
+        0 => 0,
+        w => w as u16 + 1,
+    };
+    let name = clip(
+        name,
+        usize::from(rest.saturating_sub(BUTTON_WIDTH + 2 + hidden_width)),
+    );
+    let mut line = header(
+        &name,
+        theme.warning,
+        rest.saturating_sub(BUTTON_WIDTH + 1 + hidden_width),
+    );
+    if hidden_width > 0 {
+        let at = line.spans.len() - 1;
+        line.spans
+            .splice(at..at, hidden.into_iter().chain([Span::raw(" ")]));
+    }
     line.spans.insert(
         0,
         Span::styled(
@@ -1035,6 +1060,36 @@ fn look(theme: &Theme, state: &State) -> (&'static str, Color) {
     }
 }
 
+fn hidden_counts<'a>(theme: &Theme, rows: impl IntoIterator<Item = &'a Row>) -> Vec<Span<'static>> {
+    let order = [
+        State::Waiting(Ask::Question),
+        State::Working,
+        State::Finished,
+        State::Unasked,
+        State::Idle,
+        State::Unknown,
+    ];
+    let mut counts = [0usize; 6];
+    for row in rows {
+        let glyph = look(theme, &row.state).0;
+        if let Some(slot) = order.iter().position(|s| look(theme, s).0 == glyph) {
+            counts[slot] += 1;
+        }
+    }
+    let mut spans = Vec::new();
+    for (state, count) in order.iter().zip(counts).filter(|(_, n)| *n > 0) {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        let (glyph, color) = look(theme, state);
+        spans.push(Span::styled(
+            format!("{glyph}{count}"),
+            Style::default().fg(color),
+        ));
+    }
+    spans
+}
+
 fn unattended(state: &State) -> bool {
     matches!(state, State::Finished | State::Unasked)
 }
@@ -1074,19 +1129,27 @@ fn badge_of(fleet: &FleetPanel, worktree: &Path) -> Option<Badge> {
     }
 }
 
+enum Foldable {
+    Open,
+    Folded(Vec<Span<'static>>),
+}
+
 fn worktree_line(
     theme: &Theme,
     icons: IconSet,
     worktree: &Worktree,
-    open: Option<bool>,
+    fold: Option<Foldable>,
     badge: Option<Badge>,
     width: u16,
     selection: Option<bool>,
 ) -> Line<'static> {
     let selected = selection.is_some();
-    let marker = match open {
-        Some(open) => format!("{} ", icons::expand_arrow(open, icons)),
-        None => "  ".to_string(),
+    let (marker, hidden) = match fold {
+        Some(Foldable::Open) => (format!("{} ", icons::expand_arrow(true, icons)), Vec::new()),
+        Some(Foldable::Folded(hidden)) => {
+            (format!("{} ", icons::expand_arrow(false, icons)), hidden)
+        }
+        None => ("  ".to_string(), Vec::new()),
     };
     let (badge, badge_fg) = match badge {
         Some(Badge::Review(Mark::Current)) => (icons::REVIDERE_CURRENT.get(icons), theme.success),
@@ -1099,20 +1162,31 @@ fn worktree_line(
     } else {
         "   ".to_string()
     };
-    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5 + MARKER_WIDTH));
+    let hidden_width = match spans_width(&hidden) {
+        0 => 0,
+        w => w + 1,
+    };
+    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5 + MARKER_WIDTH))
+        .saturating_sub(hidden_width);
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
     let lead = if selected { " ❯" } else { "  " };
-    let spans = vec![
+    let mut spans = vec![
         Span::styled(lead, Style::default().fg(theme.accent)),
         Span::styled(marker, Style::default().fg(marker_fg(theme, selected))),
         Span::styled(label, Style::default().fg(theme.info)),
+    ];
+    if hidden_width > 0 {
+        spans.push(Span::raw(" "));
+        spans.extend(hidden);
+    }
+    spans.extend([
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(badge, Style::default().fg(badge_fg)),
         Span::raw(" "),
         Span::styled(revidere, Style::default().fg(theme.fg)),
         Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
-    ];
+    ]);
     Line::from(spans).style(self::selection(theme, selection.unwrap_or(false), selected))
 }
 
