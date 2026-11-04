@@ -291,7 +291,10 @@ fn intaken(repo: &Path, number: u64) -> Result<IntakenPr, String> {
 
 fn opened(main: &str, branches: &[&str]) -> impl Fn(&Path) -> anyhow::Result<RepoWorktrees> {
     let main = PathBuf::from(main);
-    let branches: Vec<String> = branches.iter().map(|b| b.to_string()).collect();
+    let branches: HashMap<String, PathBuf> = branches
+        .iter()
+        .map(|b| (b.to_string(), main.join(b)))
+        .collect();
     move |_: &Path| {
         Ok(RepoWorktrees {
             main: main.clone(),
@@ -342,7 +345,7 @@ fn 開けないリポジトリとghの失敗は名前を残して次のリポジ
             Some("/missing") => anyhow::bail!("not a git repository"),
             _ => Ok(RepoWorktrees {
                 main: path.to_path_buf(),
-                branches: Vec::new(),
+                branches: HashMap::new(),
             }),
         },
         |main| match main.to_str() {
@@ -393,18 +396,14 @@ fn 同じリポジトリを別の綴りで書いても問い合わせは1回() {
 #[test]
 fn worktreeのあるブランチは取り込み済みとみなす() {
     let repo = TestRepo::with_base_commit();
-    repo.linked_worktree("a");
+    let linked = repo.linked_worktree("a");
     let found = repo_worktrees(&repo.path).unwrap();
-    assert!(
-        found.branches.contains(&String::from("a")),
-        "{:?}",
-        found.branches
+    assert_eq!(
+        found.branches.get("a"),
+        Some(&linked.path.canonicalize().unwrap()),
+        "ブランチがそれを checkout している worktree を指さない"
     );
-    assert!(
-        found.branches.contains(&String::from("main")),
-        "{:?}",
-        found.branches
-    );
+    assert!(found.branches.contains_key("main"), "{:?}", found.branches);
 }
 
 #[test]
@@ -423,7 +422,7 @@ fn 読めた依頼一覧は取り込んだ1件より後ろのworktreeありま�
     let mut listed = queried.listed.clone();
     listed.sort();
     assert_eq!(listed, [1, 2, 3]);
-    assert_eq!(queried.with_worktree, [3]);
+    assert_eq!(queried.with_worktree, [(3, PathBuf::from("/r/c"))]);
 }
 
 #[test]
@@ -440,7 +439,7 @@ fn 取り込んだrepoより後ろと失敗したrepoは読めた側に入らな
         |path| {
             Ok(RepoWorktrees {
                 main: path.to_path_buf(),
-                branches: Vec::new(),
+                branches: HashMap::new(),
             })
         },
         |main| {

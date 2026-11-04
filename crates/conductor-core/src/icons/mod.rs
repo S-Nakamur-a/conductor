@@ -272,6 +272,9 @@ pub const REVIDERE_CURRENT: Glyph = Glyph::new("\u{eba4}", "\u{2713}");
 /// 同じブランチの、HEAD と違う commit を読んだ revidere だけがある。
 pub const REVIDERE_STALE: Glyph = Glyph::new("\u{ea82}", "\u{21bb}");
 
+/// 自分へのレビュー依頼が続いていて、revidere の記録がまだ無い。
+pub const REVIEW_REQUESTED: Glyph = Glyph::new("\u{ea64}", "!");
+
 /// 別プロセスに grab されていて操作できないパネル。
 pub const LOCKED: Glyph = Glyph::new("\u{ea75}", "\u{22a0}");
 

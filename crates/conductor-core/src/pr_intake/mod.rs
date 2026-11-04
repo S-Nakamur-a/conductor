@@ -3,7 +3,7 @@
 //! gh のサブコマンドと JSON フィールド名、refspec の綴りをここ 1 か所に集める。
 //! 散らばると gh の出力が変わったときに直す場所を取りこぼす。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -232,7 +232,8 @@ pub fn review_requests(repo_path: &Path) -> Result<Vec<PrHead>, PrIntakeError> {
 /// repo_worktrees の結果。
 pub struct RepoWorktrees {
     pub main: PathBuf,
-    pub branches: Vec<String>,
+    /// ブランチ名から、それを checkout している worktree。
+    pub branches: HashMap<String, PathBuf>,
 }
 
 /// repo_path の main worktree と、各 worktree が checkout しているブランチ。detached は含めない。
@@ -240,9 +241,9 @@ pub fn repo_worktrees(repo_path: &Path) -> anyhow::Result<RepoWorktrees> {
     let engine = GitEngine::open(repo_path)?;
     let heads = engine.worktree_heads()?;
     let branches = heads
-        .iter()
-        .filter_map(|w| match &w.head {
-            crate::git_engine::Head::Branch(name) => Some(name.clone()),
+        .into_iter()
+        .filter_map(|w| match w.head {
+            crate::git_engine::Head::Branch(name) => Some((name, w.path)),
             _ => None,
         })
         .collect();
@@ -267,8 +268,8 @@ pub struct ReviewRound {
 pub struct QueriedRepo {
     pub main: PathBuf,
     pub listed: Vec<u64>,
-    /// 既に worktree のある PR。消されても作り直さない。
-    pub with_worktree: Vec<u64>,
+    /// 既に worktree のある PR とその worktree。消されても作り直さない。
+    pub with_worktree: Vec<(u64, PathBuf)>,
 }
 
 /// 取り込みを試した PR とその結果。
@@ -309,18 +310,20 @@ pub fn review_round(
                 continue;
             }
         };
-        let (with_worktree, without): (Vec<PrHead>, Vec<PrHead>) = heads
-            .into_iter()
-            .partition(|pr| opened.branches.contains(&pr.local_branch()));
-        let listed = with_worktree
-            .iter()
-            .chain(&without)
-            .map(|pr| pr.number)
-            .collect();
+        let mut listed = Vec::new();
+        let mut with_worktree = Vec::new();
+        let mut without = Vec::new();
+        for pr in heads {
+            listed.push(pr.number);
+            match opened.branches.get(&pr.local_branch()) {
+                Some(path) => with_worktree.push((pr.number, path.clone())),
+                None => without.push(pr),
+            }
+        }
         round.queried.push(QueriedRepo {
             main: opened.main.clone(),
             listed,
-            with_worktree: with_worktree.iter().map(|pr| pr.number).collect(),
+            with_worktree,
         });
         let fresh = without
             .into_iter()

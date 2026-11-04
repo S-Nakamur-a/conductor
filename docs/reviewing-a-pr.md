@@ -24,7 +24,11 @@ terminal keybindings keep working while you review:
    for open PRs that request *your* review — directly, not through one of your
    teams — and takes in the first one that has no worktree yet, one PR at a
    time, without moving you off the worktree you are on. The status line names
-   the PR; run `/revidere` there for the AI review. While your review stays
+   the PR; run `/revidere` there for the AI review. Until a revidere page reads
+   it, every worktree of a PR still requesting your review, taken in by hand or
+   not, carries a pull-request mark in the Sessions list (`!` without a Nerd
+   Font). A repository that could not be asked keeps the marks of the last
+   answer. While your review stays
    requested, a PR is taken in once: if you delete its worktree it is not
    brought back, and one that failed to come in is not tried again (enter its
    number here by hand). Both are forgotten when the request is dropped, so a
