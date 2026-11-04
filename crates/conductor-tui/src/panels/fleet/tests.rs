@@ -3994,6 +3994,62 @@ mod launch {
             )
         );
     }
+
+    #[test]
+    fn レビュー依頼の続くworktreeはrevidereの印が無いときだけ依頼の印を描き_押すと行を選ぶ() {
+        use conductor_core::icons;
+        use conductor_core::revidere_records::Mark;
+        let mut ws = reviewed(&[
+            ("/r/app-00", Mark::Current, None),
+            ("/r/app-01", Mark::Stale, None),
+        ]);
+        ws.panels.fleet.set_review_requested(
+            ["/r/app-00", "/r/app-01", "/r/app-02"]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+        );
+        let set = ws.config.ui.icon_set();
+        let composed = render::compose(&ws, ratatui::layout::Rect::new(0, 0, 95, 12)).unwrap();
+        let badge = |label: &str| {
+            let index = composed
+                .slots
+                .iter()
+                .position(|s| matches!(s, render::Slot::Worktree(w) if w.label == label))
+                .unwrap();
+            let line = &composed.lines[index];
+            let at = line
+                .spans
+                .iter()
+                .position(|s| s.content.starts_with('['))
+                .unwrap();
+            let span = &line.spans[at - 2];
+            (span.content.to_string(), span.style.fg)
+        };
+        let theme = &ws.theme;
+        assert_eq!(
+            badge("b02"),
+            (
+                icons::REVIEW_REQUESTED.get(set).to_string(),
+                Some(theme.accent)
+            )
+        );
+        assert_eq!(
+            badge("b00").0,
+            icons::REVIDERE_CURRENT.get(set).to_string(),
+            "今の commit を読んだら依頼の印は消す"
+        );
+        assert_eq!(badge("b01").0, icons::REVIDERE_STALE.get(set).to_string());
+
+        assert!(
+            press_at(&mut ws, 8, 3).is_empty(),
+            "依頼の印には開くものが無い"
+        );
+        assert_eq!(
+            ws.panels.fleet.selected_dir(),
+            Some(PathBuf::from("/r/app-02"))
+        );
+    }
 }
 
 mod usage {

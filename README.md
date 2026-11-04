@@ -225,7 +225,11 @@ whose directory has been cleaned away, is not counted. Clicking the mark opens t
 published page of the kind it shows: one that read the commit checked out now if there is
 any, otherwise one that read an older commit. A link is recorded only by a revidere run from
 plugin 0.11.0 on, once it has published the page; when the kind shown has no recorded link,
-the mark says so instead.
+the mark says so instead. With no revidere page yet, a worktree whose pull request still
+requests your review (from `[review] auto_review_repos`, see
+[docs/reviewing-a-pr.md](docs/reviewing-a-pr.md)) shows a pull-request mark in the accent
+colour there (`!` without a Nerd Font); it goes once the review is dropped, and clicking it
+only selects the line.
 
 **g** opens the selected line's pull request in the browser: one whose head is the branch
 checked out in that worktree (on a session's line, the worktree it runs in), as

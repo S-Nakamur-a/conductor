@@ -1,5 +1,6 @@
 //! 画面全体の状態。旧 App の代わりだが、パネルの update はここを受け取らない。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -259,6 +260,8 @@ struct ReviewRequests {
     in_flight: bool,
     /// 依頼が続いている間、もう取り込まない (main worktree, PR 番号)。試したものと worktree を見たもの。
     tried: std::collections::HashSet<(PathBuf, u64)>,
+    /// main worktree ごとの、依頼が続いている PR の worktree。問い合わせられなかった周は前のまま。
+    waiting: HashMap<PathBuf, Vec<PathBuf>>,
 }
 
 impl Workspace {
@@ -892,15 +895,19 @@ impl Workspace {
         in_window_repo: bool,
     ) -> Vec<Effect> {
         self.review_requests.in_flight = false;
-        let tried = &mut self.review_requests.tried;
+        let requests = &mut self.review_requests;
         for queried in round.queried {
-            tried.retain(|(repo, number)| *repo != queried.main || queried.listed.contains(number));
-            tried.extend(
-                queried
-                    .with_worktree
+            requests
+                .tried
+                .retain(|(repo, number)| *repo != queried.main || queried.listed.contains(number));
+            let (numbers, paths): (Vec<u64>, Vec<PathBuf>) =
+                queried.with_worktree.into_iter().unzip();
+            requests.tried.extend(
+                numbers
                     .into_iter()
                     .map(|number| (queried.main.clone(), number)),
             );
+            requests.waiting.insert(queried.main, paths);
         }
         let mut effects = Vec::new();
         let mut parts = Vec::new();
@@ -911,9 +918,20 @@ impl Workspace {
                 |n| n.to_string_lossy().into_owned(),
             );
             let number = intake.number;
-            self.review_requests.tried.insert((intake.repo, number));
+            self.review_requests
+                .tried
+                .insert((intake.repo.clone(), number));
             match intake.outcome {
                 Ok(pr) => {
+                    let path = pr
+                        .worktree_path
+                        .canonicalize()
+                        .unwrap_or_else(|_| pr.worktree_path.clone());
+                    self.review_requests
+                        .waiting
+                        .entry(intake.repo)
+                        .or_default()
+                        .push(path);
                     parts.push(format!(
                         "Review requested on {name} PR #{number}: checked out '{}'. Run /revidere there.",
                         pr.meta.branch
@@ -933,6 +951,14 @@ impl Workspace {
                 .failures
                 .into_iter()
                 .map(|f| format!("review requests: {f}")),
+        );
+        self.panels.fleet.set_review_requested(
+            self.review_requests
+                .waiting
+                .values()
+                .flatten()
+                .cloned()
+                .collect(),
         );
         if !parts.is_empty() {
             let level = if failed {
@@ -1430,7 +1456,7 @@ mod tests {
             queried: vec![conductor_core::pr_intake::QueriedRepo {
                 main: PathBuf::from("/r"),
                 listed: vec![8, 9],
-                with_worktree: vec![8],
+                with_worktree: vec![(8, PathBuf::from("/r/wt8"))],
             }],
             ..Default::default()
         };
@@ -1444,6 +1470,82 @@ mod tests {
             std::collections::HashSet::from([(PathBuf::from("/r"), 8), (PathBuf::from("/s"), 7),]),
             "外れた /r の 7 を忘れ、別 repo の /s の 7 は残し、worktree のある 8 を覚える"
         );
+    }
+
+    fn queried(main: &str, waiting: &[(u64, &str)]) -> ReviewRound {
+        ReviewRound {
+            queried: vec![conductor_core::pr_intake::QueriedRepo {
+                main: PathBuf::from(main),
+                listed: waiting.iter().map(|(number, _)| *number).collect(),
+                with_worktree: waiting
+                    .iter()
+                    .map(|(number, path)| (*number, PathBuf::from(path)))
+                    .collect(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn accept_round(ws: &mut Workspace, round: ReviewRound) {
+        ws.accept(TaskResult::ReviewRound {
+            round: Box::new(round),
+            in_window_repo: false,
+        });
+    }
+
+    #[test]
+    fn 依頼の続くworktreeに印を付け_依頼から外れたら外す() {
+        let mut ws = Workspace::for_test();
+        accept_round(&mut ws, queried("/r", &[(8, "/r/wt8")]));
+        assert!(ws.panels.fleet.is_review_requested(Path::new("/r/wt8")));
+        accept_round(&mut ws, queried("/r", &[]));
+        assert!(!ws.panels.fleet.is_review_requested(Path::new("/r/wt8")));
+    }
+
+    #[test]
+    fn 問い合わせられなかった周と問い合わせなかったrepoの印は前の周のまま() {
+        let mut ws = Workspace::for_test();
+        accept_round(&mut ws, queried("/r", &[(8, "/r/wt8")]));
+        accept_round(&mut ws, queried("/s", &[(3, "/s/wt3")]));
+        let failed = ReviewRound {
+            failures: vec![String::from("/r: offline")],
+            ..Default::default()
+        };
+        accept_round(&mut ws, failed);
+        assert!(ws.panels.fleet.is_review_requested(Path::new("/r/wt8")));
+        assert!(ws.panels.fleet.is_review_requested(Path::new("/s/wt3")));
+    }
+
+    #[test]
+    fn 取り込んだprのworktreeには次の周を待たずに印を付け_取り込めなければ付けない() {
+        let mut ws = Workspace::for_test();
+        accept_round(&mut ws, intake("/r", 7, Ok(())));
+        assert!(
+            ws.panels
+                .fleet
+                .is_review_requested(Path::new("/r/feature-a"))
+        );
+
+        let mut ws = Workspace::for_test();
+        accept_round(&mut ws, intake("/r", 7, Err("network down")));
+        assert!(
+            !ws.panels
+                .fleet
+                .is_review_requested(Path::new("/r/feature-a"))
+        );
+    }
+
+    #[test]
+    fn 取り込んだprのworktreeはsymlink越しでも一覧の木と同じ実体のパスで印を付ける() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir_all(real.join("feature-a")).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut ws = Workspace::for_test();
+        accept_round(&mut ws, intake(link.to_str().unwrap(), 7, Ok(())));
+        let canonical = real.join("feature-a").canonicalize().unwrap();
+        assert!(ws.panels.fleet.is_review_requested(&canonical));
     }
 
     #[test]

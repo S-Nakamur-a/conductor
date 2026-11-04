@@ -8,7 +8,7 @@ pub mod changes;
 pub mod fold;
 pub mod render;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -244,6 +244,7 @@ pub struct FleetPanel {
     placement: HashMap<PathBuf, PathBuf>,
     usage: Usage,
     reviews: HashMap<PathBuf, Review>,
+    review_requested: HashSet<PathBuf>,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
     /// Smart Worktree の Prompt を開いた repo。Prompt の on_submit は関数ポインタで掴めない。
@@ -440,6 +441,14 @@ impl FleetPanel {
 
     pub fn review_of(&self, worktree: &Path) -> Option<&Review> {
         self.reviews.get(worktree)
+    }
+
+    pub fn is_review_requested(&self, worktree: &Path) -> bool {
+        self.review_requested.contains(worktree)
+    }
+
+    pub fn set_review_requested(&mut self, worktrees: HashSet<PathBuf>) {
+        self.review_requested = worktrees;
     }
 
     pub fn came_from(&self) -> Focus {
