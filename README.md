@@ -40,7 +40,9 @@ shows any that are), and publishes the result as a review page (an Artifact) wit
 diff excerpts and links to GitHub. `/monstrare` is for understanding a change rather
 than reviewing every line: it groups the changes into themes, draws each one (a
 sequence, a decision tree, a before and after — whatever fits), and publishes a page
-with the concerns that would block an approval and the ones that would not.
+with, if there is anything worth knowing, a short list of notes (what changed
+behaviour, what was not measured) -- whether the branch can be approved is left to
+`/revidere`.
 
 ## Usage
 

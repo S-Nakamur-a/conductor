@@ -62,7 +62,7 @@ def figure(v, where: str) -> None:
         raise Failure(f"{where} に svg と caption が無い")
 
 
-def concern_items(v, where: str) -> None:
+def note_items(v, where: str) -> None:
     if not isinstance(v, list):
         raise Failure(f"{where} が配列でない")
     for i, c in enumerate(v):
@@ -110,11 +110,7 @@ def validate(s) -> None:
             if rg["side"] == "file":
                 raise Failure(f"{where}.excerpts[{j}] の side は new か old (抜粋は行を指す)")
         strings(t.get("files"), f"{where}.files")
-    concerns = s.get("concerns", {})
-    if not isinstance(concerns, dict):
-        raise Failure("concerns がオブジェクトでない")
-    for key in ("blocking", "nonblocking"):
-        concern_items(concerns.get(key, []), f"concerns.{key}")
+    note_items(s.get("notes", []), "notes")
 
 
 def renamed_hint(path: str, files: list[dict]) -> str:
@@ -172,23 +168,12 @@ def load(d: str) -> tuple[dict, list[dict], list[dict], dict]:
 # ---- HTML ----
 
 
-def concern_list(items: list[dict]) -> str:
-    return "".join(f'<li>{prose(c["text"], "inline")}<span class="how">{esc(c["how"])}</span></li>' for c in items)
-
-
-def concerns_html(story: dict, missing: list[str]) -> str:
-    c = story.get("concerns", {})
-    blocking, nonblocking = c.get("blocking", []), c.get("nonblocking", [])
-    if blocking:
-        block = f'<ul>{concern_list(blocking)}</ul>'
-    else:
-        block = '<p>止めるものは無い。</p>'
-    if missing:
-        block += f'<p class="warn"><a href="#map">どの主題にも入っていないファイル {len(missing)} 件</a>は読んでいない。</p>'
-    out = f'<div class="block"><h3>LGTM を止めるもの {len(blocking)}</h3>{block}</div>'
-    if nonblocking:
-        out += f'<div class="soft"><h3>止めないが、知っておくとよいもの {len(nonblocking)}</h3><ul>{concern_list(nonblocking)}</ul></div>'
-    return out
+def notes_html(story: dict) -> str:
+    notes = story.get("notes", [])
+    if not notes:
+        return ""
+    items = "".join(f'<li>{prose(n["text"], "inline")}<span class="how">{esc(n["how"])}</span></li>' for n in notes)
+    return f'<section class="card"><div class="head"><h2>知っておくとよいこと {len(notes)}</h2></div><ul class="notes">{items}</ul></section>'
 
 
 def figure_html(fig: dict) -> str:
@@ -264,7 +249,7 @@ def render(meta: dict, files: list[dict], focus: list[set], story: dict) -> str:
         banner="".join(banner),
         overview=figure_html(story["overview"]),
         themes="".join(themes),
-        concerns=concerns_html(story, missing),
+        notes=notes_html(story),
         map=map_html(files, story, missing),
         shared_css=rv.SHARED_CSS,
         md_script=rv.MD_SCRIPT,
@@ -311,7 +296,6 @@ code, .path, .fn, .ln, .code, .num, .n {{ font-family: var(--mono); font-size: .
 .banner {{ margin: 0; padding: 10px 14px; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; }}
 .banner a {{ color: inherit; }}
 .note {{ margin: 0; font-size: .9rem; color: var(--muted); }}
-.warn {{ margin: 0; font-size: .9rem; color: var(--warn); }}
 .card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px; display: grid; gap: 14px; min-width: 0; scroll-margin-top: 16px; }}
 .head {{ display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }}
 .num {{ color: var(--accent); font-weight: 600; font-size: 1rem; }}
@@ -333,15 +317,10 @@ figure.pic {{ margin: 0; display: grid; gap: 8px; min-width: 0; }}
 .pic figcaption {{ color: var(--muted); font-size: .88rem; max-width: 72ch; }}
 .pair {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
 .pair > div {{ border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; align-content: start; }}
-.pair ul, .concerns ul {{ margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }}
+.pair ul, .notes {{ margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }}
 .tag {{ font-size: .75rem; font-weight: 700; }}
 .before .tag {{ color: var(--gone); }} .after .tag {{ color: var(--new); }}
 .files {{ display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: .85rem; }}
-.concerns {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
-.concerns > div {{ border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }}
-.concerns p {{ margin: 0; }}
-.block {{ border: 1.5px solid var(--gone); }} .block h3 {{ color: var(--gone); }}
-.soft {{ border: 1.5px dashed var(--hold); }} .soft h3 {{ color: var(--hold); }}
 .how {{ font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }}
 .map {{ display: grid; gap: 6px; font-size: .85rem; }}
 .map .row {{ display: grid; grid-template-columns: minmax(0, 18em) 7em minmax(0, 1fr) 7em; gap: 10px; align-items: center; }}
@@ -353,7 +332,7 @@ figure.pic {{ margin: 0; display: grid; gap: 8px; min-width: 0; }}
 .bar i {{ display: block; height: 100%; }} .bar .a {{ background: var(--new); }} .bar .d {{ background: var(--gone); }}
 .n {{ color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }}
 {shared_css}
-@media (max-width: 640px) {{ .pair, .concerns {{ grid-template-columns: 1fr; }}
+@media (max-width: 640px) {{ .pair {{ grid-template-columns: 1fr; }}
   .map .row {{ grid-template-columns: minmax(0, 1fr) auto; }} .map .bar {{ grid-column: 1 / -1; }} }}
 </style>
 </head>
@@ -367,7 +346,7 @@ figure.pic {{ margin: 0; display: grid; gap: 8px; min-width: 0; }}
 </header>
 <section class="card" id="t0"><div class="head"><span class="num">00</span><h2>全体</h2></div>{overview}</section>
 {themes}
-<section class="card"><div class="head"><h2>気になるところ</h2></div><div class="concerns">{concerns}</div></section>
+{notes}
 <section class="card" id="map"><div class="head"><h2>どのファイルがどの主題か</h2></div><div class="map">{map}</div></section>
 </main>
 {md_script}
