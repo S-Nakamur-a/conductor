@@ -11,9 +11,11 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 `cargo build` · `cargo run [-- <repo-path>]` · `cargo test --workspace` ·
 `cargo clippy --workspace` · `cargo check --workspace` · `make fmt`.
 Set `RUST_LOG=debug` for logging.
-The revidere skill's script has its own tests, which CI does not run:
-`python3 -m unittest discover -s plugins/conductor/skills/revidere/scripts`
-(also under `/usr/bin/python3`, which is 3.9 on macOS).
+The revidere and monstrare skills' scripts have their own tests, which CI does not run:
+`python3 -m unittest discover -s plugins/conductor/skills/revidere/scripts` and
+`python3 -m unittest discover -s plugins/conductor/skills/monstrare/scripts`
+(also under `/usr/bin/python3`, which is 3.9 on macOS). Run both after touching
+`revidere.py`: monstrare imports it.
 
 **Always pass `--workspace`** — bare `cargo test` / `cargo clippy` only cover the
 root `conductor` package, which is a five-line `main.rs`; everything else is in
@@ -195,6 +197,14 @@ that includes a window with no `$TMPDIR` at all, since Rust then reads the per-u
 the marks but makes every one say it has no link. The list's revidere button
 starts Claude with `/conductor:revidere` as its first argument rather than typing it in
 (the reason is on `Conversation`).
+
+**monstrare** (`plugins/conductor/skills/monstrare/`) is its sibling for understanding
+rather than reviewing: the session draws an SVG overview and one or more per theme that changes behaviour, and `scripts/monstrare.py`
+checks only that every changed file belongs to some theme, then renders the page. It
+borrows the git, diff, excerpt and link code from `revidere.py` by import (through
+`realpath`, so a symlinked skill dir still finds it), which makes revidere's helpers its
+API too. Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so the session
+list's revidere marks never count it.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 

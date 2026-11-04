@@ -869,7 +869,49 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
         toc="".join(toc),
         sections="".join(body),
         impacts=impacts or '<p class="muted">影響の記述は無い。</p>',
+        shared_css=SHARED_CSS,
+        md_script=MD_SCRIPT,
     )
+
+
+SHARED_CSS = """\
+.md { white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere; }
+.md.rendered { white-space: normal; }
+.md.rendered > :first-child { margin-top: 0; } .md.rendered > :last-child { margin-bottom: 0; }
+.md.inline { display: inline; } .md.inline.rendered p { display: inline; }
+.md pre { overflow-x: auto; padding: 8px; background: var(--bg); border-radius: 4px; }
+.hunk { margin: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; min-width: 0; }
+.hunk figcaption, .filechange { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 6px 10px;
+  background: var(--bg); font-size: .85rem; border-bottom: 1px solid var(--line); }
+.filechange { border: 1px solid var(--line); border-radius: 4px; }
+.links { margin-left: auto; display: flex; gap: 12px; }
+.gh { white-space: nowrap; } .nolink { color: var(--muted); font-size: .8rem; }
+.fn { color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .8rem; line-height: 1.5; }
+td { padding: 0 8px; vertical-align: top; }
+.ln { color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.code { white-space: pre; }
+.sign { user-select: none; display: inline-block; width: 1.2em; color: var(--muted); }
+tr.add { background: var(--add-bg); color: var(--add-fg); }
+tr.del { background: var(--del-bg); color: var(--del-fg); }
+tr.other { opacity: .45; }
+tr.dup td.code { box-shadow: inset 3px 0 0 var(--warn); }
+tr.gap td { color: var(--muted); text-align: center; }
+"""
+
+MD_SCRIPT = """\
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
+<script>
+if (window.marked && window.DOMPurify) {
+  for (const el of document.querySelectorAll("[data-md]")) {
+    el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
+    el.classList.add("rendered");
+  }
+}
+</script>
+"""
 
 
 PAGE = """<title>{title}</title>
@@ -934,32 +976,10 @@ dl {{ margin: 0; }}
 .sections {{ display: grid; gap: 20px; }}
 .why {{ display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: .92rem; }}
 .label {{ font-size: .8rem; letter-spacing: .08em; padding-top: 2px; }}
-.md {{ white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere; }}
-.md.rendered {{ white-space: normal; }}
-.md.rendered > :first-child {{ margin-top: 0; }} .md.rendered > :last-child {{ margin-bottom: 0; }}
-.md.inline {{ display: inline; }} .md.inline.rendered p {{ display: inline; }}
-.md pre {{ overflow-x: auto; padding: 8px; background: var(--bg); border-radius: 4px; }}
 .rels {{ list-style: none; margin: 0; padding: 0; font-size: .9rem; display: grid; gap: 4px; }}
 .rels .primary {{ font-weight: 700; }}
 .rels .md {{ margin-left: .5em; color: var(--muted); font-weight: 400; }}
-.hunk {{ margin: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; min-width: 0; }}
-.hunk figcaption, .filechange {{ display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 6px 10px;
-  background: var(--bg); font-size: .85rem; border-bottom: 1px solid var(--line); }}
-.filechange {{ border: 1px solid var(--line); border-radius: 4px; }}
-.links {{ margin-left: auto; display: flex; gap: 12px; }}
-.gh {{ white-space: nowrap; }} .nolink {{ color: var(--muted); font-size: .8rem; }}
-.fn {{ color: var(--muted); }}
-.scroll {{ overflow-x: auto; }}
-table {{ border-collapse: collapse; width: 100%; font-size: .8rem; line-height: 1.5; }}
-td {{ padding: 0 8px; vertical-align: top; }}
-.ln {{ color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }}
-.code {{ white-space: pre; }}
-.sign {{ user-select: none; display: inline-block; width: 1.2em; color: var(--muted); }}
-tr.add {{ background: var(--add-bg); color: var(--add-fg); }}
-tr.del {{ background: var(--del-bg); color: var(--del-fg); }}
-tr.other {{ opacity: .45; }}
-tr.dup td.code {{ box-shadow: inset 3px 0 0 var(--warn); }}
-tr.gap td {{ color: var(--muted); text-align: center; }}
+{shared_css}
 .impacts {{ display: grid; gap: 12px; }}
 .impact {{ background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; }}
 .impact header {{ display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }}
@@ -981,34 +1001,26 @@ tr.gap td {{ color: var(--muted); text-align: center; }}
 <section><h2>節ごとの変更</h2><div class="sections">{sections}</div></section>
 <section><h2>機能への影響</h2><div class="impacts">{impacts}</div></section>
 </main>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a" crossorigin="anonymous"></script>
-<script>
-if (window.marked && window.DOMPurify) {{
-  for (const el of document.querySelectorAll("[data-md]")) {{
-    el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
-    el.classList.add("rendered");
-  }}
-}}
-</script>
+{md_script}
 """
 
 
 # ---- コマンド ----
 
 
-def cmd_prepare(args) -> int:
+def resolve_range(base: str | None) -> tuple[str, str, str, str]:
+    """(root, base_ref, base_oid, head_oid)。base_oid はベースとの共通祖先。"""
     root = repo_root(os.getcwd())
     head_oid = commit_of(root, "HEAD")
-    base_ref = args.base or guess_base(root)
+    base_ref = base or guess_base(root)
     base_oid = git_text(root, "merge-base", commit_of(root, base_ref), head_oid)
-    text = diff_text(root, base_oid)
-    if not text.strip():
-        print(f"{base_ref} ({base_oid[:10]}) から作業ツリーまでに差分が無い", file=sys.stderr)
-        return 3
+    return root, base_ref, base_oid, head_oid
+
+
+def branch_meta(root: str, base_ref: str, base_oid: str, head_oid: str) -> dict:
     url = origin_url(root)
     repo = github_repo(url) if url else None
-    meta = {
+    return {
         "root": root,
         "branch": git_text(root, "rev-parse", "--abbrev-ref", "HEAD"),
         "base_ref": base_ref,
@@ -1020,10 +1032,23 @@ def cmd_prepare(args) -> int:
         "base_pushed": bool(repo) and on_origin(root, base_oid),
         "dirty": dirty_paths(root),
     }
-    d = tempfile.mkdtemp(prefix="revidere-")
+
+
+def write_workdir(prefix: str, meta: dict, text: str) -> str:
+    d = tempfile.mkdtemp(prefix=prefix)
     with open(os.path.join(d, "diff.patch"), "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     write_json(os.path.join(d, "meta.json"), meta)
+    return d
+
+
+def cmd_prepare(args) -> int:
+    root, base_ref, base_oid, head_oid = resolve_range(args.base)
+    text = diff_text(root, base_oid)
+    if not text.strip():
+        print(f"{base_ref} ({base_oid[:10]}) から作業ツリーまでに差分が無い", file=sys.stderr)
+        return 3
+    d = write_workdir("revidere-", branch_meta(root, base_ref, base_oid, head_oid), text)
     files = parse_diff(text)
     print(f"作業 dir: {d}")
     print(f"範囲: {base_ref} ({base_oid[:10]}) から作業ツリーまで。`git diff-index -p -M {base_oid[:10]}` で読める")

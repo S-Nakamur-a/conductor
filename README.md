@@ -33,11 +33,14 @@ Then, in a Claude Code session:
 ```
 
 That sets up the MCP server (review comment DB and change summaries) and the
-`/address-conductor-comment`, `/explain-comment` and `/revidere` skills.
+`/address-conductor-comment`, `/explain-comment`, `/revidere` and `/monstrare` skills.
 `/revidere` sorts the branch's changes into sections by importance, checks that no
 changed line is left unexplained (and
 shows any that are), and publishes the result as a review page (an Artifact) with
-diff excerpts and links to GitHub.
+diff excerpts and links to GitHub. `/monstrare` is for understanding a change rather
+than reviewing every line: it groups the changes into themes, draws each one (a
+sequence, a decision tree, a before and after — whatever fits), and publishes a page
+with the concerns that would block an approval and the ones that would not.
 
 ## Usage
 
