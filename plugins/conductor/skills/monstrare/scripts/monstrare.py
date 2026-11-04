@@ -216,7 +216,6 @@ def map_html(files: list[dict], story: dict, missing: list[str]) -> str:
         sizes[f["path"]] = (a + add, d + dele)
     widest = max([a + d for a, d in sizes.values()] + [1])
     rows = []
-    # 主題に入っていないファイルは末尾にまとめる。
     for p in sorted(changed_paths(files), key=lambda p: p in missing):
         add, dele = sizes[p]
         marks = "".join(f'<a class="mark" href="#t{i}">{i:02d}</a>' for i in themes_of.get(p, []))
