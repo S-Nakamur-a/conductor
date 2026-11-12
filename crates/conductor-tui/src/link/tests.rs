@@ -68,9 +68,10 @@ fn 本物の画面で折り返したurlをユーザ入力も答えも包む() {
     let d = "https://example.com/paren/a/very/long/path/that/wraps/rows";
     let e = "https://en.wikipedia.org/wiki/Rust_(programming_language)_and_some_more_words";
     let g = "https://example.com/angle/a/very/long/path/that/wraps/across/rows";
-    assert_eq!(urls_of(&links), vec![a, b, c, d, e, b, c, d, e, g]);
+    let f = "https://ja.wikipedia.org/wiki/";
+    assert_eq!(urls_of(&links), vec![a, b, c, d, e, f, b, c, d, e, f, g]);
     assert_eq!(
-        links[5].segments,
+        links[6].segments,
         vec![Segment { y: 14, xs: 5..44 }, Segment { y: 15, xs: 2..27 },]
     );
 }
@@ -88,7 +89,17 @@ fn 番号付きの一覧の行末のurlを次の行の番号と繋がない() {
         .map(|n| format!("{n}. https://github.com/o/r/issues/{n}\n"))
         .collect();
     let urls = logged(&numbered);
-    assert!(find(&buffer, buffer.area, &Joining::Logged(&urls)).is_empty());
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    assert_eq!(
+        urls_of(&links),
+        vec![
+            "https://github.com/o/r/issues/1",
+            "https://github.com/o/r/issues/2",
+            "https://github.com/o/r/issues/1",
+            "https://github.com/o/r/issues/2",
+        ]
+    );
+    assert!(links.iter().all(|l| l.segments.len() == 1));
 }
 
 #[test]
@@ -112,13 +123,39 @@ fn 三行にまたがるurlを包む() {
 }
 
 #[test]
-fn ログに無いurlと一行に収まるurlは包まない() {
+fn ログに無い繋ぎは作らず各行のurlをその行だけで包む() {
     let lines = ["see https://a.example/xx", "yy and https://b.example"];
     let buffer = screen(24, &lines);
     let empty = HashSet::new();
-    assert!(find(&buffer, buffer.area, &Joining::Logged(&empty)).is_empty());
+    let one_line = vec!["https://a.example/xx", "https://b.example"];
+    assert_eq!(
+        urls_of(&find(&buffer, buffer.area, &Joining::Logged(&empty))),
+        one_line
+    );
     let urls = logged("https://b.example and https://a.example/zz");
-    assert!(find(&buffer, buffer.area, &Joining::Logged(&urls)).is_empty());
+    assert_eq!(
+        urls_of(&find(&buffer, buffer.area, &Joining::Logged(&urls))),
+        one_line
+    );
+}
+
+#[test]
+fn 一行のurlの後ろの括弧と全角の字は包まない() {
+    let lines = [
+        "(see https://a.ex/x) and https://b.ex/y）です",
+        "Rust: https://en.wikipedia.org/wiki/Rust_(a).",
+    ];
+    let buffer = screen(50, &lines);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[]));
+    assert_eq!(
+        urls_of(&links),
+        vec![
+            "https://a.ex/x",
+            "https://b.ex/y",
+            "https://en.wikipedia.org/wiki/Rust_(a)"
+        ]
+    );
+    assert_eq!(links[0].segments, vec![Segment { y: 0, xs: 5..19 }]);
 }
 
 #[test]
@@ -144,9 +181,9 @@ fn 一行の二つ目のurlが次の行へ続くときはそれだけを包む()
     let buffer = screen(28, &lines);
     let urls = logged("https://a.ex/1 https://b.ex/22 tail");
     let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
-    assert_eq!(urls_of(&links), vec!["https://b.ex/22"]);
+    assert_eq!(urls_of(&links), vec!["https://a.ex/1", "https://b.ex/22"]);
     assert_eq!(
-        links[0].segments,
+        links[1].segments,
         vec![Segment { y: 0, xs: 15..28 }, Segment { y: 1, xs: 0..2 }]
     );
 }
@@ -182,11 +219,13 @@ fn シェルは端末が折り返した行だけを繋ぐ() {
     let buffer = screen(23, &lines);
     let links = find(&buffer, buffer.area, &Joining::Wrapped(&[0]));
     assert_eq!(urls_of(&links), vec!["https://ex.com/aaa/b"]);
-    assert!(find(&buffer, buffer.area, &Joining::Wrapped(&[])).is_empty());
+    let unwrapped = find(&buffer, buffer.area, &Joining::Wrapped(&[]));
+    assert_eq!(urls_of(&unwrapped), vec!["https://ex.com/a"]);
 
     let short = screen(24, &lines);
-    assert!(
-        find(&short, short.area, &Joining::Wrapped(&[0])).is_empty(),
+    assert_eq!(
+        urls_of(&find(&short, short.area, &Joining::Wrapped(&[0]))),
+        vec!["https://ex.com/a"],
         "右端まで届いていない URL は続かない"
     );
 }
@@ -205,7 +244,7 @@ fn リンクはカーソルと折り返しを退避してから包み最後に�
         "https://ex.com",
         vec![Segment { y: 0, xs: 0..8 }, Segment { y: 1, xs: 0..6 }],
     )];
-    let bytes = String::from_utf8(Painter::default().paint(&buffer, &links)).unwrap();
+    let bytes = String::from_utf8(Painter::default().paint(&buffer, &links, false)).unwrap();
     let open = bytes
         .find("\x1b]8;id=conductor0;https://ex.com\x1b\\")
         .unwrap();
@@ -228,19 +267,47 @@ fn 包まなくなった行はリンクの外で描き直す() {
         "https://ex.com",
         vec![Segment { y: 0, xs: 0..8 }, Segment { y: 1, xs: 0..6 }],
     )];
-    painter.paint(&buffer, &links);
+    painter.paint(&buffer, &links, false);
 
     let next = screen(8, &["next    ", "line    "]);
-    let bytes = String::from_utf8(painter.paint(&next, &[])).unwrap();
+    let bytes = String::from_utf8(painter.paint(&next, &[], false)).unwrap();
     assert!(!bytes.contains("\x1b]8;id"), "{bytes:?}");
     assert!(
         bytes.contains("next") && bytes.contains("line"),
         "{bytes:?}"
     );
     assert!(
-        painter.paint(&next, &[]).is_empty(),
+        painter.paint(&next, &[], false).is_empty(),
         "一度直したら次は書かない"
     );
+}
+
+#[test]
+fn 同じリンクと字なら書き直さず_字が変わるか端末を消したら書き直す() {
+    let buffer = screen(8, &["https://", "ex.com  "]);
+    let links = [link(
+        "https://ex.com",
+        vec![Segment { y: 0, xs: 0..8 }, Segment { y: 1, xs: 0..6 }],
+    )];
+    let mut painter = Painter::default();
+    assert!(!painter.paint(&buffer, &links, false).is_empty());
+    assert!(painter.paint(&buffer, &links, false).is_empty());
+
+    let mut outside = buffer.clone();
+    outside[(7, 1)].set_char('x');
+    assert!(
+        painter.paint(&outside, &links, false).is_empty(),
+        "リンクの外の字は ratatui が書くだけでリンクを壊さない"
+    );
+
+    assert!(!painter.paint(&outside, &links, true).is_empty());
+
+    let mut inside = outside.clone();
+    inside[(2, 1)].set_char('X');
+    assert!(!painter.paint(&inside, &links, false).is_empty());
+
+    let wider = screen(9, &["https://", "ex.com  "]);
+    assert!(!painter.paint(&wider, &links, false).is_empty());
 }
 
 #[test]
@@ -253,9 +320,10 @@ fn 画面が縮んでも前のリンクの行を読みに行かない() {
             "https://ex.com",
             vec![Segment { y: 3, xs: 0..8 }, Segment { y: 4, xs: 0..6 }],
         )],
+        false,
     );
     let small = screen(4, &["ab"]);
-    let bytes = painter.paint(&small, &[]);
+    let bytes = painter.paint(&small, &[], false);
     assert!(bytes.starts_with(b"\x1b7"));
 }
 
@@ -266,8 +334,9 @@ fn 全角の続きのセルは書き直さない() {
     painter.paint(
         &buffer,
         &[link("https://x", vec![Segment { y: 0, xs: 4..6 }])],
+        false,
     );
-    let bytes = String::from_utf8(painter.paint(&buffer, &[])).unwrap();
+    let bytes = String::from_utf8(painter.paint(&buffer, &[], false)).unwrap();
     assert!(!bytes.contains("日 "), "{bytes:?}");
     assert!(!bytes.contains("本 "), "{bytes:?}");
     assert!(bytes.contains("ab"), "{bytes:?}");
@@ -281,8 +350,9 @@ fn 描かないセルは書き直さない() {
     painter.paint(
         &buffer,
         &[link("https://x", vec![Segment { y: 0, xs: 0..2 }])],
+        false,
     );
-    let bytes = String::from_utf8(painter.paint(&buffer, &[])).unwrap();
+    let bytes = String::from_utf8(painter.paint(&buffer, &[], false)).unwrap();
     assert!(!bytes.contains('c'), "{bytes:?}");
     assert!(bytes.contains("ab") && bytes.contains("def"), "{bytes:?}");
 }
@@ -297,6 +367,7 @@ fn 選択のハイライトは色ごと包む() {
             "https://ex.com",
             vec![Segment { y: 0, xs: 0..8 }, Segment { y: 1, xs: 0..6 }],
         )],
+        false,
     ))
     .unwrap();
     assert!(bytes.contains("48;5;1mex."), "{bytes:?}");
