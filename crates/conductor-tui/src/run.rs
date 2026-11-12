@@ -146,7 +146,8 @@ pub fn run(
             // トランスクリプトの行が動いたフレームだけは端末ごと消す。消してから描くまでを
             // 同期出力で囲むのは、消えた瞬間を見せないため。非対応の端末は無視するだけ。
             let _ = execute!(io::stdout(), BeginSynchronizedUpdate);
-            if ws.panels.terminal.take_clear_request() {
+            let cleared = ws.panels.terminal.take_clear_request();
+            if cleared {
                 terminal.clear()?;
             }
             ws.fx.start_pending();
@@ -159,7 +160,7 @@ pub fn run(
                 }
                 links = crate::link::on_screen(ws, &last_layout, frame.buffer_mut());
             })?;
-            let linked = link_painter.paint(drawn.buffer, &links);
+            let linked = link_painter.paint(drawn.buffer, &links, cleared);
             let mut stdout = io::stdout();
             let _ = stdout.write_all(&linked).and_then(|_| stdout.flush());
             let _ = execute!(stdout, EndSynchronizedUpdate);

@@ -1,5 +1,5 @@
-//! 折り返して何行にもまたがる URL を、端末の OSC 8 リンクで包む。外の端末は見た目の
-//! 1 行の中でしか URL を探さないので、包まないと 2 行目から先を押しても開かない。
+//! URL を端末の OSC 8 リンクで包む。外の端末は見た目の 1 行の中でしか URL を探さないので、
+//! 包まないと折り返した URL は 2 行目から先を押しても開かない。
 //!
 //! ratatui のセルに OSC 8 を入れると幅を誤って数えるので、描き終えた後に、包む区間の
 //! セルだけをもう一度書く。
@@ -73,7 +73,7 @@ pub fn on_screen(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Vec<Link> 
     links
 }
 
-/// 1 行に収まる URL は端末が自分で拾うので返さない。
+/// 1 行に収まる URL も包む。外の端末に拾わせると、後ろに付いた閉じ括弧や全角の字まで URL にされる。
 pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
     let rows: Vec<Vec<(u16, char)>> = (area.top()..area.bottom())
         .map(|y| row(buffer, area, y))
@@ -86,6 +86,7 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
             let end = run_end(&rows[r], start);
             i = end;
             let Some((link, pieces)) = follow(&rows, (r, start, end), area.top(), joining) else {
+                links.extend(single(&rows[r], (start, end), area.top() + r as u16));
                 continue;
             };
             links.push(link);
@@ -98,6 +99,52 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
         }
     }
     links
+}
+
+/// 日本語の字へそのまま続く URL は、日本語を含む URL の途中かもしれないので包まない。
+/// 途中までを包むと別のページを開くので、それよりは外の端末に任せる。
+/// 閉じ括弧を外したときだけは、括弧の外の日本語とみなして包む。
+fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<Link> {
+    let text = chars(&row[start..end]);
+    let url = trim_url(&text);
+    let closed = text[url.len()..].contains([')', ']', '}']);
+    let ends_here = row
+        .get(end)
+        .is_none_or(|&(_, c)| c.is_ascii() || is_fullwidth_end(c));
+    if SCHEMES.contains(&url) || !(closed || ends_here) {
+        return None;
+    }
+    let stop = start + url.len();
+    Some(Link {
+        url: url.to_string(),
+        segments: vec![Segment {
+            y,
+            xs: row[start].0..row[stop - 1].0 + 1,
+        }],
+    })
+}
+
+fn is_fullwidth_end(c: char) -> bool {
+    matches!(
+        c,
+        '）' | '」'
+            | '』'
+            | '】'
+            | '〕'
+            | '〉'
+            | '》'
+            | '］'
+            | '｝'
+            | '、'
+            | '。'
+            | '，'
+            | '．'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '　'
+    )
 }
 
 type Piece = (usize, usize, usize);
@@ -243,16 +290,47 @@ fn cells(buffer: &Buffer, xs: Range<u16>, y: u16) -> impl Iterator<Item = (u16, 
 #[derive(Debug, Default)]
 pub struct Painter {
     linked_rows: Vec<u16>,
+    painted: Option<Painted>,
+}
+
+/// 端末に包んで書いたもの。これと同じなら端末の上のリンクは無傷で残っている。
+#[derive(Debug, PartialEq)]
+struct Painted {
+    area: Rect,
+    links: Vec<Link>,
+    cells: Vec<Cell>,
+}
+
+impl Painted {
+    fn of(buffer: &Buffer, links: &[Link]) -> Self {
+        let cells = links
+            .iter()
+            .flat_map(|l| &l.segments)
+            .flat_map(|s| cells(buffer, s.xs.clone(), s.y).map(|(_, c)| c.clone()))
+            .collect();
+        Self {
+            area: buffer.area,
+            links: links.to_vec(),
+            cells,
+        }
+    }
 }
 
 impl Painter {
     /// 前に包んだ行を素で描き直してから、今のリンクを包んで描くバイト列。
     /// カーソルと筆は ESC 7 / ESC 8 で元へ戻す。書く間だけ自動折り返しを戻すのは、
     /// tmux が折り返しを切った画面では同じ字の上書きを飛ばし、リンクを付け替えないため。
-    pub fn paint(&mut self, buffer: &Buffer, links: &[Link]) -> Vec<u8> {
+    /// 書き直すたびに端末はポインタの下のリンクの強調を外して押せなくなるので、前と同じなら書かない。
+    /// cleared は端末ごと消したフレームで、消えたリンクを書き直す。
+    pub fn paint(&mut self, buffer: &Buffer, links: &[Link], cleared: bool) -> Vec<u8> {
         if self.linked_rows.is_empty() && links.is_empty() {
             return Vec::new();
         }
+        let painted = Painted::of(buffer, links);
+        if !cleared && self.painted.as_ref() == Some(&painted) {
+            return Vec::new();
+        }
+        self.painted = Some(painted);
         let area = buffer.area;
         let mut out = b"\x1b7\x1b[?7h".to_vec();
         for &y in &self.linked_rows {
