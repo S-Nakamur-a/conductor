@@ -101,10 +101,16 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
     links
 }
 
+/// 日本語の字へそのまま続く URL は、日本語を含む URL の途中かもしれないので包まない。
+/// 途中までを包むと別のページを開くので、それよりは外の端末に任せる。
 fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<Link> {
     let text = chars(&row[start..end]);
     let url = trim_url(&text);
-    if SCHEMES.contains(&url) {
+    let trimmed = url.len() < text.len();
+    let ends_here = row
+        .get(end)
+        .is_none_or(|&(_, c)| c.is_ascii() || is_fullwidth_end(c));
+    if SCHEMES.contains(&url) || !(trimmed || ends_here) {
         return None;
     }
     let stop = start + url.len();
@@ -115,6 +121,29 @@ fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<L
             xs: row[start].0..row[stop - 1].0 + 1,
         }],
     })
+}
+
+fn is_fullwidth_end(c: char) -> bool {
+    matches!(
+        c,
+        '）' | '」'
+            | '』'
+            | '】'
+            | '〕'
+            | '〉'
+            | '》'
+            | '］'
+            | '｝'
+            | '、'
+            | '。'
+            | '，'
+            | '．'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '　'
+    )
 }
 
 type Piece = (usize, usize, usize);

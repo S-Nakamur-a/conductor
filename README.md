@@ -112,9 +112,11 @@ terminals that follow OSC 8 (such as iTerm2) can open it from any of its lines. 
 shell the terminal's own wrap decides; in a Claude panel the joined text must match a
 URL in the session's log, so a URL with non-ASCII characters, a markdown link whose
 URL is not on screen, and one written after the last read (every 2s) are not joined.
-A URL on one line is wrapped too, so a `)` with no `(` to pair with, a
-sentence's closing punctuation and any non-ASCII character after it are not part of
-the link. tmux passes OSC 8 through only when its `terminal-features` allow
+A URL on one line is wrapped too, so a `)`, `]` or `}` with nothing to pair with, a
+sentence's closing punctuation and a full-width bracket or punctuation mark after it
+are not part of the link. A URL running straight into other non-ASCII text (a Japanese
+path, or `https://a.example/xを開く`) is left to the terminal, since wrapping only
+its ASCII part would open another page. tmux passes OSC 8 through only when its `terminal-features` allow
 `hyperlinks` (not checked here).
 
 The main screen shows one worktree, whose branch is in the title bar, and lists no

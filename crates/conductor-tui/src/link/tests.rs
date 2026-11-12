@@ -68,10 +68,9 @@ fn 本物の画面で折り返したurlをユーザ入力も答えも包む() {
     let d = "https://example.com/paren/a/very/long/path/that/wraps/rows";
     let e = "https://en.wikipedia.org/wiki/Rust_(programming_language)_and_some_more_words";
     let g = "https://example.com/angle/a/very/long/path/that/wraps/across/rows";
-    let f = "https://ja.wikipedia.org/wiki/";
-    assert_eq!(urls_of(&links), vec![a, b, c, d, e, f, b, c, d, e, f, g]);
+    assert_eq!(urls_of(&links), vec![a, b, c, d, e, b, c, d, e, g]);
     assert_eq!(
-        links[6].segments,
+        links[5].segments,
         vec![Segment { y: 14, xs: 5..44 }, Segment { y: 15, xs: 2..27 },]
     );
 }
@@ -156,6 +155,33 @@ fn 一行のurlの後ろの括弧と全角の字は包まない() {
         ]
     );
     assert_eq!(links[0].segments, vec![Segment { y: 0, xs: 5..19 }]);
+}
+
+#[test]
+fn 一行のurlの後ろの角括弧と全角の句読点は包まない() {
+    let lines = [
+        "[https://a.ex/z] 見て https://b.ex/x。次",
+        "公式(https://c.ex/x)を参照 [https://d.ex/y]です",
+    ];
+    let buffer = screen(50, &lines);
+    let want = vec![
+        "https://a.ex/z",
+        "https://b.ex/x",
+        "https://c.ex/x",
+        "https://d.ex/y",
+    ];
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[]));
+    assert_eq!(urls_of(&links), want);
+    let empty = HashSet::new();
+    let links = find(&buffer, buffer.area, &Joining::Logged(&empty));
+    assert_eq!(urls_of(&links), want);
+}
+
+#[test]
+fn 日本語へ続く一行のurlは途中まで包まず外の端末に任せる() {
+    let lines = ["参考 https://ja.wikipedia.org/wiki/日本語 です"];
+    let buffer = screen(50, &lines);
+    assert!(find(&buffer, buffer.area, &Joining::Wrapped(&[])).is_empty());
 }
 
 #[test]

@@ -16,15 +16,19 @@ pub fn is_url_char(c: char) -> bool {
     c.is_ascii_graphic() && !matches!(c, '*' | '`' | '<' | '>' | '"' | '\\')
 }
 
-/// 文の終わりの句読点と、URL の中の `(` と対にならない `)` を末尾から落とす。
+/// 文の終わりの句読点と、URL の中に開きの無い閉じ括弧を末尾から落とす。
 pub fn trim_url(url: &str) -> &str {
     let mut url = url;
     loop {
         let Some(last) = url.chars().next_back() else {
             return url;
         };
-        let unbalanced_paren = last == ')' && url.matches(')').count() > url.matches('(').count();
-        if !matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'') && !unbalanced_paren {
+        let unbalanced = [('(', ')'), ('[', ']'), ('{', '}')]
+            .iter()
+            .any(|&(open, close)| {
+                last == close && url.matches(close).count() > url.matches(open).count()
+            });
+        if !matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'') && !unbalanced {
             return url;
         }
         url = &url[..url.len() - 1];
@@ -116,6 +120,14 @@ mod tests {
         assert_eq!(
             urls("(see https://a.example/x). Also https://b.example/y, ok"),
             vec!["https://a.example/x", "https://b.example/y"]
+        );
+    }
+
+    #[test]
+    fn 対にならない角括弧と波括弧は落とし対は残す() {
+        assert_eq!(
+            urls("[https://a.ex/x] {https://b.ex/y} https://c.ex/p[1]"),
+            vec!["https://a.ex/x", "https://b.ex/y", "https://c.ex/p[1]"]
         );
     }
 
