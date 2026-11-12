@@ -103,14 +103,15 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
 
 /// 日本語の字へそのまま続く URL は、日本語を含む URL の途中かもしれないので包まない。
 /// 途中までを包むと別のページを開くので、それよりは外の端末に任せる。
+/// 閉じ括弧を外したときだけは、括弧の外の日本語とみなして包む。
 fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<Link> {
     let text = chars(&row[start..end]);
     let url = trim_url(&text);
-    let trimmed = url.len() < text.len();
+    let closed = text[url.len()..].contains([')', ']', '}']);
     let ends_here = row
         .get(end)
         .is_none_or(|&(_, c)| c.is_ascii() || is_fullwidth_end(c));
-    if SCHEMES.contains(&url) || !(trimmed || ends_here) {
+    if SCHEMES.contains(&url) || !(closed || ends_here) {
         return None;
     }
     let stop = start + url.len();

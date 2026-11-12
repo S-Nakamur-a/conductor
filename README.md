@@ -115,9 +115,10 @@ URL is not on screen, and one written after the last read (every 2s) are not joi
 A URL on one line is wrapped too, so a `)`, `]` or `}` with nothing to pair with, a
 sentence's closing punctuation and a full-width bracket or punctuation mark after it
 are not part of the link. A URL running straight into other non-ASCII text (a Japanese
-path, or `https://a.example/xを開く`) is left to the terminal, since wrapping only
-its ASCII part would open another page. tmux passes OSC 8 through only when its `terminal-features` allow
-`hyperlinks` (not checked here).
+path, `Category:日本`, or `https://a.example/xを開く`) is left to the terminal, since
+wrapping only its ASCII part would open another page; only a closing bracket in
+between, as in `(https://a.example/x)を参照`, marks where it ends. tmux passes OSC 8
+through only when its `terminal-features` allow `hyperlinks` (not checked here).
 
 The main screen shows one worktree, whose branch is in the title bar, and lists no
 others: no uncommitted-change counts, ahead/behind or waiting/active state per

@@ -179,8 +179,13 @@ fn 一行のurlの後ろの角括弧と全角の句読点は包まない() {
 
 #[test]
 fn 日本語へ続く一行のurlは途中まで包まず外の端末に任せる() {
-    let lines = ["参考 https://ja.wikipedia.org/wiki/日本語 です"];
-    let buffer = screen(50, &lines);
+    let lines = [
+        "参考 https://ja.wikipedia.org/wiki/日本語 です",
+        "https://ja.wikipedia.org/wiki/Category:日本の企業",
+        "https://ja.wikipedia.org/wiki/Wikipedia:井戸端",
+        "https://ex.com/search?q=x,日本 https://ex.com/v1.日本",
+    ];
+    let buffer = screen(60, &lines);
     assert!(find(&buffer, buffer.area, &Joining::Wrapped(&[])).is_empty());
 }
 
