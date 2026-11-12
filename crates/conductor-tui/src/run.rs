@@ -3121,10 +3121,10 @@ needle here
         let (mut ws, mut svc, _) = fleet_with_tree();
         ws.chrome.fleet_open = false;
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
-        assert_eq!(svc.in_flight(), 0);
+        assert_eq!(delivered(&mut svc, is_fleet_changes), 0);
         ws.chrome.fleet_open = true;
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
-        assert_eq!(svc.in_flight(), 1);
+        assert_eq!(delivered(&mut svc, is_fleet_changes), 1);
     }
 
     #[test]
@@ -3132,7 +3132,24 @@ needle here
         let (mut ws, mut svc, _) = fleet_with_tree();
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
         poll_fleet_changes(&mut ws, &mut svc, Instant::now());
-        assert_eq!(svc.in_flight(), 1, "投げ中に 2 本目を投げた");
+        assert_eq!(
+            delivered(&mut svc, is_fleet_changes),
+            1,
+            "投げ中に 2 本目を投げた"
+        );
+    }
+
+    /// 投げた Task のうち is に当たる結果の数。in_flight は Task が終わると減るので、
+    /// 投げた直後に読むと、もう終わった回に 0 を返す。
+    fn delivered(svc: &mut Services<TaskResult>, is: fn(&TaskResult) -> bool) -> usize {
+        crate::testing::wait_for(|| svc.in_flight() == 0);
+        std::iter::from_fn(|| svc.try_recv())
+            .filter(|event| matches!(&event.kind, EventKind::Task(result) if is(result)))
+            .count()
+    }
+
+    fn is_fleet_changes(result: &TaskResult) -> bool {
+        matches!(result, TaskResult::FleetChanges { .. })
     }
 
     fn one_live_session() -> conductor_core::claude_sessions::registry::LiveSession {
@@ -3206,7 +3223,8 @@ needle here
         on_key(&mut ws, &mut svc, ctrl_a());
         poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
         poll_fleet_artifacts(&mut ws, &mut svc, Instant::now());
-        assert_eq!(svc.in_flight(), 1);
+        let is_artifacts = |r: &TaskResult| matches!(r, TaskResult::FleetArtifacts { .. });
+        assert_eq!(delivered(&mut svc, is_artifacts), 1);
     }
 
     #[test]

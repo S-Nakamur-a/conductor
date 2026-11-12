@@ -116,19 +116,23 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(recv_watch(&svc), Some(WatchEvent::GitChanged));
+        recv_until(&svc, &WatchEvent::GitChanged);
     }
 
-    fn recv_watch(svc: &Services<()>) -> Option<WatchEvent> {
+    fn recv_until(svc: &Services<()>, want: &WatchEvent) -> Vec<WatchEvent> {
+        let mut before = Vec::new();
         for _ in 0..200 {
-            if let Some(event) = svc.try_recv()
-                && let crate::EventKind::Watch(w) = event.kind
-            {
-                return Some(w);
+            while let Some(event) = svc.try_recv() {
+                if let crate::EventKind::Watch(w) = event.kind {
+                    if &w == want {
+                        return before;
+                    }
+                    before.push(w);
+                }
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        None
+        panic!("{want:?} が届かなかった。届いたもの: {before:?}");
     }
 
     #[test]
@@ -144,8 +148,7 @@ mod tests {
         let file = root.join("a.txt");
         std::fs::write(&file, "x").unwrap();
 
-        let event = recv_watch(&svc).expect("event should arrive");
-        assert!(matches!(event, WatchEvent::FsChanged(p) if p == file));
+        recv_until(&svc, &WatchEvent::FsChanged(file));
     }
 
     #[test]
@@ -163,7 +166,13 @@ mod tests {
         let visible = root.join("visible.txt");
         std::fs::write(&visible, "x").unwrap();
 
-        let event = recv_watch(&svc).expect("visible.txt should still be reported");
-        assert!(matches!(event, WatchEvent::FsChanged(p) if p == visible));
+        let before = recv_until(&svc, &WatchEvent::FsChanged(visible));
+        let ignored = |event: &WatchEvent| match event {
+            WatchEvent::FsChanged(p) => {
+                p.starts_with(root.join(".git")) || p.starts_with(root.join(".conductor"))
+            }
+            other => *other == WatchEvent::GitChanged,
+        };
+        assert!(!before.iter().any(ignored), "{before:?}");
     }
 }
