@@ -224,7 +224,6 @@ fn continues(joining: &Joining, url: &str) -> bool {
     }
 }
 
-/// 行 r の `end` で終わる並びの続きとして読める、次の行の並び。
 fn continuation(
     rows: &[Vec<(u16, char)>],
     (r, end): (usize, usize),
