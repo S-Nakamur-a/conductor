@@ -454,3 +454,280 @@ fn 読めなかったときは同じ会話の前の集合を残す() {
     log.install("a".into(), None, Some("a"), now);
     assert!(log.of("a").unwrap().contains("https://x"));
 }
+
+/// Claude Code のように右端の 1 桁を空けて折り、続きの行を 2 桁下げて描いた画面。
+fn wrapped_like_claude(width: u16, line: &str) -> Vec<String> {
+    let body: Vec<char> = line.chars().collect();
+    let mut rows = vec![];
+    let mut at = 0;
+    while at < body.len() {
+        let indent = if rows.is_empty() { "" } else { "  " };
+        let take = (width as usize - 1 - indent.len()).min(body.len() - at);
+        rows.push(format!(
+            "{indent}{}",
+            body[at..at + take].iter().collect::<String>()
+        ));
+        at += take;
+    }
+    rows
+}
+
+#[test]
+fn ポートの付いたurlはどの桁で折れてもポートごと包む() {
+    let url = "http://localhost:4111/api/very/long/path/x";
+    let line = format!("  open {url} now");
+    let urls = logged(&line);
+    for width in 12..50 {
+        let rows = wrapped_like_claude(width, &line);
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let buffer = screen(width, &refs);
+        let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+        assert_eq!(urls_of(&links), vec![url], "width {width}: {rows:?}");
+    }
+}
+
+#[test]
+fn スキームの無いローカルのホストとポートはhttpを付けて包み折れても繋ぐ() {
+    let lines = [
+        "  起動先は `localhost:4111` と en.localhost:3000/ab",
+        "  c/def です                                       ",
+    ];
+    let buffer = screen(52, &lines);
+    let urls = logged("起動先は `localhost:4111` と en.localhost:3000/abc/def です");
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    assert_eq!(
+        urls_of(&links),
+        vec!["http://localhost:4111", "http://en.localhost:3000/abc/def"]
+    );
+    assert_eq!(links[1].segments.len(), 2);
+}
+
+#[test]
+fn 在るパスだけを折れても繋いでfileのurlで包み行番号は外す() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("deeply").join("nested_source_file.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "").unwrap();
+    let file = file.to_str().unwrap();
+    let line = format!("  see {file}:12 and /no/such/file.rs ok");
+    let urls = logged(&line);
+    let rows = wrapped_like_claude(30, &line);
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen(30, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    assert_eq!(urls_of(&links), vec![format!("file://{file}").as_str()]);
+    assert!(links[0].segments.len() > 1, "{rows:?}");
+}
+
+#[test]
+fn 語の途中のスラッシュから始まるパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("src{path} {path}");
+    let buffer = screen(line.len() as u16 + 1, &[line.as_str()]);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[]));
+    assert_eq!(urls_of(&links), vec![format!("file://{path}").as_str()]);
+    assert_eq!(links[0].segments[0].xs.start as usize, 3 + path.len() + 1);
+}
+
+#[test]
+fn 日本語へ続く一行のパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("{path}を開く");
+    let buffer = screen(line.len() as u16 + 1, &[line.as_str()]);
+    assert!(find(&buffer, buffer.area, &Joining::Wrapped(&[])).is_empty());
+}
+
+#[test]
+fn シェルが折り返した在るパスは繋ぐ() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nested_source_file.rs");
+    std::fs::write(&file, "").unwrap();
+    let file = file.to_str().unwrap();
+    let cut = file.len() - 5;
+    let buffer = screen(cut as u16, &[&file[..cut], &file[cut..]]);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[0]));
+    assert_eq!(urls_of(&links), vec![format!("file://{file}").as_str()]);
+}
+
+/// 本物の Claude Code 2.1.325 を幅 44 の tmux で動かして撮った画面 (ユーザ入力とその答え)。
+/// 表は幅が足りず「path: …」の形で描かれた。行末の空白は tmux が落としたもの。
+const CAP8: [&str; 33] = [
+    "❯ ツールは使わず、次の本文を一字も変えずに",
+    "  そのまま返して（説明は不要）。 P: ",
+    "  /tmp/conductor-cap8/a/very/long/nested/di",
+    "  rectory/source_file.rs:12 を見て。 L: ",
+    "  localhost:4111 と en.localhost:3000/some/",
+    "  long/path/that/wraps/rows です。 N: 1. ",
+    "  /tmp/conductor-cap8/f1 2. ",
+    "  /tmp/conductor-cap8/f2 （N ",
+    "  は番号付きの一覧で、各項目を別の行に） T:",
+    "  列 path と note の markdown の表で、1 ",
+    "  行目は path=/tmp/conductor-cap8/a/very/lo",
+    "  ng/nested/directory/source_file.rs note=x",
+    "",
+    "⏺ A plugin's hook printed a notice ",
+    "  here. ",
+    "  \"some-plugin\" wrote four rows of",
+    "  text that hold no link at all.",
+    "",
+    "⏺ P: /tmp/conductor-cap8/a/very/long/nested/",
+    "  directory/source_file.rs:12 を見て。",
+    "",
+    "  L: localhost:4111 と en.localhost:3000/som",
+    "  e/long/path/that/wraps/rows です。",
+    "",
+    "  N:",
+    "  1. /tmp/conductor-cap8/f1",
+    "  2. /tmp/conductor-cap8/f2",
+    "",
+    "  T:",
+    "",
+    "  path: /tmp/conductor-cap8/a/very/long/nest",
+    "  ed/directory/source_file.rs",
+    "  note: x",
+];
+
+const CAP8_LOG: &str = "ツールは使わず、次の本文を一字も変えずにそのまま返して（説明は不要）。 P: /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs:12 を見て。 L: `localhost:4111` と en.localhost:3000/some/long/path/that/wraps/rows です。 N: 1. /tmp/conductor-cap8/f1 2. /tmp/conductor-cap8/f2 （N は番号付きの一覧で、各項目を別の行に） T: 列 path と note の markdown の表で、1 行目は path=/tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs note=x
+P: /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs:12 を見て。
+
+L: `localhost:4111` と en.localhost:3000/some/long/path/that/wraps/rows です。
+
+N:
+1. /tmp/conductor-cap8/f1
+2. /tmp/conductor-cap8/f2
+
+T:
+
+| path | note |
+|---|---|
+| /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs | x |";
+
+#[test]
+fn 本物の画面で折り返したパスとホストを繋ぎ一覧の項目と語の途中のパスは繋がない() {
+    let dir = std::path::Path::new("/tmp/conductor-cap8/a/very/long/nested/directory");
+    std::fs::create_dir_all(dir).unwrap();
+    for file in [
+        dir.join("source_file.rs"),
+        "/tmp/conductor-cap8/f1".into(),
+        "/tmp/conductor-cap8/f2".into(),
+    ] {
+        std::fs::write(file, "").unwrap();
+    }
+    let buffer = screen(44, &CAP8);
+    let urls = logged(CAP8_LOG);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    let long = "file:///tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs";
+    let host = "http://localhost:4111";
+    let wrapped_host = "http://en.localhost:3000/some/long/path/that/wraps/rows";
+    let f1 = "file:///tmp/conductor-cap8/f1";
+    let f2 = "file:///tmp/conductor-cap8/f2";
+    assert_eq!(
+        urls_of(&links),
+        vec![
+            long,
+            host,
+            wrapped_host,
+            f1,
+            f2,
+            long,
+            host,
+            wrapped_host,
+            f1,
+            f2,
+            long
+        ]
+    );
+    let rows: Vec<Vec<u16>> = links
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.y).collect())
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            vec![2, 3],
+            vec![4],
+            vec![4, 5],
+            vec![6],
+            vec![7],
+            vec![18, 19],
+            vec![21],
+            vec![21, 22],
+            vec![25],
+            vec![26],
+            vec![30, 31],
+        ]
+    );
+}
+
+#[test]
+fn ホストの中やコロンの直後で折れてもポートごと包む() {
+    let line = "  open localhost:4111/api/x now";
+    let urls = logged(line);
+    for width in 12..50 {
+        let rows = wrapped_like_claude(width, line);
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let buffer = screen(width, &refs);
+        let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+        assert_eq!(
+            urls_of(&links),
+            vec!["http://localhost:4111/api/x"],
+            "width {width}: {rows:?}"
+        );
+    }
+}
+
+#[test]
+fn 先頭のスラッシュの直後で折れたパスも繋ぐ() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("  see {path} ok");
+    let rows = wrapped_like_claude(8, &line);
+    assert_eq!(rows[0], "  see /");
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen(8, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert_eq!(urls_of(&links), vec![format!("file://{path}").as_str()]);
+}
+
+#[test]
+fn 折れ目の手前が在るディレクトリでも続きの無いパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("proj").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let head = format!("{}/", src.to_str().unwrap());
+    let tail = "new_module_not_yet.rs";
+    let line = format!("作る: {head}{tail}");
+    let logged_rows = [format!("  作る: {head}"), format!("  {tail}")];
+    let refs: Vec<&str> = logged_rows.iter().map(String::as_str).collect();
+    let buffer = screen(head.len() as u16 + 9, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert!(links.is_empty(), "{links:?}");
+
+    let shell_rows = [format!("ls: {head}"), format!("{tail}: No such file")];
+    let refs: Vec<&str> = shell_rows.iter().map(String::as_str).collect();
+    let buffer = screen(head.len() as u16 + 4, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[0]));
+    assert!(links.is_empty(), "{links:?}");
+}
+
+#[test]
+fn ログに在るディレクトリと無いファイルの両方があっても三行にまたがる無いファイルは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("proj").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let src = src.to_str().unwrap();
+    let missing = format!("{src}/missing_module.rs");
+    let line = format!("see {src} and {missing}");
+    let cut = src.len() / 2;
+    let rows = [
+        format!("  {}", &missing[..cut]),
+        format!("  {}", &missing[cut..src.len()]),
+        format!("  {}", &missing[src.len()..]),
+    ];
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen((src.len() - cut) as u16 + 3, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert!(links.is_empty(), "{links:?}");
+}
