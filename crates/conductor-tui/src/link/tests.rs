@@ -529,3 +529,134 @@ fn 語の途中のスラッシュから始まるパスは包まない() {
     assert_eq!(urls_of(&links), vec![format!("file://{path}").as_str()]);
     assert_eq!(links[0].segments[0].xs.start as usize, 3 + path.len() + 1);
 }
+
+#[test]
+fn 日本語へ続く一行のパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("{path}を開く");
+    let buffer = screen(line.len() as u16 + 1, &[line.as_str()]);
+    assert!(find(&buffer, buffer.area, &Joining::Wrapped(&[])).is_empty());
+}
+
+#[test]
+fn シェルが折り返した在るパスは繋ぐ() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nested_source_file.rs");
+    std::fs::write(&file, "").unwrap();
+    let file = file.to_str().unwrap();
+    let cut = file.len() - 5;
+    let buffer = screen(cut as u16, &[&file[..cut], &file[cut..]]);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[0]));
+    assert_eq!(urls_of(&links), vec![format!("file://{file}").as_str()]);
+}
+
+/// 本物の Claude Code 2.1.325 を幅 44 の tmux で動かして撮った画面 (ユーザ入力とその答え)。
+/// 表は幅が足りず「path: …」の形で描かれた。行末の空白は tmux が落としたもの。
+const CAP8: [&str; 33] = [
+    "❯ ツールは使わず、次の本文を一字も変えずに",
+    "  そのまま返して（説明は不要）。 P: ",
+    "  /tmp/conductor-cap8/a/very/long/nested/di",
+    "  rectory/source_file.rs:12 を見て。 L: ",
+    "  localhost:4111 と en.localhost:3000/some/",
+    "  long/path/that/wraps/rows です。 N: 1. ",
+    "  /tmp/conductor-cap8/f1 2. ",
+    "  /tmp/conductor-cap8/f2 （N ",
+    "  は番号付きの一覧で、各項目を別の行に） T:",
+    "  列 path と note の markdown の表で、1 ",
+    "  行目は path=/tmp/conductor-cap8/a/very/lo",
+    "  ng/nested/directory/source_file.rs note=x",
+    "",
+    "⏺ session-board: its prompt.compose ",
+    "  hook was skipped. ",
+    "  \"cc-plugin-sec-default\" runs first",
+    "  and sent the event on past it.",
+    "",
+    "⏺ P: /tmp/conductor-cap8/a/very/long/nested/",
+    "  directory/source_file.rs:12 を見て。",
+    "",
+    "  L: localhost:4111 と en.localhost:3000/som",
+    "  e/long/path/that/wraps/rows です。",
+    "",
+    "  N:",
+    "  1. /tmp/conductor-cap8/f1",
+    "  2. /tmp/conductor-cap8/f2",
+    "",
+    "  T:",
+    "",
+    "  path: /tmp/conductor-cap8/a/very/long/nest",
+    "  ed/directory/source_file.rs",
+    "  note: x",
+];
+
+const CAP8_LOG: &str = "ツールは使わず、次の本文を一字も変えずにそのまま返して（説明は不要）。 P: /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs:12 を見て。 L: `localhost:4111` と en.localhost:3000/some/long/path/that/wraps/rows です。 N: 1. /tmp/conductor-cap8/f1 2. /tmp/conductor-cap8/f2 （N は番号付きの一覧で、各項目を別の行に） T: 列 path と note の markdown の表で、1 行目は path=/tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs note=x
+P: /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs:12 を見て。
+
+L: `localhost:4111` と en.localhost:3000/some/long/path/that/wraps/rows です。
+
+N:
+1. /tmp/conductor-cap8/f1
+2. /tmp/conductor-cap8/f2
+
+T:
+
+| path | note |
+|---|---|
+| /tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs | x |";
+
+#[test]
+fn 本物の画面で折り返したパスとホストを繋ぎ一覧の項目と語の途中のパスは繋がない() {
+    let dir = std::path::Path::new("/tmp/conductor-cap8/a/very/long/nested/directory");
+    std::fs::create_dir_all(dir).unwrap();
+    for file in [
+        dir.join("source_file.rs"),
+        "/tmp/conductor-cap8/f1".into(),
+        "/tmp/conductor-cap8/f2".into(),
+    ] {
+        std::fs::write(file, "").unwrap();
+    }
+    let buffer = screen(44, &CAP8);
+    let urls = logged(CAP8_LOG);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    let long = "file:///tmp/conductor-cap8/a/very/long/nested/directory/source_file.rs";
+    let host = "http://localhost:4111";
+    let wrapped_host = "http://en.localhost:3000/some/long/path/that/wraps/rows";
+    let f1 = "file:///tmp/conductor-cap8/f1";
+    let f2 = "file:///tmp/conductor-cap8/f2";
+    assert_eq!(
+        urls_of(&links),
+        vec![
+            long,
+            host,
+            wrapped_host,
+            f1,
+            f2,
+            long,
+            host,
+            wrapped_host,
+            f1,
+            f2,
+            long
+        ]
+    );
+    let rows: Vec<Vec<u16>> = links
+        .iter()
+        .map(|l| l.segments.iter().map(|s| s.y).collect())
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            vec![2, 3],
+            vec![4],
+            vec![4, 5],
+            vec![6],
+            vec![7],
+            vec![18, 19],
+            vec![21],
+            vec![21, 22],
+            vec![25],
+            vec![26],
+            vec![30, 31],
+        ]
+    );
+}

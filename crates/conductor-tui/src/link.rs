@@ -31,7 +31,7 @@ pub struct Segment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
-    /// 押したときに開く先。パスは file://、スキームの無いホストは http:// を付けたもの。
+    /// 押したときに開く先 (urls::target の返す値)。
     pub url: String,
     pub segments: Vec<Segment>,
 }
