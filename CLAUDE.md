@@ -781,3 +781,10 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   that broke here were all joins that must not happen: a table cell's two lines, the "2." of a
   numbered list after a URL ending in a digit, the status rows, the URL after "PR is here:".
   Record a real screen holding those forms and pin "not joined" on it before claiming the rule.
+  A form the rule newly accepts gets a width sweep that puts the break at every position inside
+  it (inside the host, right after the colon, inside the port); one hand-picked break is not a
+  test. The real-screen recording is taken with the break at the symptom's position too, not only
+  at the forms that must stay unjoined. Sweep the new form, not the one base already joins: #479
+  swept `http://localhost:4111/…`, which base joined at every width from 15 up, and pinned the
+  scheme-less forms at one width with the break inside a path, so the case the request named —
+  `localhost:` | `4111` — failed at widths 10–18 unnoticed.
