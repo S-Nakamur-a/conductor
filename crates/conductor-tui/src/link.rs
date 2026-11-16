@@ -83,14 +83,20 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
     let mut links = Vec::new();
     for r in 0..rows.len() {
         let mut i = from[r];
-        while let Some(start) = url_start(&rows[r], i) {
+        while let Some(start) = url_start(&rows, r, i, area.top(), joining) {
             let end = run_end(&rows[r], start);
             i = end;
-            let Some((link, pieces)) = follow(&rows, (r, start, end), area.top(), joining) else {
-                links.extend(single(&rows[r], (start, end), area.top() + r as u16));
-                continue;
+            let pieces = match follow(&rows, (r, start, end), area.top(), joining) {
+                None => {
+                    links.extend(single(&rows[r], (start, end), area.top() + r as u16));
+                    continue;
+                }
+                Some(Followed::Link(link, pieces)) => {
+                    links.push(link);
+                    pieces
+                }
+                Some(Followed::Unopenable(pieces)) => pieces,
             };
-            links.push(link);
             let &(last, _, last_end) = pieces.last().expect("a link has pieces");
             for &(k, _, _) in &pieces[1..pieces.len() - 1] {
                 from[k] = rows[k].len();
@@ -150,37 +156,32 @@ fn is_fullwidth_end(c: char) -> bool {
 
 type Piece = (usize, usize, usize);
 
+/// 次の行へ続くと分かった並びは、丸ごと包むか包まないかのどちらか。
+/// 頭の行だけを包むと、在るディレクトリで止まった無いファイルのパスが別の物を開く。
+enum Followed {
+    Link(Link, Vec<Piece>),
+    Unopenable(Vec<Piece>),
+}
+
 fn follow(
     rows: &[Vec<(u16, char)>],
     first: Piece,
     top: u16,
     joining: &Joining,
-) -> Option<(Link, Vec<Piece>)> {
+) -> Option<Followed> {
     let mut pieces = vec![first];
     let mut text = chars(&rows[first.0][first.1..first.2]);
     let mut best = None;
     loop {
         let (r, _, end) = *pieces.last().expect("never empty");
-        let next = r + 1;
-        if next >= rows.len() || !reaches_end(&rows[r], end, joining) {
+        let Some((start, stop)) = continuation(rows, (r, end), top, joining) else {
             break;
-        }
-        let start = match joining {
-            Joining::Wrapped(wrapped) if wrapped.contains(&(top + r as u16)) => 0,
-            Joining::Wrapped(_) => break,
-            Joining::Logged(_) => rows[next]
-                .iter()
-                .position(|&(_, c)| c != ' ')
-                .unwrap_or(rows[next].len()),
         };
-        let stop = run_end(&rows[next], start);
-        if stop == start || fits_before(&rows[r], end, stop - start, joining) {
-            break;
-        }
+        let next = r + 1;
         text += &chars(&rows[next][start..stop]);
         pieces.push((next, start, stop));
         let url = trim_url(&text);
-        if accepts(joining, url) {
+        if continues(joining, url) {
             best = Some((pieces.len(), url.len()));
         }
         if let Joining::Logged(urls) = joining
@@ -197,6 +198,13 @@ fn follow(
         piece.2 = piece.1 + take;
         left -= take;
     }
+    let text: String = pieces
+        .iter()
+        .map(|&(r, s, e)| chars(&rows[r][s..e]))
+        .collect();
+    let Some(url) = target(&text) else {
+        return Some(Followed::Unopenable(pieces));
+    };
     let segments = pieces
         .iter()
         .filter(|p| p.2 > p.1)
@@ -205,20 +213,38 @@ fn follow(
             xs: rows[r][s].0..rows[r][e - 1].0 + 1,
         })
         .collect();
-    let text: String = pieces
-        .iter()
-        .map(|&(r, s, e)| chars(&rows[r][s..e]))
-        .collect();
-    let url = target(&text)?;
-    Some((Link { url, segments }, pieces))
+    Some(Followed::Link(Link { url, segments }, pieces))
 }
 
-fn accepts(joining: &Joining, url: &str) -> bool {
-    let logged = match joining {
+/// シェルは端末が折り返したことを知っているので、続きは最後の行まで全部。
+fn continues(joining: &Joining, url: &str) -> bool {
+    match joining {
         Joining::Wrapped(_) => true,
         Joining::Logged(urls) => urls.contains(url),
+    }
+}
+
+/// 行 r の `end` で終わる並びの続きとして読める、次の行の並び。
+fn continuation(
+    rows: &[Vec<(u16, char)>],
+    (r, end): (usize, usize),
+    top: u16,
+    joining: &Joining,
+) -> Option<(usize, usize)> {
+    let next = rows.get(r + 1)?;
+    if !reaches_end(&rows[r], end, joining) {
+        return None;
+    }
+    let start = match joining {
+        Joining::Wrapped(wrapped) if wrapped.contains(&(top + r as u16)) => 0,
+        Joining::Wrapped(_) => return None,
+        Joining::Logged(_) => next
+            .iter()
+            .position(|&(_, c)| c != ' ')
+            .unwrap_or(next.len()),
     };
-    logged && target(url).is_some()
+    let stop = run_end(next, start);
+    (stop > start && !fits_before(&rows[r], end, stop - start, joining)).then_some((start, stop))
 }
 
 /// 端末の折り返しは右端まで字が詰まっている。Claude Code は右端の 1〜2 桁を空けて
@@ -240,10 +266,34 @@ fn chars(cells: &[(u16, char)]) -> String {
     cells.iter().map(|&(_, c)| c).collect()
 }
 
-fn url_start(row: &[(u16, char)], from: usize) -> Option<usize> {
-    let text = chars(&row[from..]);
+/// `localhost:` や先頭の `/` で折れた行は、その行だけではリンクの頭に見えないので、
+/// 行末の並びに次の行の続きをつないで判定する。
+fn url_start(
+    rows: &[Vec<(u16, char)>],
+    r: usize,
+    from: usize,
+    top: u16,
+    joining: &Joining,
+) -> Option<usize> {
+    let row = &rows[r];
+    let end = match joining {
+        Joining::Wrapped(_) => row.len(),
+        Joining::Logged(_) => row
+            .iter()
+            .rposition(|&(_, c)| c != ' ')
+            .map_or(0, |i| i + 1),
+    };
+    if end <= from {
+        return None;
+    }
+    let mut text = chars(&row[from..end]);
+    if is_url_char(row[end - 1].1)
+        && let Some((start, stop)) = continuation(rows, (r, end), top, joining)
+    {
+        text += &chars(&rows[r + 1][start..stop]);
+    }
     text.char_indices()
-        .zip(from..)
+        .zip(from..end)
         .find(|&((at, _), i)| {
             let after_break = i == 0 || !is_url_char(row[i - 1].1);
             starts_link(after_break, &text[at..])

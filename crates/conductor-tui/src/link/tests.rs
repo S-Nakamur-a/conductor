@@ -477,7 +477,7 @@ fn ポートの付いたurlはどの桁で折れてもポートごと包む() {
     let url = "http://localhost:4111/api/very/long/path/x";
     let line = format!("  open {url} now");
     let urls = logged(&line);
-    for width in 15..50 {
+    for width in 12..50 {
         let rows = wrapped_like_claude(width, &line);
         let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
         let buffer = screen(width, &refs);
@@ -659,4 +659,75 @@ fn 本物の画面で折り返したパスとホストを繋ぎ一覧の項目�
             vec![30, 31],
         ]
     );
+}
+
+#[test]
+fn ホストの中やコロンの直後で折れてもポートごと包む() {
+    let line = "  open localhost:4111/api/x now";
+    let urls = logged(line);
+    for width in 12..50 {
+        let rows = wrapped_like_claude(width, line);
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let buffer = screen(width, &refs);
+        let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+        assert_eq!(
+            urls_of(&links),
+            vec!["http://localhost:4111/api/x"],
+            "width {width}: {rows:?}"
+        );
+    }
+}
+
+#[test]
+fn 先頭のスラッシュの直後で折れたパスも繋ぐ() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("  see {path} ok");
+    let rows = wrapped_like_claude(8, &line);
+    assert_eq!(rows[0], "  see /");
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen(8, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert_eq!(urls_of(&links), vec![format!("file://{path}").as_str()]);
+}
+
+#[test]
+fn 折れ目の手前が在るディレクトリでも続きの無いパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("proj").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let head = format!("{}/", src.to_str().unwrap());
+    let tail = "new_module_not_yet.rs";
+    let line = format!("作る: {head}{tail}");
+    let logged_rows = [format!("  作る: {head}"), format!("  {tail}")];
+    let refs: Vec<&str> = logged_rows.iter().map(String::as_str).collect();
+    let buffer = screen(head.len() as u16 + 9, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert!(links.is_empty(), "{links:?}");
+
+    let shell_rows = [format!("ls: {head}"), format!("{tail}: No such file")];
+    let refs: Vec<&str> = shell_rows.iter().map(String::as_str).collect();
+    let buffer = screen(head.len() as u16 + 4, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[0]));
+    assert!(links.is_empty(), "{links:?}");
+}
+
+#[test]
+fn ログに在るディレクトリと無いファイルの両方があっても三行にまたがる無いファイルは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("proj").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let src = src.to_str().unwrap();
+    let missing = format!("{src}/missing_module.rs");
+    let line = format!("see {src} and {missing}");
+    let cut = src.len() / 2;
+    let rows = [
+        format!("  {}", &missing[..cut]),
+        format!("  {}", &missing[cut..src.len()]),
+        format!("  {}", &missing[src.len()..]),
+    ];
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen((src.len() - cut) as u16 + 3, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&logged(&line)));
+    assert!(links.is_empty(), "{links:?}");
 }
