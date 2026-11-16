@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use conductor_core::claude_log::urls::{SCHEMES, Scan, is_url_char, trim_url};
+use conductor_core::claude_log::urls::{Scan, is_url_char, starts_link, target, trim_url};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -31,6 +31,7 @@ pub struct Segment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
+    /// 押したときに開く先。パスは file://、スキームの無いホストは http:// を付けたもの。
     pub url: String,
     pub segments: Vec<Segment>,
 }
@@ -111,12 +112,12 @@ fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<L
     let ends_here = row
         .get(end)
         .is_none_or(|&(_, c)| c.is_ascii() || is_fullwidth_end(c));
-    if SCHEMES.contains(&url) || !(closed || ends_here) {
+    if !(closed || ends_here) {
         return None;
     }
     let stop = start + url.len();
     Some(Link {
-        url: url.to_string(),
+        url: target(url)?,
         segments: vec![Segment {
             y,
             xs: row[start].0..row[stop - 1].0 + 1,
@@ -204,20 +205,20 @@ fn follow(
             xs: rows[r][s].0..rows[r][e - 1].0 + 1,
         })
         .collect();
-    let url = pieces
+    let text: String = pieces
         .iter()
         .map(|&(r, s, e)| chars(&rows[r][s..e]))
         .collect();
+    let url = target(&text)?;
     Some((Link { url, segments }, pieces))
 }
 
 fn accepts(joining: &Joining, url: &str) -> bool {
-    match joining {
-        Joining::Wrapped(_) => SCHEMES
-            .iter()
-            .any(|s| url.starts_with(s) && url.len() > s.len()),
+    let logged = match joining {
+        Joining::Wrapped(_) => true,
         Joining::Logged(urls) => urls.contains(url),
-    }
+    };
+    logged && target(url).is_some()
 }
 
 /// 端末の折り返しは右端まで字が詰まっている。Claude Code は右端の 1〜2 桁を空けて
@@ -240,13 +241,14 @@ fn chars(cells: &[(u16, char)]) -> String {
 }
 
 fn url_start(row: &[(u16, char)], from: usize) -> Option<usize> {
-    (from..row.len()).find(|&i| {
-        SCHEMES.iter().any(|s| {
-            s.chars()
-                .enumerate()
-                .all(|(k, c)| row.get(i + k).is_some_and(|&(_, d)| d == c))
+    let text = chars(&row[from..]);
+    text.char_indices()
+        .zip(from..)
+        .find(|&((at, _), i)| {
+            let after_break = i == 0 || !is_url_char(row[i - 1].1);
+            starts_link(after_break, &text[at..])
         })
-    })
+        .map(|(_, i)| i)
 }
 
 fn run_end(row: &[(u16, char)], start: usize) -> usize {

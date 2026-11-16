@@ -1,4 +1,4 @@
-//! 会話ログ (.jsonl) に現れる URL を集める。画面に折り返して描かれた URL が本物かを、
+//! 会話ログ (.jsonl) に現れる URL とパスを集める。画面に折り返して描かれた URL が本物かを、
 //! ここで集めた URL と照らして確かめる。
 //!
 //! 行を JSON として解かずに生のバイトから拾う。JSON の文字列は `"` と `\` を逃がすが、
@@ -35,24 +35,85 @@ pub fn trim_url(url: &str) -> &str {
     }
 }
 
-/// `text` の中の URL。それぞれ trim_url を通したもの。
+/// `tail` の頭からリンクになりうる並びが始まるか。URL、絶対パス、`localhost:4111` のような
+/// スキームの無いローカルのホストとポート。後の 2 つは語の頭 (`after_break`) でだけ始まる。
+pub fn starts_link(after_break: bool, tail: &str) -> bool {
+    SCHEMES.iter().any(|s| tail.starts_with(s))
+        || after_break && (starts_path(tail) || is_local_host(tail))
+}
+
+fn starts_path(tail: &str) -> bool {
+    let mut chars = tail.chars();
+    chars.next() == Some('/') && chars.next().is_some_and(|c| is_url_char(c) && c != '/')
+}
+
+fn is_local_host(text: &str) -> bool {
+    let host_len = text
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+        .unwrap_or(text.len());
+    let host = &text[..host_len];
+    let local =
+        matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0") || host.ends_with(".localhost");
+    local
+        && text[host_len..]
+            .strip_prefix(':')
+            .is_some_and(|port| port.starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// 押したときに開く先。パスは在るものだけを file:// で返し、`:12` や `:12:5` の行番号は外す。
+pub fn target(link: &str) -> Option<String> {
+    if SCHEMES.iter().any(|s| link.starts_with(s)) {
+        return (!SCHEMES.contains(&link)).then(|| link.to_string());
+    }
+    if starts_path(link) {
+        let file = without_line_number(link);
+        return Path::new(file).exists().then(|| format!("file://{file}"));
+    }
+    is_local_host(link).then(|| format!("http://{link}"))
+}
+
+fn without_line_number(path: &str) -> &str {
+    let mut path = path;
+    for _ in 0..2 {
+        match path.rsplit_once(':') {
+            Some((head, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+                path = head
+            }
+            _ => break,
+        }
+    }
+    path
+}
+
+/// `text` の中のリンクになりうる並び。それぞれ trim_url を通したもの。
+/// 会話ログの JSON では行の頭のパスが `\n` の直後に来るので、逃がした改行とタブも語の切れ目とみなす。
 pub fn extract(text: &str) -> impl Iterator<Item = &str> {
-    let mut rest = text;
+    let mut at = 0;
     std::iter::from_fn(move || {
-        loop {
-            let tail = &rest[rest.find("http")?..];
-            if !SCHEMES.iter().any(|s| tail.starts_with(s)) {
-                rest = &tail["http".len()..];
+        while let Some(c) = text[at..].chars().next() {
+            let tail = &text[at..];
+            if starts_link(after_break(&text[..at]), tail) {
+                let len = tail.find(|c: char| !is_url_char(c)).unwrap_or(tail.len());
+                at += len;
+                let link = trim_url(&tail[..len]);
+                if starts_link(true, link) && !SCHEMES.contains(&link) {
+                    return Some(link);
+                }
                 continue;
             }
-            let len = tail.find(|c: char| !is_url_char(c)).unwrap_or(tail.len());
-            rest = &tail[len..];
-            let url = trim_url(&tail[..len]);
-            if !SCHEMES.contains(&url) {
-                return Some(url);
-            }
+            at += c.len_utf8();
         }
+        None
     })
+}
+
+fn after_break(before: &str) -> bool {
+    let mut back = before.chars().rev();
+    match (back.next(), back.next()) {
+        (None, _) => true,
+        (Some('n' | 't' | 'r'), Some('\\')) => true,
+        (Some(c), _) => !is_url_char(c),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -137,6 +198,42 @@ mod tests {
             urls("https://en.wikipedia.org/wiki/Rust_(programming_language)."),
             vec!["https://en.wikipedia.org/wiki/Rust_(programming_language)"]
         );
+    }
+
+    #[test]
+    fn スキームの無いローカルのホストとポートも拾い語の途中からは拾わない() {
+        assert_eq!(
+            urls("`localhost:4111` en.localhost:3000/a, 127.0.0.1:8080. localhost: notlocalhost:1"),
+            vec!["localhost:4111", "en.localhost:3000/a", "127.0.0.1:8080"]
+        );
+        assert_eq!(
+            urls("http://localhost:4111/x"),
+            vec!["http://localhost:4111/x"]
+        );
+    }
+
+    #[test]
+    fn 語の頭とjsonの逃がした改行の後の絶対パスを拾う() {
+        let line = r#"{"t":"see /Users/a/b.rs:12, src/c.rs\n/tmp/d //e /"}"#;
+        assert_eq!(urls(line), vec!["/Users/a/b.rs:12", "/tmp/d"]);
+    }
+
+    #[test]
+    fn 開く先はパスなら在るものだけで行番号を外しホストにはスキームを付ける() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.rs");
+        std::fs::write(&file, "").unwrap();
+        let file = file.to_str().unwrap();
+        assert_eq!(
+            target(&format!("{file}:12:5")),
+            Some(format!("file://{file}"))
+        );
+        assert_eq!(target(&format!("{file}x")), None);
+        assert_eq!(
+            target("localhost:4111/x"),
+            Some("http://localhost:4111/x".to_string())
+        );
+        assert_eq!(target("https://"), None);
     }
 
     #[test]

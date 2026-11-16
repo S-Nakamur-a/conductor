@@ -454,3 +454,78 @@ fn 読めなかったときは同じ会話の前の集合を残す() {
     log.install("a".into(), None, Some("a"), now);
     assert!(log.of("a").unwrap().contains("https://x"));
 }
+
+/// Claude Code のように右端の 1 桁を空けて折り、続きの行を 2 桁下げて描いた画面。
+fn wrapped_like_claude(width: u16, line: &str) -> Vec<String> {
+    let body: Vec<char> = line.chars().collect();
+    let mut rows = vec![];
+    let mut at = 0;
+    while at < body.len() {
+        let indent = if rows.is_empty() { "" } else { "  " };
+        let take = (width as usize - 1 - indent.len()).min(body.len() - at);
+        rows.push(format!(
+            "{indent}{}",
+            body[at..at + take].iter().collect::<String>()
+        ));
+        at += take;
+    }
+    rows
+}
+
+#[test]
+fn ポートの付いたurlはどの桁で折れてもポートごと包む() {
+    let url = "http://localhost:4111/api/very/long/path/x";
+    let line = format!("  open {url} now");
+    let urls = logged(&line);
+    for width in 15..50 {
+        let rows = wrapped_like_claude(width, &line);
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let buffer = screen(width, &refs);
+        let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+        assert_eq!(urls_of(&links), vec![url], "width {width}: {rows:?}");
+    }
+}
+
+#[test]
+fn スキームの無いローカルのホストとポートはhttpを付けて包み折れても繋ぐ() {
+    let lines = [
+        "  起動先は `localhost:4111` と en.localhost:3000/ab",
+        "  c/def です                                       ",
+    ];
+    let buffer = screen(52, &lines);
+    let urls = logged("起動先は `localhost:4111` と en.localhost:3000/abc/def です");
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    assert_eq!(
+        urls_of(&links),
+        vec!["http://localhost:4111", "http://en.localhost:3000/abc/def"]
+    );
+    assert_eq!(links[1].segments.len(), 2);
+}
+
+#[test]
+fn 在るパスだけを折れても繋いでfileのurlで包み行番号は外す() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("deeply").join("nested_source_file.rs");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "").unwrap();
+    let file = file.to_str().unwrap();
+    let line = format!("  see {file}:12 and /no/such/file.rs ok");
+    let urls = logged(&line);
+    let rows = wrapped_like_claude(30, &line);
+    let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let buffer = screen(30, &refs);
+    let links = find(&buffer, buffer.area, &Joining::Logged(&urls));
+    assert_eq!(urls_of(&links), vec![format!("file://{file}").as_str()]);
+    assert!(links[0].segments.len() > 1, "{rows:?}");
+}
+
+#[test]
+fn 語の途中のスラッシュから始まるパスは包まない() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap();
+    let line = format!("src{path} {path}");
+    let buffer = screen(line.len() as u16 + 1, &[line.as_str()]);
+    let links = find(&buffer, buffer.area, &Joining::Wrapped(&[]));
+    assert_eq!(urls_of(&links), vec![format!("file://{path}").as_str()]);
+    assert_eq!(links[0].segments[0].xs.start as usize, 3 + path.len() + 1);
+}
