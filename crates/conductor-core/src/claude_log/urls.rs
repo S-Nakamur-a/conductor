@@ -60,7 +60,7 @@ fn is_local_host(text: &str) -> bool {
             .is_some_and(|port| port.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// 押したときに開く先。パスは在るものだけを file:// で返し、`:12` や `:12:5` の行番号は外す。
+/// 押したときに開く先。パスは在るものだけを file:// で返し、`:12` `:12:5` `:12-15` の行番号は外す。
 pub fn target(link: &str) -> Option<String> {
     if SCHEMES.iter().any(|s| link.starts_with(s)) {
         return (!SCHEMES.contains(&link)).then(|| link.to_string());
@@ -76,13 +76,18 @@ fn without_line_number(path: &str) -> &str {
     let mut path = path;
     for _ in 0..2 {
         match path.rsplit_once(':') {
-            Some((head, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
-                path = head
-            }
+            Some((head, n)) if is_line_number(n) => path = head,
             _ => break,
         }
     }
     path
+}
+
+fn is_line_number(n: &str) -> bool {
+    let (from, to) = n.split_once('-').unwrap_or((n, "0"));
+    [from, to]
+        .iter()
+        .all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// `text` の中のリンクになりうる並び。それぞれ trim_url を通したもの。
@@ -228,6 +233,11 @@ mod tests {
             target(&format!("{file}:12:5")),
             Some(format!("file://{file}"))
         );
+        assert_eq!(
+            target(&format!("{file}:12-15")),
+            Some(format!("file://{file}"))
+        );
+        assert_eq!(target(&format!("{file}:12-")), None);
         assert_eq!(target(&format!("{file}x")), None);
         assert_eq!(
             target("localhost:4111/x"),
