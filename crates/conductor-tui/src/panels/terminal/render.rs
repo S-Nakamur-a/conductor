@@ -207,6 +207,9 @@ pub fn osc8_runs(
     else {
         return Vec::new();
     };
+    let tint = crate::render::focus_tint(ws)
+        .filter(|(focused, _)| *focused == region)
+        .map(|(_, tint)| tint);
     let mut parser = lock(&screen);
     parser.set_scrollback(scroll);
     let screen = parser.screen();
@@ -227,7 +230,7 @@ pub fn osc8_runs(
             let Some(url) = screen.cell_link(row, col - width) else {
                 continue;
             };
-            if !drawn_as(buffer, (x, y), &contents, cell_style(cell)) {
+            if !drawn_as(buffer, (x, y), &contents, cell_style(cell), tint) {
                 continue;
             }
             match runs.last_mut() {
@@ -244,11 +247,23 @@ pub fn osc8_runs(
     runs
 }
 
-fn drawn_as(buffer: &Buffer, at: (u16, u16), contents: &str, style: Style) -> bool {
+/// `tint` はフォーカス中の区画で既定の地に敷いた色で、既定の地のセルはそれでも同じと見る。
+fn drawn_as(
+    buffer: &Buffer,
+    at: (u16, u16),
+    contents: &str,
+    style: Style,
+    tint: Option<Color>,
+) -> bool {
     buffer.cell(at).is_some_and(|drawn| {
+        let bg = if style.bg == Some(Color::Reset) && Some(drawn.bg) == tint {
+            Color::Reset
+        } else {
+            drawn.bg
+        };
         drawn.symbol() == contents
             && Some(drawn.fg) == style.fg
-            && Some(drawn.bg) == style.bg
+            && Some(bg) == style.bg
             && drawn.modifier == style.add_modifier
     })
 }

@@ -288,9 +288,7 @@ fn トランスクリプトを開いている間は描いた字と違うセル�
     assert_eq!(marked(&shown, rect, &buffer), vec![]);
 }
 
-#[test]
-fn 一覧の右に映したセッションでも描いた位置で包む() {
-    let url = "https://a.example/fleet";
+fn fleet_showing(url: &str) -> Shown {
     let mut shown = claude_showing(4, 40, osc8(url, url).as_bytes());
     let mut svc = conductor_svc::Services::new();
     crate::effect::apply(
@@ -307,6 +305,13 @@ fn 一覧の右に映したセッションでも描いた位置で包む() {
         }],
     );
     assert_eq!(shown.ws.fleet_session().as_deref(), Some(shown.id.as_str()));
+    shown
+}
+
+#[test]
+fn 一覧の右に映したセッションでも描いた位置で包む() {
+    let url = "https://a.example/fleet";
+    let shown = fleet_showing(url);
     let rect = Rect::new(0, 0, 42, 6);
     let mut terminal = Terminal::new(TestBackend::new(rect.width, rect.height)).unwrap();
     terminal
@@ -381,6 +386,43 @@ fn 画面全体を通しても印のリンクが包まれる() {
     let links = crate::link::on_screen(&shown.ws, &layout, terminal.backend().buffer());
     let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
     assert_eq!(urls, [url]);
+}
+
+#[test]
+fn フォーカスの地を敷いた区画でも印のリンクが包まれる() {
+    let url = "https://a.example/focused";
+    let mut shown = claude_showing(6, 40, osc8(url, url).as_bytes());
+    shown.ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(30, 30, 40));
+    shown.ws.focus = crate::workspace::Focus::TerminalClaude;
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = crate::layout::layout(&shown.ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| crate::render::render(frame, &shown.ws, &layout))
+        .unwrap();
+    let links = crate::link::on_screen(&shown.ws, &layout, terminal.backend().buffer());
+    let marked: Vec<&Link> = links.iter().filter(|l| l.url == url).collect();
+    assert_eq!(marked.len(), 1, "{links:?}");
+    assert_eq!(marked[0].segments[0].xs.len(), url.len());
+}
+
+#[test]
+fn 一覧の右で入力中でも印のリンクが包まれる() {
+    let url = "https://a.example/fleet-focused";
+    let mut shown = fleet_showing(url);
+    shown.ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(30, 30, 40));
+    shown.ws.focus = crate::workspace::Focus::FleetSession;
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = crate::layout::layout(&shown.ws, area);
+    assert!(layout.rect(Region::FleetSession).is_some());
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| crate::render::render(frame, &shown.ws, &layout))
+        .unwrap();
+    let links = crate::link::on_screen(&shown.ws, &layout, terminal.backend().buffer());
+    let marked: Vec<&Link> = links.iter().filter(|l| l.url == url).collect();
+    assert_eq!(marked.len(), 1, "{links:?}");
+    assert_eq!(marked[0].segments[0].xs.len(), url.len());
 }
 
 #[test]

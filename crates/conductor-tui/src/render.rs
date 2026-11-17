@@ -249,10 +249,12 @@ const FOCUS_TINT: f64 = 0.05;
 /// 端末の背景を少し本文の色へ寄せて、フォーカス中の区画に敷く。地を自分で塗ったセル
 /// (シェルや Claude が色を付けた所、選択行) は塗り替えない。
 fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
-    let (Some(bg), Some(rect)) = (ws.chrome.terminal_bg, layout.rect(focused_region(ws))) else {
+    let Some((region, tint)) = focus_tint(ws) else {
         return;
     };
-    let tint = Theme::lerp(bg, ws.theme.fg, FOCUS_TINT);
+    let Some(rect) = layout.rect(region) else {
+        return;
+    };
     let buf = frame.buffer_mut();
     for y in rect.top()..rect.bottom() {
         for x in rect.left()..rect.right() {
@@ -262,6 +264,12 @@ fn tint_focused(frame: &mut Frame, ws: &Workspace, layout: &Layout) {
             }
         }
     }
+}
+
+/// フォーカス中の区画と、そこで既定の地に敷く色。
+pub(crate) fn focus_tint(ws: &Workspace) -> Option<(Region, Color)> {
+    let bg = ws.chrome.terminal_bg?;
+    Some((focused_region(ws), Theme::lerp(bg, ws.theme.fg, FOCUS_TINT)))
 }
 
 /// フォーカスが枠を光らせる区画。
