@@ -342,6 +342,10 @@ impl FleetPanel {
         vec![Effect::Focus(Focus::Fleet)]
     }
 
+    pub fn shows_changes(&self) -> bool {
+        self.lower == Lower::Changes && self.lower_shown
+    }
+
     pub fn shows_artifacts(&self) -> bool {
         self.lower == Lower::Artifacts && self.lower_shown
     }
@@ -1242,6 +1246,55 @@ impl FleetPanel {
         }
     }
 
+    /// 左下の変更ファイルに入っているときのキー。ここに無いものは飲む。見えていない一覧の行や
+    /// 詳細の画面へ、打ちかけの文字が届かないように。
+    fn changes_key(&mut self, action: Action) -> Option<Vec<Effect>> {
+        let changes = &mut self.changes;
+        let reading = changes.body_open();
+        match action {
+            Action::NavigateDown | Action::NavigateUp => {
+                let delta = if action == Action::NavigateDown {
+                    1
+                } else {
+                    -1
+                };
+                match reading {
+                    true => changes.scroll_body(delta),
+                    false => changes.step_file(delta),
+                }
+            }
+            Action::NextChangedFile => changes.step_file(1),
+            Action::PrevChangedFile => changes.step_file(-1),
+            Action::ScrollHalfPageDown | Action::ScrollHalfPageUp => {
+                let half = (changes.body_height() / 2).max(1) as isize;
+                let sign = if action == Action::ScrollHalfPageDown {
+                    1
+                } else {
+                    -1
+                };
+                changes.scroll_body(sign * half);
+            }
+            Action::Select => changes.open_body(),
+            Action::ExitSubPanel if reading => changes.close_body(),
+            Action::ExitSubPanel => return Some(vec![Effect::Focus(Focus::Fleet)]),
+            Action::ShowFleetChanges => return Some(vec![Effect::Focus(Focus::Fleet)]),
+            Action::ShowFleetArtifacts => self.lower = Lower::Artifacts,
+            Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
+            Action::Quit
+            | Action::ShowHelp
+            | Action::CommandPalette
+            | Action::FocusMenuBar
+            | Action::FocusSessions
+            | Action::FocusExplorer
+            | Action::FocusViewer
+            | Action::FocusTerminalClaude
+            | Action::FocusTerminalShell
+            | Action::OpenThemePicker => return None,
+            _ => {}
+        }
+        Some(Vec::new())
+    }
+
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         if ctx.focus == Focus::FleetSession {
             return (action == Action::LeaveTerminal).then(|| vec![Effect::Focus(Focus::Fleet)]);
@@ -1259,6 +1312,9 @@ impl FleetPanel {
                 | Action::PrevSession => Some(Vec::new()),
                 _ => None,
             };
+        }
+        if ctx.focus == Focus::FleetChanges {
+            return self.changes_key(action);
         }
         let items = self.items();
         let at = items.iter().position(|item| self.is_selected_item(item));

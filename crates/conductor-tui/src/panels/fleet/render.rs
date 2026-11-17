@@ -396,6 +396,13 @@ pub fn hint(ws: &Workspace) -> String {
         let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
         return format!("{}← などは Claude に届く", back.unwrap_or_default());
     }
+    if ws.focus == Focus::FleetChanges {
+        let back = chord(Action::ExitSubPanel).map(|key| format!("{key} 戻る · "));
+        return format!(
+            "{}ほかのキーは左下の Git Changes が受ける",
+            back.unwrap_or_default()
+        );
+    }
     if ws.focus == Focus::FleetShell {
         let back = chord(Action::LeaveTerminal).map(|key| format!("{key} 一覧へ戻る · "));
         let changes =
@@ -708,8 +715,18 @@ fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
     let inner = inner(rect);
     let fleet = &ws.panels.fleet;
     let target = fleet.selected_dir();
-    let lines = match (fleet.changes.for_target(target.as_deref()), &target) {
-        (Some((changes, status)), _) => git_changes::render::lines(
+    let Some((changes, status)) = fleet.changes.for_target(target.as_deref()) else {
+        let loading =
+            target.map(|_| Line::styled("  loading\u{2026}", Style::default().fg(ws.theme.muted)));
+        frame.render_widget(
+            Paragraph::new(loading.into_iter().collect::<Vec<_>>()),
+            inner,
+        );
+        return;
+    };
+    let split = super::changes::split(inner, fleet.changes.body_open());
+    if let Some(tree) = split.tree {
+        let lines = git_changes::render::lines(
             changes,
             status,
             // コメントと既読はこの窓の repo のものしか持っていない。
@@ -717,25 +734,87 @@ fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
             &ws.theme,
             &ws.config,
             git_changes::render::Area {
-                width: usize::from(inner.width),
-                height: usize::from(inner.height),
+                width: usize::from(tree.width),
+                height: usize::from(tree.height),
             },
-            false,
-        )
-        .into_iter()
-        // 操作しない区画なので、先頭行に付く選択の地は消す。
-        .map(|mut line| {
-            line.style.bg = None;
-            line
-        })
-        .collect(),
-        (None, Some(_)) => vec![Line::styled(
-            "  loading\u{2026}",
-            Style::default().fg(ws.theme.muted),
-        )],
-        (None, None) => Vec::new(),
+            ws.focus == Focus::FleetChanges,
+        );
+        frame.render_widget(Paragraph::new(lines), tree);
+    }
+    if let Some(divider) = split.divider {
+        let bar = vec![
+            Line::styled("\u{2502}", Style::default().fg(ws.theme.border_unfocused));
+            usize::from(divider.height)
+        ];
+        frame.render_widget(Paragraph::new(bar), divider);
+    }
+    if let Some(body) = split.body {
+        frame.render_widget(Paragraph::new(change_body(ws, changes, body)), body);
+    }
+}
+
+/// 選んだファイルの見出しと diff。見出しは送っても残す。
+fn change_body(
+    ws: &Workspace,
+    changes: &git_changes::GitChanges,
+    body: Rect,
+) -> Vec<Line<'static>> {
+    let theme = &ws.theme;
+    let branch = &ws.panels.fleet.changes;
+    let Some(file) = branch
+        .selected_path()
+        .and_then(|path| changes.diff().files.iter().find(|f| f.path == path))
+    else {
+        return vec![Line::styled(
+            "  ファイルを選ぶと diff が出る",
+            Style::default().fg(theme.hint),
+        )];
     };
-    frame.render_widget(Paragraph::new(lines), inner);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!(" {} ", file.status.letter()),
+            Style::default().fg(git_changes::render::status_color(theme, file.status)),
+        ),
+        Span::styled(
+            file.path.clone(),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  +{}", file.added_lines),
+            Style::default().fg(theme.diff_add),
+        ),
+        Span::styled(
+            format!(" \u{2212}{}", file.deleted_lines),
+            Style::default().fg(theme.diff_del),
+        ),
+    ])];
+    let shown = branch.body();
+    if shown.entries.is_empty() {
+        lines.push(Line::styled(
+            "  Binary or empty file",
+            Style::default().fg(theme.hint),
+        ));
+        return lines;
+    }
+    let width = usize::from(body.width);
+    lines.extend(
+        shown
+            .entries
+            .iter()
+            .skip(branch.body_scroll())
+            .take(usize::from(body.height).saturating_sub(1))
+            .map(|entry| {
+                crate::panels::viewer::render::unified_line(
+                    entry,
+                    theme,
+                    shown.digits,
+                    width,
+                    0,
+                    None,
+                )
+            }),
+    );
+    lines
 }
 
 /// 1 行目が先頭の Artifact。押した行はこの並びで引く (`SessionArtifacts::click`)。

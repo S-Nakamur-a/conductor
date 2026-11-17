@@ -659,6 +659,18 @@ the region draws nothing but `loading…` until the selected dir's own result la
 diff is the Explorer's own, warming included: on a repository no window has open, its
 `git status` can still take the warming turn (`status_map.rs`) and write that index.
 
+**The region is a tree and the picked file's diff side by side** (`changes::split`, read by
+both the renderer and the mouse): 30 columns of tree, a divider, and the rest. When the rest
+would be under 60 columns it does not split — the tree fills the region, and Enter or a click
+on a file swaps in the diff (j/k scroll it, n/N move file, Esc back to the tree). A click
+there enters `Focus::FleetChanges`, which has its own layer (`fleet_changes`) and **swallows
+every key it does not use**: sharing the list's layer would let D / A reach a list row
+nobody is looking at, and the global layer would let ctrl+o / ctrl+n change the screen. The
+picked file and the diff's scroll are kept per dir (`BranchChanges::park`), and a re-read of
+the same dir goes through `GitChanges::install` rather than a new `GitChanges`, which is what
+keeps the pick by path across the 5s refresh. The right side has no syntax colours: the
+region never reads the new side.
+
 The same region shows a shell of that worktree instead (`FleetPanel::lower`): **Ctrl+t**
 (`new_shell`, caught by the list) shows it and steps into `Focus::FleetShell`, starting
 one only if none is alive there; **Ctrl+g** shows Git Changes and returns to the list —

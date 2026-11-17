@@ -34,6 +34,8 @@ pub enum Focus {
     FleetSession,
     /// 一覧の左下に映した、選んだ worktree のシェル。
     FleetShell,
+    /// 一覧の左下に映した、選んだ worktree の変更ファイルと diff。
+    FleetChanges,
 }
 
 impl Focus {
@@ -45,7 +47,10 @@ impl Focus {
     }
 
     pub fn in_fleet(self) -> bool {
-        matches!(self, Self::Fleet | Self::FleetSession | Self::FleetShell)
+        matches!(
+            self,
+            Self::Fleet | Self::FleetSession | Self::FleetShell | Self::FleetChanges
+        )
     }
 
     /// Tab の輪。
@@ -54,9 +59,11 @@ impl Focus {
             Self::Explorer => Self::Viewer,
             Self::Viewer => Self::TerminalClaude,
             Self::TerminalClaude => Self::TerminalShell,
-            Self::TerminalShell | Self::Fleet | Self::FleetSession | Self::FleetShell => {
-                Self::Explorer
-            }
+            Self::TerminalShell
+            | Self::Fleet
+            | Self::FleetSession
+            | Self::FleetShell
+            | Self::FleetChanges => Self::Explorer,
         }
     }
 
@@ -66,7 +73,9 @@ impl Focus {
             Self::Viewer => Self::Explorer,
             Self::TerminalClaude => Self::Viewer,
             Self::TerminalShell => Self::TerminalClaude,
-            Self::Fleet | Self::FleetSession | Self::FleetShell => Self::Explorer,
+            Self::Fleet | Self::FleetSession | Self::FleetShell | Self::FleetChanges => {
+                Self::Explorer
+            }
         }
     }
 
@@ -80,12 +89,14 @@ impl Focus {
             Self::Fleet => "Sessions",
             Self::FleetSession => "Session",
             Self::FleetShell => "Shell",
+            Self::FleetChanges => "Git Changes",
         }
     }
 
     pub fn key_context(self) -> KeyContext {
         match self {
             Self::Fleet => KeyContext::Fleet,
+            Self::FleetChanges => KeyContext::FleetChanges,
             Self::Explorer => KeyContext::Explorer,
             Self::Viewer => KeyContext::Viewer,
             Self::TerminalClaude | Self::TerminalShell | Self::FleetSession | Self::FleetShell => {
@@ -472,8 +483,8 @@ impl Workspace {
                     .terminal
                     .update(action, &ctx)
                     .or_else(|| panels.fleet.update(action, &ctx)),
-                // 端末パネルの読みビューとスクロールは右の Claude のもの。左下のシェルには無い。
-                Focus::FleetShell => panels.fleet.update(action, &ctx),
+                // 端末パネルの読みビューとスクロールは右の Claude のもの。左下には無い。
+                Focus::FleetShell | Focus::FleetChanges => panels.fleet.update(action, &ctx),
             },
         }
     }
@@ -1069,7 +1080,7 @@ impl Workspace {
             Focus::FleetShell => self
                 .fleet_shell()
                 .filter(|id| self.panels.fleet.typing_shell() == Some(id.as_str())),
-            Focus::Explorer | Focus::Viewer | Focus::Fleet => None,
+            Focus::Explorer | Focus::Viewer | Focus::Fleet | Focus::FleetChanges => None,
         }
     }
 
@@ -1154,6 +1165,9 @@ impl Workspace {
         self.panels.fleet.set_lower_shown(lower.is_some());
         // 打ち先が消えた・入れ替わった・見えなくなったときは、次のシェルへ打たせず一覧へ戻す。
         if self.focus == Focus::FleetShell && self.pty_session().is_none() {
+            self.focus = Focus::Fleet;
+        }
+        if self.focus == Focus::FleetChanges && !self.panels.fleet.shows_changes() {
             self.focus = Focus::Fleet;
         }
         let fleet_session = self.fleet_session();

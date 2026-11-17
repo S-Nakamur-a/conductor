@@ -621,7 +621,8 @@ fn on_mouse(
                 apply(ws, svc, effects);
                 return;
             }
-            let columns = viewer_code_columns(ws, region, mouse);
+            let columns = viewer_code_columns(ws, region, mouse)
+                .or_else(|| fleet_changes_columns(ws, layout, region, mouse));
             // 左右表示の行は 2 つのファイルの断片を 1 行に並べたもので、写しても読めない。
             let selectable = !(region == Region::Changes && ws.shown_changes().side_by_side());
             ws.chrome.selection = select::area(layout, region)
@@ -631,9 +632,13 @@ fn on_mouse(
                     // None (ガター等) はそのまま区画まるごと — 行番号ごと持っていきたい選択もある。
                     columns.map_or(selection, |c| selection.within_columns(c))
                 });
-            let Some(focus) = focus_for(region) else {
+            let Some(focus) = focus_for(ws, region) else {
                 return;
             };
+            // 確認の対象はモーダルを開いた時点で決まっている。左下に入ると、続くキーが確認から逸れる。
+            if focus == Focus::FleetChanges && !ws.modals.is_empty() {
+                return;
+            }
             apply(ws, svc, vec![Effect::Focus(focus)]);
             if region == Region::ChangesList {
                 if ws.center_tab() == crate::panels::changes::Tab::Commits {
@@ -713,6 +718,7 @@ fn on_mouse(
                         .click_blank_detail(&ctx, (mouse.column, mouse.row))
                 }
                 Focus::FleetShell => fleet_artifact_click(ws, layout, mouse),
+                Focus::FleetChanges => fleet_changes_click(ws, layout, mouse),
                 _ => Vec::new(),
             };
             apply(ws, svc, effects);
@@ -740,6 +746,54 @@ fn fleet_row_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Ve
         on_marker: render::on_marker(&composed, x, y),
     };
     ws.panels.fleet.click_list((x, y), press, &ws.config)
+}
+
+/// 左下の Git Changes を押したところ。ツリーの行ならそのファイルを選び、狭くて割れないなら diff を開く。
+fn fleet_changes_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Vec<Effect> {
+    let Some(split) = fleet_changes_split(ws, layout) else {
+        return Vec::new();
+    };
+    let changes = &mut ws.panels.fleet.changes;
+    let on_tree = split
+        .tree
+        .is_some_and(|tree| tree.contains(Position::new(mouse.column, mouse.row)));
+    if on_tree && changes.select_at(mouse.row) && split.body.is_none() {
+        changes.open_body();
+    }
+    Vec::new()
+}
+
+fn fleet_changes_split(
+    ws: &Workspace,
+    layout: &Layout,
+) -> Option<crate::panels::fleet::changes::Split> {
+    let fleet = &ws.panels.fleet;
+    if !fleet.shows_changes() {
+        return None;
+    }
+    let inner = crate::panels::fleet::render::inner(layout.rect(Region::FleetChanges)?);
+    Some(crate::panels::fleet::changes::split(
+        inner,
+        fleet.changes.body_open(),
+    ))
+}
+
+/// 左右に割った左下のドラッグは、押した側の桁に絞る。ツリーの文字が diff の写しに混ざらない。
+fn fleet_changes_columns(
+    ws: &Workspace,
+    layout: &Layout,
+    region: Region,
+    mouse: MouseEvent,
+) -> Option<(u16, u16)> {
+    if region != Region::FleetChanges {
+        return None;
+    }
+    let split = fleet_changes_split(ws, layout)?;
+    [split.tree, split.body]
+        .into_iter()
+        .flatten()
+        .find(|rect| rect.contains(Position::new(mouse.column, mouse.row)))
+        .map(|rect| (rect.x, rect.right().saturating_sub(1)))
 }
 
 fn fleet_artifact_click(ws: &mut Workspace, layout: &Layout, mouse: MouseEvent) -> Vec<Effect> {
@@ -886,6 +940,18 @@ fn scroll_region(
             };
             ws.panels.fleet.scroll_list(&composed, delta);
         }
+        Region::FleetChanges if ws.modals.is_empty() => {
+            let Some(split) = fleet_changes_split(ws, layout) else {
+                return;
+            };
+            let at = Position::new(mouse.column, mouse.row);
+            let changes = &mut ws.panels.fleet.changes;
+            if split.tree.is_some_and(|tree| tree.contains(at)) {
+                changes.pan_tree(delta);
+            } else if split.body.is_some_and(|body| body.contains(at)) {
+                changes.scroll_body(delta);
+            }
+        }
         // 端末はホイールの行き先が中身次第 (子プロセス / トランスクリプト /
         // スクロールバック) なので、判断はパネルが持つ。
         Region::TerminalClaude | Region::TerminalShell | Region::FleetSession => {
@@ -907,7 +973,7 @@ fn scroll_region(
     }
 }
 
-fn focus_for(region: Region) -> Option<Focus> {
+fn focus_for(ws: &Workspace, region: Region) -> Option<Focus> {
     match region {
         Region::ExplorerTree | Region::ExplorerChanges | Region::ChangesList => {
             Some(Focus::Explorer)
@@ -917,6 +983,9 @@ fn focus_for(region: Region) -> Option<Focus> {
         Region::TerminalShell => Some(Focus::TerminalShell),
         Region::FleetList => Some(Focus::Fleet),
         Region::FleetSession => Some(Focus::FleetSession),
+        Region::FleetChanges if ws.panels.fleet.lower() == crate::panels::fleet::Lower::Changes => {
+            Some(Focus::FleetChanges)
+        }
         Region::FleetChanges => Some(Focus::FleetShell),
         Region::TitleBar | Region::MenuBar | Region::StatusBar => None,
     }
@@ -3200,20 +3269,243 @@ needle here
     }
 
     #[test]
-    fn 変更の区画を押してもキーボードは動かない() {
+    fn 変更の区画を押すと一覧からも右の_claude_からもそこへ入る() {
         for focus in [Focus::Fleet, Focus::FleetSession] {
             let (mut ws, mut svc, l) = fleet_with_tree();
+            ws.sync_layout(&l);
+            land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
             ws.focus = focus;
-            let rect = l.rect(Region::FleetChanges).unwrap();
-            let click = MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: rect.x + 3,
-                row: rect.y + 2,
-                modifiers: KeyModifiers::NONE,
-            };
-            on_mouse(&mut ws, &mut svc, &l, click);
-            assert_eq!(ws.focus, focus);
+            on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 2));
+            assert_eq!(ws.focus, Focus::FleetChanges, "{focus:?}");
         }
+    }
+
+    fn changed_file(path: &str) -> conductor_core::diff_state::FileDiff {
+        use conductor_core::diff_state::{DiffHunk, DiffLine, DiffLineTag, FileDiff, FileStatus};
+        let lines = (1..=40)
+            .map(|n| DiffLine {
+                tag: DiffLineTag::Insert,
+                old_line_no: None,
+                new_line_no: Some(n),
+                inline_segments: Vec::new(),
+                content: format!("{path} line {n}"),
+            })
+            .collect();
+        FileDiff {
+            path: path.into(),
+            status: FileStatus::Modified,
+            added_lines: 40,
+            deleted_lines: 0,
+            hunks: vec![DiffHunk {
+                lines,
+                func_header: None,
+            }],
+        }
+    }
+
+    fn land_changes(ws: &mut Workspace, dir: &str, paths: &[&str]) {
+        use conductor_core::diff_state::{DiffSource, DiffState};
+        let mut diff = DiffState::new(DiffSource::working_tree("main"));
+        diff.files = paths.iter().map(|p| changed_file(p)).collect();
+        diff.rebuild_display_list();
+        ws.accept(TaskResult::FleetChanges {
+            dir: PathBuf::from(dir),
+            diff: Box::new(diff),
+            status: Default::default(),
+        });
+    }
+
+    /// 左下の枠の内側から数えた位置を押す。
+    fn press_at(l: &Layout, column: u16, line: u16) -> MouseEvent {
+        let inner = crate::panels::fleet::render::inner(l.rect(Region::FleetChanges).unwrap());
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: inner.x + column,
+            row: inner.y + line,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn picked(ws: &Workspace) -> Option<&str> {
+        ws.panels.fleet.changes.selected_path()
+    }
+
+    /// 変更ファイルが 2 つ届いた一覧で、左下に入ったところ。
+    fn in_lower_changes() -> (Workspace, Services<TaskResult>, Layout) {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 0));
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        (ws, svc, l)
+    }
+
+    #[test]
+    fn 左下のツリーのファイルを押すとそれを選び右にその_diff_を出す() {
+        let (mut ws, mut svc, l) = in_lower_changes();
+        assert_eq!(picked(&ws), Some("a.rs"));
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 1));
+        assert_eq!(picked(&ws), Some("b.rs"));
+        assert!(drawn_changes(&mut ws, &l).contains("b.rs line 1"));
+    }
+
+    #[test]
+    fn 左下の右半分を押しても選んだファイルは変わらない() {
+        let (mut ws, mut svc, l) = in_lower_changes();
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 40, 1));
+        assert_eq!(picked(&ws), Some("a.rs"));
+        assert_eq!(ws.focus, Focus::FleetChanges);
+    }
+
+    #[test]
+    fn 左下で_j_と_k_はファイルを送り_esc_で一覧へ戻り一覧は閉じない() {
+        let (mut ws, mut svc, _) = in_lower_changes();
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(picked(&ws), Some("b.rs"));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(picked(&ws), Some("a.rs"));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(ws.chrome.fleet_open);
+    }
+
+    #[test]
+    fn 左下で一覧のキーや全体のキーを打っても一覧の行も画面も動かない() {
+        let (mut ws, mut svc, _) = in_lower_changes();
+        let row = ws.panels.fleet.selected_dir();
+        let keys = [
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT),
+            KeyEvent::from(KeyCode::Char('g')),
+            KeyEvent::from(KeyCode::Char('G')),
+            KeyEvent::from(KeyCode::Char('h')),
+            KeyEvent::from(KeyCode::Char('l')),
+            KeyEvent::from(KeyCode::Tab),
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+        ];
+        for key in keys {
+            on_key(&mut ws, &mut svc, key);
+            assert_eq!(ws.focus, Focus::FleetChanges, "{key:?}");
+            assert!(ws.chrome.fleet_open, "{key:?}");
+            assert!(ws.modals.is_empty(), "{key:?}: {:?}", ws.modals.last());
+            assert_eq!(ws.panels.fleet.selected_dir(), row, "{key:?}");
+        }
+        assert_eq!(svc.in_flight(), 0);
+    }
+
+    #[test]
+    fn 左下の_ctrl_g_は一覧へ_ctrl_a_は_artifacts_に替える() {
+        let (mut ws, mut svc, _) = in_lower_changes();
+        on_key(&mut ws, &mut svc, ctrl_g());
+        assert_eq!(ws.focus, Focus::Fleet);
+        let (mut ws, mut svc, l) = in_lower_changes();
+        on_key(&mut ws, &mut svc, ctrl_a());
+        ws.sync_layout(&l);
+        assert_eq!(
+            ws.panels.fleet.lower(),
+            crate::panels::fleet::Lower::Artifacts
+        );
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 左下の区画が消えたら一覧へ戻る() {
+        let (mut ws, _svc, _) = in_lower_changes();
+        let short = layout(&ws, Rect::new(0, 0, 160, 12));
+        assert!(short.rect(Region::FleetChanges).is_none());
+        ws.sync_layout(&short);
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 左下から一覧を開き直して閉じても詳細の画面に左下のフォーカスが残らない() {
+        let (mut ws, mut svc, _) = in_lower_changes();
+        let before = ws.panels.fleet.came_from();
+        on_key(
+            &mut ws,
+            &mut svc,
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT),
+        );
+        assert_eq!(ws.panels.fleet.came_from(), before);
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetChanges)]);
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert!(!ws.chrome.fleet_open);
+        assert_eq!(ws.focus, before);
+    }
+
+    #[test]
+    fn 左下へのフォーカスは一覧を出たときの行き先を書き換えない() {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        let before = ws.panels.fleet.came_from();
+        apply(&mut ws, &mut svc, vec![Effect::Focus(Focus::FleetChanges)]);
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        assert_eq!(ws.panels.fleet.came_from(), before);
+    }
+
+    #[test]
+    fn 確認が開いている間に左下を押しても入らない() {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        land_changes(&mut ws, "/r/app", &["a.rs"]);
+        ws.modals.push(Modal::Confirm(crate::modal::Confirm::ask(
+            "Stop?",
+            vec![Effect::Quit],
+        )));
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 0));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 左下のホイールは左ならツリーを右なら_diff_を送る() {
+        let (mut ws, mut svc, l) = in_lower_changes();
+        let wheel = |column| MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            ..press_at(&l, column, 1)
+        };
+        on_mouse(&mut ws, &mut svc, &l, wheel(40));
+        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
+        on_mouse(&mut ws, &mut svc, &l, wheel(3));
+        assert_eq!(picked(&ws), Some("a.rs"), "ホイールで選択が動いた");
+        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
+    }
+
+    #[test]
+    fn 左下で写すドラッグは押した側の桁に絞る() {
+        let (ws, _svc, l) = in_lower_changes();
+        let inner = crate::panels::fleet::render::inner(l.rect(Region::FleetChanges).unwrap());
+        let tree = fleet_changes_columns(&ws, &l, Region::FleetChanges, press_at(&l, 3, 1));
+        let body = fleet_changes_columns(&ws, &l, Region::FleetChanges, press_at(&l, 40, 1));
+        assert_eq!(tree, Some((inner.x, inner.x + 29)));
+        assert_eq!(body, Some((inner.x + 31, inner.right() - 1)));
+    }
+
+    #[test]
+    fn 狭くて割れない左下ではファイルを押すと_diff_を区画いっぱいに出し_esc_でツリーへ戻る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        on_mouse(&mut ws, &mut svc, &narrow, press_at(&narrow, 3, 1));
+        assert_eq!(picked(&ws), Some("b.rs"));
+        assert!(ws.panels.fleet.changes.body_open());
+        assert!(drawn_changes(&mut ws, &narrow).contains("b.rs line 1"));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(picked(&ws), Some("b.rs"), "末尾で止まる");
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(
+            ws.panels.fleet.changes.body_scroll(),
+            1,
+            "開いている間の j は送り"
+        );
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert!(!ws.panels.fleet.changes.body_open());
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(ws.focus, Focus::Fleet);
     }
 
     fn drawn_changes(ws: &mut Workspace, l: &Layout) -> String {
@@ -4006,7 +4298,11 @@ needle here
         on_key(&mut f.ws, &mut f.svc, ctrl_t());
         on_key(&mut f.ws, &mut f.svc, ctrl_g());
         on_mouse(&mut f.ws, &mut f.svc, &f.l, click);
-        assert_eq!(f.ws.focus, Focus::Fleet, "Git Changes を押して入った");
+        assert_eq!(
+            f.ws.focus,
+            Focus::FleetChanges,
+            "Git Changes を押してシェルに入った"
+        );
         on_key(&mut f.ws, &mut f.svc, ctrl_t());
         on_key(
             &mut f.ws,

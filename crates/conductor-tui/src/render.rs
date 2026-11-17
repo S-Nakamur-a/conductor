@@ -279,7 +279,7 @@ fn focused_region(ws: &Workspace) -> Region {
         Focus::TerminalShell => Region::TerminalShell,
         Focus::Fleet => Region::FleetList,
         Focus::FleetSession => Region::FleetSession,
-        Focus::FleetShell => Region::FleetChanges,
+        Focus::FleetShell | Focus::FleetChanges => Region::FleetChanges,
     }
 }
 
@@ -346,6 +346,14 @@ fn key_hint(
         Focus::FleetShell => &[
             ("list", &[Action::LeaveTerminal]),
             ("changes", &[Action::OpenFileFromTerminal]),
+        ],
+        Focus::FleetChanges => &[
+            ("file", &[Action::NavigateDown, Action::NavigateUp]),
+            (
+                "scroll",
+                &[Action::ScrollHalfPageDown, Action::ScrollHalfPageUp],
+            ),
+            ("list", &[Action::ExitSubPanel]),
         ],
         Focus::Explorer if context == KeyContext::ChangesList => &[
             ("nav", &[Action::NavigateDown, Action::NavigateUp]),

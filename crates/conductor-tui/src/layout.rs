@@ -197,9 +197,11 @@ pub fn layout(ws: &Workspace, area: Rect) -> Layout {
         push_fleet(&mut regions, main, cfg);
     } else if ws.chrome.maximized {
         match ws.focus {
-            Focus::Explorer | Focus::Fleet | Focus::FleetSession | Focus::FleetShell => {
-                push_explorer(&mut regions, main)
-            }
+            Focus::Explorer
+            | Focus::Fleet
+            | Focus::FleetSession
+            | Focus::FleetShell
+            | Focus::FleetChanges => push_explorer(&mut regions, main),
             Focus::Viewer => regions.push((center, main)),
             Focus::TerminalClaude => regions.push((Region::TerminalClaude, main)),
             Focus::TerminalShell => regions.push((Region::TerminalShell, main)),

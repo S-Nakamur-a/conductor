@@ -340,6 +340,11 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                     ws.focus = Focus::FleetShell;
                 }
             }
+            Effect::Focus(Focus::FleetChanges) => {
+                if ws.chrome.fleet_open && ws.panels.fleet.shows_changes() {
+                    ws.focus = Focus::FleetChanges;
+                }
+            }
             Effect::Focus(focus) => ws.set_screen_focus(focus),
             Effect::OpenFleetShell => queue.extend(open_fleet_shell(ws)),
             Effect::OpenFleet => {
