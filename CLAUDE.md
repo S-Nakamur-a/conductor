@@ -61,6 +61,17 @@ the Claude Code sessions inside the TUI, resolving the DB from
   request from another worktree switches the window there first; close_file does not, and
   only acts on the worktree being shown. With `diff` it lands in the Files changed tab
   (`Effect::ShowChange`), waiting for the diff while it is being read; without, in Code.
+  **While the session list is open the window moves nothing** but the area under it, and
+  only for the conversation selected there: the line carries the asking panel's
+  `CONDUCTOR_PANEL_ID` (`panel`, optional, so an older MCP or PTY host that drops it reads
+  as "not the selected one"), and `remote::under_list` compares it with
+  `Workspace::fleet_session` and the request's cwd, canonicalised, with the selected
+  worktree. A diff request for a file the held diff does not have yet waits for a read
+  started after the request (`Pending::after`), then shows the diff or, failing that, the
+  whole file; one for a file it has is shown at once and scrolled to the asked line again
+  when that read lands, unless someone scrolled in between. A waiting request is dropped
+  as soon as the asking conversation is no longer the one selected (closing the list counts). While the shell under the list is being typed into, the request is kept
+  but the area is not switched.
   Adding a window tool runs an action at a moment nobody chose. Open one level of
   the callees of the action it reuses and check each side effect against someone
   who is typing or is on another worktree: #403's three bugs were all visible that
@@ -623,7 +634,7 @@ main worktree for every destination (Ctrl+o's detail screen included), and like 
 (`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
 remembered as where Esc returns (`Workspace::screen_focus`, which
 the focus cycle reads), so a background result never moves the keyboard to a region
-nobody can see, and window tools (`remote.rs`) do nothing but say so. Focus moves
+nobody can see, and window tools (`remote.rs`) move nothing but the area under the list, for the selected conversation only (the MCP section). Focus moves
 made by hand — commands from keys, the palette or the menu, and the focus cycle —
 go through `command::by_hand`, which turns them into `LeaveFleet`. The right side shows
 one of this window's sessions live (`Focus::FleetSession`). Which one is derived from
@@ -701,11 +712,15 @@ every key it does not use**: sharing the list's layer would let D / A reach a li
 nobody is looking at, and the global layer would let ctrl+o / ctrl+n change the screen. The
 picked file and the diff's scroll are kept per dir (`BranchChanges::park`), and a re-read of
 the same dir goes through `GitChanges::install` rather than a new `GitChanges`, which is what
-keeps the pick by path across the 5s refresh. That refresh leaves the tree where the wheel
-put it (`tree_panned`) and only follows the pick when nobody scrolled. The full-region diff
-exists only where the region does not split and only while the region has the keyboard
-(`set_split`, and `sync_layout` closes it on leaving), so a key never moves something that
-is not drawn; for the same reason, until the selected dir's own result lands the region's
+keeps the pick by path across the 5s refresh. What the AI shows there (`Pick::asked`) stays
+until someone picks a file by hand: a whole file (`Body::Whole`, read on a worker by
+`Task::LoadFleetFile` and matched by seq, asked once per seq, and re-read only when a diff lands (so at most once per 5s refresh)) gets a provisional row above the tree when the
+file has no change, an asked diff whose file leaves the diff (a commit) turns into that
+file's whole, and the line it was asked for is scrolled to, again when a read started after the request lands unless someone scrolled (`Pick::scrolled`). That refresh leaves the
+tree where the wheel put it (`tree_panned`) and only follows the pick when nobody scrolled. The full-region diff
+exists only where the region does not split, and only while the region has the keyboard
+or the AI is showing it (`set_split`, and `sync_layout`'s `note_focus` closes it otherwise),
+so a key never moves something that is not drawn; for the same reason, until the selected dir's own result lands the region's
 keys and clicks touch nothing (the previous dir's tree is still held, behind loading…). The
 right side has no syntax colours: the region never reads the new side.
 

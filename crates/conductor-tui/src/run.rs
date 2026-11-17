@@ -278,7 +278,11 @@ fn watch_effects(
     use conductor_svc::watch::WatchEvent;
     match watch {
         WatchEvent::RefreshRequested => vec![Effect::Spawn(Task::LoadReview)],
-        WatchEvent::UiRequest { cwd, request } => crate::remote::effects(ws, &cwd, request),
+        WatchEvent::UiRequest {
+            cwd,
+            panel,
+            request,
+        } => crate::remote::effects(ws, &cwd, panel.as_deref(), request),
         // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
         WatchEvent::FsChanged(path) => {
             crate::index::note_change(ws, &path);
@@ -399,6 +403,13 @@ fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: I
     let fleet = &ws.panels.fleet;
     if let Some(dir) = fleet.changes.wanted(fleet.selected_dir(), now) {
         apply(ws, svc, vec![Effect::Spawn(Task::FleetChanges { dir })]);
+    }
+    if let Some((dir, path, seq)) = ws.panels.fleet.changes.take_file_read() {
+        apply(
+            ws,
+            svc,
+            vec![Effect::Spawn(Task::LoadFleetFile { dir, path, seq })],
+        );
     }
 }
 
@@ -3342,6 +3353,30 @@ needle here
     }
 
     #[test]
+    fn ai_が開いた変更の無いファイルはツリーの上の仮の行と右の全体に出る() {
+        let (mut ws, _svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        land_changes(&mut ws, "/r/app", &["a.rs"]);
+        let changes = &mut ws.panels.fleet.changes;
+        changes.open_asked(
+            "p",
+            std::path::Path::new("/r/app"),
+            "plain.rs".into(),
+            Some(50),
+            false,
+        );
+        let (dir, path, seq) = changes.take_file_read().unwrap();
+        let text = (1..=100).map(|n| format!("plain {n:03}")).collect();
+        changes.install_file(&dir, &path, seq, Ok(text));
+        let drawn = drawn_changes(&mut ws, &l);
+        assert!(drawn.contains("\u{00b7} plain.rs"), "{drawn}");
+        assert!(drawn.contains("whole file"), "{drawn}");
+        assert!(drawn.contains("plain 050"), "{drawn}");
+        assert!(!drawn.contains("plain 049"), "頼まれた行から出していない");
+        assert!(drawn.contains("a.rs"), "ツリーが消えた");
+    }
+
+    #[test]
     fn 左下のツリーのファイルを押すとそれを選び右にその_diff_を出す() {
         let (mut ws, mut svc, l) = in_lower_changes();
         assert_eq!(picked(&ws), Some("a.rs"));
@@ -3563,6 +3598,26 @@ needle here
             !ws.panels.fleet.changes.body_open(),
             "狭めても読みの状態には戻さない"
         );
+    }
+
+    #[test]
+    fn 狭い窓で_ai_が開いたものも_ctrl_g_で閉じて一覧へ戻る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        ws.panels.fleet.changes.open_asked(
+            "p",
+            std::path::Path::new("/r/app"),
+            "b.rs".into(),
+            None,
+            true,
+        );
+        ws.focus = Focus::FleetChanges;
+        on_key(&mut ws, &mut svc, ctrl_g());
+        ws.sync_layout(&narrow);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(!ws.panels.fleet.changes.body_open());
     }
 
     #[test]

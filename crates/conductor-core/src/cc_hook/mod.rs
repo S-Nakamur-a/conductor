@@ -38,7 +38,12 @@ pub enum Notification {
         session_id: String,
     },
     /// パネルの Claude が MCP 越しに頼んだ画面操作。cwd はどの worktree の話か。
-    Ui { cwd: PathBuf, request: UiRequest },
+    /// panel は頼んだパネル。古い MCP と古い PTY ホストを通った行には無い。
+    Ui {
+        cwd: PathBuf,
+        panel: Option<String>,
+        request: UiRequest,
+    },
 }
 
 /// Claude から画面への頼みごと。パスは絶対パス。
@@ -58,6 +63,8 @@ pub enum UiRequest {
 #[derive(Serialize, Deserialize)]
 struct UiLine {
     cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    panel: Option<String>,
     request: UiRequest,
 }
 
@@ -66,9 +73,14 @@ impl Notification {
         let (verb, rest) = line.trim().split_once(' ')?;
         match verb {
             "ui" => {
-                let UiLine { cwd, request } = serde_json::from_str(rest).ok()?;
+                let UiLine {
+                    cwd,
+                    panel,
+                    request,
+                } = serde_json::from_str(rest).ok()?;
                 Some(Self::Ui {
                     cwd: PathBuf::from(cwd),
+                    panel,
                     request,
                 })
             }
@@ -90,9 +102,14 @@ impl Notification {
                 panel_id,
                 session_id,
             } => format!("session {panel_id} {session_id}\n"),
-            Self::Ui { cwd, request } => {
+            Self::Ui {
+                cwd,
+                panel,
+                request,
+            } => {
                 let line = UiLine {
                     cwd: cwd.to_string_lossy().into_owned(),
+                    panel: panel.clone(),
                     request: request.clone(),
                 };
                 let json = serde_json::to_string(&line).expect("UiLine は文字列と数値だけ");
@@ -195,10 +212,21 @@ mod tests {
                 r#"ui {"cwd":"/tmp/my wt","request":{"op":"open_file","path":"/tmp/my wt/a b.rs","line":3,"diff":true}}"#,
                 Notification::Ui {
                     cwd: PathBuf::from("/tmp/my wt"),
+                    panel: None,
                     request: UiRequest::OpenFile {
                         path: "/tmp/my wt/a b.rs".to_string(),
                         line: Some(3),
                         diff: true,
+                    },
+                },
+            ),
+            (
+                r#"ui {"cwd":"/tmp/wt","panel":"p-1","request":{"op":"close_file","path":"/tmp/wt/a.rs"}}"#,
+                Notification::Ui {
+                    cwd: PathBuf::from("/tmp/wt"),
+                    panel: Some("p-1".to_string()),
+                    request: UiRequest::CloseFile {
+                        path: "/tmp/wt/a.rs".to_string(),
                     },
                 },
             ),
@@ -207,6 +235,22 @@ mod tests {
             assert_eq!(Notification::parse(line).as_ref(), Some(&want), "{line}");
             assert_eq!(want.to_line(), format!("{line}\n"));
         }
+    }
+
+    #[test]
+    fn パネルの欄を知らない読み手は欄を落とし_知っている読み手は欄の無い行をパネル無しで読む() {
+        #[derive(Serialize, Deserialize)]
+        struct OlderLine {
+            cwd: String,
+            request: UiRequest,
+        }
+        let newer = r#"{"cwd":"/tmp/wt","panel":"p-1","request":{"op":"close_file","path":"/tmp/wt/a.rs"}}"#;
+        let older: OlderLine = serde_json::from_str(newer).unwrap();
+        let rewritten = format!("ui {}", serde_json::to_string(&older).unwrap());
+        let Some(Notification::Ui { panel, .. }) = Notification::parse(&rewritten) else {
+            panic!("{rewritten}");
+        };
+        assert_eq!(panel, None);
     }
 
     #[test]

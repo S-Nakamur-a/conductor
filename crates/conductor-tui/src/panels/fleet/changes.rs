@@ -1,4 +1,4 @@
-//! 一覧の下区画: 選んだ行のブランチの変更ファイルと、選んだファイルの diff。Explorer が持つ
+//! 一覧の下区画: 選んだ行のブランチの変更ファイルと、選んだファイルの diff (AI が頼んだファイルは全体)。Explorer が持つ
 //! 作業ツリーの diff と同じ読み方で、ツリーは同じ形で描く。
 
 use std::collections::HashMap;
@@ -71,13 +71,70 @@ pub fn split(inner: Rect, body_open: bool) -> Split {
 struct Pick {
     path: Option<String>,
     scroll: usize,
+    /// 右にファイル全体を出す。変更の無いファイルはツリーに行が無いので、仮の行で示す。
+    whole: bool,
+    /// AI が出した。人が選び直すまで、diff から消えても全体に移って残る。
+    asked: bool,
+    /// 次に中身が据わったとき、1 回だけそこへ送る行 (1 始まり、新しい側)。
+    line: Option<usize>,
+    /// AI が出した後に人がスクロールした。送り直さない。
+    scrolled: bool,
 }
 
-/// 選んだファイルの diff を、描く形にしたもの。
+/// diff で出してと頼まれ、頼みより後の読みを待っているもの。手元の diff に無ければまだ出していない (shown=false)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pending {
+    /// 頼んだ会話。一覧でこれが選ばれている間だけ生きる。
+    panel: String,
+    dir: PathBuf,
+    path: String,
+    line: Option<usize>,
+    diff: bool,
+    /// 頼んだ時点で始めていた読みの数。これより後に始めた読みで判定する。
+    after: u64,
+    /// もう出してある。新しい読みでは頼まれた行へ送り直すだけ。
+    shown: bool,
+}
+
+/// ファイル全体の読み。seq で照合し、古い結果は据えない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileRead {
+    dir: PathBuf,
+    path: String,
+    seq: u64,
+    asked: bool,
+}
+
+/// 右に描くもの。
 #[derive(Debug, Default)]
-pub struct Body {
-    pub entries: Vec<Entry>,
-    pub digits: usize,
+pub enum Body {
+    #[default]
+    Nothing,
+    Diff {
+        entries: Vec<Entry>,
+        digits: usize,
+    },
+    Reading,
+    Whole {
+        path: String,
+        lines: Result<Vec<String>, String>,
+    },
+}
+
+impl Body {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Diff { entries, .. } => entries.len(),
+            Self::Whole {
+                lines: Ok(lines), ..
+            } => lines.len(),
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -87,8 +144,14 @@ pub struct BranchChanges {
     view: Viewport,
     fetching: bool,
     landed: Option<Instant>,
+    /// 始めた読みの数と、いま投げている読みの番号。
+    reads: u64,
+    reading: u64,
     pick: Pick,
     picks: HashMap<PathBuf, Pick>,
+    pending: Option<Pending>,
+    file: Option<FileRead>,
+    file_seq: u64,
     body: Body,
     /// 右の diff に使える行数。見出しの 1 行は除く。
     body_height: usize,
@@ -107,17 +170,24 @@ impl BranchChanges {
         if self.fetching {
             return None;
         }
+        let waiting = self.pending.as_ref().is_some_and(|p| p.dir == target);
         let fresh = self.shown_dir() == Some(target.as_path())
             && self.landed.is_some_and(|at| now < at + REFRESH);
-        (!fresh).then_some(target)
+        (waiting || !fresh).then_some(target)
     }
 
     pub fn note_fetching(&mut self) {
         self.fetching = true;
+        self.reads += 1;
+        self.reading = self.reads;
     }
 
+    /// 投げた結果は捨てられる。全体の読みは頼み直す。
     pub fn forget_in_flight(&mut self) {
         self.fetching = false;
+        if let Some(read) = &mut self.file {
+            read.asked = false;
+        }
     }
 
     /// 届いた dir が今の対象でなければ捨てる。base が同じ別 worktree の diff は source では見分けられない。
@@ -151,36 +221,159 @@ impl BranchChanges {
             self.pick = self.picks.get(&dir).cloned().unwrap_or_default();
             let mut changes = GitChanges::new(dir.clone(), &base);
             changes.set_viewport(self.view);
-            self.shown = Some((dir, changes, status));
+            self.shown = Some((dir.clone(), changes, status));
+        }
+        if self.pending.as_ref().is_some_and(|p| p.dir != dir) {
+            self.pending = None;
         }
         let Some((_, changes, _)) = &mut self.shown else {
             return;
         };
         let panned = (same && self.tree_panned).then(|| changes.cursor().scroll());
+        let tree_file = changes.selected_path().map(str::to_string);
         // 帯への警告は捨てる。読み直すたびに同じ警告が出続ける。理由は区画の中に出る。
         let _ = changes.install(diff);
-        let kept = match self.pick.path.as_deref() {
+        let picked = match self.pick.path.as_deref() {
             Some(path) => changes.select_path(path),
             None => false,
         };
+        // 右が木に無いファイル (仮の行) でも、木のカーソルは木自身のファイルが消えるまで保つ。
+        let off_tree = !picked && (self.pick.whole || self.pick.asked) && self.pick.path.is_some();
+        let kept = picked || off_tree && tree_file.is_some_and(|f| changes.select_path(&f));
         if !kept {
             changes.select_first_file();
-            self.pick.scroll = 0;
             self.tree_panned = false;
+        }
+        if off_tree {
+            self.pick.whole = true;
+        } else if !picked {
+            self.pick.scroll = 0;
         }
         if let Some(scroll) = panned.filter(|_| kept) {
             changes.pan(scroll as isize - changes.cursor().scroll() as isize);
         }
         self.landed = Some(now);
-        self.rebuild_body();
+        let reading = self.reading;
+        let resolved = self.pending.take_if(|p| p.dir == dir && reading > p.after);
+        match resolved {
+            Some(p) if !p.shown => {
+                let has = self.has_change(&p.path);
+                self.show_asked(p.path, p.line, !(p.diff && has));
+            }
+            resolved => {
+                let resend = resolved.filter(|p| {
+                    self.pick.asked
+                        && !self.pick.scrolled
+                        && self.pick.path.as_ref() == Some(&p.path)
+                });
+                if let Some(p) = resend {
+                    self.pick.line = p.line;
+                }
+                if self.pick.whole {
+                    self.read_file();
+                }
+                self.rebuild_body();
+                self.apply_view();
+            }
+        }
+    }
+
+    /// 頼んだ会話が一覧で選ばれていなければ、待っている頼みを捨てる。
+    pub fn keep_pending_for(&mut self, selected: Option<&str>) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|p| Some(p.panel.as_str()) != selected)
+        {
+            self.pending = None;
+        }
+    }
+
+    /// AI の頼み。dir の結果がまだ無いか、diff の頼みで手元の diff に無ければ、頼みより後の読みを待って出す。
+    /// 手元の diff は数秒古いことがあるので、diff の頼みは先に出したうえで、その読みで頼まれた行へ送り直す。
+    pub fn open_asked(
+        &mut self,
+        panel: &str,
+        dir: &Path,
+        path: String,
+        line: Option<usize>,
+        diff: bool,
+    ) {
+        let here = self.shown_dir() == Some(dir);
+        let shown = here && (!diff || self.has_change(&path));
+        if shown {
+            self.show_asked(path.clone(), line, !diff);
+            if !diff {
+                return;
+            }
+        }
+        self.pending = Some(Pending {
+            panel: panel.to_string(),
+            dir: dir.to_path_buf(),
+            path,
+            line,
+            diff,
+            after: if diff { self.reads } else { 0 },
+            shown,
+        });
+        self.landed = None;
+    }
+
+    /// 右にそのファイルが出ていれば、ツリーの選択の diff に戻す。
+    pub fn close_asked(&mut self, dir: &Path, path: &str) -> bool {
+        let showing = self.shown_dir() == Some(dir) && self.pick.path.as_deref() == Some(path);
+        if showing {
+            self.pick = Pick::default();
+            self.pending = None;
+            self.file = None;
+            self.rebuild_body();
+            self.apply_view();
+        }
+        showing
+    }
+
+    /// 全体の読みが要るなら、その (dir, path, seq) を 1 回だけ渡す。
+    pub fn take_file_read(&mut self) -> Option<(PathBuf, String, u64)> {
+        let read = self.file.as_mut().filter(|r| !r.asked)?;
+        read.asked = true;
+        Some((read.dir.clone(), read.path.clone(), read.seq))
+    }
+
+    pub fn install_file(
+        &mut self,
+        dir: &Path,
+        path: &str,
+        seq: u64,
+        lines: Result<Vec<String>, String>,
+    ) {
+        let current = self
+            .file
+            .as_ref()
+            .is_some_and(|r| r.seq == seq && r.dir == dir && r.path == path);
+        if !current || !self.pick.whole || self.pick.path.as_deref() != Some(path) {
+            return;
+        }
+        self.file = None;
+        self.body = Body::Whole {
+            path: path.to_string(),
+            lines,
+        };
+        if let Some(line) = self.pick.line.take() {
+            self.pick.scroll = line.saturating_sub(1);
+        }
+        self.clamp_scroll();
+    }
+
+    /// ツリーに行の無いファイルを出しているとき、そのパス。ツリーの先頭に仮の行で出す。
+    pub fn provisional(&self) -> Option<&str> {
+        let path = self.pick.path.as_deref().filter(|_| self.pick.whole)?;
+        (!self.has_change(path)).then_some(path)
     }
 
     pub fn set_viewport(&mut self, view: Viewport) {
         self.view = view;
         self.body_height = view.height.saturating_sub(1);
-        if let Some((_, changes, _)) = &mut self.shown {
-            changes.set_viewport(view);
-        }
+        self.apply_view();
         self.clamp_scroll();
     }
 
@@ -213,6 +406,13 @@ impl BranchChanges {
     pub fn set_split(&mut self, split: bool) {
         self.split = split;
         if split {
+            self.body_open = false;
+        }
+    }
+
+    /// 区画いっぱいの diff は、左下がキーボードを持っている間か、AI が出している間だけ。
+    pub fn note_focus(&mut self, inside: bool) {
+        if !inside && !self.pick.asked {
             self.body_open = false;
         }
     }
@@ -252,6 +452,7 @@ impl BranchChanges {
     }
 
     pub fn scroll_body(&mut self, delta: isize) {
+        self.pick.scrolled = true;
         self.pick.scroll = self.pick.scroll.saturating_add_signed(delta);
         self.clamp_scroll();
     }
@@ -260,20 +461,92 @@ impl BranchChanges {
         self.body_height
     }
 
+    /// 人が選んだ。AI の頼みも、全体の表示も、待っている頼みもここで終わる。
     fn chose(&mut self) {
         self.tree_panned = false;
+        self.pending = None;
         let path = self
             .shown
             .as_ref()
             .and_then(|(_, changes, _)| changes.selected_path())
             .map(str::to_string);
-        if path != self.pick.path {
-            self.pick = Pick { path, scroll: 0 };
+        let plain = !self.pick.whole && !self.pick.asked;
+        if path != self.pick.path || !plain {
+            self.pick = Pick {
+                path,
+                ..Pick::default()
+            };
+            self.file = None;
             self.rebuild_body();
+            self.apply_view();
+        }
+    }
+
+    fn show_asked(&mut self, path: String, line: Option<usize>, whole: bool) {
+        self.pending = None;
+        self.tree_panned = false;
+        if let Some((_, changes, _)) = &mut self.shown {
+            changes.select_path(&path);
+        }
+        self.pick = Pick {
+            path: Some(path),
+            whole,
+            asked: true,
+            line,
+            ..Pick::default()
+        };
+        self.body_open = !self.split;
+        if whole {
+            self.body = Body::Reading;
+            self.read_file();
+        }
+        self.rebuild_body();
+        self.apply_view();
+    }
+
+    fn read_file(&mut self) {
+        let (Some(dir), Some(path)) = (
+            self.shown_dir().map(Path::to_path_buf),
+            self.pick.path.clone(),
+        ) else {
+            return;
+        };
+        self.file_seq += 1;
+        self.file = Some(FileRead {
+            dir,
+            path,
+            seq: self.file_seq,
+            asked: false,
+        });
+    }
+
+    fn has_change(&self, path: &str) -> bool {
+        self.shown
+            .as_ref()
+            .is_some_and(|(_, changes, _)| changes.diff().files.iter().any(|f| f.path == path))
+    }
+
+    /// 仮の行を出している間は、ツリーをその 1 行ぶん下げる。
+    fn apply_view(&mut self) {
+        let mut view = self.view;
+        if self.provisional().is_some() {
+            view.top = view.top.saturating_add(1);
+            view.height = view.height.saturating_sub(1);
+        }
+        if let Some((_, changes, _)) = &mut self.shown {
+            changes.set_viewport(view);
         }
     }
 
     fn rebuild_body(&mut self) {
+        if self.pick.whole {
+            let kept = matches!(&self.body, Body::Whole { path, .. } if Some(path) == self.pick.path.as_ref());
+            if !kept {
+                self.body = Body::Reading;
+            }
+            self.clamp_scroll();
+            return;
+        }
         let file = self.shown.as_ref().and_then(|(_, changes, _)| {
             let path = changes.selected_path()?;
             changes.diff().files.iter().find(|f| f.path == path)
@@ -283,9 +556,15 @@ impl BranchChanges {
         if let Some(file) = file {
             pane.build(file, 0);
         }
-        self.body = Body {
-            digits: digit_count(pane.max_line_no),
-            entries: pane.entries,
+        if let Some(line) = self.pick.line.take() {
+            self.pick.scroll = row_of_line(&pane.entries, line);
+        }
+        self.body = match self.pick.path {
+            Some(_) => Body::Diff {
+                digits: digit_count(pane.max_line_no),
+                entries: pane.entries,
+            },
+            None => Body::Nothing,
         };
         if self.pick.path.is_none() {
             self.body_open = false;
@@ -294,20 +573,19 @@ impl BranchChanges {
     }
 
     fn clamp_scroll(&mut self) {
-        let max = self
-            .body
-            .entries
-            .len()
-            .saturating_sub(self.body_height.max(1));
+        let max = self.body.len().saturating_sub(self.body_height.max(1));
         self.pick.scroll = self.pick.scroll.min(max);
     }
 
     /// 今の dir の選択を預ける。
     fn park(&mut self) {
         if let Some((dir, _, _)) = &self.shown {
-            self.picks
-                .insert(dir.clone(), std::mem::take(&mut self.pick));
+            let mut pick = std::mem::take(&mut self.pick);
+            pick.line = None;
+            self.picks.insert(dir.clone(), pick);
         }
+        self.file = None;
+        self.body = Body::Nothing;
         self.body_open = false;
         self.tree_panned = false;
     }
@@ -315,6 +593,24 @@ impl BranchChanges {
     fn shown_dir(&self) -> Option<&Path> {
         self.shown.as_ref().map(|(dir, _, _)| dir.as_path())
     }
+}
+
+/// 新しい側の行番号が line 以上の最初の行。無ければ最後のハンクの頭。
+fn row_of_line(entries: &[Entry], line: usize) -> usize {
+    let at_or_after = entries
+        .iter()
+        .position(|e| matches!(e, Entry::Line { new_line_no: Some(n), .. } if *n >= line));
+    at_or_after.unwrap_or_else(|| {
+        entries
+            .iter()
+            .rposition(|e| {
+                matches!(
+                    e,
+                    Entry::HunkSeparator { .. } | Entry::ExpandableContext { .. }
+                )
+            })
+            .unwrap_or(0)
+    })
 }
 
 #[cfg(test)]
@@ -471,7 +767,7 @@ mod tests {
         let mut changes = sized();
         land(&mut changes, "/a", files(&[("crates/x.rs", 3)]));
         assert_eq!(changes.selected_path(), Some("crates/x.rs"));
-        assert!(!changes.body().entries.is_empty());
+        assert!(!changes.body().is_empty());
     }
 
     #[test]
@@ -532,7 +828,7 @@ mod tests {
         land(&mut changes, "/a", files(&[("a.rs", 3)]));
         land(&mut changes, "/a", files(&[]));
         assert_eq!(changes.selected_path(), None);
-        assert!(changes.body().entries.is_empty());
+        assert!(changes.body().is_empty());
     }
 
     #[test]
@@ -555,7 +851,7 @@ mod tests {
         changes.scroll_body(20);
         land(&mut changes, "/a", files(&[("a.rs", 8)]));
         let height = changes.body_height();
-        assert_eq!(changes.body_scroll(), changes.body().entries.len() - height);
+        assert_eq!(changes.body_scroll(), changes.body().len() - height);
     }
 
     #[test]
@@ -603,5 +899,387 @@ mod tests {
             "{} が {window:?} の外",
             tree.selected()
         );
+    }
+
+    fn top_new_line(changes: &BranchChanges) -> Option<usize> {
+        let Body::Diff { entries, .. } = changes.body() else {
+            return None;
+        };
+        match entries.get(changes.body_scroll())? {
+            Entry::Line { new_line_no, .. } => *new_line_no,
+            _ => None,
+        }
+    }
+
+    fn whole_lines(n: usize) -> Result<Vec<String>, String> {
+        Ok((1..=n).map(|i| format!("line {i}")).collect())
+    }
+
+    /// 全体の読みを頼まれていれば、その通りに読んだことにして据える。
+    fn read_whole(changes: &mut BranchChanges, n: usize) {
+        let (dir, path, seq) = changes.take_file_read().expect("全体の読みを頼んでいない");
+        changes.install_file(&dir, &path, seq, whole_lines(n));
+    }
+
+    fn asked_long() -> BranchChanges {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        changes
+    }
+
+    #[test]
+    fn diff_で頼まれたファイルを選び頼まれた行へ送り_人がスクロールした後の読み直しでは引き戻さない()
+     {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(20), true);
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        assert_eq!(top_new_line(&changes), Some(20));
+        changes.scroll_body(-5);
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert_eq!(
+            top_new_line(&changes),
+            Some(15),
+            "読み直しで頼まれた行へ引き戻した"
+        );
+    }
+
+    #[test]
+    fn 頼まれた行がハンクより後なら最後のハンクの頭へ送る() {
+        let entries = vec![
+            Entry::HunkSeparator { func_header: None },
+            Entry::Line {
+                tag: DiffLineTag::Insert,
+                old_line_no: None,
+                new_line_no: Some(3),
+                inline_segments: Vec::new(),
+                content: String::new(),
+            },
+            Entry::HunkSeparator { func_header: None },
+            Entry::Line {
+                tag: DiffLineTag::Insert,
+                old_line_no: None,
+                new_line_no: Some(9),
+                inline_segments: Vec::new(),
+                content: String::new(),
+            },
+        ];
+        assert_eq!(row_of_line(&entries, 5), 3);
+        assert_eq!(row_of_line(&entries, 50), 2);
+    }
+
+    #[test]
+    fn 全体で頼まれた変更のあるファイルはツリーで選び_全体を読んで頼まれた行から出す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(30), false);
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        assert!(matches!(changes.body(), Body::Reading));
+        assert_eq!(changes.provisional(), None);
+        read_whole(&mut changes, 100);
+        assert!(matches!(changes.body(), Body::Whole { lines: Ok(_), .. }));
+        assert_eq!(changes.body_scroll(), 29);
+    }
+
+    #[test]
+    fn 変更の無いファイルは仮の行で選び_ファイルを送ると仮の行が消えて_diff_に戻る() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        assert_eq!(changes.provisional(), Some("plain.rs"));
+        read_whole(&mut changes, 5);
+        changes.step_file(1);
+        assert_eq!(changes.provisional(), None);
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+    }
+
+    #[test]
+    fn 仮の行がある間はツリーを一行下げて押した行とファイルを合わせる() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        assert!(!changes.select_at(0), "仮の行を押してツリーの先頭を選んだ");
+        assert!(changes.select_at(1));
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+    }
+
+    #[test]
+    fn 全体を出している間に同じファイルを選び直すと_diff_に戻る() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "a.rs".into(), None, false);
+        read_whole(&mut changes, 5);
+        assert!(changes.select_at(0));
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+    }
+
+    #[test]
+    fn 手元の_diff_に無いファイルは頼みより後に始めた読みで判定する() {
+        let mut changes = asked_long();
+        changes.note_fetching();
+        changes.open_asked("p", Path::new("/a"), "new.rs".into(), None, true);
+        let now = Instant::now();
+        assert_eq!(changes.wanted(Some(dir("/a")), now), None, "投げ中に重ねた");
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("new.rs", 4)]));
+        assert_ne!(
+            changes.selected_path(),
+            Some("new.rs"),
+            "頼みより前の読みで判定した"
+        );
+        assert_eq!(
+            changes.wanted(Some(dir("/a")), now),
+            Some(dir("/a")),
+            "読み直しを待たせた"
+        );
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("new.rs", 4)]));
+        assert_eq!(changes.selected_path(), Some("new.rs"));
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+    }
+
+    #[test]
+    fn 読み直しても_diff_に無ければ全体を出す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, true);
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        assert_eq!(changes.provisional(), Some("plain.rs"));
+        assert!(matches!(changes.body(), Body::Reading));
+    }
+
+    #[test]
+    fn 待っている頼みは選択が別の_worktree_に移ると捨て_同じパスを選ばない() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "new.rs".into(), None, true);
+        changes.note_fetching();
+        land(&mut changes, "/b", files(&[("new.rs", 1), ("z.rs", 1)]));
+        changes.note_fetching();
+        land(&mut changes, "/b", files(&[("new.rs", 1), ("z.rs", 1)]));
+        assert_eq!(
+            changes.selected_path(),
+            Some("new.rs"),
+            "先頭のファイルのまま"
+        );
+        assert_eq!(changes.provisional(), None);
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("new.rs", 4)]));
+        assert_ne!(
+            changes.selected_path(),
+            Some("new.rs"),
+            "捨てた頼みで選んだ"
+        );
+    }
+
+    #[test]
+    fn 待っている間に二つ目の頼みが来たら後の頼みが勝つ() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "new.rs".into(), None, true);
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, true);
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        changes.note_fetching();
+        land(
+            &mut changes,
+            "/a",
+            files(&[("a.rs", 3), ("b.rs", 40), ("new.rs", 4)]),
+        );
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+    }
+
+    #[test]
+    fn ai_が_diff_で出したファイルが_diff_から消えたらその全体へ移る() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, true);
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        assert_eq!(changes.provisional(), Some("b.rs"));
+        read_whole(&mut changes, 40);
+        assert!(matches!(changes.body(), Body::Whole { .. }));
+    }
+
+    #[test]
+    fn 人が選んだファイルが消えたら先頭のファイルへ移り全体にはしない() {
+        let mut changes = asked_long();
+        changes.step_file(1);
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+    }
+
+    #[test]
+    fn 古い全体の読みは据えない() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, false);
+        let (d, p, old) = changes.take_file_read().unwrap();
+        changes.open_asked("p", Path::new("/a"), "a.rs".into(), None, false);
+        changes.install_file(&d, &p, old, whole_lines(3));
+        assert!(matches!(changes.body(), Body::Reading));
+        let (d, p, seq) = changes.take_file_read().unwrap();
+        changes.install_file(&d, &p, seq + 1, whole_lines(3));
+        assert!(matches!(changes.body(), Body::Reading));
+        changes.step_file(1);
+        changes.install_file(&d, &p, seq, whole_lines(3));
+        assert!(
+            matches!(changes.body(), Body::Diff { .. }),
+            "選び直した後に据えた"
+        );
+    }
+
+    #[test]
+    fn 全体を読めない理由はそのまま右に出す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "img.bin".into(), None, false);
+        let (d, p, seq) = changes.take_file_read().unwrap();
+        changes.install_file(&d, &p, seq, Err("binary file".into()));
+        assert!(matches!(changes.body(), Body::Whole { lines: Err(r), .. } if r == "binary file"));
+    }
+
+    #[test]
+    fn 全体の読みが捨てられたら頼み直す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, false);
+        assert!(changes.take_file_read().is_some());
+        assert!(changes.take_file_read().is_none(), "同じ読みを 2 回頼んだ");
+        changes.forget_in_flight();
+        assert!(changes.take_file_read().is_some());
+    }
+
+    #[test]
+    fn 全体を出したまま別の_worktree_から戻ると読み直して全体を出す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        read_whole(&mut changes, 5);
+        land(&mut changes, "/b", files(&[("x.rs", 1)]));
+        assert!(
+            matches!(changes.body(), Body::Diff { .. }),
+            "前の worktree の全体を出した"
+        );
+        changes.open_asked("p", Path::new("/b"), "plain.rs".into(), None, false);
+        read_whole(&mut changes, 7);
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        assert_eq!(changes.provisional(), Some("plain.rs"));
+        assert!(matches!(changes.body(), Body::Reading));
+        read_whole(&mut changes, 5);
+        assert!(matches!(changes.body(), Body::Whole { .. }));
+    }
+
+    #[test]
+    fn 閉じる頼みは右にそのファイルが出ていればツリーの選択の_diff_に戻す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        assert!(!changes.close_asked(Path::new("/a"), "a.rs"));
+        assert!(changes.close_asked(Path::new("/a"), "plain.rs"));
+        assert_eq!(changes.provisional(), None);
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        assert!(matches!(changes.body(), Body::Diff { .. }));
+    }
+
+    #[test]
+    fn 狭い区画では_ai_の頼みを区画いっぱいに出し_左下に入っていなくても閉じない() {
+        let mut changes = asked_long();
+        changes.set_split(false);
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, true);
+        assert!(changes.body_open());
+        changes.note_focus(false);
+        assert!(changes.body_open());
+        changes.step_file(-1);
+        changes.note_focus(false);
+        assert!(!changes.body_open(), "人が選んだ後も出し続けた");
+    }
+
+    #[test]
+    fn 待っている頼みは人が選び直すと捨てる() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "new.rs".into(), None, true);
+        changes.step_file(1);
+        changes.note_fetching();
+        land(
+            &mut changes,
+            "/a",
+            files(&[("a.rs", 3), ("b.rs", 40), ("new.rs", 4)]),
+        );
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+    }
+
+    #[test]
+    fn 全体を出している間の読み直しは前の中身を出したままスクロールを保つ() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), Some(50), false);
+        read_whole(&mut changes, 100);
+        changes.scroll_body(-5);
+        let at = changes.body_scroll();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert!(matches!(changes.body(), Body::Whole { lines: Ok(_), .. }));
+        assert_eq!(changes.body_scroll(), at);
+        assert!(changes.take_file_read().is_some(), "読み直しを頼んでいない");
+    }
+
+    #[test]
+    fn 仮の行を出している間の読み直しは木のカーソルとホイールの位置を保つ() {
+        let mut changes = sized();
+        let names: Vec<String> = (0..20).map(|i| format!("m{i:02}.rs")).collect();
+        let refs: Vec<(&str, usize)> = names.iter().map(|p| (p.as_str(), 1)).collect();
+        land(&mut changes, "/a", files(&refs));
+        for _ in 0..8 {
+            changes.step_file(1);
+        }
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        read_whole(&mut changes, 5);
+        changes.pan_tree(6);
+        let tree = |c: &BranchChanges| {
+            let cursor = c.for_target(Some(Path::new("/a"))).unwrap().0.cursor();
+            (cursor.selected(), cursor.scroll())
+        };
+        let before = tree(&changes);
+        land(&mut changes, "/a", files(&refs));
+        assert_eq!(tree(&changes), before);
+        assert_eq!(changes.provisional(), Some("plain.rs"));
+    }
+
+    #[test]
+    fn diff_の頼みは頼みより後の読みが着いたら頼まれた行へ送り直す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(60), true);
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 80)]));
+        assert_eq!(top_new_line(&changes), Some(60));
+    }
+
+    #[test]
+    fn 送り直しの前に人がスクロールしていたら送らない() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(60), true);
+        changes.scroll_body(3);
+        let at = top_new_line(&changes);
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 80)]));
+        assert_eq!(top_new_line(&changes), at);
+    }
+
+    #[test]
+    fn 区画の高さが変わっても人がスクロールしていなければ新しい読みで送り直す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(38), true);
+        changes.set_viewport(Viewport::new(0, 20));
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 80)]));
+        assert_eq!(top_new_line(&changes), Some(38));
+    }
+
+    #[test]
+    fn diff_で出したファイルが新しい読みで消えたら全体を頼まれた行から出す() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(30), true);
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        read_whole(&mut changes, 100);
+        assert_eq!(changes.body_scroll(), 29);
+    }
+
+    #[test]
+    fn 待っている頼みは頼んだ会話が選ばれていなければ捨てる() {
+        let mut changes = asked_long();
+        changes.open_asked("p", Path::new("/a"), "new.rs".into(), None, true);
+        changes.keep_pending_for(Some("p"));
+        changes.keep_pending_for(Some("q"));
+        changes.note_fetching();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("new.rs", 4)]));
+        assert_ne!(changes.selected_path(), Some("new.rs"));
     }
 }

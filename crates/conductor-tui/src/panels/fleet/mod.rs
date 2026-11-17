@@ -337,6 +337,11 @@ impl FleetPanel {
         self.typing_shell.as_deref()
     }
 
+    /// 左下を Git Changes にする。キーボードは動かさない。
+    pub fn put_changes(&mut self) {
+        self.lower = Lower::Changes;
+    }
+
     fn show_changes(&mut self) -> Vec<Effect> {
         self.lower = Lower::Changes;
         vec![Effect::Focus(Focus::Fleet)]
@@ -1294,7 +1299,10 @@ impl FleetPanel {
                 changes.close_body();
                 return Some(vec![Effect::Focus(Focus::Fleet)]);
             }
-            Action::ShowFleetChanges => return Some(vec![Effect::Focus(Focus::Fleet)]),
+            Action::ShowFleetChanges => {
+                changes.close_body();
+                return Some(vec![Effect::Focus(Focus::Fleet)]);
+            }
             Action::ShowFleetArtifacts => self.lower = Lower::Artifacts,
             Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
             Action::Quit

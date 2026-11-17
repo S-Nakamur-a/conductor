@@ -138,7 +138,13 @@ impl McpServer {
                 "Not running inside a Conductor terminal panel, so there is no Conductor window to ask.",
             );
         };
-        match cc_hook::send(Path::new(&sock), &Notification::Ui { cwd, request }) {
+        let panel = std::env::var(cc_hook::PANEL_ID_ENV).ok();
+        let ask = Notification::Ui {
+            cwd,
+            panel,
+            request,
+        };
+        match cc_hook::send(Path::new(&sock), &ask) {
             Ok(()) => ok_text(
                 "Sent to Conductor. It takes effect only while a Conductor window is open on this repository; this tool cannot confirm that it did.",
             ),
@@ -422,7 +428,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Open a file in the Conductor window's Viewer, as a tab. Use it to show the user the code you are talking about. With diff=true it shows the file's diff against the base branch instead, scrolled to in the Files changed tab, which stacks every changed file's diff (only files changed on this branch). If the window is showing another worktree, it switches to this one first."
+        description = "Open a file in the Conductor window's Viewer, as a tab. Use it to show the user the code you are talking about. With diff=true it shows the file's diff against the base branch instead, scrolled to in the Files changed tab, which stacks every changed file's diff (only files changed on this branch). If the window is showing another worktree, it switches to this one first. While the window shows its session list instead, the file appears under the list (a diff, or the whole file when diff is false or the file is unchanged) only if this session is the one selected in the list; otherwise the window only says so."
     )]
     async fn open_file(
         &self,
@@ -443,7 +449,7 @@ impl McpServer {
     }
 
     #[tool(
-        description = "Close a file's tab (plain or diff) in the Conductor window's Viewer. Only acts while the window is showing this worktree."
+        description = "Close a file's tab (plain or diff) in the Conductor window's Viewer. Only acts while the window is showing this worktree. While the window shows its session list instead, it returns the area under the list to the file picked there, if this session is selected and that area is showing this file."
     )]
     async fn close_file(
         &self,
