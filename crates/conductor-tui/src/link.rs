@@ -17,7 +17,7 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::layout::{Layout, Region};
-use crate::panels::terminal::render::{claude_shown, link_wrapped_rows};
+use crate::panels::terminal::render::{claude_shown, link_wrapped_rows, osc8_runs};
 use crate::workspace::{Focus, Workspace};
 
 /// 会話ログを読み直すまでの間。読むのは伸びた分だけなので短くてよい。
@@ -49,6 +49,7 @@ pub fn on_screen(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Vec<Link> 
     if ws.chrome.menu.is_active() || !ws.modals.is_empty() {
         return Vec::new();
     }
+    let marked = marked_links(ws, PTY_REGIONS.map(|r| (r, layout.rect(r))), buffer);
     let mut links = Vec::new();
     for region in [Region::TerminalClaude, Region::FleetSession] {
         let Some(rect) = layout.rect(region) else {
@@ -71,7 +72,59 @@ pub fn on_screen(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Vec<Link> 
             links.extend(find(buffer, area, &Joining::Wrapped(&wrapped)));
         }
     }
+    merge(marked, links)
+}
+
+/// 子が OSC 8 で名指ししたリンクは字から推すより確かなので、重なる推測は捨てる。
+pub(crate) fn merge(marked: Vec<Link>, mut guessed: Vec<Link>) -> Vec<Link> {
+    guessed.retain(|link| !overlaps(link, &marked));
+    marked.into_iter().chain(guessed).collect()
+}
+
+const PTY_REGIONS: [Region; 4] = [
+    Region::TerminalClaude,
+    Region::FleetSession,
+    Region::TerminalShell,
+    Region::FleetChanges,
+];
+
+/// 子が OSC 8 で名指ししたリンク。Claude Code は同じ URL に同じ id を付けるので、
+/// 区画の中の同じ URL は 1 つのリンクにする。
+pub(crate) fn marked_links(
+    ws: &Workspace,
+    regions: impl IntoIterator<Item = (Region, Option<Rect>)>,
+    buffer: &Buffer,
+) -> Vec<Link> {
+    let mut links = Vec::new();
+    for (region, rect) in regions {
+        let Some(rect) = rect else {
+            continue;
+        };
+        let mut in_region: Vec<Link> = Vec::new();
+        for (y, xs, url) in osc8_runs(ws, region, rect, buffer) {
+            let segment = Segment { y, xs };
+            match in_region.iter_mut().find(|link| link.url == url) {
+                Some(link) => link.segments.push(segment),
+                None => in_region.push(Link {
+                    url,
+                    segments: vec![segment],
+                }),
+            }
+        }
+        links.extend(in_region);
+    }
     links
+}
+
+fn overlaps(link: &Link, others: &[Link]) -> bool {
+    let hits =
+        |a: &Segment, b: &Segment| a.y == b.y && a.xs.start < b.xs.end && b.xs.start < a.xs.end;
+    link.segments.iter().any(|mine| {
+        others
+            .iter()
+            .flat_map(|other| &other.segments)
+            .any(|theirs| hits(mine, theirs))
+    })
 }
 
 /// 1 行に収まる URL も包む。外の端末に拾わせると、後ろに付いた閉じ括弧や全角の字まで URL にされる。

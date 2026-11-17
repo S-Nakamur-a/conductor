@@ -107,12 +107,16 @@ text. A line the log cannot vouch for, such as the input box or the status
 lines, keeps its line break. On a live panel the plain copy lands first and is
 replaced once the log has been read.
 
-A URL wrapped over several lines is wrapped whole in an OSC 8 hyperlink, so
-terminals that follow OSC 8 (such as iTerm2) can open it from any of its lines. In a
+Links reach the outer terminal as OSC 8 hyperlinks, so terminals that follow OSC 8
+(such as iTerm2) can open a URL from any of the lines it wraps over. A link the
+program in the panel marks with OSC 8 itself is kept as it is: Claude Code marks every
+URL and markdown link it prints, so a URL it wraps inside a table cell or a sentence
+opens whole from either line, and a markdown link opens from its text. Every piece of
+the same URL in a panel is one link. Text with no such mark — a file path such as
+`foo.rs:12-15`, or a shell command's output — is found by its shape instead. In a
 shell the terminal's own wrap decides; in a Claude panel the joined text must match a
-URL in the session's log, so a URL with non-ASCII characters, a markdown link whose
-URL is not on screen, and one written after the last read (every 2s) are not joined.
-A URL on one line is wrapped too, so a `)`, `]` or `}` with nothing to pair with, a
+URL in the session's log, so a URL with non-ASCII characters and one written after the
+last read (every 2s) are not joined. A URL on one line is wrapped too, so a `)`, `]` or `}` with nothing to pair with, a
 sentence's closing punctuation and a full-width bracket or punctuation mark after it
 are not part of the link. A URL running straight into other non-ASCII text (a Japanese
 path, `Category:日本`, or `https://a.example/xを開く`) is left to the terminal, since

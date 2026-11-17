@@ -3,9 +3,11 @@
 //! 描画のたびにパーサをロックして読む。キャッシュを持たせると「描画が次フレームの
 //! 入力の前提を作る」形に戻るし、1 画面ぶんのセル複写は毎フレーム払える。
 
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -179,6 +181,82 @@ pub fn claude_shown(ws: &Workspace, region: Region, rect: Rect) -> (Option<Strin
         ),
         _ => (ws.fleet_session(), pty_area(rect)),
     }
+}
+
+/// 区画に映した PTY の画面で、OSC 8 のリンクが付いた字の並び (画面の y、桁の範囲、URL)。
+/// 描いた後のバッファと字も見た目も同じセルだけを拾うので、トランスクリプト・遡りの帯・
+/// 浮いた窓が覆った所、区画からはみ出した全角字、描いた後に PTY が書き換えた所は入らない。
+pub fn osc8_runs(
+    ws: &Workspace,
+    region: Region,
+    rect: Rect,
+    buffer: &Buffer,
+) -> Vec<(u16, Range<u16>, String)> {
+    let panel = &ws.panels.terminal;
+    let (session, scroll, content) = match region {
+        Region::TerminalClaude | Region::TerminalShell => {
+            let pane = panel.pane(region);
+            (pane.session.clone(), pane.scroll, content_area(rect))
+        }
+        Region::FleetSession => (ws.fleet_session(), 0, pty_area(rect)),
+        Region::FleetChanges => (ws.fleet_shell(), 0, pty_area(rect)),
+        _ => return Vec::new(),
+    };
+    let Some(screen) = panel
+        .index_of(session.as_deref())
+        .and_then(|index| panel.pty.screen(index))
+    else {
+        return Vec::new();
+    };
+    let mut parser = lock(&screen);
+    let wanted = if parser.screen().alternate_screen() {
+        0
+    } else {
+        scroll
+    };
+    parser.set_scrollback(wanted);
+    let screen = parser.screen();
+    let (rows, cols) = screen.size();
+    let mut runs: Vec<(u16, Range<u16>, String)> = Vec::new();
+    for row in 0..rows.min(content.height) {
+        let y = content.y + row;
+        let mut col = 0;
+        while col < cols.min(content.width) {
+            let Some(cell) = screen.cell(row, col) else {
+                break;
+            };
+            let contents = cell.contents();
+            let width = UnicodeWidthStr::width(contents.as_str()).max(1) as u16;
+            let x = content.x + col;
+            let xs = x..x + width;
+            col += width;
+            let Some(url) = screen.cell_link(row, col - width) else {
+                continue;
+            };
+            if !drawn_as(buffer, (x, y), &contents, cell_style(cell)) {
+                continue;
+            }
+            match runs.last_mut() {
+                Some((last_y, last_xs, last_url))
+                    if *last_y == y && last_xs.end == x && last_url == url =>
+                {
+                    last_xs.end = xs.end;
+                }
+                _ => runs.push((y, xs, url.to_owned())),
+            }
+        }
+    }
+    parser.set_scrollback(0);
+    runs
+}
+
+fn drawn_as(buffer: &Buffer, at: (u16, u16), contents: &str, style: Style) -> bool {
+    buffer.cell(at).is_some_and(|drawn| {
+        drawn.symbol() == contents
+            && Some(drawn.fg) == style.fg
+            && Some(drawn.bg) == style.bg
+            && drawn.modifier == style.add_modifier
+    })
 }
 
 /// スクロールバックを当てた画面で、次の行へ折り返している行 (内容領域の上から) と、画面の桁数。
