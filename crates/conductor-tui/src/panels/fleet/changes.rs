@@ -94,7 +94,7 @@ pub struct BranchChanges {
     body_height: usize,
     /// 狭くて割れないときに、diff の側を出しているか。
     body_open: bool,
-    /// 左右に割れる幅か。前の描画で決まったもの。
+    /// 左右に割れる幅か。sync_layout が渡す。
     split: bool,
     /// ホイールでツリーを動かしたか。動かしていれば読み直しで窓を選択へ寄せない。
     tree_panned: bool,
