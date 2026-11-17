@@ -8,6 +8,7 @@ pub struct Cell {
     contents: [char; CODEPOINTS_IN_CELL],
     len: u8,
     attrs: crate::attrs::Attrs,
+    link: Option<crate::link::LinkId>,
 }
 
 impl PartialEq<Self> for Cell {
@@ -15,7 +16,7 @@ impl PartialEq<Self> for Cell {
         if self.len != other.len {
             return false;
         }
-        if self.attrs != other.attrs {
+        if self.attrs != other.attrs || self.link != other.link {
             return false;
         }
         let len = self.len();
@@ -60,6 +61,15 @@ impl Cell {
     pub(crate) fn clear(&mut self, attrs: crate::attrs::Attrs) {
         self.len = 0;
         self.attrs = attrs;
+        self.link = None;
+    }
+
+    pub(crate) fn link(&self) -> Option<crate::link::LinkId> {
+        self.link
+    }
+
+    pub(crate) fn set_link(&mut self, link: Option<crate::link::LinkId>) {
+        self.link = link;
     }
 
     /// Returns the text contents of the cell.
