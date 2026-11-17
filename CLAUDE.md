@@ -213,6 +213,10 @@ What the outer terminal can open is rewritten by conductor as OSC 8 after each f
   transcript cell drawn in the default colours over the same character still passes;
   Claude Code draws its links in a colour the transcript does not use. So does a
   default-background cell in the focused region, which the frame tinted (`render::focus_tint`).
+  Everything `render()` does after the panels draw — the focus tint, the selection, a modal,
+  `fx` — rewrites what `osc8_runs` compares against, so each one is a row of any change to
+  that check. `Workspace::for_test` leaves `chrome.terminal_bg` unset, which turns the tint off:
+  #484's whole-screen test passed while a focused panel dropped every marked cell (#487).
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell
   and by the session's log in a Claude panel.
