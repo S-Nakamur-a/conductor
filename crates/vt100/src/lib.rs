@@ -33,18 +33,8 @@
 //! );
 //! ```
 
-#![warn(clippy::cargo)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
-#![warn(clippy::as_conversions)]
-#![warn(clippy::get_unwrap)]
-#![allow(clippy::cognitive_complexity)]
-#![allow(clippy::missing_const_for_fn)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::struct_excessive_bools)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::type_complexity)]
+// 取り込んだ 0.15.2 の書き方を保つため、今の clippy が足した指摘は当てない。
+#![allow(clippy::all)]
 
 mod attrs;
 mod cell;
