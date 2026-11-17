@@ -40,6 +40,7 @@ pub enum WatchEvent {
     /// パネルの Claude が MCP 越しに画面操作を頼んだ。
     UiRequest {
         cwd: PathBuf,
+        panel: Option<String>,
         request: conductor_core::cc_hook::UiRequest,
     },
 }
@@ -55,7 +56,15 @@ impl From<conductor_core::cc_hook::Notification> for WatchEvent {
                 panel_id,
                 session_id,
             },
-            Notification::Ui { cwd, request } => Self::UiRequest { cwd, request },
+            Notification::Ui {
+                cwd,
+                panel,
+                request,
+            } => Self::UiRequest {
+                cwd,
+                panel,
+                request,
+            },
         }
     }
 }

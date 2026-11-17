@@ -580,6 +580,18 @@ impl Workspace {
                     .install(dir, *diff, status, target.as_deref(), Instant::now());
                 Vec::new()
             }
+            TaskResult::FleetFile {
+                dir,
+                path,
+                seq,
+                lines,
+            } => {
+                self.panels
+                    .fleet
+                    .changes
+                    .install_file(&dir, &path, seq, lines);
+                Vec::new()
+            }
             TaskResult::FleetArtifacts { session, scan } => {
                 let fleet = &mut self.panels.fleet;
                 let target = fleet.selected_conversation().map(|c| c.id);
@@ -1170,9 +1182,8 @@ impl Workspace {
         if self.focus == Focus::FleetChanges && !self.panels.fleet.shows_changes() {
             self.focus = Focus::Fleet;
         }
-        if self.focus != Focus::FleetChanges {
-            self.panels.fleet.changes.close_body();
-        }
+        let inside = self.focus == Focus::FleetChanges;
+        self.panels.fleet.changes.note_focus(inside);
         let fleet_session = self.fleet_session();
         let fleet_shell = self.fleet_shell();
         self.panels

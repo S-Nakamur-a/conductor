@@ -19,6 +19,7 @@ use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Workt
 use crate::effect::Effect;
 use crate::modal::Confirm;
 use crate::panels::explorer::git_changes;
+use crate::panels::viewer::render::digit_count;
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
@@ -725,7 +726,20 @@ fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
         return;
     };
     let split = super::changes::split(inner, fleet.changes.body_open());
-    if let Some(tree) = split.tree {
+    if let Some(mut tree) = split.tree {
+        let provisional = fleet.changes.provisional();
+        if let Some(path) = provisional {
+            let row = Rect { height: 1, ..tree };
+            let style = Style::default()
+                .fg(ws.theme.selected_fg)
+                .bg(ws.theme.selected_bg);
+            frame.render_widget(
+                Paragraph::new(Line::styled(format!("  \u{00b7} {path}"), style)),
+                row,
+            );
+            tree.y += 1;
+            tree.height = tree.height.saturating_sub(1);
+        }
         let lines = git_changes::render::lines(
             changes,
             status,
@@ -737,7 +751,8 @@ fn changes(frame: &mut Frame, rect: Rect, ws: &Workspace) {
                 width: usize::from(tree.width),
                 height: usize::from(tree.height),
             },
-            ws.focus == Focus::FleetChanges,
+            // 仮の行が選ばれている間は、ツリーの選択を沈めて 2 つ目の選択に見せない。
+            ws.focus == Focus::FleetChanges && provisional.is_none(),
         );
         frame.render_widget(Paragraph::new(lines), tree);
     }
@@ -759,61 +774,86 @@ fn change_body(
     changes: &git_changes::GitChanges,
     body: Rect,
 ) -> Vec<Line<'static>> {
+    use super::changes::Body;
     let theme = &ws.theme;
     let branch = &ws.panels.fleet.changes;
-    let Some(file) = branch
-        .selected_path()
-        .and_then(|path| changes.diff().files.iter().find(|f| f.path == path))
-    else {
-        return vec![Line::styled(
-            "  ファイルを選ぶと diff が出る",
-            Style::default().fg(theme.hint),
-        )];
+    let hint = |text: String| Line::styled(format!("  {text}"), Style::default().fg(theme.hint));
+    let Some(path) = branch.selected_path() else {
+        return vec![hint("ファイルを選ぶと diff が出る".into())];
     };
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            format!(" {} ", file.status.letter()),
-            Style::default().fg(git_changes::render::status_color(theme, file.status)),
-        ),
-        Span::styled(
-            file.path.clone(),
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  +{}", file.added_lines),
-            Style::default().fg(theme.diff_add),
-        ),
-        Span::styled(
-            format!(" \u{2212}{}", file.deleted_lines),
-            Style::default().fg(theme.diff_del),
-        ),
-    ])];
-    let shown = branch.body();
-    if shown.entries.is_empty() {
-        lines.push(Line::styled(
-            "  Binary or empty file",
+    let file = changes.diff().files.iter().find(|f| f.path == path);
+    let mut header = match file {
+        Some(file) => vec![
+            Span::styled(
+                format!(" {} ", file.status.letter()),
+                Style::default().fg(git_changes::render::status_color(theme, file.status)),
+            ),
+            Span::styled(
+                path.to_string(),
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  +{}", file.added_lines),
+                Style::default().fg(theme.diff_add),
+            ),
+            Span::styled(
+                format!(" \u{2212}{}", file.deleted_lines),
+                Style::default().fg(theme.diff_del),
+            ),
+        ],
+        None => vec![
+            Span::raw("   "),
+            Span::styled(
+                path.to_string(),
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
+        ],
+    };
+    if matches!(branch.body(), Body::Reading | Body::Whole { .. }) {
+        header.push(Span::styled(
+            "  whole file",
             Style::default().fg(theme.hint),
         ));
-        return lines;
     }
+    let mut lines = vec![Line::from(header)];
     let width = usize::from(body.width);
-    lines.extend(
-        shown
-            .entries
-            .iter()
-            .skip(branch.body_scroll())
-            .take(usize::from(body.height).saturating_sub(1))
-            .map(|entry| {
-                crate::panels::viewer::render::unified_line(
-                    entry,
-                    theme,
-                    shown.digits,
-                    width,
-                    0,
-                    None,
-                )
-            }),
-    );
+    let rows = usize::from(body.height).saturating_sub(1);
+    let scroll = branch.body_scroll();
+    match branch.body() {
+        Body::Nothing => lines.push(hint("Binary or empty file".into())),
+        Body::Diff { entries, .. } if entries.is_empty() => {
+            lines.push(hint("Binary or empty file".into()))
+        }
+        Body::Diff { entries, digits } => {
+            lines.extend(entries.iter().skip(scroll).take(rows).map(|entry| {
+                crate::panels::viewer::render::unified_line(entry, theme, *digits, width, 0, None)
+            }))
+        }
+        Body::Reading => lines.push(hint("reading\u{2026}".into())),
+        Body::Whole {
+            lines: Err(reason), ..
+        } => lines.push(hint(reason.clone())),
+        Body::Whole {
+            lines: Ok(text), ..
+        } => {
+            let digits = digit_count(text.len());
+            lines.extend(
+                text.iter()
+                    .enumerate()
+                    .skip(scroll)
+                    .take(rows)
+                    .map(|(i, line)| {
+                        Line::from(vec![
+                            Span::styled(
+                                format!("{:>digits$} \u{2502} ", i + 1),
+                                Style::default().fg(theme.muted),
+                            ),
+                            Span::styled(line.clone(), Style::default().fg(theme.fg)),
+                        ])
+                    }),
+            );
+        }
+    }
     lines
 }
 

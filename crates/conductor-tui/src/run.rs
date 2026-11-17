@@ -278,7 +278,11 @@ fn watch_effects(
     use conductor_svc::watch::WatchEvent;
     match watch {
         WatchEvent::RefreshRequested => vec![Effect::Spawn(Task::LoadReview)],
-        WatchEvent::UiRequest { cwd, request } => crate::remote::effects(ws, &cwd, request),
+        WatchEvent::UiRequest {
+            cwd,
+            panel,
+            request,
+        } => crate::remote::effects(ws, &cwd, panel.as_deref(), request),
         // 索引の作り直しは自前の静穏時間で数えるので、1 件ずつそのまま渡す。
         WatchEvent::FsChanged(path) => {
             crate::index::note_change(ws, &path);
@@ -399,6 +403,13 @@ fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: I
     let fleet = &ws.panels.fleet;
     if let Some(dir) = fleet.changes.wanted(fleet.selected_dir(), now) {
         apply(ws, svc, vec![Effect::Spawn(Task::FleetChanges { dir })]);
+    }
+    if let Some((dir, path, seq)) = ws.panels.fleet.changes.take_file_read() {
+        apply(
+            ws,
+            svc,
+            vec![Effect::Spawn(Task::LoadFleetFile { dir, path, seq })],
+        );
     }
 }
 
@@ -3339,6 +3350,29 @@ needle here
         on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 0));
         assert_eq!(ws.focus, Focus::FleetChanges);
         (ws, svc, l)
+    }
+
+    #[test]
+    fn ai_が開いた変更の無いファイルはツリーの上の仮の行と右の全体に出る() {
+        let (mut ws, _svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        land_changes(&mut ws, "/r/app", &["a.rs"]);
+        let changes = &mut ws.panels.fleet.changes;
+        changes.open_asked(
+            std::path::Path::new("/r/app"),
+            "plain.rs".into(),
+            Some(50),
+            false,
+        );
+        let (dir, path, seq) = changes.take_file_read().unwrap();
+        let text = (1..=100).map(|n| format!("plain {n:03}")).collect();
+        changes.install_file(&dir, &path, seq, Ok(text));
+        let drawn = drawn_changes(&mut ws, &l);
+        assert!(drawn.contains("\u{00b7} plain.rs"), "{drawn}");
+        assert!(drawn.contains("whole file"), "{drawn}");
+        assert!(drawn.contains("plain 050"), "{drawn}");
+        assert!(!drawn.contains("plain 049"), "頼まれた行から出していない");
+        assert!(drawn.contains("a.rs"), "ツリーが消えた");
     }
 
     #[test]

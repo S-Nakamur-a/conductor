@@ -267,6 +267,12 @@ pub enum Task {
     FleetChanges {
         dir: PathBuf,
     },
+    /// 一覧の左下に出すファイル全体。seq で照合する。
+    LoadFleetFile {
+        dir: PathBuf,
+        path: String,
+        seq: u64,
+    },
     /// 一覧で選んだセッションが publish した Artifact。from の続きから読む。
     FleetArtifacts {
         conversation: crate::panels::fleet::artifacts::Conversation,
@@ -434,6 +440,12 @@ pub enum TaskResult {
         dir: PathBuf,
         diff: Box<DiffState>,
         status: GitStatusMap,
+    },
+    FleetFile {
+        dir: PathBuf,
+        path: String,
+        seq: u64,
+        lines: Result<Vec<String>, String>,
     },
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
@@ -1002,6 +1014,20 @@ impl Task {
                         (dir, diff, status)
                     },
                     |(dir, diff, status)| TaskResult::FleetChanges { dir, diff, status },
+                );
+            }
+            Task::LoadFleetFile { dir, path, seq } => {
+                svc.spawn(
+                    move || {
+                        let lines = content::read_lines(&dir, &path, env.tab_width);
+                        (dir, path, seq, lines)
+                    },
+                    |(dir, path, seq, lines)| TaskResult::FleetFile {
+                        dir,
+                        path,
+                        seq,
+                        lines,
+                    },
                 );
             }
             Task::FleetArtifacts { conversation, from } => {

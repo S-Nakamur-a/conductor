@@ -1309,7 +1309,7 @@ mod screen {
             line: None,
             diff: true,
         };
-        let effects = crate::remote::effects(&mut ws, &feat, open);
+        let effects = crate::remote::effects(&mut ws, &feat, None, open);
         assert!(
             matches!(
                 effects.as_slice(),
