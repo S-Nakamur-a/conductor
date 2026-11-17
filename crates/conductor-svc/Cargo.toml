@@ -10,7 +10,7 @@ conductor-core = { path = "../conductor-core" }
 anyhow = "1"
 log = "0.4"
 portable-pty = "0.9"
-vt100 = "0.15"
+vt100 = { path = "../vt100" }
 notify = "8"
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2"

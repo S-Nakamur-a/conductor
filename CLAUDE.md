@@ -378,11 +378,17 @@ crates/
   conductor-mcp/    conductor mcp-serve — the review DB over stdio.
   conductor-tui/    the screen: panels, modals, route / layout / Effect / render.
   sheaf-core/       the SCIP index with confidence attached.
+  vt100/            the terminal parser, vendored from crates.io 0.15.2 (MIT).
+                    It has its own rustfmt.toml and allows clippy::all and
+                    deprecated in lib.rs, so those warnings do not fail CI's
+                    -D warnings. The original is the commit
+                    "chore: vt100 0.15.2 を crates/vt100 に取り込む".
 src/main.rs         five lines: hands this package's version to conductor_tui::entry::run.
 ```
 
 Dependency direction: `tui → svc → core ← sheaf-core`. core knows
-neither tui nor svc, and cargo enforces it. The version string comes from the
+neither tui nor svc, and cargo enforces it. vt100 is a leaf that conductor-svc and
+conductor-tui depend on. The version string comes from the
 root `Cargo.toml` and is passed in, so `conductor -V`, the status line and the
 self-update comparison all read one number.
 
