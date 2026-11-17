@@ -384,6 +384,24 @@ fn 画面全体を通しても印のリンクが包まれる() {
 }
 
 #[test]
+fn フォーカスの地を敷いた区画でも印のリンクが包まれる() {
+    let url = "https://a.example/focused";
+    let mut shown = claude_showing(6, 40, osc8(url, url).as_bytes());
+    shown.ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(30, 30, 40));
+    shown.ws.focus = crate::workspace::Focus::TerminalClaude;
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = crate::layout::layout(&shown.ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| crate::render::render(frame, &shown.ws, &layout))
+        .unwrap();
+    let links = crate::link::on_screen(&shown.ws, &layout, terminal.backend().buffer());
+    let marked: Vec<&Link> = links.iter().filter(|l| l.url == url).collect();
+    assert_eq!(marked.len(), 1, "{links:?}");
+    assert_eq!(marked[0].segments[0].xs.len(), url.len());
+}
+
+#[test]
 fn 描いた後にptyが同じ字を別の色で書き換えたセルは包まない() {
     let url = "https://a.example/changed";
     let shown = claude_showing(4, 40, osc8(url, url).as_bytes());
