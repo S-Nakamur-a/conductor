@@ -1,6 +1,6 @@
 //! 埋め込みの既定バインディングにユーザの [keybinds] を重ね、KeyEvent を Action に解決する。
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use keymap_suite::{ActionName, KeyInput, Keymap, Loaded, resolve_layered};
 
 use super::action::Action;
@@ -46,6 +46,20 @@ impl KeyMap {
         resolve_layered(self.chain(context), &input)
             .copied()
             .filter(|action| fires_in(*action, context))
+    }
+
+    /// メニュー・モーダル・端末区画の上でも先回りして終了させるキーか。修飾キー付きの
+    /// チョードと F キーに限るのは、quit に束ねた文字キーを入力欄や Claude に打った
+    /// だけで窓が閉じ、書きかけが消えるのを避けるため。
+    pub fn quits_from_anywhere(&self, key: &KeyEvent, context: KeyContext) -> bool {
+        let chord = key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+            || matches!(key.code, KeyCode::F(_));
+        let Ok(input) = KeyInput::try_from(*key) else {
+            return false;
+        };
+        chord && resolve_layered(self.chain(context), &input) == Some(&Action::Quit)
     }
 
     /// コンテキストで action を発火させる全チョードの表示文字列 (keymap-core の

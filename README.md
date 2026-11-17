@@ -323,7 +323,7 @@ command by name.
 | **Ctrl+n** / **Ctrl+t** | new Claude Code session / new shell (in the Sessions list, Ctrl+n opens its own menu and Ctrl+t the selected worktree's shell under the list) |
 | **j/k** · **h/l** · **g/G** | up/down · collapse/expand · top/bottom (in the Sessions list, g opens the pull request) |
 | **/** · **Ctrl+g** | search · full-text (grep) search (in the Sessions list, Ctrl+g shows Git Changes under the list and Ctrl+a the selected session's artifacts) |
-| **Esc** · **Ctrl+q** | back / close overlay · quit |
+| **Esc** · **Ctrl+q** | back / close overlay · quit (also over dialogs, the menu and terminal panels, so a program inside a terminal never receives Ctrl+q; `"ctrl+q" = false` under `[keybinds.keys]` turns it off) |
 
 To drive Chrome from Claude, start the session with *Terminal ▸ New Claude Code
 Session (Chrome)* (or "New Claude Code (Chrome)" in the palette), pick

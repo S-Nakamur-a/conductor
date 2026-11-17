@@ -1498,26 +1498,162 @@ mod tests {
         assert!(ws.panels.viewer.tabs().is_empty(), "a.txt は新しい根に無い");
     }
 
-    /// ターミナルへ入ると Tab も ctrl+q も PTY のものになり、パネルを跨ぐのは
-    /// fires_in_terminal なチョード (alt+l) だけになる。
     #[test]
-    fn フォーカス移動と終了はターミナルで振る舞いが変わる() {
+    fn ターミナルでは_tabは端末へ届きパネルを跨ぐのは_alt_lだけ() {
         let alt_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::ALT);
-        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
         let mut ws = Workspace::for_test();
 
         press(&mut ws, &[key(KeyCode::Tab), key(KeyCode::Tab)]);
         assert_eq!(ws.focus, Focus::TerminalClaude);
-        press(&mut ws, &[key(KeyCode::Tab), ctrl_q]);
+        press(&mut ws, &[key(KeyCode::Tab)]);
         assert_eq!(ws.focus, Focus::TerminalClaude);
-        assert!(!ws.should_quit);
 
         press(&mut ws, &[alt_l]);
         assert_eq!(ws.focus, Focus::TerminalShell);
         press(&mut ws, &[alt_l]);
         assert_eq!(ws.focus, Focus::Explorer);
-        press(&mut ws, &[ctrl_q]);
-        assert!(ws.should_quit);
+    }
+
+    fn ctrl_q() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)
+    }
+
+    fn with_keybinds(toml_text: &str) -> Workspace {
+        let mut ws = Workspace::for_test();
+        let user: toml::Table = toml::from_str(toml_text).unwrap();
+        ws.keymap = conductor_core::keymap::KeyMap::with_warnings(&user).0;
+        ws
+    }
+
+    fn screens(make: impl Fn() -> Workspace) -> Vec<(String, Workspace)> {
+        let mut out = Vec::new();
+        for focus in [
+            Focus::Fleet,
+            Focus::Explorer,
+            Focus::Viewer,
+            Focus::TerminalClaude,
+            Focus::TerminalShell,
+            Focus::FleetSession,
+            Focus::FleetShell,
+        ] {
+            let mut ws = make();
+            ws.focus = focus;
+            out.push((format!("{focus:?}"), ws));
+        }
+        let mut menu = make();
+        press(&mut menu, &[key(KeyCode::F(10))]);
+        assert!(menu.chrome.menu.is_active());
+        out.push(("menu".into(), menu));
+        let mut help = make();
+        press(&mut help, &[key(KeyCode::Char('?'))]);
+        assert!(matches!(help.modals.as_slice(), [Modal::Help(_)]));
+        out.push(("help".into(), help));
+        let mut palette = make();
+        press(
+            &mut palette,
+            &[KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)],
+        );
+        assert!(matches!(palette.modals.as_slice(), [Modal::Palette(_)]));
+        out.push(("palette".into(), palette));
+        let mut chord = make();
+        chord.focus = Focus::Viewer;
+        press(&mut chord, &[key(KeyCode::Char('z'))]);
+        assert!(chord.panels.viewer.awaiting_chord());
+        out.push(("viewer z".into(), chord));
+        let mut nav = make();
+        nav.focus = Focus::Viewer;
+        press(&mut nav, &[key(KeyCode::Char('g'))]);
+        assert!(nav.panels.viewer.awaiting_chord());
+        out.push(("viewer g".into(), nav));
+        let mut editor = make();
+        editor.modals.push(Modal::CommentEditor(
+            crate::modal::CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None),
+        ));
+        press(
+            &mut editor,
+            &[key(KeyCode::Char('w')), key(KeyCode::Char('i'))],
+        );
+        assert!(matches!(
+            editor.modals.as_slice(),
+            [Modal::CommentEditor(_)]
+        ));
+        out.push(("comment editor".into(), editor));
+        out
+    }
+
+    #[test]
+    fn 修飾付きの終了キーはどの画面からでも終了する() {
+        for (name, mut ws) in screens(Workspace::for_test) {
+            press(&mut ws, &[ctrl_q()]);
+            assert!(ws.should_quit, "{name} で ctrl+q が終了しなかった");
+        }
+    }
+
+    #[test]
+    fn alt付きとfキーの終了キーも端末とモーダルの上で終了する() {
+        for k in [
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT),
+            key(KeyCode::F(9)),
+        ] {
+            for (name, mut ws) in
+                screens(|| with_keybinds("[keys]\n\"alt+x\" = \"quit\"\n\"f9\" = \"quit\""))
+            {
+                press(&mut ws, &[k]);
+                assert!(ws.should_quit, "{name} で {k:?} が終了しなかった");
+            }
+        }
+    }
+
+    #[test]
+    fn 終了キーを外した設定ではどの画面でも終了しない() {
+        for (name, mut ws) in screens(|| with_keybinds("[keys]\n\"ctrl+q\" = false")) {
+            press(&mut ws, &[ctrl_q()]);
+            assert!(!ws.should_quit, "{name} で外した ctrl+q が終了した");
+        }
+    }
+
+    #[test]
+    fn 層で束ね直した終了キーは束ね直した先に従う() {
+        let mut ws = with_keybinds("[layers.explorer]\n\"ctrl+q\" = \"show_help\"");
+        ws.focus = Focus::Explorer;
+        press(&mut ws, &[ctrl_q()]);
+        assert!(
+            !ws.should_quit,
+            "explorer の層で束ね直した ctrl+q が終了した"
+        );
+        assert!(matches!(ws.modals.as_slice(), [Modal::Help(_)]));
+        press(&mut ws, &[key(KeyCode::Esc)]);
+
+        let mut ws = with_keybinds("[layers.overlay]\n\"ctrl+q\" = \"select\"");
+        press(&mut ws, &[key(KeyCode::Char('?')), ctrl_q()]);
+        assert!(
+            !ws.should_quit,
+            "overlay の層で束ね直した ctrl+q がモーダルで終了した"
+        );
+        press(&mut ws, &[key(KeyCode::Esc), ctrl_q()]);
+        assert!(
+            ws.should_quit,
+            "モーダルを閉じた後の explorer で終了しなかった"
+        );
+    }
+
+    #[test]
+    fn 文字キーを終了に束ねてもモーダルと端末では終了しない() {
+        let mut ws = with_keybinds("[keys]\n\"Q\" = \"quit\"\n[layers.fleet]\n\"x\" = \"quit\"");
+        let shift_q = KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT);
+        ws.focus = Focus::TerminalClaude;
+        press(&mut ws, &[shift_q]);
+        assert!(!ws.should_quit, "端末に打った Q で終了した");
+
+        ws.focus = Focus::Fleet;
+        press(
+            &mut ws,
+            &[key(KeyCode::Char('?')), key(KeyCode::Char('x')), shift_q],
+        );
+        assert!(!ws.should_quit, "モーダルに打った x / Q で終了した");
+
+        press(&mut ws, &[key(KeyCode::Esc), key(KeyCode::Char('x'))]);
+        assert!(ws.should_quit, "一覧の層の x が一覧で終了しなかった");
     }
 
     #[test]

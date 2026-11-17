@@ -1,11 +1,11 @@
-//! キー 1 つの行き先を決める唯一の関数。段は menu → modal の top → パネルの 2 打鍵目
-//! → PTY 転送 → keymap。
+//! キー 1 つの行き先を決める唯一の関数。段は終了のチョード → menu → modal の top
+//! → パネルの 2 打鍵目 → PTY 転送 → keymap。
 //!
 //! 2 打鍵目の段があるのは、折りたたみ (za/zc/zo/zm/zr/zR/zM) の語彙をキーマップに
 //! 載せていないため。キーマップに載せると 7 つのアクションが増え、しかも 1 打鍵目を
 //! 押した後だけ意味を持つという条件が表に出せない。
 
-use conductor_core::keymap::Action;
+use conductor_core::keymap::{Action, KeyContext};
 use crossterm::event::KeyEvent;
 
 use crate::effect::Effect;
@@ -23,6 +23,15 @@ pub enum Routed {
 }
 
 pub fn route(ws: &mut Workspace, key: KeyEvent) -> Routed {
+    let overlay = ws.chrome.menu.is_active() || !ws.modals.is_empty();
+    let context = if overlay {
+        KeyContext::Overlay
+    } else {
+        ws.key_context()
+    };
+    if ws.keymap.quits_from_anywhere(&key, context) {
+        return Routed::Effects(global_effects(ws, Action::Quit));
+    }
     if ws.chrome.menu.is_active() {
         return Routed::Effects(crate::menu::key(ws, key));
     }
@@ -91,11 +100,11 @@ mod tests {
     }
 
     #[test]
-    fn モーダルが開いていれば_topが全てのキーを消費する() {
+    fn モーダルが開いていれば_topが終了キー以外を消費する() {
         let mut ws = Workspace::for_test();
         ws.modals
             .push(Modal::Help(crate::modal::help::Help::open(ws.focus)));
-        for k in [key(KeyCode::Char('j')), ctrl('q'), key(KeyCode::Char('あ'))] {
+        for k in [key(KeyCode::Char('j')), ctrl('w'), key(KeyCode::Char('あ'))] {
             assert!(matches!(route(&mut ws, k), Routed::Effects(_)), "{k:?}");
         }
         assert!(!ws.should_quit);
@@ -124,7 +133,7 @@ mod tests {
             route(&mut ws, key(KeyCode::Char('j'))),
             Routed::ForwardToPty(_)
         ));
-        assert!(matches!(route(&mut ws, ctrl('q')), Routed::ForwardToPty(_)));
+        assert!(matches!(route(&mut ws, ctrl('r')), Routed::ForwardToPty(_)));
     }
 
     #[test]
@@ -261,8 +270,8 @@ mod tests {
         let mut ws = Workspace::for_test();
         ws.focus = Focus::Explorer;
         assert!(matches!(
-            route(&mut ws, ctrl('q')),
-            Routed::Action(Action::Quit)
+            route(&mut ws, key(KeyCode::Char('?'))),
+            Routed::Action(Action::ShowHelp)
         ));
         assert_eq!(route(&mut ws, key(KeyCode::Char('あ'))), Routed::Ignored);
     }

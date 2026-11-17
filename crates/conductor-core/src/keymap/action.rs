@@ -254,7 +254,8 @@ impl Action {
     }
 
     /// PTY を持つパネルがフォーカスされている間、このアクションを横取りするか。
-    /// false のチョードは内側のプログラムへ転送される (ctrl+r や ctrl+q/XON を奪わない)。
+    /// false のチョードは内側のプログラムへ転送される (ctrl+r を奪わない)。終了だけは
+    /// KeyMap::quits_from_anywhere で route が先回りするので、ここには載せない。
     /// PTY 横取りの唯一の真実の源で、KeyMap::resolve も keys_for_action もこれに従う。
     pub fn fires_in_terminal(self) -> bool {
         matches!(

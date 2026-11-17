@@ -409,12 +409,15 @@ the panels, a `Vec<Modal>` and the chrome (status, menu state, layout ratios).
 Input ─route()─> Routed ─update()─> Vec<Effect> ─apply()─> Workspace ─render(&Workspace)─> Frame
 ```
 
-- `route` is the only function deciding where a key goes: menu → the top modal →
-  a panel's second chord key → PTY forwarding → keymap. **The default is to
-  consume**, which keeps an IME's composing glyphs from leaking outward; it is a
-  property of the top modal, not a rule repeated per stage.
+- `route` is the only function deciding where a key goes: quit chord → menu → the
+  top modal → a panel's second chord key → PTY forwarding → keymap. **The default is
+  to consume**, which keeps an IME's composing glyphs from leaking outward; it is a
+  property of the top modal, not a rule repeated per stage. The quit stage
+  (`KeyMap::quits_from_anywhere`) takes only a modified chord or an F key bound to
+  `quit`, read from the `overlay` layer while a menu or modal is open: a plain key
+  bound to quit would close the window on a character typed into a dialog or Claude.
 - `Action::fires_in_terminal()` is the single source of truth for what a terminal
-  panel does *not* forward to the PTY. A plain-character key added to a layer whose
+  panel does *not* forward to the PTY, quit aside. A plain-character key added to a layer whose
   screen also has a PTY region (Sessions: its right side and the lower shell) gets a
   `route.rs` test that it still reaches the PTY there: `!` is Claude's bash mode.
 - **`render` takes `&Workspace` only.** Hit geometry is never a by-product of

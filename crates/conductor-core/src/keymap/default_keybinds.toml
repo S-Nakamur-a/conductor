@@ -18,7 +18,8 @@
 
 # ── Global ──────────────────────────────────────────────────────────────────
 [keys]
-# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. Note:
+# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. It also
+# works over dialogs, the menu and terminal panels (see README). Note:
 # ctrl+q is XON in some terminals' flow control — verify it reaches the app.
 "ctrl+q" = "quit"
 "?" = "show_help"
