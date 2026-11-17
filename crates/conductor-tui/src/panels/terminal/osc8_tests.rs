@@ -265,7 +265,7 @@ fn 遡って読んでいる間は帯の重なる最上行を包まない() {
 }
 
 #[test]
-fn トランスクリプトを開いている間は印を読まない() {
+fn トランスクリプトを開いている間は描いた字と違うセルを包まない() {
     let url = "https://a.example/transcript";
     let mut shown = claude_showing(4, 40, osc8(url, url).as_bytes());
     let id = shown.id.clone();
@@ -365,4 +365,70 @@ fn 印のリンクと重なる推測は捨て重ならない推測は残す() {
     ];
     let urls: Vec<String> = merge(marked, guessed).into_iter().map(|l| l.url).collect();
     assert_eq!(urls, ["https://real.example", "https://other.example"]);
+}
+
+#[test]
+fn 画面全体を通しても印のリンクが包まれる() {
+    let url = "https://a.example/whole";
+    let shown = claude_showing(6, 40, osc8(url, "https://shown.example/text").as_bytes());
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = crate::layout::layout(&shown.ws, area);
+    assert!(layout.rect(Region::TerminalClaude).is_some());
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| crate::render::render(frame, &shown.ws, &layout))
+        .unwrap();
+    let links = crate::link::on_screen(&shown.ws, &layout, terminal.backend().buffer());
+    let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+    assert_eq!(urls, [url]);
+}
+
+#[test]
+fn 描いた後にptyが同じ字を別の色で書き換えたセルは包まない() {
+    let url = "https://a.example/changed";
+    let shown = claude_showing(4, 40, osc8(url, url).as_bytes());
+    let rect = claude_rect(&shown);
+    let buffer = draw(&shown, rect);
+    feed(
+        &shown,
+        format!("\x1b[1;1H\x1b[31m{}\x1b[m", osc8(url, "h")).as_bytes(),
+    );
+    let links = marked(&shown, rect, &buffer);
+    let content = render::content_area(rect);
+    assert_eq!(links[0].segments[0].xs.start, content.x + 1);
+}
+
+#[test]
+fn 代替画面のリンクは遡りの量に依らず映っている行で読む() {
+    let url = "https://a.example/alternate";
+    let bytes = format!(
+        "a\r\nb\r\nc\r\nd\r\ne\r\n\x1b[?1049h\x1b[H{}",
+        osc8(url, url)
+    );
+    let mut shown = claude_showing(4, 40, bytes.as_bytes());
+    shown.ws.panels.terminal.claude.scroll = 3;
+    let rect = claude_rect(&shown);
+    let buffer = draw(&shown, rect);
+    let links = marked(&shown, rect, &buffer);
+    assert_eq!(links.len(), 1, "{links:?}");
+    assert_eq!(links[0].segments[0].y, render::content_area(rect).y);
+}
+
+#[test]
+fn シェルの区画でも子が付けたリンクを包む() {
+    let url = "https://a.example/shell";
+    let mut shown = claude_showing(4, 40, format!("$ {}", osc8(url, "x")).as_bytes());
+    let id = shown.id.clone();
+    shown.ws.panels.terminal.shell.show(Some(id));
+    let (rows, cols) = shown.size;
+    let rect = Rect::new(0, 0, cols + 2, rows + 3);
+    let mut terminal = Terminal::new(TestBackend::new(rect.width, rect.height)).unwrap();
+    terminal
+        .draw(|frame| render::pane(frame, rect, &shown.ws, Region::TerminalShell))
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let links = marked_links(&shown.ws, [(Region::TerminalShell, Some(rect))], &buffer);
+    assert_eq!(links.len(), 1, "{links:?}");
+    assert_eq!(links[0].url, url);
+    assert_eq!(texts(&buffer, &links[0]), ["x"]);
 }

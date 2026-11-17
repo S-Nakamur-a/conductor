@@ -8,6 +8,8 @@ pub(crate) type LinkId = NonZeroU16;
 
 /// vte が 1 つの OSC で割る params の上限。達したら後ろの `;` 以降は捨てられている。
 const MAX_OSC_PARAMS: usize = 16;
+/// vte (既定の no_std) が `;` を除いた OSC の中身を溜める上限。満ちたら後ろは黙って捨てる。
+const MAX_OSC_RAW: usize = 1024;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Links {
@@ -24,7 +26,8 @@ impl Links {
     /// 途中までの URL を開かせるより開かせない方がよいので、欠けたかもしれない URL
     /// と外の端末へ書き戻せない字を含む URL はリンクにしない。
     pub(crate) fn open(&mut self, params: &[&[u8]]) -> Option<LinkId> {
-        if params.len() >= MAX_OSC_PARAMS {
+        let raw_len: usize = params.iter().map(|param| param.len()).sum();
+        if params.len() >= MAX_OSC_PARAMS || raw_len >= MAX_OSC_RAW {
             return None;
         }
         let url = params.get(2..).unwrap_or_default().join(&b';');

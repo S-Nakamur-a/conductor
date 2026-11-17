@@ -184,8 +184,7 @@ pub fn claude_shown(ws: &Workspace, region: Region, rect: Rect) -> (Option<Strin
 }
 
 /// 区画に映した PTY の画面で、OSC 8 のリンクが付いた字の並び (画面の y、桁の範囲、URL)。
-/// 描いた後のバッファと字も見た目も同じセルだけを拾うので、トランスクリプト・遡りの帯・
-/// 浮いた窓が覆った所、区画からはみ出した全角字、描いた後に PTY が書き換えた所は入らない。
+/// 描いた後のバッファと字も見た目も同じセルだけを拾う。描いた後に覆われた所と書き換わった所を包まないため。
 pub fn osc8_runs(
     ws: &Workspace,
     region: Region,
@@ -209,12 +208,7 @@ pub fn osc8_runs(
         return Vec::new();
     };
     let mut parser = lock(&screen);
-    let wanted = if parser.screen().alternate_screen() {
-        0
-    } else {
-        scroll
-    };
-    parser.set_scrollback(wanted);
+    parser.set_scrollback(scroll);
     let screen = parser.screen();
     let (rows, cols) = screen.size();
     let mut runs: Vec<(u16, Range<u16>, String)> = Vec::new();

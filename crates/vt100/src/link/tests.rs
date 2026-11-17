@@ -294,3 +294,30 @@ fn リンクの無い画面の書き出しにosc8は入らない() {
     let formatted = parser.screen().state_formatted();
     assert!(!formatted.windows(3).any(|w| w == b"]8;"), "{formatted:?}");
 }
+
+#[test]
+fn 大きさを変えても残るセルのリンクは残る() {
+    let mut parser = parse(3, 10, &[&open(URL)[..], b"ab", CLOSE].concat());
+    parser.set_size(3, 6);
+    assert_eq!(linked_cols(&parser, 0), vec![0, 1]);
+    parser.set_size(5, 10);
+    assert_eq!(linked_cols(&parser, 0), vec![0, 1]);
+}
+
+#[test]
+fn vteの1024バイトに届いて切れたかもしれないurlはリンクにしない() {
+    // params は "8" と "id=x" と URL で、vte は `;` を数えない。
+    let url_of = |total: usize| {
+        let head = "https://a.example/";
+        format!("{head}{}", "a".repeat(total - 1 - 4 - head.len()))
+    };
+    let fits = url_of(1023);
+    let parser = parse(3, 10, &[&open(&fits)[..], b"x"].concat());
+    assert_eq!(parser.screen().cell_link(0, 0), Some(fits.as_str()));
+
+    for total in [1024, 1138, 2048] {
+        let cut = url_of(total);
+        let parser = parse(3, 10, &[&open(&cut)[..], b"x"].concat());
+        assert_eq!(parser.screen().cell_link(0, 0), None, "{total}");
+    }
+}

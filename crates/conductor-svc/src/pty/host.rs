@@ -453,8 +453,7 @@ fn snapshot(history: Option<&VecDeque<u8>>, screen: &vt100::Screen) -> Vec<u8> {
     let mut bytes: Vec<u8> = history
         .map(|h| h.iter().copied().collect())
         .unwrap_or_default();
-    // 生履歴がリンクを開いたまま、または OSC 8 の途中で終わっていると、
-    // 後ろの書き出しの字が全部そのリンクになる。開いているリンクは書き出しの最後で開き直す。
+    // 生履歴が開いたままのリンクや途中で切れた OSC 8 を残すと、後ろの書き出し全部がリンクになる。
     bytes.extend_from_slice(b"\x1b]8;;\x1b\\");
     // vt100 の状態の書き出しは代替画面に居ることを含まない。
     if screen.alternate_screen() {

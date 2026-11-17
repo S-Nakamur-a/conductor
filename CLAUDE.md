@@ -185,15 +185,19 @@ What the outer terminal can open is rewritten by conductor as OSC 8 after each f
 - **The child's own OSC 8.** The vendored vt100 keeps it per cell (the only behaviour
   changed there; `git diff` from the vendoring commit shows all of it): a cell carries a 16-bit
   index into its screen's URL table, outside `Attrs`, so SGR 0 keeps a link and erasing
-  drops it. A URL vte may have cut (16 params), one with a control character, and any
+  drops it. A URL vte may have cut (16 params, or 1,024 bytes of
+  payload), one with a control character, and any
   past the 65,535th are not links — opening part of a URL is worse than not opening it.
   `state_formatted` opens a link only around characters, because its padding spaces
-  would otherwise take it. Claude Code marks every URL and markdown link, gives one URL
-  one id wherever it appears (measured on 2.1.326), and repeats the whole URL on each
+  would otherwise take it. Claude Code marks the URLs and markdown links it writes in a reply
+  (bare, in parentheses, labelled, in a table cell and wrapped), gives one URL one id
+  wherever it appears (measured on 2.1.326), and repeats the whole URL on each
   piece it wraps, so `link::marked_links` makes one link of every piece of a URL in a
   region and needs no rule for joining rows. `render::osc8_runs` keeps only cells the
-  frame drew with the same text and style, which is what keeps a transcript, the
-  scrollback banner, a popup or output that arrived after drawing from taking a link.
+  frame drew with the same text and style, which is what keeps the scrollback banner, a
+  popup, output that arrived after drawing and most of a transcript from taking a link. A
+  transcript cell drawn in the default colours over the same character still passes;
+  Claude Code draws its links in a colour the transcript does not use.
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell
   and by the session's log in a Claude panel.

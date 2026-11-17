@@ -109,9 +109,10 @@ replaced once the log has been read.
 
 Links reach the outer terminal as OSC 8 hyperlinks, so terminals that follow OSC 8
 (such as iTerm2) can open a URL from any of the lines it wraps over. A link the
-program in the panel marks with OSC 8 itself is kept as it is: Claude Code marks every
-URL and markdown link it prints, so a URL it wraps inside a table cell or a sentence
-opens whole from either line, and a markdown link opens from its text. Every piece of
+program in the panel marks with OSC 8 itself is kept as it is: Claude Code marks the
+URLs and markdown links in its replies, so a URL it wraps inside a table cell or a sentence
+opens whole from either line, and a markdown link opens from its text (a URL of
+about 1,000 bytes or more loses the mark). Every piece of
 the same URL in a panel is one link. Text with no such mark — a file path such as
 `foo.rs:12-15`, or a shell command's output — is found by its shape instead. In a
 shell the terminal's own wrap decides; in a Claude panel the joined text must match a

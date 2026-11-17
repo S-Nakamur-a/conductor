@@ -31,7 +31,7 @@ pub struct Segment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
-    /// 押したときに開く先 (urls::target の返す値)。
+    /// 押したときに開く先。字から探したものは urls::target を通し、OSC 8 の印は子が付けたまま。
     pub url: String,
     pub segments: Vec<Segment>,
 }
