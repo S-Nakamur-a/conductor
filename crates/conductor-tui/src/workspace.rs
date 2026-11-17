@@ -1170,16 +1170,23 @@ impl Workspace {
         if self.focus == Focus::FleetChanges && !self.panels.fleet.shows_changes() {
             self.focus = Focus::Fleet;
         }
+        if self.focus != Focus::FleetChanges {
+            self.panels.fleet.changes.close_body();
+        }
         let fleet_session = self.fleet_session();
         let fleet_shell = self.fleet_shell();
         self.panels
             .terminal
             .sync_sizes(layout, fleet_session.as_deref(), fleet_shell.as_deref());
         if let Some(rect) = lower {
-            self.panels
-                .fleet
-                .changes
-                .set_viewport(crate::list::Viewport::inside(rect, 0));
+            let changes = &mut self.panels.fleet.changes;
+            changes.set_viewport(crate::list::Viewport::inside(rect, 0));
+            let inner = crate::panels::fleet::render::inner(rect);
+            changes.set_split(
+                crate::panels::fleet::changes::split(inner, false)
+                    .body
+                    .is_some(),
+            );
         }
         let modal = crate::render::comment_list_rect(layout.area);
         for open in &mut self.modals {

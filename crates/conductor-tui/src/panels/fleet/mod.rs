@@ -1246,11 +1246,25 @@ impl FleetPanel {
         }
     }
 
-    /// 左下の変更ファイルに入っているときのキー。ここに無いものは飲む。見えていない一覧の行や
-    /// 詳細の画面へ、打ちかけの文字が届かないように。
     fn changes_key(&mut self, action: Action) -> Option<Vec<Effect>> {
+        let target = self.selected_dir();
         let changes = &mut self.changes;
-        let reading = changes.body_open();
+        // 読み込み中は前の worktree の結果が残っている。見えていないものを動かさない。
+        let ready = changes.for_target(target.as_deref()).is_some();
+        let reading = ready && changes.body_open();
+        let moves = matches!(
+            action,
+            Action::NavigateDown
+                | Action::NavigateUp
+                | Action::NextChangedFile
+                | Action::PrevChangedFile
+                | Action::ScrollHalfPageDown
+                | Action::ScrollHalfPageUp
+                | Action::Select
+        );
+        if moves && !ready {
+            return Some(Vec::new());
+        }
         match action {
             Action::NavigateDown | Action::NavigateUp => {
                 let delta = if action == Action::NavigateDown {
@@ -1265,7 +1279,7 @@ impl FleetPanel {
             }
             Action::NextChangedFile => changes.step_file(1),
             Action::PrevChangedFile => changes.step_file(-1),
-            Action::ScrollHalfPageDown | Action::ScrollHalfPageUp => {
+            Action::ScrollHalfPageDown | Action::ScrollHalfPageUp if reading || changes.split() => {
                 let half = (changes.body_height() / 2).max(1) as isize;
                 let sign = if action == Action::ScrollHalfPageDown {
                     1
@@ -1274,9 +1288,12 @@ impl FleetPanel {
                 };
                 changes.scroll_body(sign * half);
             }
-            Action::Select => changes.open_body(),
+            Action::Select if !changes.split() => changes.open_body(),
             Action::ExitSubPanel if reading => changes.close_body(),
-            Action::ExitSubPanel => return Some(vec![Effect::Focus(Focus::Fleet)]),
+            Action::ExitSubPanel => {
+                changes.close_body();
+                return Some(vec![Effect::Focus(Focus::Fleet)]);
+            }
             Action::ShowFleetChanges => return Some(vec![Effect::Focus(Focus::Fleet)]),
             Action::ShowFleetArtifacts => self.lower = Lower::Artifacts,
             Action::NewShell => return Some(vec![Effect::OpenFleetShell]),

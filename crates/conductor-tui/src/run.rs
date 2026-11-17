@@ -768,7 +768,8 @@ fn fleet_changes_split(
     layout: &Layout,
 ) -> Option<crate::panels::fleet::changes::Split> {
     let fleet = &ws.panels.fleet;
-    if !fleet.shows_changes() {
+    let target = fleet.selected_dir();
+    if !fleet.shows_changes() || fleet.changes.for_target(target.as_deref()).is_none() {
         return None;
     }
     let inner = crate::panels::fleet::render::inner(layout.rect(Region::FleetChanges)?);
@@ -3459,18 +3460,226 @@ needle here
         assert_eq!(ws.focus, Focus::Fleet);
     }
 
+    fn many(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("f{i:02}.rs")).collect()
+    }
+
+    /// 区画より長い変更ファイルの一覧で、左下に入ったところ。
+    fn in_long_lower_changes() -> (Workspace, Services<TaskResult>, Layout, Vec<String>) {
+        let (mut ws, mut svc, l) = fleet_with_tree();
+        ws.sync_layout(&l);
+        let names = many(40);
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        land_changes(&mut ws, "/r/app", &refs);
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 0));
+        (ws, svc, l, names)
+    }
+
+    fn tree_scroll(ws: &Workspace) -> usize {
+        let target = ws.panels.fleet.selected_dir();
+        let (changes, _) = ws
+            .panels
+            .fleet
+            .changes
+            .for_target(target.as_deref())
+            .unwrap();
+        changes.cursor().scroll()
+    }
+
+    fn wheel_down(l: &Layout, column: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            ..press_at(l, column, 1)
+        }
+    }
+
     #[test]
     fn 左下のホイールは左ならツリーを右なら_diff_を送る() {
+        let (mut ws, mut svc, l, _) = in_long_lower_changes();
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 40));
+        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
+        assert_eq!(tree_scroll(&ws), 0);
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        assert_eq!(tree_scroll(&ws), 3);
+        assert_eq!(picked(&ws), Some("f00.rs"), "ホイールで選択が動いた");
+        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
+    }
+
+    #[test]
+    fn ホイールでずらしたツリーは_j_で選択を追う表示に戻る() {
+        let (mut ws, mut svc, l, _) = in_long_lower_changes();
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        assert_eq!(tree_scroll(&ws), 6);
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(picked(&ws), Some("f01.rs"));
+        assert_eq!(tree_scroll(&ws), 1);
+    }
+
+    #[test]
+    fn 読み直しが届いてもホイールでずらしたツリーの位置は動かない() {
+        let (mut ws, mut svc, l, names) = in_long_lower_changes();
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        land_changes(&mut ws, "/r/app", &refs);
+        assert_eq!(tree_scroll(&ws), 6);
+        let fewer: Vec<&str> = refs[1..].to_vec();
+        land_changes(&mut ws, "/r/app", &fewer);
+        assert_eq!(picked(&ws), Some("f01.rs"));
+        assert_eq!(
+            tree_scroll(&ws),
+            0,
+            "消えて選び直した先頭のファイルが見えない"
+        );
+    }
+
+    #[test]
+    fn 割れている左下で_enter_を押しても_j_は次のファイルへ送り_esc_は一覧へ戻る() {
+        let (mut ws, mut svc, _) = in_lower_changes();
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Enter));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(picked(&ws), Some("b.rs"));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 狭くて_diff_を開いたまま窓を広げると_j_は次のファイルへ送り_esc_は一覧へ戻る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs", "c.rs"]);
+        on_mouse(&mut ws, &mut svc, &narrow, press_at(&narrow, 3, 0));
+        assert!(ws.panels.fleet.changes.body_open());
+        let wide = layout(&ws, Rect::new(0, 0, 160, 40));
+        ws.sync_layout(&wide);
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(picked(&ws), Some("b.rs"));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(ws.focus, Focus::Fleet);
+        ws.sync_layout(&narrow);
+        assert!(
+            !ws.panels.fleet.changes.body_open(),
+            "狭めても読みの状態には戻さない"
+        );
+    }
+
+    #[test]
+    fn 狭い窓で_diff_を開いたまま左下を抜けると次はツリーから出る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        on_mouse(&mut ws, &mut svc, &narrow, press_at(&narrow, 3, 0));
+        on_key(&mut ws, &mut svc, ctrl_g());
+        ws.sync_layout(&narrow);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(!ws.panels.fleet.changes.body_open());
+    }
+
+    #[test]
+    fn 狭い窓でツリーを出している間の半ページ送りは見えない_diff_を送らない() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs"]);
+        on_mouse(&mut ws, &mut svc, &narrow, press_at(&narrow, 3, 5));
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        assert!(!ws.panels.fleet.changes.body_open());
+        on_key(
+            &mut ws,
+            &mut svc,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(ws.panels.fleet.changes.body_scroll(), 0);
+    }
+
+    /// 左下に入ったまま、一覧の選択だけを動かす (選んでいたセッションが終わって選び直されたときの形)。
+    fn move_list_selection(ws: &mut Workspace, action: conductor_core::keymap::Action, to: &str) {
+        let focus = ws.focus;
+        ws.focus = Focus::Fleet;
+        for _ in 0..5 {
+            if ws.panels.fleet.selected_dir() == Some(PathBuf::from(to)) {
+                break;
+            }
+            ws.dispatch_to(Focus::Fleet, action);
+        }
+        ws.focus = focus;
+        assert_eq!(ws.panels.fleet.selected_dir(), Some(PathBuf::from(to)));
+    }
+
+    #[test]
+    fn 読み込み中の左下を押しても前の_worktree_の選択は書き換わらない() {
         let (mut ws, mut svc, l) = in_lower_changes();
-        let wheel = |column| MouseEvent {
-            kind: MouseEventKind::ScrollDown,
-            ..press_at(&l, column, 1)
-        };
-        on_mouse(&mut ws, &mut svc, &l, wheel(40));
-        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
-        on_mouse(&mut ws, &mut svc, &l, wheel(3));
-        assert_eq!(picked(&ws), Some("a.rs"), "ホイールで選択が動いた");
-        assert_eq!(ws.panels.fleet.changes.body_scroll(), 3);
+        assert_eq!(picked(&ws), Some("a.rs"));
+        move_list_selection(
+            &mut ws,
+            conductor_core::keymap::Action::NavigateDown,
+            "/r/app-b",
+        );
+        assert!(drawn_changes(&mut ws, &l).contains("loading"));
+        on_mouse(&mut ws, &mut svc, &l, press_at(&l, 3, 1));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Char('j')));
+        on_mouse(&mut ws, &mut svc, &l, wheel_down(&l, 3));
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        land_changes(&mut ws, "/r/app-b", &["x.rs"]);
+        move_list_selection(
+            &mut ws,
+            conductor_core::keymap::Action::NavigateUp,
+            "/r/app",
+        );
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        assert_eq!(picked(&ws), Some("a.rs"));
+    }
+
+    #[test]
+    fn 狭い窓で_diff_を読んでいる間に一覧の選択が移ると_esc_一回で一覧へ戻る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs"]);
+        on_mouse(&mut ws, &mut svc, &narrow, press_at(&narrow, 3, 5));
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Enter));
+        assert!(ws.panels.fleet.changes.body_open());
+        move_list_selection(
+            &mut ws,
+            conductor_core::keymap::Action::NavigateDown,
+            "/r/app-b",
+        );
+        ws.sync_layout(&narrow);
+        on_key(&mut ws, &mut svc, KeyEvent::from(KeyCode::Esc));
+        assert_eq!(ws.focus, Focus::Fleet);
+    }
+
+    #[test]
+    fn 左下に居る間に一覧の選択が移っても左下に居続け_移った先の先頭を選ぶ() {
+        let (mut ws, _svc, l) = in_lower_changes();
+        move_list_selection(
+            &mut ws,
+            conductor_core::keymap::Action::NavigateDown,
+            "/r/app-b",
+        );
+        ws.sync_layout(&l);
+        land_changes(&mut ws, "/r/app-b", &["x.rs", "y.rs"]);
+        ws.sync_layout(&l);
+        assert_eq!(ws.focus, Focus::FleetChanges);
+        assert_eq!(picked(&ws), Some("x.rs"));
+    }
+
+    #[test]
+    fn 左下の_ctrl_t_はシェルを開く() {
+        let (mut ws, _svc, _) = in_lower_changes();
+        let effects = ws
+            .dispatch_to(
+                Focus::FleetChanges,
+                conductor_core::keymap::Action::NewShell,
+            )
+            .unwrap_or_default();
+        assert!(
+            matches!(effects.as_slice(), [Effect::OpenFleetShell]),
+            "{effects:?}"
+        );
     }
 
     #[test]

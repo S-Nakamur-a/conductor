@@ -62,10 +62,7 @@ fn layers(page: Focus) -> &'static [(&'static str, KeyContext)] {
         Focus::Fleet | Focus::FleetSession | Focus::FleetShell => {
             &[("Sessions", KeyContext::Fleet)]
         }
-        Focus::FleetChanges => &[
-            ("Sessions \u{2014} Git Changes", KeyContext::FleetChanges),
-            ("Sessions", KeyContext::Fleet),
-        ],
+        Focus::FleetChanges => &[("Sessions \u{2014} Git Changes", KeyContext::FleetChanges)],
         Focus::Explorer => &[
             ("Explorer \u{2014} file tree", KeyContext::Explorer),
             (

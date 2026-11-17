@@ -94,6 +94,10 @@ pub struct BranchChanges {
     body_height: usize,
     /// 狭くて割れないときに、diff の側を出しているか。
     body_open: bool,
+    /// 左右に割れる幅か。前の描画で決まったもの。
+    split: bool,
+    /// ホイールでツリーを動かしたか。動かしていれば読み直しで窓を選択へ寄せない。
+    tree_panned: bool,
 }
 
 impl BranchChanges {
@@ -152,6 +156,7 @@ impl BranchChanges {
         let Some((_, changes, _)) = &mut self.shown else {
             return;
         };
+        let panned = (same && self.tree_panned).then(|| changes.cursor().scroll());
         // 帯への警告は捨てる。読み直すたびに同じ警告が出続ける。理由は区画の中に出る。
         let _ = changes.install(diff);
         let kept = match self.pick.path.as_deref() {
@@ -161,6 +166,10 @@ impl BranchChanges {
         if !kept {
             changes.select_first_file();
             self.pick.scroll = 0;
+            self.tree_panned = false;
+        }
+        if let Some(scroll) = panned.filter(|_| kept) {
+            changes.pan(scroll as isize - changes.cursor().scroll() as isize);
         }
         self.landed = Some(now);
         self.rebuild_body();
@@ -196,6 +205,18 @@ impl BranchChanges {
         self.body_open
     }
 
+    pub fn split(&self) -> bool {
+        self.split
+    }
+
+    /// 割れる幅では diff を区画いっぱいに出す状態を持たない。広げたら畳む。
+    pub fn set_split(&mut self, split: bool) {
+        self.split = split;
+        if split {
+            self.body_open = false;
+        }
+    }
+
     pub fn open_body(&mut self) {
         self.body_open = self.pick.path.is_some();
     }
@@ -226,6 +247,7 @@ impl BranchChanges {
     pub fn pan_tree(&mut self, delta: isize) {
         if let Some((_, changes, _)) = &mut self.shown {
             changes.pan(delta);
+            self.tree_panned = true;
         }
     }
 
@@ -239,6 +261,7 @@ impl BranchChanges {
     }
 
     fn chose(&mut self) {
+        self.tree_panned = false;
         let path = self
             .shown
             .as_ref()
@@ -286,6 +309,7 @@ impl BranchChanges {
                 .insert(dir.clone(), std::mem::take(&mut self.pick));
         }
         self.body_open = false;
+        self.tree_panned = false;
     }
 
     fn shown_dir(&self) -> Option<&Path> {
@@ -551,6 +575,33 @@ mod tests {
         assert_eq!(
             (reading.tree, reading.body.map(|r| r.width)),
             (None, Some(59))
+        );
+    }
+
+    #[test]
+    fn ホイールに触れていなければ上にファイルが増えても選んだ行は見えたまま() {
+        let mut changes = sized();
+        let names: Vec<String> = (0..10).map(|i| format!("m{i:02}.rs")).collect();
+        let refs: Vec<(&str, usize)> = names.iter().map(|p| (p.as_str(), 1)).collect();
+        land(&mut changes, "/a", files(&refs));
+        for _ in 0..5 {
+            changes.step_file(1);
+        }
+        let mut more: Vec<String> = (0..3).map(|i| format!("a{i}.rs")).collect();
+        more.extend(names.iter().cloned());
+        let refs: Vec<(&str, usize)> = more.iter().map(|p| (p.as_str(), 1)).collect();
+        land(&mut changes, "/a", files(&refs));
+        assert_eq!(changes.selected_path(), Some("m05.rs"));
+        let tree = changes
+            .for_target(Some(Path::new("/a")))
+            .unwrap()
+            .0
+            .cursor();
+        let window = tree.scroll()..tree.scroll() + 6;
+        assert!(
+            window.contains(&tree.selected()),
+            "{} が {window:?} の外",
+            tree.selected()
         );
     }
 }

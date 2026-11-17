@@ -643,7 +643,7 @@ a cell is about twice as tall as wide, so that is a window that *looks* tall): t
 on top at `fleet_stack_pct`, the session below at full width, and no `FleetChanges`. It
 reuses the short-window path — `set_lower_shown(false)` turns Ctrl+t down, drops the
 keys that fill that region (`fleet::render::needs_lower`) from the list's footer and the
-status bar, and a `FleetShell` focus falls back to the list. The three Sessions
+status bar, and a `FleetShell` or `FleetChanges` focus falls back to the list. The three Sessions
 borders (`Divider::FleetWidth` / `FleetSplit` / `FleetStack`) drag like the detail
 screen's, and no border is grabbed while a modal is open: the [+] popup opens over the
 list's right border, and a press there must pick the item. The list and the right side's
@@ -668,8 +668,13 @@ every key it does not use**: sharing the list's layer would let D / A reach a li
 nobody is looking at, and the global layer would let ctrl+o / ctrl+n change the screen. The
 picked file and the diff's scroll are kept per dir (`BranchChanges::park`), and a re-read of
 the same dir goes through `GitChanges::install` rather than a new `GitChanges`, which is what
-keeps the pick by path across the 5s refresh. The right side has no syntax colours: the
-region never reads the new side.
+keeps the pick by path across the 5s refresh. That refresh leaves the tree where the wheel
+put it (`tree_panned`) and only follows the pick when nobody scrolled. The full-region diff
+exists only where the region does not split and only while the region has the keyboard
+(`set_split`, and `sync_layout` closes it on leaving), so a key never moves something that
+is not drawn; for the same reason, until the selected dir's own result lands the region's
+keys and clicks touch nothing (the previous dir's tree is still held, behind loading…). The
+right side has no syntax colours: the region never reads the new side.
 
 The same region shows a shell of that worktree instead (`FleetPanel::lower`): **Ctrl+t**
 (`new_shell`, caught by the list) shows it and steps into `Focus::FleetShell`, starting

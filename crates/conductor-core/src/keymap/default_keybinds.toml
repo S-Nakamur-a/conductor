@@ -131,9 +131,8 @@
 # 左下を、選んだセッションの Artifact 一覧にする。左下のシェルの中では ctrl+a は行頭へ行くキーなので、シェルへ届く。
 "ctrl+a" = "show_fleet_artifacts"
 
-# ── Sessions の左下: 選んだ worktree の変更ファイルと、その diff ──────────────────────
+# Sessions の左下: 選んだ worktree の変更ファイルと、その diff
 # 一覧の層を共有しないのは、D や A がここから届くと、見えていない一覧の行を止める・消すため。
-# ここに無いキーは、全体の層のものでも左下が飲む (ctrl+o や ctrl+n で画面が替わらない)。
 [layers.fleet_changes]
 "j" = "navigate_down"
 "down" = "navigate_down"

@@ -173,8 +173,13 @@ the right stays put; the next key that moves the selection brings it back into v
 Below the list, **Git Changes** shows the files the selected line's branch changed and
 by how much: from where it left the
 repository's default branch to the working tree, uncommitted and untracked files
-included. It is for reading only, is re-read about every five seconds while the list is
-open, and is not shown when the window is too short.
+included. It is re-read about every five seconds while the list is open, and is not
+shown when the window is too short.
+Click a file (or click in and press **j/k**) and its diff appears beside the tree; the
+wheel scrolls the side it is over, and **Esc** steps back to the list. Where the list is
+under 91 columns wide the two do not fit side by side: the tree fills the area, **Enter**
+or a click on a file swaps in the diff (**j/k** scroll it, **n/N** change file), and
+**Esc** goes back to the tree first.
 
 **Ctrl+t** puts a shell of the selected line's worktree there instead and steps into
 it, starting one only if that worktree has none running; **Ctrl+g** brings Git Changes
