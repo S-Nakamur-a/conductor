@@ -1560,6 +1560,24 @@ mod tests {
         press(&mut chord, &[key(KeyCode::Char('z'))]);
         assert!(chord.panels.viewer.awaiting_chord());
         out.push(("viewer z".into(), chord));
+        let mut nav = make();
+        nav.focus = Focus::Viewer;
+        press(&mut nav, &[key(KeyCode::Char('g'))]);
+        assert!(nav.panels.viewer.awaiting_chord());
+        out.push(("viewer g".into(), nav));
+        let mut editor = make();
+        editor.modals.push(Modal::CommentEditor(
+            crate::modal::CommentEditor::new_comment("main".into(), "a.rs".into(), 1, None),
+        ));
+        press(
+            &mut editor,
+            &[key(KeyCode::Char('w')), key(KeyCode::Char('i'))],
+        );
+        assert!(matches!(
+            editor.modals.as_slice(),
+            [Modal::CommentEditor(_)]
+        ));
+        out.push(("comment editor".into(), editor));
         out
     }
 
