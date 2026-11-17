@@ -69,6 +69,9 @@ pub struct Screen {
     attrs: crate::attrs::Attrs,
     saved_attrs: crate::attrs::Attrs,
 
+    links: crate::link::Links,
+    current_link: Option<crate::link::LinkId>,
+
     title: String,
     icon_name: String,
 
@@ -95,6 +98,9 @@ impl Screen {
 
             attrs: crate::attrs::Attrs::default(),
             saved_attrs: crate::attrs::Attrs::default(),
+
+            links: crate::link::Links::default(),
+            current_link: None,
 
             title: String::default(),
             icon_name: String::default(),
@@ -271,8 +277,12 @@ impl Screen {
 
     fn write_contents_formatted(&self, contents: &mut Vec<u8>) {
         crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
-        let prev_attrs = self.grid().write_contents_formatted(contents);
+        let prev_attrs =
+            self.grid().write_contents_formatted(contents, &self.links);
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
+        if self.current_link.is_some() {
+            self.links.write_switch(contents, self.current_link);
+        }
     }
 
     /// Returns the formatted visible contents of the terminal by row,
@@ -306,6 +316,7 @@ impl Screen {
                 wrapping,
                 None,
                 None,
+                &self.links,
             );
             if start == 0 && width == self.grid.size().cols {
                 wrapping = row.wrapped();
@@ -601,6 +612,14 @@ impl Screen {
         self.grid().visible_cell(crate::grid::Pos { row, col })
     }
 
+    /// Returns the OSC 8 hyperlink of the cell at the given location, if any.
+    /// A wide character carries it on its first cell only.
+    #[must_use]
+    pub fn cell_link(&self, row: u16, col: u16) -> Option<&str> {
+        let id = self.cell(row, col)?.link()?;
+        Some(self.links.url(id))
+    }
+
     /// Returns whether the text in row `row` should wrap to the next line.
     #[must_use]
     pub fn row_wrapped(&self, row: u16) -> bool {
@@ -813,6 +832,7 @@ impl Screen {
         let pos = self.grid().pos();
         let size = self.grid().size();
         let attrs = self.attrs;
+        let link = self.current_link;
 
         let width = c.width();
         if width.is_none() && (u32::from(c)) < 256 {
@@ -987,6 +1007,7 @@ impl Screen {
                 // that self.grid().pos().col has a valid value.
                 .unwrap();
             cell.set(c, attrs);
+            cell.set_link(link);
             self.grid_mut().col_inc(1);
             if width > 1 {
                 let pos = self.grid().pos();
@@ -1672,6 +1693,7 @@ impl vte::Perform for Screen {
             (Some(&b"0"), Some(s)) => self.osc0(s),
             (Some(&b"1"), Some(s)) => self.osc1(s),
             (Some(&b"2"), Some(s)) => self.osc2(s),
+            (Some(&b"8"), _) => self.current_link = self.links.open(params),
             _ => {
                 if log::log_enabled!(log::Level::Debug) {
                     log::debug!(

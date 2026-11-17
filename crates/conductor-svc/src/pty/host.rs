@@ -453,6 +453,9 @@ fn snapshot(history: Option<&VecDeque<u8>>, screen: &vt100::Screen) -> Vec<u8> {
     let mut bytes: Vec<u8> = history
         .map(|h| h.iter().copied().collect())
         .unwrap_or_default();
+    // 生履歴がリンクを開いたまま、または OSC 8 の途中で終わっていると、
+    // 後ろの書き出しの字が全部そのリンクになる。開いているリンクは書き出しの最後で開き直す。
+    bytes.extend_from_slice(b"\x1b]8;;\x1b\\");
     // vt100 の状態の書き出しは代替画面に居ることを含まない。
     if screen.alternate_screen() {
         bytes.extend_from_slice(b"\x1b[?1049h");
@@ -814,6 +817,49 @@ mod tests {
             "{:?}",
             screen.contents()
         );
+    }
+
+    fn linked_cells(screen: &vt100::Screen) -> Vec<(u16, u16, String)> {
+        let (rows, cols) = screen.size();
+        (0..rows)
+            .flat_map(|row| (0..cols).map(move |col| (row, col)))
+            .filter_map(|(row, col)| Some((row, col, screen.cell_link(row, col)?.to_owned())))
+            .collect()
+    }
+
+    #[test]
+    fn 生履歴がリンクを開いたまま終わっても写しのリンクは増えない() {
+        let history = b"\x1b]8;;https://a.example/p\x1b\\ab";
+        let mut host_screen = vt100::Parser::new(5, 20, 100);
+        host_screen.process(b"\x1b[41mbg\x1b[m\r\nplain text\r\n");
+        host_screen.process(history);
+        let trimmed: VecDeque<u8> = history.iter().copied().collect();
+
+        let mut mirror = vt100::Parser::new(5, 20, 100);
+        mirror.process(&snapshot(Some(&trimmed), host_screen.screen()));
+
+        assert_eq!(
+            linked_cells(mirror.screen()),
+            linked_cells(host_screen.screen())
+        );
+        mirror.process(b"c");
+        host_screen.process(b"c");
+        assert_eq!(
+            linked_cells(mirror.screen()),
+            linked_cells(host_screen.screen())
+        );
+    }
+
+    #[test]
+    fn 生履歴がosc8の途中で切れても途中までのurlをリンクにしない() {
+        let mut host_screen = vt100::Parser::new(5, 20, 100);
+        host_screen.process(b"plain text\r\n");
+        let trimmed: VecDeque<u8> = b"x\x1b]8;;https://a.exa".iter().copied().collect();
+
+        let mut mirror = vt100::Parser::new(5, 20, 100);
+        mirror.process(&snapshot(Some(&trimmed), host_screen.screen()));
+
+        assert_eq!(linked_cells(mirror.screen()), vec![]);
     }
 
     #[test]

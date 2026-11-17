@@ -202,6 +202,7 @@ impl Grid {
     pub fn write_contents_formatted(
         &self,
         contents: &mut Vec<u8>,
+        links: &crate::link::Links,
     ) -> crate::attrs::Attrs {
         crate::term::ClearAttrs::default().write_buf(contents);
         crate::term::ClearScreen::default().write_buf(contents);
@@ -221,6 +222,7 @@ impl Grid {
                 wrapping,
                 Some(prev_pos),
                 Some(prev_attrs),
+                links,
             );
             prev_pos = new_pos;
             prev_attrs = new_attrs;

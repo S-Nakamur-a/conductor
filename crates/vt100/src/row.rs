@@ -143,9 +143,18 @@ impl Row {
         wrapping: bool,
         prev_pos: Option<crate::grid::Pos>,
         prev_attrs: Option<crate::attrs::Attrs>,
+        links: &crate::link::Links,
     ) -> (crate::grid::Pos, crate::attrs::Attrs) {
         let mut prev_was_wide = false;
         let default_cell = crate::cell::Cell::default();
+        // 開いたまま次の行へ行くと、行頭の位置合わせの空白にリンクが付く。
+        let mut open_link = None;
+        let mut switch_link = |contents: &mut Vec<u8>, to| {
+            if open_link != to {
+                links.write_switch(contents, to);
+                open_link = to;
+            }
+        };
 
         let mut prev_pos = prev_pos.unwrap_or_else(|| {
             if wrapping {
@@ -241,6 +250,7 @@ impl Row {
                         attrs.write_escape_code_diff(contents, &prev_attrs);
                         prev_attrs = *attrs;
                     }
+                    switch_link(contents, cell.link());
 
                     prev_pos.col += if cell.is_wide() { 2 } else { 1 };
                     let cell_contents = cell.contents();
@@ -250,6 +260,7 @@ impl Row {
                 }
             }
         }
+        switch_link(contents, None);
         if let Some((prev_col, attrs)) = erase {
             let new_pos = crate::grid::Pos { row, col: prev_col };
             if wrapping
