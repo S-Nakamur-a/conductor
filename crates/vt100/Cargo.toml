@@ -1,6 +1,6 @@
 [package]
 name = "vt100"
-version = "0.15.2-wt.docs-osc8-render-passes"
+version = "0.15.2"
 authors = ["Jesse Luehrs <doy@tozt.net>"]
 edition = "2021"
 description = "Library for parsing terminal data"
