@@ -379,8 +379,9 @@ crates/
   conductor-tui/    the screen: panels, modals, route / layout / Effect / render.
   sheaf-core/       the SCIP index with confidence attached.
   vt100/            the terminal parser, vendored from crates.io 0.15.2 (MIT).
-                    It has its own rustfmt.toml and allows clippy::all, so CI's
-                    -D warnings does not apply to it. The original is the commit
+                    It has its own rustfmt.toml and allows clippy::all and
+                    deprecated in lib.rs, so those warnings do not fail CI's
+                    -D warnings. The original is the commit
                     "chore: vt100 0.15.2 を crates/vt100 に取り込む".
 src/main.rs         five lines: hands this package's version to conductor_tui::entry::run.
 ```

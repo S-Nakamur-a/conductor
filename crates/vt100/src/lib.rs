@@ -33,8 +33,8 @@
 //! );
 //! ```
 
-// 取り込んだ 0.15.2 の書き方を保つため、今の clippy が足した指摘は当てない。
-#![allow(clippy::all)]
+// 取り込んだ 0.15.2 の書き方を保つため、今の clippy と rustc が足した指摘は当てない。
+#![allow(clippy::all, deprecated)]
 
 mod attrs;
 mod cell;
