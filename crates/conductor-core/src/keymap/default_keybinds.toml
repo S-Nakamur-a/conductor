@@ -18,9 +18,8 @@
 
 # ── Global ──────────────────────────────────────────────────────────────────
 [keys]
-# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. A quit
-# chord (ctrl/alt/super or an F key) also works over menus, dialogs and the
-# terminal panels, so programs inside a terminal never see ctrl+q. Note:
+# Quit lives on ctrl+q (not bare q) so a stray q never kills the app. It also
+# works over dialogs, the menu and terminal panels (see README). Note:
 # ctrl+q is XON in some terminals' flow control — verify it reaches the app.
 "ctrl+q" = "quit"
 "?" = "show_help"

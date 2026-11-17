@@ -1525,7 +1525,6 @@ mod tests {
         ws
     }
 
-    /// 終了キーの先回りが効く前の状態を 1 つずつ作る。
     fn screens(make: impl Fn() -> Workspace) -> Vec<(String, Workspace)> {
         let mut out = Vec::new();
         for focus in [
@@ -1569,6 +1568,21 @@ mod tests {
         for (name, mut ws) in screens(Workspace::for_test) {
             press(&mut ws, &[ctrl_q()]);
             assert!(ws.should_quit, "{name} で ctrl+q が終了しなかった");
+        }
+    }
+
+    #[test]
+    fn alt付きとfキーの終了キーも端末とモーダルの上で終了する() {
+        for k in [
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT),
+            key(KeyCode::F(9)),
+        ] {
+            for (name, mut ws) in
+                screens(|| with_keybinds("[keys]\n\"alt+x\" = \"quit\"\n\"f9\" = \"quit\""))
+            {
+                press(&mut ws, &[k]);
+                assert!(ws.should_quit, "{name} で {k:?} が終了しなかった");
+            }
         }
     }
 
