@@ -1,4 +1,4 @@
-//! 一覧の下区画: 選んだ行のブランチの変更ファイルと、選んだファイルの diff。Explorer が持つ
+//! 一覧の下区画: 選んだ行のブランチの変更ファイルと、選んだファイルの diff (AI が頼んだファイルは全体)。Explorer が持つ
 //! 作業ツリーの diff と同じ読み方で、ツリーは同じ形で描く。
 
 use std::collections::HashMap;
@@ -1137,5 +1137,32 @@ mod tests {
         changes.step_file(-1);
         changes.note_focus(false);
         assert!(!changes.body_open(), "人が選んだ後も出し続けた");
+    }
+
+    #[test]
+    fn 待っている頼みは人が選び直すと捨てる() {
+        let mut changes = asked_long();
+        changes.open_asked(Path::new("/a"), "new.rs".into(), None, true);
+        changes.step_file(1);
+        changes.note_fetching();
+        land(
+            &mut changes,
+            "/a",
+            files(&[("a.rs", 3), ("b.rs", 40), ("new.rs", 4)]),
+        );
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+    }
+
+    #[test]
+    fn 全体を出している間の読み直しは前の中身を出したままスクロールを保つ() {
+        let mut changes = asked_long();
+        changes.open_asked(Path::new("/a"), "plain.rs".into(), Some(50), false);
+        read_whole(&mut changes, 100);
+        changes.scroll_body(-5);
+        let at = changes.body_scroll();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert!(matches!(changes.body(), Body::Whole { lines: Ok(_), .. }));
+        assert_eq!(changes.body_scroll(), at);
+        assert!(changes.take_file_read().is_some(), "読み直しを頼んでいない");
     }
 }

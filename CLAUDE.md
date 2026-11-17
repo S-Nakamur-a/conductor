@@ -632,7 +632,7 @@ main worktree for every destination (Ctrl+o's detail screen included), and like 
 (`chrome.fleet_open`): while it is, an `Effect::Focus` nobody made by hand is only
 remembered as where Esc returns (`Workspace::screen_focus`, which
 the focus cycle reads), so a background result never moves the keyboard to a region
-nobody can see, and window tools (`remote.rs`) do nothing but say so. Focus moves
+nobody can see, and window tools (`remote.rs`) move nothing but the area under the list, for the selected conversation only (the MCP section). Focus moves
 made by hand — commands from keys, the palette or the menu, and the focus cycle —
 go through `command::by_hand`, which turns them into `LeaveFleet`. The right side shows
 one of this window's sessions live (`Focus::FleetSession`). Which one is derived from
@@ -712,7 +712,7 @@ picked file and the diff's scroll are kept per dir (`BranchChanges::park`), and 
 the same dir goes through `GitChanges::install` rather than a new `GitChanges`, which is what
 keeps the pick by path across the 5s refresh. What the AI shows there (`Pick::asked`) stays
 until someone picks a file by hand: a whole file (`Body::Whole`, read on a worker by
-`Task::LoadFleetFile` and matched by seq) gets a provisional row above the tree when the
+`Task::LoadFleetFile` and matched by seq, asked once per seq, and re-read only when a diff lands (so at most once per 5s refresh)) gets a provisional row above the tree when the
 file has no change, an asked diff whose file leaves the diff (a commit) turns into that
 file's whole, and the line it was asked for is scrolled to once. That refresh leaves the
 tree where the wheel put it (`tree_panned`) and only follows the pick when nobody scrolled. The full-region diff

@@ -3600,6 +3600,25 @@ needle here
     }
 
     #[test]
+    fn 狭い窓で_ai_が開いたものも_ctrl_g_で閉じて一覧へ戻る() {
+        let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
+        let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
+        ws.sync_layout(&narrow);
+        land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
+        ws.panels.fleet.changes.open_asked(
+            std::path::Path::new("/r/app"),
+            "b.rs".into(),
+            None,
+            true,
+        );
+        ws.focus = Focus::FleetChanges;
+        on_key(&mut ws, &mut svc, ctrl_g());
+        ws.sync_layout(&narrow);
+        assert_eq!(ws.focus, Focus::Fleet);
+        assert!(!ws.panels.fleet.changes.body_open());
+    }
+
+    #[test]
     fn 狭い窓で_diff_を開いたまま左下を抜けると次はツリーから出る() {
         let (mut ws, mut svc, _) = fleet_listing(Vec::new(), 40);
         let narrow = layout(&ws, Rect::new(0, 0, 100, 40));
