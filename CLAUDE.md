@@ -716,7 +716,7 @@ keeps the pick by path across the 5s refresh. What the AI shows there (`Pick::as
 until someone picks a file by hand: a whole file (`Body::Whole`, read on a worker by
 `Task::LoadFleetFile` and matched by seq, asked once per seq, and re-read only when a diff lands (so at most once per 5s refresh)) gets a provisional row above the tree when the
 file has no change, an asked diff whose file leaves the diff (a commit) turns into that
-file's whole, and the line it was asked for is scrolled to once. That refresh leaves the
+file's whole, and the line it was asked for is scrolled to, again when a read started after the request lands unless someone scrolled (`Pick::scrolled`). That refresh leaves the
 tree where the wheel put it (`tree_panned`) and only follows the pick when nobody scrolled. The full-region diff
 exists only where the region does not split, and only while the region has the keyboard
 or the AI is showing it (`set_split`, and `sync_layout`'s `note_focus` closes it otherwise),

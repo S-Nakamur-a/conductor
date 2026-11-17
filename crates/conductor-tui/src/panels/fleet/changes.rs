@@ -81,7 +81,7 @@ struct Pick {
     scrolled: bool,
 }
 
-/// diff で出してと頼まれたが、手元の diff にまだ無いファイル。
+/// diff で出してと頼まれ、頼みより後の読みを待っているもの。手元の diff に無ければまだ出していない (shown=false)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Pending {
     /// 頼んだ会話。一覧でこれが選ばれている間だけ生きる。
@@ -289,9 +289,8 @@ impl BranchChanges {
         }
     }
 
-    /// AI の頼み。dir の結果がまだ据わっていないか、diff の頼みで手元の diff に無ければ、
-    /// 読み直しを 1 本挟んでから出す。
-    /// 手元の diff は数秒古いことがあるので、diff の頼みは頼みより後に始めた読みでもう一度見る。
+    /// AI の頼み。dir の結果がまだ無いか、diff の頼みで手元の diff に無ければ、頼みより後の読みを待って出す。
+    /// 手元の diff は数秒古いことがあるので、diff の頼みは先に出したうえで、その読みで頼まれた行へ送り直す。
     pub fn open_asked(
         &mut self,
         panel: &str,
@@ -929,7 +928,8 @@ mod tests {
     }
 
     #[test]
-    fn diff_で頼まれたファイルを選び頼まれた行へ一度だけ送る() {
+    fn diff_で頼まれたファイルを選び頼まれた行へ送り_人がスクロールした後の読み直しでは引き戻さない()
+     {
         let mut changes = asked_long();
         changes.open_asked("p", Path::new("/a"), "b.rs".into(), Some(20), true);
         assert_eq!(changes.selected_path(), Some("b.rs"));
