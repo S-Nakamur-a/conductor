@@ -211,7 +211,8 @@ What the outer terminal can open is rewritten by conductor as OSC 8 after each f
   frame drew with the same text and style, which is what keeps the scrollback banner, a
   popup, output that arrived after drawing and most of a transcript from taking a link. A
   transcript cell drawn in the default colours over the same character still passes;
-  Claude Code draws its links in a colour the transcript does not use.
+  Claude Code draws its links in a colour the transcript does not use. So does a
+  default-background cell in the focused region, which the frame tinted (`render::focus_tint`).
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell
   and by the session's log in a Claude panel.
