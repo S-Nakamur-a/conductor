@@ -131,6 +131,24 @@
 # 左下を、選んだセッションの Artifact 一覧にする。左下のシェルの中では ctrl+a は行頭へ行くキーなので、シェルへ届く。
 "ctrl+a" = "show_fleet_artifacts"
 
+# Sessions の左下: 選んだ worktree の変更ファイルと、その diff
+# 一覧の層を共有しないのは、D や A がここから届くと、見えていない一覧の行を止める・消すため。
+[layers.fleet_changes]
+"j" = "navigate_down"
+"down" = "navigate_down"
+"k" = "navigate_up"
+"up" = "navigate_up"
+# 狭くて割れないとき、選んだファイルの diff を区画いっぱいに出す。
+"enter" = "select"
+"n" = "next_changed_file"
+"N" = "prev_changed_file"
+"ctrl+d" = "scroll_half_page_down"
+"ctrl+u" = "scroll_half_page_up"
+"esc" = "exit_sub_panel"
+"ctrl+g" = "show_fleet_changes"
+"ctrl+a" = "show_fleet_artifacts"
+":" = "command_palette"
+
 # ── Explorer (file tree) ───────────────────────────────────────────────────────
 [layers.explorer]
 "1" = "show_code_tab"

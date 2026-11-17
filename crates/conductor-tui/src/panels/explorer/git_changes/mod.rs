@@ -113,4 +113,71 @@ impl GitChanges {
     fn clamp(&mut self) {
         self.cursor.clamp(self.diff.display_list.len(), self.view);
     }
+
+    /// 選んでいる行のファイル。ディレクトリ行なら None。
+    pub fn selected_path(&self) -> Option<&str> {
+        self.diff
+            .resolve_file(self.cursor.selected())
+            .map(|f| f.path.as_str())
+    }
+
+    /// そのパスのファイルを選ぶ。一覧に無ければ何もしない。
+    pub fn select_path(&mut self, path: &str) -> bool {
+        let Some(at) = self.diff.display_index_for_path(path) else {
+            return false;
+        };
+        self.cursor
+            .select(at, self.diff.display_list.len(), self.view);
+        true
+    }
+
+    pub fn select_first_file(&mut self) {
+        let first = self.file_rows().next();
+        match first {
+            Some(at) => self
+                .cursor
+                .select(at, self.diff.display_list.len(), self.view),
+            None => self.cursor = ListCursor::default(),
+        }
+    }
+
+    /// ディレクトリ行を飛ばして前後のファイルへ。端ではそのまま。
+    pub fn step_file(&mut self, delta: isize) {
+        let at = self.cursor.selected();
+        let next = match delta.signum() {
+            1 => self.file_rows().find(|&i| i > at),
+            -1 => self.file_rows().rfind(|&i| i < at),
+            _ => None,
+        };
+        match next {
+            Some(i) => self
+                .cursor
+                .select(i, self.diff.display_list.len(), self.view),
+            None if self.selected_path().is_none() => self.select_first_file(),
+            None => self.cursor.reveal(self.diff.display_list.len(), self.view),
+        }
+    }
+
+    /// 画面 y の行がファイルならそれを選ぶ。
+    pub fn select_at(&mut self, y: u16) -> bool {
+        let len = self.diff.display_list.len();
+        let Some(at) = self.cursor.index_at(y, len, self.view) else {
+            return false;
+        };
+        if self.diff.resolve_file(at).is_none() {
+            return false;
+        }
+        self.cursor.select(at, len, self.view);
+        true
+    }
+
+    /// 選択は動かさず窓だけ動かす。
+    pub fn pan(&mut self, delta: isize) {
+        self.cursor
+            .pan(delta, self.diff.display_list.len(), self.view);
+    }
+
+    fn file_rows(&self) -> impl DoubleEndedIterator<Item = usize> + '_ {
+        (0..self.diff.display_list.len()).filter(|&i| self.diff.resolve_file(i).is_some())
+    }
 }

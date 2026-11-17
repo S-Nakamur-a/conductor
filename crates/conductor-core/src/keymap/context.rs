@@ -4,6 +4,8 @@
 pub enum KeyContext {
     Global,
     Fleet,
+    /// 一覧の左下の、選んだ worktree の変更ファイルとその中身。
+    FleetChanges,
     Explorer,
     ExplorerCommentList,
     ExplorerTourStops,
@@ -18,8 +20,9 @@ pub enum KeyContext {
 
 impl KeyContext {
     /// Global 以外の全コンテキスト。それぞれ [layers.<name>] テーブルで裏打ちされる。
-    pub const PANELS: [KeyContext; 9] = [
+    pub const PANELS: [KeyContext; 10] = [
         KeyContext::Fleet,
+        KeyContext::FleetChanges,
         KeyContext::Explorer,
         KeyContext::ExplorerCommentList,
         KeyContext::ExplorerTourStops,
@@ -34,6 +37,7 @@ impl KeyContext {
         match self {
             KeyContext::Global => keymap_suite::GLOBAL_LAYER,
             KeyContext::Fleet => "fleet",
+            KeyContext::FleetChanges => "fleet_changes",
             KeyContext::Explorer => "explorer",
             KeyContext::ExplorerCommentList => "explorer_comment_list",
             KeyContext::ExplorerTourStops => "explorer_tour_stops",

@@ -342,6 +342,10 @@ impl FleetPanel {
         vec![Effect::Focus(Focus::Fleet)]
     }
 
+    pub fn shows_changes(&self) -> bool {
+        self.lower == Lower::Changes && self.lower_shown
+    }
+
     pub fn shows_artifacts(&self) -> bool {
         self.lower == Lower::Artifacts && self.lower_shown
     }
@@ -1242,6 +1246,72 @@ impl FleetPanel {
         }
     }
 
+    fn changes_key(&mut self, action: Action) -> Option<Vec<Effect>> {
+        let target = self.selected_dir();
+        let changes = &mut self.changes;
+        // 読み込み中は前の worktree の結果が残っている。見えていないものを動かさない。
+        let ready = changes.for_target(target.as_deref()).is_some();
+        let reading = ready && changes.body_open();
+        let moves = matches!(
+            action,
+            Action::NavigateDown
+                | Action::NavigateUp
+                | Action::NextChangedFile
+                | Action::PrevChangedFile
+                | Action::ScrollHalfPageDown
+                | Action::ScrollHalfPageUp
+                | Action::Select
+        );
+        if moves && !ready {
+            return Some(Vec::new());
+        }
+        match action {
+            Action::NavigateDown | Action::NavigateUp => {
+                let delta = if action == Action::NavigateDown {
+                    1
+                } else {
+                    -1
+                };
+                match reading {
+                    true => changes.scroll_body(delta),
+                    false => changes.step_file(delta),
+                }
+            }
+            Action::NextChangedFile => changes.step_file(1),
+            Action::PrevChangedFile => changes.step_file(-1),
+            Action::ScrollHalfPageDown | Action::ScrollHalfPageUp if reading || changes.split() => {
+                let half = (changes.body_height() / 2).max(1) as isize;
+                let sign = if action == Action::ScrollHalfPageDown {
+                    1
+                } else {
+                    -1
+                };
+                changes.scroll_body(sign * half);
+            }
+            Action::Select if !changes.split() => changes.open_body(),
+            Action::ExitSubPanel if reading => changes.close_body(),
+            Action::ExitSubPanel => {
+                changes.close_body();
+                return Some(vec![Effect::Focus(Focus::Fleet)]);
+            }
+            Action::ShowFleetChanges => return Some(vec![Effect::Focus(Focus::Fleet)]),
+            Action::ShowFleetArtifacts => self.lower = Lower::Artifacts,
+            Action::NewShell => return Some(vec![Effect::OpenFleetShell]),
+            Action::Quit
+            | Action::ShowHelp
+            | Action::CommandPalette
+            | Action::FocusMenuBar
+            | Action::FocusSessions
+            | Action::FocusExplorer
+            | Action::FocusViewer
+            | Action::FocusTerminalClaude
+            | Action::FocusTerminalShell
+            | Action::OpenThemePicker => return None,
+            _ => {}
+        }
+        Some(Vec::new())
+    }
+
     pub fn update(&mut self, action: Action, ctx: &Ctx) -> Option<Vec<Effect>> {
         if ctx.focus == Focus::FleetSession {
             return (action == Action::LeaveTerminal).then(|| vec![Effect::Focus(Focus::Fleet)]);
@@ -1259,6 +1329,9 @@ impl FleetPanel {
                 | Action::PrevSession => Some(Vec::new()),
                 _ => None,
             };
+        }
+        if ctx.focus == Focus::FleetChanges {
+            return self.changes_key(action);
         }
         let items = self.items();
         let at = items.iter().position(|item| self.is_selected_item(item));

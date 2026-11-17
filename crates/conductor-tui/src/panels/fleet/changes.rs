@@ -1,16 +1,84 @@
-//! 一覧の下区画: 選んだ行のブランチの変更ファイル。Explorer が持つ作業ツリーの diff と同じ読み方で、同じ形で描く。
+//! 一覧の下区画: 選んだ行のブランチの変更ファイルと、選んだファイルの diff。Explorer が持つ
+//! 作業ツリーの diff と同じ読み方で、ツリーは同じ形で描く。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::GitStatusMap;
+use ratatui::layout::Rect;
 
 use crate::list::Viewport;
 use crate::panels::explorer::git_changes::GitChanges;
+use crate::panels::viewer::diff::{DiffPane, Entry};
+use crate::panels::viewer::render::digit_count;
 
 /// 同じ dir を読み直すまでの間。前の結果が届いてから数える。
 pub const REFRESH: Duration = Duration::from_secs(5);
+
+const TREE_WIDTH: u16 = 30;
+/// 右の diff にこれだけ取れないなら割らず、ツリーと diff を入れ替えて出す。
+const BODY_MIN_WIDTH: u16 = 60;
+
+/// 区画の中身の置き場。描画とマウスの当たり判定が同じものを読む。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Split {
+    pub tree: Option<Rect>,
+    pub divider: Option<Rect>,
+    pub body: Option<Rect>,
+}
+
+/// 枠の内側をツリーと diff に分ける。狭ければ、diff を開いているかでどちらか一方。
+pub fn split(inner: Rect, body_open: bool) -> Split {
+    if inner.width >= TREE_WIDTH + 1 + BODY_MIN_WIDTH {
+        let tree = Rect {
+            width: TREE_WIDTH,
+            ..inner
+        };
+        let divider = Rect {
+            x: inner.x + TREE_WIDTH,
+            width: 1,
+            ..inner
+        };
+        let body = Rect {
+            x: inner.x + TREE_WIDTH + 1,
+            width: inner.width - TREE_WIDTH - 1,
+            ..inner
+        };
+        return Split {
+            tree: Some(tree),
+            divider: Some(divider),
+            body: Some(body),
+        };
+    }
+    match body_open {
+        true => Split {
+            tree: None,
+            divider: None,
+            body: Some(inner),
+        },
+        false => Split {
+            tree: Some(inner),
+            divider: None,
+            body: None,
+        },
+    }
+}
+
+/// worktree を移っても戻れるように預けておくもの。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Pick {
+    path: Option<String>,
+    scroll: usize,
+}
+
+/// 選んだファイルの diff を、描く形にしたもの。
+#[derive(Debug, Default)]
+pub struct Body {
+    pub entries: Vec<Entry>,
+    pub digits: usize,
+}
 
 #[derive(Debug, Default)]
 pub struct BranchChanges {
@@ -19,6 +87,17 @@ pub struct BranchChanges {
     view: Viewport,
     fetching: bool,
     landed: Option<Instant>,
+    pick: Pick,
+    picks: HashMap<PathBuf, Pick>,
+    body: Body,
+    /// 右の diff に使える行数。見出しの 1 行は除く。
+    body_height: usize,
+    /// 狭くて割れないときに、diff の側を出しているか。
+    body_open: bool,
+    /// 左右に割れる幅か。sync_layout が渡す。
+    split: bool,
+    /// ホイールでツリーを動かしたか。動かしていれば読み直しで窓を選択へ寄せない。
+    tree_panned: bool,
 }
 
 impl BranchChanges {
@@ -58,24 +137,179 @@ impl BranchChanges {
             DiffSource::WorkingTree { base } => base.clone(),
             DiffSource::Commit { .. } => return,
         };
-        let mut changes = GitChanges::new(dir.clone(), &base);
-        changes.set_viewport(self.view);
+        // 同じ dir なら作り直さない。作り直すと選んだファイルが先頭へ戻る。
+        let same = self
+            .shown
+            .as_ref()
+            .is_some_and(|(shown, changes, _)| shown == &dir && changes.source() == &diff.source);
+        if same {
+            if let Some((_, _, held)) = &mut self.shown {
+                *held = status;
+            }
+        } else {
+            self.park();
+            self.pick = self.picks.get(&dir).cloned().unwrap_or_default();
+            let mut changes = GitChanges::new(dir.clone(), &base);
+            changes.set_viewport(self.view);
+            self.shown = Some((dir, changes, status));
+        }
+        let Some((_, changes, _)) = &mut self.shown else {
+            return;
+        };
+        let panned = (same && self.tree_panned).then(|| changes.cursor().scroll());
         // 帯への警告は捨てる。読み直すたびに同じ警告が出続ける。理由は区画の中に出る。
         let _ = changes.install(diff);
-        self.shown = Some((dir, changes, status));
+        let kept = match self.pick.path.as_deref() {
+            Some(path) => changes.select_path(path),
+            None => false,
+        };
+        if !kept {
+            changes.select_first_file();
+            self.pick.scroll = 0;
+            self.tree_panned = false;
+        }
+        if let Some(scroll) = panned.filter(|_| kept) {
+            changes.pan(scroll as isize - changes.cursor().scroll() as isize);
+        }
         self.landed = Some(now);
+        self.rebuild_body();
     }
 
     pub fn set_viewport(&mut self, view: Viewport) {
         self.view = view;
+        self.body_height = view.height.saturating_sub(1);
         if let Some((_, changes, _)) = &mut self.shown {
             changes.set_viewport(view);
         }
+        self.clamp_scroll();
     }
 
     pub fn for_target(&self, target: Option<&Path>) -> Option<(&GitChanges, &GitStatusMap)> {
         let (dir, changes, status) = self.shown.as_ref()?;
         (target == Some(dir.as_path())).then_some((changes, status))
+    }
+
+    pub fn body(&self) -> &Body {
+        &self.body
+    }
+
+    pub fn selected_path(&self) -> Option<&str> {
+        self.pick.path.as_deref()
+    }
+
+    pub fn body_scroll(&self) -> usize {
+        self.pick.scroll
+    }
+
+    pub fn body_open(&self) -> bool {
+        self.body_open
+    }
+
+    pub fn split(&self) -> bool {
+        self.split
+    }
+
+    /// 割れる幅では diff を区画いっぱいに出す状態を持たない。広げたら畳む。
+    pub fn set_split(&mut self, split: bool) {
+        self.split = split;
+        if split {
+            self.body_open = false;
+        }
+    }
+
+    pub fn open_body(&mut self) {
+        self.body_open = self.pick.path.is_some();
+    }
+
+    pub fn close_body(&mut self) {
+        self.body_open = false;
+    }
+
+    pub fn step_file(&mut self, delta: isize) {
+        if let Some((_, changes, _)) = &mut self.shown {
+            changes.step_file(delta);
+            self.chose();
+        }
+    }
+
+    /// 画面 y のツリーの行がファイルなら選ぶ。
+    pub fn select_at(&mut self, y: u16) -> bool {
+        let chosen = self
+            .shown
+            .as_mut()
+            .is_some_and(|(_, changes, _)| changes.select_at(y));
+        if chosen {
+            self.chose();
+        }
+        chosen
+    }
+
+    pub fn pan_tree(&mut self, delta: isize) {
+        if let Some((_, changes, _)) = &mut self.shown {
+            changes.pan(delta);
+            self.tree_panned = true;
+        }
+    }
+
+    pub fn scroll_body(&mut self, delta: isize) {
+        self.pick.scroll = self.pick.scroll.saturating_add_signed(delta);
+        self.clamp_scroll();
+    }
+
+    pub fn body_height(&self) -> usize {
+        self.body_height
+    }
+
+    fn chose(&mut self) {
+        self.tree_panned = false;
+        let path = self
+            .shown
+            .as_ref()
+            .and_then(|(_, changes, _)| changes.selected_path())
+            .map(str::to_string);
+        if path != self.pick.path {
+            self.pick = Pick { path, scroll: 0 };
+            self.rebuild_body();
+        }
+    }
+
+    fn rebuild_body(&mut self) {
+        let file = self.shown.as_ref().and_then(|(_, changes, _)| {
+            let path = changes.selected_path()?;
+            changes.diff().files.iter().find(|f| f.path == path)
+        });
+        self.pick.path = file.map(|f| f.path.clone());
+        let mut pane = DiffPane::default();
+        if let Some(file) = file {
+            pane.build(file, 0);
+        }
+        self.body = Body {
+            digits: digit_count(pane.max_line_no),
+            entries: pane.entries,
+        };
+        if self.pick.path.is_none() {
+            self.body_open = false;
+        }
+        self.clamp_scroll();
+    }
+
+    fn clamp_scroll(&mut self) {
+        let max = self
+            .body
+            .entries
+            .len()
+            .saturating_sub(self.body_height.max(1));
+        self.pick.scroll = self.pick.scroll.min(max);
+    }
+
+    /// 今の dir の選択を預ける。
+    fn park(&mut self) {
+        if let Some((dir, _, _)) = &self.shown {
+            self.picks
+                .insert(dir.clone(), std::mem::take(&mut self.pick));
+        }
+        self.body_open = false;
+        self.tree_panned = false;
     }
 
     fn shown_dir(&self) -> Option<&Path> {
@@ -86,6 +320,7 @@ impl BranchChanges {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conductor_core::diff_state::{DiffHunk, DiffLine, DiffLineTag, FileDiff, FileStatus};
 
     fn dir(path: &str) -> PathBuf {
         PathBuf::from(path)
@@ -183,6 +418,190 @@ mod tests {
         assert_eq!(
             changes.wanted(Some(dir("/a")), Instant::now()),
             Some(dir("/a"))
+        );
+    }
+
+    fn changed(path: &str, lines: usize) -> FileDiff {
+        let lines = (1..=lines)
+            .map(|n| DiffLine {
+                tag: DiffLineTag::Insert,
+                old_line_no: None,
+                new_line_no: Some(n),
+                inline_segments: Vec::new(),
+                content: format!("{path}:{n}"),
+            })
+            .collect::<Vec<_>>();
+        FileDiff {
+            path: path.into(),
+            status: FileStatus::Modified,
+            added_lines: lines.len(),
+            deleted_lines: 0,
+            hunks: vec![DiffHunk {
+                lines,
+                func_header: None,
+            }],
+        }
+    }
+
+    fn files(paths: &[(&str, usize)]) -> DiffState {
+        let mut diff = diff("main");
+        diff.files = paths.iter().map(|&(p, n)| changed(p, n)).collect();
+        diff.rebuild_display_list();
+        diff
+    }
+
+    fn land(changes: &mut BranchChanges, at: &str, diff: DiffState) {
+        changes.install(
+            dir(at),
+            diff,
+            GitStatusMap::default(),
+            Some(Path::new(at)),
+            Instant::now(),
+        );
+    }
+
+    fn sized() -> BranchChanges {
+        let mut changes = BranchChanges::default();
+        changes.set_viewport(Viewport::new(0, 6));
+        changes
+    }
+
+    #[test]
+    fn 初めての_worktree_ではディレクトリ行を飛ばして先頭のファイルを選ぶ() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("crates/x.rs", 3)]));
+        assert_eq!(changes.selected_path(), Some("crates/x.rs"));
+        assert!(!changes.body().entries.is_empty());
+    }
+
+    #[test]
+    fn ファイルの送りはディレクトリ行を飛ばす() {
+        let mut changes = sized();
+        land(
+            &mut changes,
+            "/a",
+            files(&[("a.rs", 1), ("crates/x.rs", 1), ("crates/y.rs", 1)]),
+        );
+        // ツリーはディレクトリを先に出す: crates/ → x.rs → y.rs → a.rs
+        assert_eq!(changes.selected_path(), Some("crates/x.rs"));
+        changes.step_file(1);
+        changes.step_file(1);
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        changes.step_file(1);
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        changes.step_file(-1);
+        changes.step_file(-1);
+        changes.step_file(-1);
+        assert_eq!(changes.selected_path(), Some("crates/x.rs"));
+
+        // 前へ送るときもディレクトリ行 (docs/) を飛ばす
+        land(
+            &mut changes,
+            "/b",
+            files(&[("crates/x.rs", 1), ("docs/y.rs", 1)]),
+        );
+        changes.step_file(1);
+        assert_eq!(changes.selected_path(), Some("docs/y.rs"));
+    }
+
+    #[test]
+    fn 同じ_worktree_の読み直しは選んだファイルとスクロールを保つ() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 1), ("b.rs", 20)]));
+        changes.step_file(1);
+        changes.scroll_body(4);
+        land(&mut changes, "/a", files(&[("a.rs", 1), ("b.rs", 20)]));
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        assert_eq!(changes.body_scroll(), 4);
+    }
+
+    #[test]
+    fn 選んでいたファイルが消えたら先頭のファイルに戻りスクロールも戻す() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 20), ("b.rs", 20)]));
+        changes.step_file(1);
+        changes.scroll_body(4);
+        land(&mut changes, "/a", files(&[("a.rs", 20)]));
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        assert_eq!(changes.body_scroll(), 0);
+    }
+
+    #[test]
+    fn 変更が無くなればツリーも右も空になる() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 3)]));
+        land(&mut changes, "/a", files(&[]));
+        assert_eq!(changes.selected_path(), None);
+        assert!(changes.body().entries.is_empty());
+    }
+
+    #[test]
+    fn 別の_worktree_から戻ると選んだファイルとスクロールが戻る() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 1), ("b.rs", 20)]));
+        changes.step_file(1);
+        changes.scroll_body(3);
+        land(&mut changes, "/b", files(&[("c.rs", 1)]));
+        assert_eq!(changes.selected_path(), Some("c.rs"));
+        land(&mut changes, "/a", files(&[("a.rs", 1), ("b.rs", 20)]));
+        assert_eq!(changes.selected_path(), Some("b.rs"));
+        assert_eq!(changes.body_scroll(), 3);
+    }
+
+    #[test]
+    fn diff_が短くなったらスクロールを末尾に丸める() {
+        let mut changes = sized();
+        land(&mut changes, "/a", files(&[("a.rs", 30)]));
+        changes.scroll_body(20);
+        land(&mut changes, "/a", files(&[("a.rs", 8)]));
+        let height = changes.body_height();
+        assert_eq!(changes.body_scroll(), changes.body().entries.len() - height);
+    }
+
+    #[test]
+    fn 右に_60_桁取れる幅なら割り_取れなければどちらか一方を出す() {
+        let at = |width| Rect::new(0, 0, width, 10);
+        for width in [95, 123] {
+            let split = split(at(width), false);
+            assert_eq!(split.tree.map(|r| r.width), Some(30), "{width}");
+            assert!(split.body.is_some_and(|r| r.width >= 60), "{width}");
+        }
+        let narrow = split(at(90), false);
+        assert_eq!(
+            (narrow.tree.map(|r| r.width), narrow.body),
+            (Some(90), None)
+        );
+        let reading = split(at(59), true);
+        assert_eq!(
+            (reading.tree, reading.body.map(|r| r.width)),
+            (None, Some(59))
+        );
+    }
+
+    #[test]
+    fn ホイールに触れていなければ上にファイルが増えても選んだ行は見えたまま() {
+        let mut changes = sized();
+        let names: Vec<String> = (0..10).map(|i| format!("m{i:02}.rs")).collect();
+        let refs: Vec<(&str, usize)> = names.iter().map(|p| (p.as_str(), 1)).collect();
+        land(&mut changes, "/a", files(&refs));
+        for _ in 0..5 {
+            changes.step_file(1);
+        }
+        let mut more: Vec<String> = (0..3).map(|i| format!("a{i}.rs")).collect();
+        more.extend(names.iter().cloned());
+        let refs: Vec<(&str, usize)> = more.iter().map(|p| (p.as_str(), 1)).collect();
+        land(&mut changes, "/a", files(&refs));
+        assert_eq!(changes.selected_path(), Some("m05.rs"));
+        let tree = changes
+            .for_target(Some(Path::new("/a")))
+            .unwrap()
+            .0
+            .cursor();
+        let window = tree.scroll()..tree.scroll() + 6;
+        assert!(
+            window.contains(&tree.selected()),
+            "{} が {window:?} の外",
+            tree.selected()
         );
     }
 }

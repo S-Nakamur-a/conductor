@@ -137,6 +137,23 @@ mod tests {
     }
 
     #[test]
+    fn 左下の_git_changes_の_j_k_は右の区画と左下のシェルでは端末へ届く() {
+        let mut ws = Workspace::for_test();
+        for code in [KeyCode::Char('j'), KeyCode::Char('k')] {
+            ws.focus = Focus::FleetChanges;
+            assert!(matches!(route(&mut ws, key(code)), Routed::Action(_)));
+            for focus in [Focus::FleetSession, Focus::FleetShell] {
+                ws.focus = focus;
+                assert_eq!(
+                    route(&mut ws, key(code)),
+                    Routed::ForwardToPty(key(code)),
+                    "{focus:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn 一覧の感嘆符は右の区画と左下のシェルでは端末へ届く() {
         let mut ws = Workspace::for_test();
         let bang = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::SHIFT);
