@@ -112,7 +112,10 @@ fn under_list(
         })?;
     match request {
         UiRequest::OpenFile { line, diff, .. } => {
-            fleet.changes.open_asked(&dir, rel.clone(), line, diff);
+            let panel = panel.unwrap_or_default();
+            fleet
+                .changes
+                .open_asked(panel, &dir, rel.clone(), line, diff);
             // 左下のシェルに打っている最中は、打ち先を消さない。
             if ws.focus == Focus::FleetShell {
                 return Ok(vec![Effect::Status(
@@ -277,6 +280,7 @@ mod tests {
 
         struct Fixture {
             ws: Workspace,
+            l: crate::layout::Layout,
             dir: PathBuf,
             panel: String,
             _tmp: tempfile::TempDir,
@@ -357,6 +361,7 @@ mod tests {
             land(&mut ws, &dir, &["a.rs", "b.rs"]);
             Fixture {
                 ws,
+                l,
                 dir,
                 panel,
                 _tmp: tmp,
@@ -528,6 +533,50 @@ mod tests {
             assert!(ask(&mut f, close(&dir, "plain.rs")).is_empty());
             assert_eq!(f.ws.panels.fleet.changes.provisional(), None);
             assert!(warned(&ask(&mut f, close(&dir, "plain.rs"))));
+        }
+
+        fn leave_session(f: &mut Fixture) {
+            for _ in 0..5 {
+                if f.ws.fleet_session().is_none() {
+                    break;
+                }
+                f.ws.dispatch_to(Focus::Fleet, Action::NavigateUp);
+            }
+            assert_eq!(f.ws.fleet_session(), None);
+        }
+
+        #[test]
+        fn 待っている頼みは選択が会話から離れたら捨てる() {
+            for same_batch in [false, true] {
+                let mut f = fixture(40);
+                std::fs::write(f.dir.join("new.rs"), "x\n").unwrap();
+                assert!(ask_open(&mut f, "new.rs", true).is_empty());
+                leave_session(&mut f);
+                if !same_batch {
+                    let l = f.l.clone();
+                    f.ws.sync_layout(&l);
+                }
+                f.ws.panels.fleet.changes.note_fetching();
+                let dir = f.dir.clone();
+                land(&mut f.ws, &dir, &["a.rs", "b.rs", "new.rs"]);
+                assert_ne!(picked(&f), Some("new.rs"), "same_batch={same_batch}");
+            }
+        }
+
+        #[test]
+        fn 待っている頼みは一覧を閉じたら捨てて開き直しても戻らない() {
+            let mut f = fixture(40);
+            std::fs::write(f.dir.join("new.rs"), "x\n").unwrap();
+            assert!(ask_open(&mut f, "new.rs", true).is_empty());
+            f.ws.chrome.fleet_open = false;
+            let l = f.l.clone();
+            f.ws.sync_layout(&l);
+            f.ws.chrome.fleet_open = true;
+            f.ws.sync_layout(&l);
+            f.ws.panels.fleet.changes.note_fetching();
+            let dir = f.dir.clone();
+            land(&mut f.ws, &dir, &["a.rs", "b.rs", "new.rs"]);
+            assert_ne!(picked(&f), Some("new.rs"));
         }
     }
 }

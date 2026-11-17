@@ -65,10 +65,12 @@ the Claude Code sessions inside the TUI, resolving the DB from
   only for the conversation selected there: the line carries the asking panel's
   `CONDUCTOR_PANEL_ID` (`panel`, optional, so an older MCP or PTY host that drops it reads
   as "not the selected one"), and `remote::under_list` compares it with
-  `Workspace::fleet_session` and the request's cwd with the selected worktree, both
-  canonicalised. A diff request for a file the held diff does not have yet waits for a
-  read started after the request (`Pending::after`), then shows the diff or, failing that,
-  the whole file. While the shell under the list is being typed into, the request is kept
+  `Workspace::fleet_session` and the request's cwd, canonicalised, with the selected
+  worktree. A diff request for a file the held diff does not have yet waits for a read
+  started after the request (`Pending::after`), then shows the diff or, failing that, the
+  whole file; one for a file it has is shown at once and scrolled to the asked line again
+  when that read lands, unless someone scrolled in between. A waiting request is dropped
+  as soon as the asking conversation is no longer the one selected (closing the list counts). While the shell under the list is being typed into, the request is kept
   but the area is not switched.
   Adding a window tool runs an action at a moment nobody chose. Open one level of
   the callees of the action it reuses and check each side effect against someone

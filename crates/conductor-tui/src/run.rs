@@ -3359,6 +3359,7 @@ needle here
         land_changes(&mut ws, "/r/app", &["a.rs"]);
         let changes = &mut ws.panels.fleet.changes;
         changes.open_asked(
+            "p",
             std::path::Path::new("/r/app"),
             "plain.rs".into(),
             Some(50),
@@ -3606,6 +3607,7 @@ needle here
         ws.sync_layout(&narrow);
         land_changes(&mut ws, "/r/app", &["a.rs", "b.rs"]);
         ws.panels.fleet.changes.open_asked(
+            "p",
             std::path::Path::new("/r/app"),
             "b.rs".into(),
             None,
