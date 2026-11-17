@@ -37,7 +37,10 @@ can stay honest. When a count moves for no reason, check the count before you
 re-diagnose the code.
 
 CI checks `cargo fmt --all -- --check` and `cargo clippy --workspace -- -D warnings`
-on every pull request — a warning is a failure, including one inherited from main. `.githooks/pre-commit` runs the same fmt check locally, but wiring
+on every pull request — a warning is a failure, including one inherited from main. CI runs
+whatever stable the ubuntu-latest image carries — no toolchain is pinned — so it can be newer
+than yours and fail first on a lint yours does not have yet (2026-11-17: `u8::max_value()`
+deprecated in the vendored vt100, on a runner newer than 1.95.0). `.githooks/pre-commit` runs the same fmt check locally, but wiring
 it up is each developer's own business — the repository does not install it.
 
 ### MCP Server (`conductor mcp-serve`, `crates/conductor-mcp/`)
@@ -845,7 +848,8 @@ Nothing else may follow it out: the rest of git stays on `git2`.
   (measured while other worktrees were building). That is what failed the `semantic_index`
   and sheaf-core `regenerate` producer tests, a few runs in six.
 - **A rule that rejoins a Claude panel's rows (copy, links) is tested on recorded real screens,
-  both ways.** Claude Code leaves no wrap mark, so every such rule is a guess, and the guesses
+  both ways.** Outside the URLs Claude Code marks with OSC 8 (joined by the marks, see Links in
+  the PTY panels) it leaves no wrap mark, so every rule for the rest is a guess, and the guesses
   that broke here were all joins that must not happen: a table cell's two lines, the "2." of a
   numbered list after a URL ending in a digit, the status rows, the URL after "PR is here:".
   Record a real screen holding those forms and pin "not joined" on it before claiming the rule.
