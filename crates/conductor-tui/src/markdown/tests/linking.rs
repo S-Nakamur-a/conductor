@@ -180,7 +180,30 @@ fn 表の幅が足りずセルが切られても印は見えている字だけ�
     let table = format!("| 名前 | 場所 |\n|---|---|\n| doc | {URL} |");
     for width in 1..16 {
         let lines = linked(&table, width);
+        let shown = pieces(&lines, URL).concat();
         assert!(urls(&lines).iter().all(|u| u == URL), "幅 {width}");
-        assert!(URL.contains(&pieces(&lines, URL).concat()), "幅 {width}");
+        assert!(URL.contains(&shown), "幅 {width}");
+        let cell_shown = lines.iter().any(|md| md.line.to_string().contains("//"));
+        assert!(
+            !cell_shown || !shown.is_empty(),
+            "幅 {width}: URL の字が見えているのに印が無い"
+        );
     }
+}
+
+#[test]
+fn ラベルの中の空白には印を付けない() {
+    let url = "https://x.example/doc";
+    let lines = linked(&format!("aaaa [foo bar baz qux quux]({url})"), 16);
+    for piece in pieces(&lines, url) {
+        assert!(!piece.contains(' '), "{piece:?}");
+    }
+    assert_eq!(
+        pieces(&linked(&format!("[foo bar]({url})"), 80), url),
+        ["foo", "bar", url]
+    );
+    assert_eq!(
+        pieces(&linked(&format!("[設定\u{3000}画面]({url})"), 80), url),
+        ["設定", "画面", url]
+    );
 }

@@ -232,3 +232,60 @@ fn 同じ表の別のセルのurlは混ざらず離れた同じurlは一つの�
     }
     assert_eq!(links.len(), 2, "{links:?}");
 }
+
+/// 札 (` Jump to latest (G) `) が占める桁。札の無い行なら None。
+fn badge_cols(buffer: &Buffer, y: u16) -> Option<std::ops::Range<u16>> {
+    let row = row_text(buffer, y);
+    let label = " Jump to latest (G) ";
+    let at = row.find(label)?;
+    let start = row[..at].chars().count() as u16;
+    Some(start..start + label.chars().count() as u16)
+}
+
+#[test]
+fn 札と同じ字のurlでも札のセルは包まない() {
+    let long = format!("https://example.com/{}", "latest-tests-totals-".repeat(6));
+    let filler: Vec<LogEntry> = (0..30).map(|i| assistant(&format!("行 {i}"))).collect();
+    let mut under_badge = false;
+    for lead in 0..20 {
+        let mut entries = filler.clone();
+        entries.push(assistant(&format!("{}{long}", "x".repeat(lead) + " ")));
+        entries.extend(filler.clone());
+        for back in 20..80 {
+            let mut ws = reading(entries.clone(), back);
+            let (links, buffer) = links_on(&mut ws, 200);
+            for segment in links.iter().flat_map(|l| &l.segments) {
+                let Some(chip) = badge_cols(&buffer, segment.y) else {
+                    continue;
+                };
+                under_badge = true;
+                assert!(
+                    segment.xs.end <= chip.start,
+                    "前置き {lead} 遡り {back}: {segment:?} が札 {chip:?} に掛かる"
+                );
+            }
+        }
+    }
+    assert!(under_badge, "札と同じ行に URL が来る形を一度も通っていない");
+}
+
+#[test]
+fn 印にしないurlは同じ画面の字の推測が正しいurlで残る() {
+    let rust = "https://en.wikipedia.org/wiki/Rust_(lang)";
+    let code = "https://c.example/code";
+    let text = format!("[Rust]({rust}) と `{code}` を見て");
+    let mut ws = reading(vec![assistant(&text)], 0);
+    let (marked, buffer) = links_on(&mut ws, 120);
+    let area = Rect::new(0, 0, AREA.width, AREA.height);
+    let layout = crate::layout::layout(&ws, area);
+    let content = render::content_area(layout.rect(Region::TerminalClaude).unwrap());
+    let logged: std::collections::HashSet<String> = [rust, code].map(String::from).into();
+    let guessed = crate::link::find(&buffer, content, &crate::link::Joining::Logged(&logged));
+    let merged = crate::link::merge(marked, guessed);
+    let urls: Vec<&str> = merged.iter().map(|l| l.url.as_str()).collect();
+    assert!(urls.contains(&rust) && urls.contains(&code), "{urls:?}");
+    assert!(
+        !urls.contains(&"https://en.wikipedia.org/wiki/Rust_(lang"),
+        "{urls:?}"
+    );
+}

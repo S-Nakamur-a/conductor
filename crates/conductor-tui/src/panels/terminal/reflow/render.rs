@@ -26,6 +26,7 @@ pub(crate) struct LinkedGlyph {
 
 /// render が area に描く行のうち、リンクになる字。
 pub(crate) fn linked_glyphs(area: Rect, reflow: &Reflow) -> Vec<LinkedGlyph> {
+    let chip = badge(area, reflow.follow).map(|(rect, _)| rect);
     let mut out = Vec::new();
     for (row, index) in reflow.shown(area.height).enumerate() {
         let y = area.y + row as u16;
@@ -39,11 +40,14 @@ pub(crate) fn linked_glyphs(area: Rect, reflow: &Reflow) -> Vec<LinkedGlyph> {
                 let run = reflow.links[index]
                     .iter()
                     .find(|run| run.cols.contains(&col));
+                let x = area.x + col as u16;
+                let under_chip = chip.is_some_and(|c| y == c.y && x + width as u16 > c.x);
                 if let Some(run) = run
                     && col + width <= area.width as usize
+                    && !under_chip
                 {
                     out.push(LinkedGlyph {
-                        x: area.x + col as u16,
+                        x,
                         y,
                         width: width as u16,
                         symbol: g.to_string(),

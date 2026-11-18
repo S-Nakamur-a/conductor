@@ -225,8 +225,8 @@ the third:
   marked inside code or the user's and tools' blocks. The raw URL goes through
   `urls::target` only when shown, and a control character, whitespace or unbalanced
   brackets (a `)` the parser cut at) drop the mark, since the URL reaches the terminal as
-  OSC 8. Each glyph must still be on screen as drawn, which keeps the "Jump to latest"
-  chip and anything drawn later out. While a region shows the transcript, `osc8_runs`
+  OSC 8. The "Jump to latest" chip's cells are left out by its rectangle (`reflow::badge`),
+  and each glyph must still be on screen as drawn, which keeps anything drawn later out. While a region shows the transcript, `osc8_runs`
   reads nothing there.
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell

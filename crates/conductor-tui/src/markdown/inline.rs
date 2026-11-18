@@ -32,7 +32,7 @@ pub(crate) fn inline_cells(text: &str, base: Style, theme: &Theme, flavor: Flavo
         let count = graphemes.len();
         for (k, g) in graphemes.into_iter().enumerate() {
             let link = match &opens {
-                Opens::Link(url) => Some(url.clone()),
+                Opens::Link(url) if !g.chars().all(char::is_whitespace) => Some(url.clone()),
                 Opens::LinkSuffix(url) if (2..count - 1).contains(&k) => Some(url.clone()),
                 _ => None,
             };
