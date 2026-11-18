@@ -7,6 +7,8 @@ use crate::strip::truncate_to_width;
 use conductor_core::theme::Theme;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::markdown::MdLine;
 use unicode_width::UnicodeWidthStr;
 
 /// 左のマーカー溝に割り当てる表示カラム数。
@@ -110,24 +112,18 @@ pub(super) fn pad_glyph_to(glyph: &str, target_cols: usize) -> String {
 }
 
 /// 先頭行にマーカー、続く行に同じ幅の空白を付ける。
-pub(super) fn with_marker(
-    lines: Vec<Line<'static>>,
-    glyph: &str,
-    marker_style: Style,
-) -> Vec<Line<'static>> {
+pub(super) fn with_marker(lines: Vec<MdLine>, glyph: &str, marker_style: Style) -> Vec<MdLine> {
     let marker = pad_glyph_to(glyph, MARKER_COLS);
     let indent = " ".repeat(MARKER_COLS);
     lines
         .into_iter()
         .enumerate()
-        .map(|(i, mut line)| {
-            let prefix = if i == 0 {
+        .map(|(i, line)| {
+            line.prefixed(if i == 0 {
                 Span::styled(marker.clone(), marker_style)
             } else {
                 Span::raw(indent.clone())
-            };
-            line.spans.insert(0, prefix);
-            line
+            })
         })
         .collect()
 }

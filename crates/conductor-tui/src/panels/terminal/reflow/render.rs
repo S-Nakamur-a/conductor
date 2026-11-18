@@ -6,11 +6,60 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::Reflow;
 use super::build::LineMeta;
 use super::style::{INACTIVE, USER_BG};
+use crate::markdown::drawn_width;
+
+/// 描いた画面の上でリンクになる 1 字。区画の座標と、そこに描いたはずの書記素。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinkedGlyph {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub symbol: String,
+    pub url: std::sync::Arc<str>,
+}
+
+/// render が area に描く行のうち、リンクになる字。
+pub(crate) fn linked_glyphs(area: Rect, reflow: &Reflow) -> Vec<LinkedGlyph> {
+    let chip = badge(area, reflow.follow).map(|(rect, _)| rect);
+    let mut out = Vec::new();
+    for (row, index) in reflow.shown(area.height).enumerate() {
+        let y = area.y + row as u16;
+        let mut col = 0;
+        for span in &reflow.lines[index].spans {
+            for g in span.content.graphemes(true) {
+                let width = drawn_width(g);
+                if width == 0 {
+                    continue;
+                }
+                let run = reflow.links[index]
+                    .iter()
+                    .find(|run| run.cols.contains(&col));
+                let x = area.x + col as u16;
+                let under_chip = chip.is_some_and(|c| y == c.y && x + width as u16 > c.x);
+                if let Some(run) = run
+                    && col + width <= area.width as usize
+                    && !under_chip
+                {
+                    out.push(LinkedGlyph {
+                        x,
+                        y,
+                        width: width as u16,
+                        symbol: g.to_string(),
+                        url: run.url.clone(),
+                    });
+                }
+                col += width;
+            }
+        }
+    }
+    out
+}
 
 /// 追従が外れているときだけ出すチップ。長い順に並べ、収まる最初のものを選ぶ。
 ///
@@ -26,14 +75,8 @@ pub(crate) fn render(frame: &mut Frame, area: Rect, reflow: &Reflow) {
     frame.render_widget(Clear, area);
 
     let buffer = frame.buffer_mut();
-    for (row, (line, meta)) in reflow
-        .lines
-        .iter()
-        .zip(reflow.meta.iter())
-        .skip(reflow.scroll)
-        .take(area.height as usize)
-        .enumerate()
-    {
+    for (row, index) in reflow.shown(area.height).enumerate() {
+        let (line, meta) = (&reflow.lines[index], &reflow.meta[index]);
         let y = area.y + row as u16;
         buffer.set_line(area.x, y, line, area.width);
         // 溝の字の直後を 1 セル未書き込みで残す。Buffer::reset で毎フレーム消えるので、

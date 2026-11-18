@@ -24,7 +24,9 @@ use crate::panels::viewer::syntax::Highlighter;
 
 use build::LineMeta;
 
-pub(crate) use render::render;
+use crate::markdown::LinkRun;
+
+pub(crate) use render::{linked_glyphs, render};
 
 /// 入場の枠色遷移にかける時間。これ以上長いと読みモードへ入る操作がもたつく。
 const TRANSITION_MS: u64 = 500;
@@ -49,6 +51,7 @@ pub(crate) struct Reflow {
     size: (u16, u16),
     lines: Vec<Line<'static>>,
     meta: Vec<LineMeta>,
+    links: Vec<Vec<LinkRun>>,
     sweep: Option<Instant>,
     /// 直前のフレームでモーダルが開いていたか。
     overlay_was_open: bool,
@@ -69,6 +72,7 @@ impl Reflow {
             size: (0, 0),
             lines: Vec::new(),
             meta: Vec::new(),
+            links: Vec::new(),
             sweep: Some(Instant::now()),
             overlay_was_open: false,
             wants_clear: true,
@@ -79,6 +83,12 @@ impl Reflow {
     #[cfg(test)]
     pub(super) fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// 高さ height の区画に映る行の番号。
+    fn shown(&self, height: u16) -> Range<usize> {
+        let start = self.scroll.min(self.lines.len());
+        start..(start + height as usize).min(self.lines.len())
     }
 
     /// 組み直した行の数と、先頭に出ている行。
@@ -159,6 +169,7 @@ impl Reflow {
             let anchor = self.meta.get(self.scroll).copied();
             self.lines = built.lines;
             self.meta = built.meta;
+            self.links = built.links;
             self.needs_rebuild = false;
             self.wants_clear = true;
             anchored = anchor.map(|a| render::anchor_index(&self.meta, a));

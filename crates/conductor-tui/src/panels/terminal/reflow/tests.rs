@@ -247,14 +247,18 @@ fn ガターの字形はちょうど1カラムと測れる() {
 #[test]
 fn マーカーは先頭行だけに付き継続行は空の字下げ() {
     let style = Style::default().fg(Color::Green);
-    let two = with_marker(vec![Line::from("hello"), Line::from("world")], ">", style);
+    let two = with_marker(
+        vec![Line::from("hello").into(), Line::from("world").into()],
+        ">",
+        style,
+    );
     assert_eq!(two.len(), 2);
-    assert_eq!(two[0].spans[0].content, "> ");
-    assert_eq!(two[1].spans[0].content, "  ");
+    assert_eq!(two[0].line.spans[0].content, "> ");
+    assert_eq!(two[1].line.spans[0].content, "  ");
 
-    let one = with_marker(vec![Line::from("only")], ">", style);
+    let one = with_marker(vec![Line::from("only").into()], ">", style);
     assert_eq!(one.len(), 1);
-    assert_eq!(one[0].spans[0].content, "> ");
+    assert_eq!(one[0].line.spans[0].content, "> ");
 
     assert!(with_marker(vec![], ">", style).is_empty());
 }
@@ -1494,4 +1498,84 @@ fn 表のセルの中の折り返しは繋がない() {
         breaks.iter().all(|&b| b == crate::rejoin::Break::Newline),
         "{rows:#?}\n{breaks:?}"
     );
+}
+
+// 描いた行に添えるリンク
+
+/// url のリンクが付いた桁に描いた字を、上の行から順に繋いだもの。
+fn linked_text(out: &Built, url: &str) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut joined = String::new();
+    for (line, links) in out.lines.iter().zip(&out.links) {
+        for run in links.iter().filter(|run| &*run.url == url) {
+            let mut col = 0;
+            for g in line.spans.iter().flat_map(|s| s.content.graphemes(true)) {
+                if run.cols.contains(&col) {
+                    joined.push_str(g);
+                }
+                col += crate::markdown::drawn_width(g);
+            }
+        }
+    }
+    joined
+}
+
+#[test]
+fn 展開を切り替えるとthinkingのurlの印が出入りし下の行の印はずれない() {
+    let think = "https://a.example/think";
+    let after = "https://a.example/after";
+    let entries = [
+        entry(
+            Role::Assistant,
+            vec![DisplayBlock::Thinking {
+                text: format!("see {think}"),
+                duration_secs: 3,
+            }],
+        ),
+        entry(Role::Assistant, vec![DisplayBlock::Text(after.into())]),
+    ];
+    let open = built(&entries, true, 80);
+    assert_eq!(linked_text(&open, think), think);
+    assert_eq!(linked_text(&open, after), after);
+    let closed = built(&entries, false, 80);
+    assert_eq!(linked_text(&closed, think), "");
+    assert_eq!(linked_text(&closed, after), after);
+}
+
+#[test]
+fn 幅を変えて組み直すと印も新しい折れ目の字に付く() {
+    let url = "https://example.com/a/very/long/path/to/the/doc";
+    let table = format!("| 名前 | 場所 |\n|---|---|\n| doc | {url} |");
+    let entries = [entry(Role::Assistant, vec![DisplayBlock::Text(table)])];
+    for width in [30, 45, 80] {
+        assert_eq!(
+            linked_text(&built(&entries, false, width), url),
+            url,
+            "幅 {width}"
+        );
+    }
+}
+
+#[test]
+fn ツールの結果には印を付けない() {
+    let url = "https://a.example/tool";
+    let entries = [entry(
+        Role::User,
+        vec![tool_result(ResultKind::Inline, &[url], false)],
+    )];
+    let out = built(&entries, true, 80);
+    assert!(out.links.iter().all(Vec::is_empty));
+}
+
+#[test]
+fn teammateの本文のurlにも印が付く() {
+    let url = "https://a.example/mate";
+    let entries = [entry(
+        Role::Assistant,
+        vec![DisplayBlock::TeammateMessage {
+            id: "x".into(),
+            body: url.into(),
+        }],
+    )];
+    assert_eq!(linked_text(&built(&entries, true, 80), url), url);
 }

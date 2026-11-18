@@ -1312,6 +1312,8 @@ fn page_lines(size: (u16, u16)) -> usize {
 
 #[cfg(test)]
 mod osc8_tests;
+#[cfg(test)]
+mod transcript_link_tests;
 
 #[cfg(test)]
 mod tests {

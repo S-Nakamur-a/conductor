@@ -183,6 +183,24 @@ pub fn claude_shown(ws: &Workspace, region: Region, rect: Rect) -> (Option<Strin
     }
 }
 
+/// Claude の区画が PTY の代わりに映しているトランスクリプトと、それを描く領域。
+pub(crate) fn transcript_shown(
+    ws: &Workspace,
+    region: Region,
+    rect: Rect,
+) -> Option<(&super::reflow::Reflow, Rect)> {
+    let panel = &ws.panels.terminal;
+    match region {
+        Region::TerminalClaude => panel
+            .transcript_of(panel.pane(region).session.as_deref())
+            .map(|reflow| (reflow, content_area(rect))),
+        Region::FleetSession => panel
+            .transcript_of(ws.fleet_session().as_deref())
+            .map(|reflow| (reflow, pty_area(rect))),
+        _ => None,
+    }
+}
+
 /// 区画に映した PTY の画面で、OSC 8 のリンクが付いた字の並び (画面の y、桁の範囲、URL)。
 /// 描いた後のバッファと字も見た目も同じセルだけを拾う。描いた後に覆われた所と書き換わった所を包まないため。
 pub fn osc8_runs(
@@ -191,6 +209,9 @@ pub fn osc8_runs(
     rect: Rect,
     buffer: &Buffer,
 ) -> Vec<(u16, Range<u16>, String)> {
+    if transcript_shown(ws, region, rect).is_some() {
+        return Vec::new();
+    }
     let panel = &ws.panels.terminal;
     let (session, scroll, content) = match region {
         Region::TerminalClaude | Region::TerminalShell => {

@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::markdown::{self, Flavor};
+use crate::markdown::{self, Flavor, LinkRun, MdLine};
 use crate::panels::viewer::syntax::Highlighter;
 
 use super::style::{
@@ -48,6 +48,8 @@ pub(super) struct LineMeta {
 pub(super) struct Built {
     pub lines: Vec<Line<'static>>,
     pub meta: Vec<LineMeta>,
+    /// 行ごとの、押すと開く桁。markdown を通った本文にだけある。
+    pub links: Vec<Vec<LinkRun>>,
 }
 
 pub(super) struct Ctx<'a> {
@@ -63,6 +65,7 @@ pub(super) fn build(ctx: &Ctx<'_>, entries: &[LogEntry], width: usize) -> Built 
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut meta: Vec<LineMeta> = Vec::new();
+    let mut links: Vec<Vec<LinkRun>> = Vec::new();
 
     for (ei, entry) in entries.iter().enumerate() {
         let before = lines.len();
@@ -90,7 +93,10 @@ pub(super) fn build(ctx: &Ctx<'_>, entries: &[LogEntry], width: usize) -> Built 
                 offset,
                 skip_col: None,
             }));
-            lines.extend(block_lines);
+            for md in block_lines {
+                lines.push(md.line);
+                links.push(md.links);
+            }
         }
 
         // 注釈だけのエントリは上のエントリの続きであって別のターンではない。CLI は
@@ -98,6 +104,7 @@ pub(super) fn build(ctx: &Ctx<'_>, entries: &[LogEntry], width: usize) -> Built 
         let next_is_continuation = entries.get(ei + 1).is_some_and(annotation_only);
         if !next_is_continuation && lines.len() > before {
             lines.push(Line::from(""));
+            links.push(Vec::new());
             meta.push(LineMeta {
                 entry: ei,
                 block: SEPARATOR,
@@ -111,7 +118,8 @@ pub(super) fn build(ctx: &Ctx<'_>, entries: &[LogEntry], width: usize) -> Built 
         m.skip_col = width_risk_hole(line);
     }
     debug_assert_eq!(lines.len(), meta.len());
-    Built { lines, meta }
+    debug_assert_eq!(lines.len(), links.len());
+    Built { lines, meta, links }
 }
 
 fn annotation_only(entry: &LogEntry) -> bool {
@@ -159,11 +167,11 @@ fn render_block(
     pos: &Pos<'_>,
     block: &DisplayBlock,
     summary_emitted: &mut bool,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     let body_width = width.saturating_sub(MARKER_COLS);
 
     match block {
-        DisplayBlock::Text(text) if pos.is_user => user_turn(pos, styles, text, width),
+        DisplayBlock::Text(text) if pos.is_user => plain(user_turn(pos, styles, text, width)),
         DisplayBlock::Text(text) => with_marker(
             markdown(ctx, md_theme, text, body_width),
             ASSISTANT_MARKER,
@@ -173,22 +181,32 @@ fn render_block(
             name,
             input,
             errored,
-        } => render_tool_use(name, input, *errored, ctx.expanded, width, &styles.tools)
-            .into_iter()
-            .collect(),
+        } => plain(render_tool_use(
+            name,
+            input,
+            *errored,
+            ctx.expanded,
+            width,
+            &styles.tools,
+        )),
         DisplayBlock::ToolResult {
             kind: ResultKind::AskUserQuestion,
             lines,
             ..
-        } => render_ask_user_question(lines, width, &styles.tools),
+        } => plain(render_ask_user_question(lines, width, &styles.tools)),
         DisplayBlock::ToolResult {
             lines, is_error, ..
-        } if ctx.expanded => render_result_expanded(lines, *is_error, width, &styles.tools),
+        } if ctx.expanded => plain(render_result_expanded(
+            lines,
+            *is_error,
+            width,
+            &styles.tools,
+        )),
         DisplayBlock::ToolResult {
             kind,
             lines,
             is_error,
-        } => render_result_collapsed(
+        } => plain(render_result_collapsed(
             *kind,
             lines,
             *is_error,
@@ -196,7 +214,7 @@ fn render_block(
             summary_emitted,
             width,
             &styles.tools,
-        ),
+        )),
         DisplayBlock::Thinking {
             text,
             duration_secs,
@@ -204,23 +222,28 @@ fn render_block(
         DisplayBlock::TeammateMessage { id, body } => {
             teammate(ctx, styles, md_theme, width, id, body)
         }
-        DisplayBlock::Annotation { lines } => render_annotation(lines, width, &styles.tools),
+        DisplayBlock::Annotation { lines } => plain(render_annotation(lines, width, &styles.tools)),
         // 実測: タスク通知はツールの緑ではなくアシスタントと同じ丸印で描かれる。
-        DisplayBlock::Notice(text) => vec![fit_glyph_line(
+        DisplayBlock::Notice(text) => plain(vec![fit_glyph_line(
             ASSISTANT_MARKER,
             &[(text.clone(), styles.assistant)],
             width,
-        )],
-        DisplayBlock::CompactBoundary => vec![fit_glyph_line(
+        )]),
+        DisplayBlock::CompactBoundary => plain(vec![fit_glyph_line(
             THINKING_GLYPH,
             &[(COMPACT_BOUNDARY.to_string(), styles.result)],
             width,
-        )],
+        )]),
     }
 }
 
-fn markdown(ctx: &Ctx<'_>, md_theme: &Theme, text: &str, body_width: usize) -> Vec<Line<'static>> {
-    markdown::render(
+/// markdown を通らない行。リンクは字から探す推測だけが付ける。
+fn plain(lines: impl IntoIterator<Item = Line<'static>>) -> Vec<MdLine> {
+    lines.into_iter().map(MdLine::from).collect()
+}
+
+fn markdown(ctx: &Ctx<'_>, md_theme: &Theme, text: &str, body_width: usize) -> Vec<MdLine> {
+    markdown::render_linked(
         text,
         body_width,
         md_theme,
@@ -254,9 +277,9 @@ fn thinking(
     width: usize,
     text: &str,
     duration_secs: u64,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     if !ctx.expanded {
-        return vec![fit_styled_line(
+        return vec![MdLine::from(fit_styled_line(
             MARKER_COLS,
             &[
                 ("Thought for ".to_string(), styles.result),
@@ -267,23 +290,23 @@ fn thinking(
                 (" (ctrl+o to expand)".to_string(), styles.result),
             ],
             width,
-        )];
+        ))];
     }
 
-    let mut lines = vec![Line::from(vec![
+    let mut lines = vec![MdLine::from(Line::from(vec![
         Span::styled(pad_glyph_to(THINKING_GLYPH, MARKER_COLS), styles.thinking),
         Span::styled("Thinking\u{2026}", styles.thinking),
-    ])];
+    ]))];
     if text.trim().is_empty() {
         return lines;
     }
     let body = markdown(ctx, md_theme, text, width.saturating_sub(MARKER_COLS))
         .into_iter()
-        .map(|mut line| {
-            for span in &mut line.spans {
+        .map(|mut md| {
+            for span in &mut md.line.spans {
                 span.style = Style::default().fg(INACTIVE).add_modifier(Modifier::ITALIC);
             }
-            line
+            md
         })
         .collect();
     lines.extend(with_marker(body, " ", styles.thinking));
@@ -307,7 +330,7 @@ fn teammate(
     width: usize,
     id: &str,
     body: &str,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     let marker = pad_glyph_to(TEAMMATE_GLYPH, MARKER_COLS);
     let head = format!("Message from @{id}");
     if !ctx.expanded {
@@ -318,16 +341,16 @@ fn teammate(
             Some(preview) => format!("{head}: {preview}{HINT}"),
             None => format!("{head}{HINT}"),
         };
-        return vec![fit_glyph_line(
+        return vec![MdLine::from(fit_glyph_line(
             TEAMMATE_GLYPH,
             &[(text, styles.result)],
             width,
-        )];
+        ))];
     }
-    let mut lines = vec![Line::from(vec![
+    let mut lines = vec![MdLine::from(Line::from(vec![
         Span::styled(marker, styles.result),
         Span::styled(head, styles.result),
-    ])];
+    ]))];
     if body.trim().is_empty() {
         return lines;
     }
