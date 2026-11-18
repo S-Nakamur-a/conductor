@@ -194,7 +194,8 @@ with no window open, and the window opened later showed it mid-tool.
 ### Links in the PTY panels (`link.rs`, `crates/vt100/src/link.rs`)
 
 What the outer terminal can open is rewritten by conductor as OSC 8 after each frame
-(`link::Painter`). There are two sources, and the first wins wherever they overlap:
+(`link::Painter`). There are three sources, and the first two win wherever they overlap
+the third:
 
 - **The child's own OSC 8.** The vendored vt100 keeps it per cell (the only behaviour
   changed there; `git diff` from the vendoring commit shows all of it): a cell carries a 16-bit
@@ -209,14 +210,24 @@ What the outer terminal can open is rewritten by conductor as OSC 8 after each f
   piece it wraps, so `link::marked_links` makes one link of every piece of a URL in a
   region and needs no rule for joining rows. `render::osc8_runs` keeps only cells the
   frame drew with the same text and style, which is what keeps the scrollback banner, a
-  popup, output that arrived after drawing and most of a transcript from taking a link. A
-  transcript cell drawn in the default colours over the same character still passes;
-  Claude Code draws its links in a colour the transcript does not use. So does a
-  default-background cell in the focused region, which the frame tinted (`render::focus_tint`).
+  popup and output that arrived after drawing from taking a link. A default-background
+  cell in the focused region, which the frame tinted (`render::focus_tint`), still passes.
   Everything `render()` does after the panels draw — the focus tint, the selection, a modal,
   `fx` — rewrites what `osc8_runs` compares against, so each one is a row of any change to
   that check. `Workspace::for_test` leaves `chrome.terminal_bg` unset, which turns the tint off:
   #484's whole-screen test passed while a focused panel dropped every marked cell (#487).
+- **The transcript conductor draws** (`link::transcript_links`). The reflow view is drawn
+  from the log, so no child mark reaches it; instead `markdown::render_linked` carries each
+  link's raw URL on the cells it draws (`wrap::Cell::link`), through wrapping, table cells
+  and every line prefix, and `reflow::linked_glyphs` maps the visible ones onto the screen
+  with the same scroll and height as `reflow::render`. A bare URL is marked by the same rule
+  as the shape detection (`inline::mark_bare_urls` mirrors `link::single`), and nothing is
+  marked inside code or the user's and tools' blocks. The raw URL goes through
+  `urls::target` only when shown, and a control character, whitespace or unbalanced
+  brackets (a `)` the parser cut at) drop the mark, since the URL reaches the terminal as
+  OSC 8. Each glyph must still be on screen as drawn, which keeps the "Jump to latest"
+  chip and anything drawn later out. While a region shows the transcript, `osc8_runs`
+  reads nothing there.
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell
   and by the session's log in a Claude panel.

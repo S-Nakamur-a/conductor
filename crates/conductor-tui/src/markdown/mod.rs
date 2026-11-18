@@ -30,6 +30,8 @@ use syntect::parsing::SyntaxSet;
 
 use parse::{MdBlock, parse_blocks};
 use render::render_block;
+pub(crate) use wrap::drawn_width;
+pub use wrap::{LinkRun, MdLine};
 
 /// どちらの見た目で描画するか。conductor 自身の UI (change summary、レビュー
 /// コメント) と Claude Code のトランスクリプト表示では、求める装飾が違う。
@@ -52,8 +54,23 @@ pub fn render(
     syntect_theme: &SyntectTheme,
     flavor: Flavor,
 ) -> Vec<Line<'static>> {
+    render_linked(text, width, theme, syntax_set, syntect_theme, flavor)
+        .into_iter()
+        .map(|md| md.line)
+        .collect()
+}
+
+/// render と同じ行に、各行の中でリンクになる桁を添える。
+pub fn render_linked(
+    text: &str,
+    width: usize,
+    theme: &Theme,
+    syntax_set: &SyntaxSet,
+    syntect_theme: &SyntectTheme,
+    flavor: Flavor,
+) -> Vec<MdLine> {
     let width = width.max(1);
-    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut out: Vec<MdLine> = Vec::new();
     // 見出しの前には必ず空行を 1 つ置く。Transcript では後ろにも置き、元の文書に
     // 続く空行は飲んで二重にしない。
     let mut prev_blank = true;
@@ -68,7 +85,7 @@ pub fn render(
         }
         swallow_next_blank = false;
         if is_heading && !prev_blank {
-            out.push(Line::from(""));
+            out.push(Line::from("").into());
         }
         out.extend(render_block(
             &block,
@@ -79,7 +96,7 @@ pub fn render(
             flavor,
         ));
         if is_heading && flavor == Flavor::Transcript {
-            out.push(Line::from(""));
+            out.push(Line::from("").into());
             swallow_next_blank = true;
             prev_blank = true;
         } else {
@@ -87,7 +104,7 @@ pub fn render(
         }
     }
     if out.is_empty() {
-        out.push(Line::from(""));
+        out.push(Line::from("").into());
     }
     out
 }

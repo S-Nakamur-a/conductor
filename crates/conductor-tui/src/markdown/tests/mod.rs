@@ -14,6 +14,7 @@ use super::wrap::display_width;
 use super::*;
 
 mod code_colors;
+mod linking;
 mod parsing;
 mod rendering;
 

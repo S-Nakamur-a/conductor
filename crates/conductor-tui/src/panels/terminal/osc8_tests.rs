@@ -474,3 +474,56 @@ fn シェルの区画でも子が付けたリンクを包む() {
     assert_eq!(links[0].url, url);
     assert_eq!(texts(&buffer, &links[0]), ["x"]);
 }
+
+fn open_transcript(shown: &mut Shown, text: &str) {
+    let id = shown.id.clone();
+    let panel = &mut shown.ws.panels.terminal;
+    panel.pending_transcript = Some(PendingTranscript {
+        panel: id.clone(),
+        session: format!("session-of-{id}"),
+        scroll_back: 0,
+    });
+    let turn = conductor_core::claude_log::LogEntry {
+        role: conductor_core::claude_log::Role::Assistant,
+        blocks: vec![conductor_core::claude_log::DisplayBlock::Text(text.into())],
+    };
+    panel.install_transcript(&format!("session-of-{id}"), Ok(vec![turn]));
+    assert!(panel.transcript_of(Some(&id)).is_some());
+}
+
+#[test]
+fn トランスクリプトを開いている区画では描いた字が同じでもptyの印を拾わない() {
+    let url = "https://a.example/pty";
+    let mut shown = claude_showing(4, 40, osc8(url, url).as_bytes());
+    let rect = claude_rect(&shown);
+    let live = draw(&shown, rect);
+    assert_eq!(marked(&shown, rect, &live).len(), 1);
+    open_transcript(&mut shown, "turn");
+    assert_eq!(marked(&shown, rect, &live), vec![]);
+}
+
+#[test]
+fn 一覧の右に映したトランスクリプトの表のurlも一つのリンクになる() {
+    let url = "https://example.com/a/very/long/path/to/the/doc";
+    let mut shown = fleet_showing("https://a.example/live");
+    open_transcript(
+        &mut shown,
+        &format!("| 名前 | 場所 |\n|---|---|\n| doc | {url} |"),
+    );
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = crate::layout::layout(&shown.ws, area);
+    let rect = layout.rect(Region::FleetSession).unwrap();
+    let body = render::pty_area(rect);
+    shown.ws.panels.terminal.fleet_size = (body.height, body.width.min(40));
+    let _ = shown.ws.prepare();
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| crate::render::render(frame, &shown.ws, &layout))
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let links = crate::link::on_screen(&shown.ws, &layout, &buffer);
+    let found: Vec<&Link> = links.iter().filter(|l| l.url == url).collect();
+    assert_eq!(found.len(), 1, "{links:?}");
+    assert!(found[0].segments.len() >= 2, "{found:?}");
+    assert_eq!(texts(&buffer, found[0]).concat(), url);
+}

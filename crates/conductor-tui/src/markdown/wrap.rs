@@ -1,5 +1,8 @@
 //! 表示幅を考慮した span の折り返し。
 
+use std::ops::Range;
+use std::sync::Arc;
+
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
@@ -14,10 +17,13 @@ use unicode_width::UnicodeWidthStr;
 /// 合計2桁なのに char としては7個あるので、char ごとに足すと過大に数えてしまい
 /// 行が早く折り返される。クラスタなら改行で分割されることもないが、char 粒度では
 /// それが平気で起きていた。
+///
+/// link はこの字を押したときに開く先で、まだ urls::target を通していない生の字。
 #[derive(Clone)]
 pub(crate) struct Cell {
     pub(crate) text: String,
     pub(crate) style: Style,
+    pub(crate) link: Option<Arc<str>>,
 }
 
 impl Cell {
@@ -25,6 +31,7 @@ impl Cell {
         Self {
             text: ch.to_string(),
             style,
+            link: None,
         }
     }
 
@@ -48,6 +55,7 @@ pub(crate) fn spans_to_cells(spans: &[Span<'static>]) -> Vec<Cell> {
             s.content.graphemes(true).map(move |g| Cell {
                 text: g.to_string(),
                 style: s.style,
+                link: None,
             })
         })
         .collect()
@@ -77,6 +85,78 @@ pub(crate) fn cells_to_line(cells: &[Cell]) -> Line<'static> {
     } else {
         Line::from(spans)
     }
+}
+
+/// 描いた 1 行と、その中でリンクになる桁。
+pub struct MdLine {
+    pub line: Line<'static>,
+    pub links: Vec<LinkRun>,
+}
+
+/// 行の中の桁の範囲と、そこを押したときに開く先 (urls::target を通す前の字)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkRun {
+    pub cols: Range<usize>,
+    pub url: Arc<str>,
+}
+
+impl From<Line<'static>> for MdLine {
+    fn from(line: Line<'static>) -> Self {
+        Self {
+            line,
+            links: Vec::new(),
+        }
+    }
+}
+
+impl MdLine {
+    /// 頭に prefix を足し、リンクの桁をその幅だけ右へずらす。
+    pub fn prefixed(mut self, prefix: Span<'static>) -> Self {
+        let shift = drawn_width(&prefix.content);
+        for link in &mut self.links {
+            link.cols = link.cols.start + shift..link.cols.end + shift;
+        }
+        self.line.spans.insert(0, prefix);
+        self
+    }
+}
+
+/// ratatui が実際に描く桁数。制御字を含む書記素は描かれないので 0。
+pub(crate) fn drawn_width(text: &str) -> usize {
+    text.graphemes(true)
+        .filter(|g| !g.chars().any(char::is_control))
+        .map(UnicodeWidthStr::width)
+        .sum()
+}
+
+pub(crate) fn cells_to_md_line(cells: &[Cell]) -> MdLine {
+    let line = cells_to_line(cells);
+    if cells.iter().all(|cell| cell.link.is_none()) {
+        return line.into();
+    }
+    let mut links: Vec<LinkRun> = Vec::new();
+    let mut col = 0;
+    for cell in cells {
+        let width = drawn_width(&cell.text);
+        if let Some(url) = cell.link.as_ref().filter(|_| width > 0) {
+            match links.last_mut() {
+                Some(last) if last.cols.end == col && last.url == *url => last.cols.end += width,
+                _ => links.push(LinkRun {
+                    cols: col..col + width,
+                    url: url.clone(),
+                }),
+            }
+        }
+        col += width;
+    }
+    MdLine { line, links }
+}
+
+pub(crate) fn wrap_linked(cells: &[Cell], width: usize) -> Vec<MdLine> {
+    wrap_cells_raw(cells, width, false)
+        .iter()
+        .map(|l| cells_to_md_line(l))
+        .collect()
 }
 
 /// hard (コードブロック) はどのセル境界でも折り返す。そうでなければ単語境界を
@@ -181,22 +261,19 @@ pub(crate) fn wrap_cells_raw(cells: &[Cell], width: usize, hard: bool) -> Vec<Ve
 }
 
 pub(crate) fn with_prefix(
-    lines: Vec<Line<'static>>,
+    lines: Vec<MdLine>,
     first: Span<'static>,
     cont: Span<'static>,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     lines
         .into_iter()
         .enumerate()
         .map(|(idx, line)| {
-            let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(if idx == 0 {
+            line.prefixed(if idx == 0 {
                 first.clone()
             } else {
                 cont.clone()
-            });
-            spans.extend(line.spans);
-            Line::from(spans)
+            })
         })
         .collect()
 }

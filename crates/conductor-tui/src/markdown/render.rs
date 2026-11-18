@@ -10,11 +10,11 @@ use syntect::parsing::SyntaxSet;
 
 use super::Flavor;
 use super::code_colors::render_code_block_transcript;
-use super::inline::inline_spans;
+use super::inline::inline_cells;
 use super::parse::MdBlock;
 use super::table::render_table;
 use super::table_boxed::render_table_boxed;
-use super::wrap::{display_width, spans_to_cells, with_prefix, wrap_cells};
+use super::wrap::{MdLine, display_width, spans_to_cells, with_prefix, wrap_cells, wrap_linked};
 
 pub(crate) fn render_block(
     block: &MdBlock,
@@ -23,13 +23,16 @@ pub(crate) fn render_block(
     syntax_set: &SyntaxSet,
     syntect_theme: &SyntectTheme,
     flavor: Flavor,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     match block {
-        MdBlock::Blank => vec![Line::from("")],
-        MdBlock::Rule => vec![Line::from(Span::styled(
-            "\u{2500}".repeat(width),
-            Style::default().fg(theme.muted),
-        ))],
+        MdBlock::Blank => vec![Line::from("").into()],
+        MdBlock::Rule => vec![
+            Line::from(Span::styled(
+                "\u{2500}".repeat(width),
+                Style::default().fg(theme.muted),
+            ))
+            .into(),
+        ],
         // Transcript フレーバー: 色バーも下線ルールもなし。太字の本文色テキストのみ
         // （H1 はさらにイタリック+下線が付き、実物の Claude Code に合わせる。H2 以降は
         // 太字のみ）。前後の空行は render 側で付与される。
@@ -39,8 +42,7 @@ pub(crate) fn render_block(
                 modifier |= Modifier::ITALIC | Modifier::UNDERLINED;
             }
             let style = Style::default().fg(theme.fg).add_modifier(modifier);
-            let cells = spans_to_cells(&inline_spans(text, style, theme, flavor));
-            wrap_cells(&cells, width, false)
+            wrap_linked(&inline_cells(text, style, theme, flavor), width)
         }
         MdBlock::Heading { level, text } => {
             // 深さごとに色を変え、見出しレベルが一目で分かるようにする。
@@ -60,26 +62,24 @@ pub(crate) fn render_block(
             );
             let cont = Span::styled("  ".to_string(), Style::default());
             let inner = width.saturating_sub(2).max(1);
-            let cells = spans_to_cells(&inline_spans(text, style, theme, Flavor::Rich));
-            let mut out = with_prefix(wrap_cells(&cells, inner, false), bar, cont);
+            let cells = inline_cells(text, style, theme, Flavor::Rich);
+            let mut out = with_prefix(wrap_linked(&cells, inner), bar, cont);
             // GitHub は H1/H2 の下に下線を引く。それに合わせて、見出しの色を帯びた
             // 全幅のルールを引き、セクションが1つの色付きブロックとして読めるようにする。
             if *level <= 2 {
-                out.push(Line::from(Span::styled(
-                    "\u{2500}".repeat(width),
-                    Style::default().fg(Theme::darken(color, 0.55)),
-                )));
+                out.push(
+                    Line::from(Span::styled(
+                        "\u{2500}".repeat(width),
+                        Style::default().fg(Theme::darken(color, 0.55)),
+                    ))
+                    .into(),
+                );
             }
             out
         }
         MdBlock::Paragraph(text) => {
-            let cells = spans_to_cells(&inline_spans(
-                text,
-                Style::default().fg(theme.fg),
-                theme,
-                flavor,
-            ));
-            wrap_cells(&cells, width, false)
+            let cells = inline_cells(text, Style::default().fg(theme.fg), theme, flavor);
+            wrap_linked(&cells, width)
         }
         // 実物の Claude Code は引用を dim な ▎ で示し、本文はターミナルのデフォルト色の
         // イタリックで描画する（muted のグレーは付けない。それは Rich 専用の装飾）。
@@ -88,21 +88,21 @@ pub(crate) fn render_block(
         MdBlock::Quote(text) if flavor == Flavor::Transcript => {
             let inner = width.saturating_sub(2).max(1);
             let style = Style::default().fg(theme.fg).add_modifier(Modifier::ITALIC);
-            let cells = spans_to_cells(&inline_spans(text, style, theme, flavor));
+            let cells = inline_cells(text, style, theme, flavor);
             let bar = Span::styled(
                 "\u{258e} ".to_string(),
                 Style::default().add_modifier(Modifier::DIM),
             );
-            with_prefix(wrap_cells(&cells, inner, false), bar.clone(), bar)
+            with_prefix(wrap_linked(&cells, inner), bar.clone(), bar)
         }
         MdBlock::Quote(text) => {
             let inner = width.saturating_sub(2).max(1);
             let style = Style::default()
                 .fg(theme.muted)
                 .add_modifier(Modifier::ITALIC);
-            let cells = spans_to_cells(&inline_spans(text, style, theme, Flavor::Rich));
+            let cells = inline_cells(text, style, theme, Flavor::Rich);
             let bar = Span::styled("\u{2502} ".to_string(), Style::default().fg(theme.muted));
-            with_prefix(wrap_cells(&cells, inner, false), bar.clone(), bar)
+            with_prefix(wrap_linked(&cells, inner), bar.clone(), bar)
         }
         MdBlock::ListItem {
             ordered,
@@ -159,16 +159,11 @@ pub(crate) fn render_block(
             };
             let prefix_w = indent + display_width(&marker);
             let inner = width.saturating_sub(prefix_w).max(1);
-            let cells = spans_to_cells(&inline_spans(
-                &text,
-                Style::default().fg(text_color),
-                theme,
-                flavor,
-            ));
+            let cells = inline_cells(&text, Style::default().fg(text_color), theme, flavor);
             let pad = " ".repeat(indent);
             let first = Span::styled(format!("{pad}{marker}"), Style::default().fg(marker_color));
             let cont = Span::styled(" ".repeat(prefix_w), Style::default());
-            with_prefix(wrap_cells(&cells, inner, false), first, cont)
+            with_prefix(wrap_linked(&cells, inner), first, cont)
         }
         MdBlock::CodeBlock { lang, lines } => match flavor {
             Flavor::Rich => render_code_block(
@@ -182,13 +177,19 @@ pub(crate) fn render_block(
             Flavor::Transcript => {
                 render_code_block_transcript(lang.as_deref(), lines, width, syntax_set)
             }
-        },
+        }
+        .into_iter()
+        .map(MdLine::from)
+        .collect(),
         MdBlock::Table {
             headers,
             aligns,
             rows,
         } => match flavor {
-            Flavor::Rich => render_table(headers, aligns, rows, width, theme),
+            Flavor::Rich => render_table(headers, aligns, rows, width, theme)
+                .into_iter()
+                .map(MdLine::from)
+                .collect(),
             Flavor::Transcript => render_table_boxed(headers, rows, width, theme),
         },
     }

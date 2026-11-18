@@ -13,8 +13,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 
 use super::Flavor;
-use super::inline::inline_spans;
-use super::wrap::{Cell, cells_to_line, spans_to_cells, wrap_cells_raw};
+use super::inline::inline_cells;
+use super::wrap::{Cell, MdLine, cells_to_md_line, wrap_cells_raw};
 
 /// GFM テーブルを枠線付きのボックスとして描画する。列のアライメントヒント
 /// (:--/--:/:-:) は無視する — 実物の Claude Code はソースのデリミタ行に
@@ -24,10 +24,10 @@ pub(crate) fn render_table_boxed(
     rows: &[Vec<String>],
     width: usize,
     theme: &Theme,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     let ncols = headers.len();
     if ncols == 0 {
-        return vec![Line::from("")];
+        return vec![Line::from("").into()];
     }
 
     // Rich テーブルと同様に、本体行をちょうど ncols 列に正規化する。
@@ -85,12 +85,12 @@ fn natural_inner_widths(headers: &[String], rows: &[Vec<String>], theme: &Theme)
 }
 
 fn rendered_width(text: &str, theme: &Theme) -> usize {
-    cells_width(&spans_to_cells(&inline_spans(
+    cells_width(&inline_cells(
         text,
         Style::default(),
         theme,
         Flavor::Transcript,
-    )))
+    ))
 }
 
 /// 枠線は境界ごとに 1 文字 (ncols + 1 個)。削り方は super::table::fit_col_widths と同じ
@@ -120,7 +120,7 @@ fn render_row(
     theme: &Theme,
     style: Style,
     width: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<MdLine> {
     let cols: Vec<Vec<Vec<Cell>>> = inner
         .iter()
         .enumerate()
@@ -155,7 +155,7 @@ fn wrap_cell(text: &str, inner_w: usize, style: Style, theme: &Theme) -> Vec<Vec
         return vec![Vec::new()];
     }
     let content_w = inner_w.saturating_sub(2).max(1);
-    let cells = spans_to_cells(&inline_spans(text, style, theme, Flavor::Transcript));
+    let cells = inline_cells(text, style, theme, Flavor::Transcript);
     wrap_cells_raw(&cells, content_w, false)
         .into_iter()
         .map(|line| pad_left(line, inner_w, style))
@@ -185,7 +185,7 @@ fn border_cells(inner: &[usize], left: char, mid: char, right: char, style: Styl
 }
 
 /// 列の計算が収まりきらない場合でも、全行を幅の上限に収める最終防御。
-fn clip_line(cells: Vec<Cell>, width: usize) -> Line<'static> {
+fn clip_line(cells: Vec<Cell>, width: usize) -> MdLine {
     let mut out = Vec::new();
     let mut w = 0;
     for cell in cells {
@@ -196,7 +196,7 @@ fn clip_line(cells: Vec<Cell>, width: usize) -> Line<'static> {
         out.push(cell);
         w += cw;
     }
-    cells_to_line(&out)
+    cells_to_md_line(&out)
 }
 
 fn cells_width(cells: &[Cell]) -> usize {

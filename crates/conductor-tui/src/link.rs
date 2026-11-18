@@ -4,7 +4,7 @@
 //! ratatui のセルに OSC 8 を入れると幅を誤って数えるので、描き終えた後に、包む区間の
 //! セルだけをもう一度書く。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -17,7 +17,10 @@ use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
 use crate::layout::{Layout, Region};
-use crate::panels::terminal::render::{claude_shown, link_wrapped_rows, osc8_runs};
+use crate::panels::terminal::reflow::linked_glyphs;
+use crate::panels::terminal::render::{
+    claude_shown, link_wrapped_rows, osc8_runs, transcript_shown,
+};
 use crate::workspace::{Focus, Workspace};
 
 /// 会話ログを読み直すまでの間。読むのは伸びた分だけなので短くてよい。
@@ -31,9 +34,27 @@ pub struct Segment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
-    /// 押したときに開く先。字から探したものは urls::target を通し、OSC 8 の印は子が付けたまま。
+    /// 押したときに開く先。字から探したものと conductor が描いたものは urls::target を通し、
+    /// OSC 8 の印は子が付けたまま。
     pub url: String,
     pub segments: Vec<Segment>,
+}
+
+impl Link {
+    /// links の中の同じ URL のリンクに区間を足す。直前の区間に続くなら延ばす。
+    fn add(links: &mut Vec<Link>, url: &str, y: u16, xs: Range<u16>) {
+        let Some(link) = links.iter_mut().find(|link| link.url == url) else {
+            links.push(Link {
+                url: url.to_owned(),
+                segments: vec![Segment { y, xs }],
+            });
+            return;
+        };
+        match link.segments.last_mut() {
+            Some(last) if last.y == y && last.xs.end == xs.start => last.xs.end = xs.end,
+            _ => link.segments.push(Segment { y, xs }),
+        }
+    }
 }
 
 /// どの行が次の行へ続くかの決め方。
@@ -49,7 +70,8 @@ pub fn on_screen(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Vec<Link> 
     if ws.chrome.menu.is_active() || !ws.modals.is_empty() {
         return Vec::new();
     }
-    let marked = marked_links(ws, PTY_REGIONS.map(|r| (r, layout.rect(r))), buffer);
+    let mut marked = marked_links(ws, PTY_REGIONS.map(|r| (r, layout.rect(r))), buffer);
+    marked.extend(transcript_links(ws, layout, buffer));
     let mut links = Vec::new();
     for region in [Region::TerminalClaude, Region::FleetSession] {
         let Some(rect) = layout.rect(region) else {
@@ -102,18 +124,52 @@ pub(crate) fn marked_links(
         };
         let mut in_region: Vec<Link> = Vec::new();
         for (y, xs, url) in osc8_runs(ws, region, rect, buffer) {
-            let segment = Segment { y, xs };
-            match in_region.iter_mut().find(|link| link.url == url) {
-                Some(link) => link.segments.push(segment),
-                None => in_region.push(Link {
-                    url,
-                    segments: vec![segment],
-                }),
+            Link::add(&mut in_region, &url, y, xs);
+        }
+        links.extend(in_region);
+    }
+    links
+}
+
+/// conductor が会話ログから描いたトランスクリプトのリンク。描く側が URL を知っているので、
+/// 子の印と同じく推測より確か。描いた後に別の字で覆われたセルは包まない。
+fn transcript_links(ws: &Workspace, layout: &Layout, buffer: &Buffer) -> Vec<Link> {
+    let mut links = Vec::new();
+    for region in [Region::TerminalClaude, Region::FleetSession] {
+        let Some((reflow, area)) = layout
+            .rect(region)
+            .and_then(|rect| transcript_shown(ws, region, rect))
+        else {
+            continue;
+        };
+        let mut opened: HashMap<std::sync::Arc<str>, Option<String>> = HashMap::new();
+        let mut in_region: Vec<Link> = Vec::new();
+        for glyph in linked_glyphs(area, reflow) {
+            let drawn = buffer
+                .cell((glyph.x, glyph.y))
+                .is_some_and(|cell| cell.symbol() == glyph.symbol);
+            let url = opened
+                .entry(glyph.url.clone())
+                .or_insert_with(|| openable(&glyph.url));
+            if let (true, Some(url)) = (drawn, url) {
+                Link::add(&mut in_region, url, glyph.y, glyph.x..glyph.x + glyph.width);
             }
         }
         links.extend(in_region);
     }
     links
+}
+
+/// 描いた URL を外の端末へ渡してよい形にする。字から探したものと同じ target を通す。
+/// 制御字は OSC 8 を途中で閉じ、括弧の数が合わない URL は markdown の読みが途中で切ったもの。
+fn openable(raw: &str) -> Option<String> {
+    let balanced = [('(', ')'), ('[', ']'), ('{', '}')]
+        .iter()
+        .all(|&(open, close)| raw.matches(open).count() == raw.matches(close).count());
+    if !balanced || raw.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    target(raw)
 }
 
 fn overlaps(link: &Link, others: &[Link]) -> bool {
@@ -184,7 +240,7 @@ fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<L
     })
 }
 
-fn is_fullwidth_end(c: char) -> bool {
+pub(crate) fn is_fullwidth_end(c: char) -> bool {
     matches!(
         c,
         '）' | '」'

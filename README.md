@@ -113,7 +113,11 @@ program in the panel marks with OSC 8 itself is kept as it is: Claude Code marks
 URLs and markdown links in its replies, so a URL it wraps inside a table cell or a sentence
 opens whole from either line, and a markdown link opens from its text (a URL of
 about 1,000 bytes or more loses the mark). Every piece of
-the same URL in a panel is one link. Text with no such mark — a file path such as
+the same URL in a panel is one link. Scrolled back into the transcript, which conductor
+draws itself from the session's log, the URLs and markdown links in Claude's replies
+open whole the same way, `localhost:4111` and existing paths included; a URL in inline
+code, a code block, your own turns or a tool's output is found by its shape as below,
+and a markdown link to a relative path, an anchor or `mailto:` opens nothing. Text with no such mark — a file path such as
 `foo.rs:12-15`, or a shell command's output — is found by its shape instead. In a
 shell the terminal's own wrap decides; in a Claude panel the joined text must match a
 URL in the session's log, so a URL with non-ASCII characters and one written after the
