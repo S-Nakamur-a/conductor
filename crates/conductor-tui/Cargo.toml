@@ -26,7 +26,8 @@ dirs = "6"
 chrono = "0.4"
 # Viewer の構文ハイライト。
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+# 構文の束は onig 版。fancy 版は .js を素の JavaScript に当てて何分も終わらない (CLAUDE.md の Sessions の diff の節)
+two-face = { version = "0.5", default-features = false, features = ["syntect-onig"] }
 syntect-tui = "3.0.6"
 # トランスクリプトの tool_use は生の JSON を持つ。分類はそれを見て決める。
 serde_json = "1"

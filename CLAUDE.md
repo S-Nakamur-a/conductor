@@ -514,7 +514,8 @@ than results return piles up one thread per second — measured 476 threads at 3
 CPU, with nothing ever settling, so the list and the Explorer stayed empty for
 good. The spawn sites are `run.rs`'s poll, the Explorer's `refresh` (three tasks
 under one guard), the per-worktree change counts, the Sessions list's
-`poll_fleet_changes` and `poll_fleet_artifacts`, the Claude panel's log URLs
+`poll_fleet_changes` (the diff, and the picked file's new side under its own guard) and
+`poll_fleet_artifacts`, the Claude panel's log URLs
 (`poll_log_urls`), and the review-request poll
 (`Workspace::ask_review_requests`); each one grew this same hole independently.
 
@@ -741,7 +742,22 @@ exists only where the region does not split, and only while the region has the k
 or the AI is showing it (`set_split`, and `sync_layout`'s `note_focus` closes it otherwise),
 so a key never moves something that is not drawn; for the same reason, until the selected dir's own result lands the region's
 keys and clicks touch nothing (the previous dir's tree is still held, behind loading…). The
-right side has no syntax colours: the region never reads the new side.
+right side's diff is coloured from the picked file's new side, which `Task::PaintFleetNewSide`
+reads *and highlights* on a worker (`viewer::syntax::Painter` shares the syntax set and theme),
+one at a time, matched by seq. Highlighting is off the UI thread on purpose: the file being
+picked is often the one the Claude on the right is editing, re-read on every 5s refresh, and a
+large file takes long enough to freeze the screen. Only one read is in flight per region, across
+file changes too (a repository switch forgets it, so one more can overlap for up to 2.5s). syntect cannot be interrupted mid-line, so the worker stops waiting after 2.5s
+(`PAINT_WAIT`) and leaves the paint running in the one seat there is (`PAINT_SLOT`); until it
+finishes, a read whose lines changed answers `Painted::Busy` and keeps the previous colours.
+**The syntax set is two-face's onig one** (`syntect-onig`; the regex engine was already Oniguruma
+through syntect-tui). two-face's fancy set lacks `JavaScript (Babel)` and resolves `.js` to the
+plain `JavaScript`, whose rules did not finish one line of ordinary JS in minutes; the onig set
+has Babel, and `viewer::syntax::without_plain_javascript` keeps every lookup (file name, shebang,
+markdown fence) off the plain one. A file given up on stays plain until its lines or
+the theme change, because the worker skips repainting when the lines' fingerprint and the theme
+are unchanged. The colour stays across a refresh, a file that cannot be read drops it, and
+deleted lines have none.
 
 The same region shows a shell of that worktree instead (`FleetPanel::lower`): **Ctrl+t**
 (`new_shell`, caught by the list) shows it and steps into `Focus::FleetShell`, starting

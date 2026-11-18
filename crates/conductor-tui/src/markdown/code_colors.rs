@@ -290,9 +290,7 @@ pub(crate) fn render_code_block_transcript(
     width: usize,
     syntax_set: &SyntaxSet,
 ) -> Vec<Line<'static>> {
-    let syntax = lang
-        .and_then(|l| syntax_set.find_syntax_by_token(l))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    let syntax = crate::panels::viewer::syntax::code_syntax(syntax_set, lang);
     let mut parse_state = ParseState::new(syntax);
     let mut scope_stack = ScopeStack::new();
     let mut string_state = StringState::default();

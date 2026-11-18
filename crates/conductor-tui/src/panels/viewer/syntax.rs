@@ -5,6 +5,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::Arc;
 
 use conductor_core::config::Config;
 use ratatui::style::{Color, Style};
@@ -85,17 +86,39 @@ pub fn find_syntax<'a>(
             syntax_set.find_syntax_by_extension(alias)
         })
     };
-    by_name
+    let syntax = by_name
         .or_else(by_ext)
         .or_else(|| syntax_set.find_syntax_by_first_line(first_line?))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text())
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    without_plain_javascript(syntax_set, syntax)
+}
+
+/// フェンス付きコードブロックの言語名から引く。
+pub fn code_syntax<'a>(syntax_set: &'a SyntaxSet, lang: Option<&str>) -> &'a SyntaxReference {
+    let syntax = lang
+        .and_then(|l| syntax_set.find_syntax_by_token(l))
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    without_plain_javascript(syntax_set, syntax)
+}
+
+/// 素の JavaScript 構文は、普通の JS の 1 行で何分も抜けないことがある。
+fn without_plain_javascript<'a>(
+    syntax_set: &'a SyntaxSet,
+    syntax: &'a SyntaxReference,
+) -> &'a SyntaxReference {
+    if syntax.name != "JavaScript" {
+        return syntax;
+    }
+    syntax_set
+        .find_syntax_by_name("JavaScript (Babel)")
+        .unwrap_or(syntax)
 }
 
 /// 構文定義とテーマを 1 組だけ持ち回る。どちらも構築が重い。
 pub struct Highlighter {
-    syntax_set: SyntaxSet,
+    syntax_set: Arc<SyntaxSet>,
     themes: EmbeddedLazyThemeSet,
-    theme: SyntectTheme,
+    theme: Arc<SyntectTheme>,
     id: String,
 }
 
@@ -109,8 +132,8 @@ impl Highlighter {
     pub fn new(cfg: &Config) -> Self {
         let themes = two_face::theme::extra();
         Self {
-            syntax_set: two_face::syntax::extra_newlines(),
-            theme: syntect_theme_for(cfg, &themes),
+            syntax_set: Arc::new(two_face::syntax::extra_newlines()),
+            theme: Arc::new(syntect_theme_for(cfg, &themes)),
             id: syntax_theme_id(cfg),
             themes,
         }
@@ -122,7 +145,7 @@ impl Highlighter {
         if id == self.id {
             return false;
         }
-        self.theme = syntect_theme_for(cfg, &self.themes);
+        self.theme = Arc::new(syntect_theme_for(cfg, &self.themes));
         self.id = id;
         true
     }
@@ -141,27 +164,82 @@ impl Highlighter {
 
     /// 1 行 = スタイル付きの断片列。行数は入力と同じ。
     pub fn highlight(&self, path: Option<&str>, lines: &[String]) -> Vec<Vec<(Style, String)>> {
-        let syntax = find_syntax(&self.syntax_set, path, lines.first().map(String::as_str));
-        let mut highlighter = HighlightLines::new(syntax, &self.theme);
-        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
-
-        LinesWithEndings::from(&text)
-            .map(
-                |line| match highlighter.highlight_line(line, &self.syntax_set) {
-                    Ok(ranges) => ranges
-                        .into_iter()
-                        .map(|(style, text)| {
-                            let style = syntect_tui::translate_style(style)
-                                .unwrap_or_default()
-                                .bg(Color::Reset);
-                            (style, text.trim_end_matches('\n').to_string())
-                        })
-                        .collect(),
-                    Err(_) => vec![(Style::default(), line.trim_end_matches('\n').to_string())],
-                },
-            )
-            .collect()
+        paint(&self.syntax_set, &self.theme, path, lines, None).expect("期限が無ければ最後まで塗る")
     }
+
+    /// worker のスレッドへ持ち出せる塗り手。構文定義とテーマは作り直さずに共有する。
+    pub fn painter(&self) -> Painter {
+        Painter {
+            syntax_set: Arc::clone(&self.syntax_set),
+            theme: Arc::clone(&self.theme),
+            theme_id: self.id.clone(),
+        }
+    }
+}
+
+/// worker のスレッドへ持ち出せる塗り手。
+#[derive(Clone)]
+pub struct Painter {
+    syntax_set: Arc<SyntaxSet>,
+    theme: Arc<SyntectTheme>,
+    theme_id: String,
+}
+
+impl std::fmt::Debug for Painter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Painter")
+            .field("theme_id", &self.theme_id)
+            .finish()
+    }
+}
+
+impl Painter {
+    pub fn theme_id(&self) -> &str {
+        &self.theme_id
+    }
+
+    /// 期限を過ぎたら行の切れ目で諦めて None。minify されたファイルは 1 つで何分もかかる。
+    pub fn highlight_within(
+        &self,
+        path: Option<&str>,
+        lines: &[String],
+        budget: std::time::Duration,
+    ) -> Option<Vec<Vec<(Style, String)>>> {
+        let deadline = std::time::Instant::now() + budget;
+        paint(&self.syntax_set, &self.theme, path, lines, Some(deadline))
+    }
+}
+
+fn paint(
+    syntax_set: &SyntaxSet,
+    theme: &SyntectTheme,
+    path: Option<&str>,
+    lines: &[String],
+    deadline: Option<std::time::Instant>,
+) -> Option<Vec<Vec<(Style, String)>>> {
+    let syntax = find_syntax(syntax_set, path, lines.first().map(String::as_str));
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+
+    LinesWithEndings::from(&text)
+        .map(|line| {
+            if deadline.is_some_and(|at| std::time::Instant::now() >= at) {
+                return None;
+            }
+            Some(match highlighter.highlight_line(line, syntax_set) {
+                Ok(ranges) => ranges
+                    .into_iter()
+                    .map(|(style, text)| {
+                        let style = syntect_tui::translate_style(style)
+                            .unwrap_or_default()
+                            .bg(Color::Reset);
+                        (style, text.trim_end_matches('\n').to_string())
+                    })
+                    .collect(),
+                Err(_) => vec![(Style::default(), line.trim_end_matches('\n').to_string())],
+            })
+        })
+        .collect()
 }
 
 /// (テーマ, パス, 本文) の指紋。同じなら描き直す理由が無い。
@@ -196,6 +274,33 @@ mod tests {
             .background
             .map(|c| 0.299 * c.r as f32 + 0.587 * c.g as f32 + 0.114 * c.b as f32)
             .unwrap_or(0.0)
+    }
+
+    #[test]
+    fn コードブロックの言語名は素の_javascript_でなく_babel_で塗る() {
+        let ss = two_face::syntax::extra_newlines();
+        let name_of = |lang: Option<&str>| code_syntax(&ss, lang).name.clone();
+        assert_eq!(name_of(Some("javascript")), "JavaScript (Babel)");
+        assert_eq!(name_of(Some("JavaScript")), "JavaScript (Babel)");
+        assert_eq!(name_of(Some("rust")), "Rust", "対照: 他の言語は替えない");
+        assert_eq!(name_of(None), "Plain Text");
+    }
+
+    #[test]
+    fn painter_は_highlighter_と同じ本文に同じ断片を返し_別のテーマの塗りとは違う() {
+        let lines: Vec<String> = ["fn main() {", "    let s = \"x\";", "}"]
+            .map(String::from)
+            .to_vec();
+        let budget = std::time::Duration::from_secs(60);
+        let h = Highlighter::new(&cfg_with("dracula"));
+        let want = h.highlight(Some("a.rs"), &lines);
+        let got = h.painter().highlight_within(Some("a.rs"), &lines, budget);
+        assert_eq!(got.as_ref(), Some(&want));
+        let other = Highlighter::new(&cfg_with("nord"));
+        let other = other
+            .painter()
+            .highlight_within(Some("a.rs"), &lines, budget);
+        assert_ne!(other.as_ref(), Some(&want), "別のテーマで同じ色になった");
     }
 
     /// [Theme::all_names] を回すので、新しいテーマを足せば自動でここに乗る。
@@ -386,7 +491,7 @@ mod tests {
         let ss = two_face::syntax::extra_newlines();
         let name_of =
             |path: &str, first: Option<&str>| find_syntax(&ss, Some(path), first).name.clone();
-        let cases: [(&str, Option<&str>, &str); 15] = [
+        let cases: [(&str, Option<&str>, &str); 18] = [
             ("Dockerfile", None, "Dockerfile"),
             ("deep/dir/Dockerfile", None, "Dockerfile"),
             ("Makefile", None, "Makefile"),
@@ -399,9 +504,12 @@ mod tests {
             ("a.tsx", None, "TypeScriptReact"),
             ("b.py", None, "Python"),
             ("c.go", None, "Go"),
-            ("d.jsx", None, "JavaScript"),
+            ("d.jsx", None, "JavaScript (Babel)"),
+            ("e.js", None, "JavaScript (Babel)"),
             ("noext", Some("#!/usr/bin/env python3"), "Python"),
             ("noext", None, "Plain Text"),
+            ("noext", Some("#!/usr/bin/env bun"), "JavaScript (Babel)"),
+            ("x.htc", None, "JavaScript (Babel)"),
         ];
         for (path, first, expected) in cases {
             assert_eq!(name_of(path, first), expected, "for {path}");

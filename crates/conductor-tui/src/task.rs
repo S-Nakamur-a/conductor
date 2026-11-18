@@ -273,6 +273,11 @@ pub enum Task {
         path: String,
         seq: u64,
     },
+    /// 一覧の右の diff に付ける構文色。新しい側を読んで worker で塗る。
+    PaintFleetNewSide {
+        read: crate::panels::fleet::changes::NewSideRead,
+        painter: crate::panels::viewer::syntax::Painter,
+    },
     /// 一覧で選んだセッションが publish した Artifact。from の続きから読む。
     FleetArtifacts {
         conversation: crate::panels::fleet::artifacts::Conversation,
@@ -446,6 +451,10 @@ pub enum TaskResult {
         path: String,
         seq: u64,
         lines: Result<Vec<String>, String>,
+    },
+    FleetNewSide {
+        read: crate::panels::fleet::changes::NewSideRead,
+        painted: Result<crate::panels::fleet::changes::Painted, String>,
     },
     /// 数え終わった worktree と、その件数。数えられなければ None のままにする。
     WorktreeCounts {
@@ -1028,6 +1037,15 @@ impl Task {
                         seq,
                         lines,
                     },
+                );
+            }
+            Task::PaintFleetNewSide { read, painter } => {
+                svc.spawn(
+                    move || {
+                        let painted = read.paint(&painter, env.tab_width);
+                        (read, painted)
+                    },
+                    |(read, painted)| TaskResult::FleetNewSide { read, painted },
                 );
             }
             Task::FleetArtifacts { conversation, from } => {
