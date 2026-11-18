@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use conductor_core::claude_log::urls::{is_url_char, starts_link, trim_url};
+use conductor_core::claude_log::urls::{is_url_char, starts_link};
 use conductor_core::theme::Theme;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
@@ -10,7 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::Flavor;
 use super::wrap::Cell;
-use crate::link::is_fullwidth_end;
+use crate::link::bare_url;
 
 /// span の字がどこを開くか。
 #[derive(Clone)]
@@ -76,13 +76,7 @@ fn mark_bare_urls(cells: &mut [Cell], text_cells: &[bool]) {
         let end = (i..chars.len())
             .find(|&k| !text_cells[k] || !is_url_char(chars[k]))
             .unwrap_or(chars.len());
-        let run = &text[at[i]..at[end]];
-        let url = trim_url(run);
-        let closed = run[url.len()..].contains([')', ']', '}']);
-        let ends_here = chars
-            .get(end)
-            .is_none_or(|&c| c.is_ascii() || is_fullwidth_end(c));
-        if closed || ends_here {
+        if let Some(url) = bare_url(&text[at[i]..at[end]], chars.get(end).copied()) {
             let url: Arc<str> = Arc::from(url);
             for cell in &mut cells[i..i + url.len()] {
                 cell.link = Some(url.clone());

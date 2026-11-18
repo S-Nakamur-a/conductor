@@ -221,7 +221,7 @@ the third:
   link's raw URL on the cells it draws (`wrap::Cell::link`), through wrapping, table cells
   and every line prefix, and `reflow::linked_glyphs` maps the visible ones onto the screen
   with the same scroll and height as `reflow::render`. A bare URL is marked by the same rule
-  as the shape detection (`inline::mark_bare_urls` mirrors `link::single`), and nothing is
+  as the shape detection (`inline::mark_bare_urls` shares `link::bare_url` with it), and nothing is
   marked inside code or the user's and tools' blocks. The raw URL goes through
   `urls::target` only when shown, and a control character, whitespace or unbalanced
   brackets (a `)` the parser cut at) drop the mark, since the URL reaches the terminal as

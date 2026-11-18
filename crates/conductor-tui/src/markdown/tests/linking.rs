@@ -158,3 +158,29 @@ fn タブの後ろのurlの桁は描いたセルと一致する() {
         .collect();
     assert_eq!(drawn, url);
 }
+
+#[test]
+fn 素のurlの直後の句読点と閉じ括弧は印に含めない() {
+    for text in [
+        "(https://a.example/x)",
+        "see https://a.example/x, ok",
+        "see https://a.example/x。次",
+    ] {
+        let lines = linked(text, 80);
+        assert_eq!(
+            pieces(&lines, "https://a.example/x"),
+            ["https://a.example/x"],
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn 表の幅が足りずセルが切られても印は見えている字だけで先は完全なurl() {
+    let table = format!("| 名前 | 場所 |\n|---|---|\n| doc | {URL} |");
+    for width in 1..16 {
+        let lines = linked(&table, width);
+        assert!(urls(&lines).iter().all(|u| u == URL), "幅 {width}");
+        assert!(URL.contains(&pieces(&lines, URL).concat()), "幅 {width}");
+    }
+}

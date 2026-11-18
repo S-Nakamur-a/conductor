@@ -1566,3 +1566,16 @@ fn ツールの結果には印を付けない() {
     let out = built(&entries, true, 80);
     assert!(out.links.iter().all(Vec::is_empty));
 }
+
+#[test]
+fn teammateの本文のurlにも印が付く() {
+    let url = "https://a.example/mate";
+    let entries = [entry(
+        Role::Assistant,
+        vec![DisplayBlock::TeammateMessage {
+            id: "x".into(),
+            body: url.into(),
+        }],
+    )];
+    assert_eq!(linked_text(&built(&entries, true, 80), url), url);
+}

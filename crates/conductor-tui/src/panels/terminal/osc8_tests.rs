@@ -506,6 +506,8 @@ fn トランスクリプトを開いている区画では描いた字が同じ�
 fn 一覧の右に映したトランスクリプトの表のurlも一つのリンクになる() {
     let url = "https://example.com/a/very/long/path/to/the/doc";
     let mut shown = fleet_showing("https://a.example/live");
+    shown.ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(30, 30, 40));
+    shown.ws.focus = crate::workspace::Focus::FleetSession;
     open_transcript(
         &mut shown,
         &format!("| 名前 | 場所 |\n|---|---|\n| doc | {url} |"),

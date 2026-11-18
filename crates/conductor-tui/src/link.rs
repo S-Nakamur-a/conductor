@@ -217,19 +217,9 @@ pub fn find(buffer: &Buffer, area: Rect, joining: &Joining) -> Vec<Link> {
     links
 }
 
-/// 日本語の字へそのまま続く URL は、日本語を含む URL の途中かもしれないので包まない。
-/// 途中までを包むと別のページを開くので、それよりは外の端末に任せる。
-/// 閉じ括弧を外したときだけは、括弧の外の日本語とみなして包む。
 fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<Link> {
     let text = chars(&row[start..end]);
-    let url = trim_url(&text);
-    let closed = text[url.len()..].contains([')', ']', '}']);
-    let ends_here = row
-        .get(end)
-        .is_none_or(|&(_, c)| c.is_ascii() || is_fullwidth_end(c));
-    if !(closed || ends_here) {
-        return None;
-    }
+    let url = bare_url(&text, row.get(end).map(|&(_, c)| c))?;
     let stop = start + url.len();
     Some(Link {
         url: target(url)?,
@@ -240,7 +230,18 @@ fn single(row: &[(u16, char)], (start, end): (usize, usize), y: u16) -> Option<L
     })
 }
 
-pub(crate) fn is_fullwidth_end(c: char) -> bool {
+/// 並び run が素の URL として終わっていれば、末尾の句読点と閉じ括弧を落とした URL。
+/// 日本語の字へそのまま続くものは日本語を含む URL の途中かもしれないので None。
+/// 途中までを包むと別のページを開くので、それよりは外の端末に任せる。
+/// 閉じ括弧を外したときだけは、括弧の外の日本語とみなして返す。
+pub(crate) fn bare_url(run: &str, next: Option<char>) -> Option<&str> {
+    let url = trim_url(run);
+    let closed = run[url.len()..].contains([')', ']', '}']);
+    let ends_here = next.is_none_or(|c| c.is_ascii() || is_fullwidth_end(c));
+    (closed || ends_here).then_some(url)
+}
+
+fn is_fullwidth_end(c: char) -> bool {
     matches!(
         c,
         '）' | '」'

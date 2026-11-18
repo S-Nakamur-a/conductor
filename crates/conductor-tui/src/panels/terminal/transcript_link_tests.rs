@@ -20,6 +20,8 @@ fn assistant(text: &str) -> LogEntry {
 
 fn reading(entries: Vec<LogEntry>, scroll_back: usize) -> Workspace {
     let mut ws = Workspace::for_test();
+    ws.chrome.terminal_bg = Some(ratatui::style::Color::Rgb(30, 30, 40));
+    ws.focus = crate::workspace::Focus::TerminalClaude;
     let panel = &mut ws.panels.terminal;
     panel.claude.show(Some(PANEL.into()));
     panel.pending_transcript = Some(PendingTranscript {
@@ -201,4 +203,32 @@ fn モーダルを開いている間はトランスクリプトの印も返さ�
         )));
     let (links, _) = links_on(&mut ws, 80);
     assert_eq!(links, vec![]);
+}
+
+#[test]
+fn 在るパスは開く先にfileを付け無いパスは印にしない() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+    let text = format!("設定: {path}\n\n無い: /no/such/dir/file.rs");
+    let mut ws = reading(vec![assistant(&text)], 0);
+    let (links, _) = links_on(&mut ws, 120);
+    let urls: Vec<&str> = links.iter().map(|l| l.url.as_str()).collect();
+    assert_eq!(urls, [format!("file://{path}")], "{links:?}");
+}
+
+#[test]
+fn 同じ表の別のセルのurlは混ざらず離れた同じurlは一つのリンクになる() {
+    let (a, b) = (
+        "https://a.example/one/two/three/four",
+        "https://b.example/five/six/seven/eight",
+    );
+    let table = format!("| 名前 | 場所 |\n|---|---|\n| a | {a} |\n| b | {b} |\n| a2 | {a} |");
+    let mut ws = reading(vec![assistant(&table)], 0);
+    let (links, buffer) = links_on(&mut ws, 40);
+    for (url, times) in [(a, 2), (b, 1)] {
+        let found = with_url(&links, url);
+        assert_eq!(found.len(), 1, "{links:?}");
+        let joined: String = found[0].segments.iter().map(|s| text(&buffer, s)).collect();
+        assert_eq!(joined, url.repeat(times));
+    }
+    assert_eq!(links.len(), 2, "{links:?}");
 }
