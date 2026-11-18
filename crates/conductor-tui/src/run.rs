@@ -22,6 +22,7 @@ use crate::effect::{Effect, apply};
 use crate::layout::{Layout, Region, layout};
 use crate::liveness::{Liveness, liveness};
 use crate::panels::explorer::ExplorerPanel;
+use crate::panels::viewer::syntax::syntax_theme_id;
 use crate::render::render;
 use crate::route::{Routed, global_effects, route};
 use crate::select;
@@ -409,6 +410,15 @@ fn poll_fleet_changes(ws: &mut Workspace, svc: &mut Services<TaskResult>, now: I
             ws,
             svc,
             vec![Effect::Spawn(Task::LoadFleetFile { dir, path, seq })],
+        );
+    }
+    let theme_id = syntax_theme_id(&ws.config);
+    if let Some(read) = ws.panels.fleet.changes.take_new_side_read(&theme_id) {
+        let painter = ws.panels.viewer.highlighter(&ws.config).painter();
+        apply(
+            ws,
+            svc,
+            vec![Effect::Spawn(Task::PaintFleetNewSide { read, painter })],
         );
     }
 }
@@ -3374,6 +3384,114 @@ needle here
         assert!(drawn.contains("plain 050"), "{drawn}");
         assert!(!drawn.contains("plain 049"), "頼まれた行から出していない");
         assert!(drawn.contains("a.rs"), "ツリーが消えた");
+    }
+
+    #[test]
+    fn 一覧の_poll_が選んだファイルの新しい側を_worker_で塗り_届いた色を右の_diff_に据える() {
+        use conductor_core::git_engine::{Head, WorktreeHead};
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_path_buf();
+        let body: String = (1..=40).map(|n| format!("let a{n} = \"s\";\n")).collect();
+        std::fs::write(dir.join("a.rs"), body).unwrap();
+        let (mut ws, mut svc, _) = fleet_with_tree();
+        ws.apply_fleet(
+            crate::panels::fleet::FleetStatus {
+                trees: vec![crate::panels::fleet::RepoTree {
+                    root: dir.clone(),
+                    name: "t".into(),
+                    worktrees: vec![WorktreeHead {
+                        path: dir.clone(),
+                        head: Head::Branch("main".into()),
+                    }],
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_eq!(ws.panels.fleet.selected_dir(), Some(dir.clone()));
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
+        assert!(
+            ws.panels.viewer.highlighter_ref().is_none(),
+            "読みが要らないのに Highlighter を作った"
+        );
+        crate::testing::pump(&mut ws, &mut svc);
+        land_changes(&mut ws, dir.to_str().unwrap(), &["a.rs"]);
+        assert!(ws.panels.fleet.changes.syntax().is_empty());
+        poll_fleet_changes(&mut ws, &mut svc, Instant::now());
+        crate::testing::pump(&mut ws, &mut svc);
+        assert!(ws.panels.viewer.highlighter_ref().is_some());
+        let rows = ws.panels.fleet.changes.syntax();
+        assert_eq!(rows.len(), 40);
+        assert!(rows[0].len() > 1, "1 行 1 トークンのまま: {:?}", rows[0]);
+    }
+
+    /// 描いた区画で、本文が text の行の (先頭の字, 後ろの字) のセル。
+    fn cells_of(
+        ws: &mut Workspace,
+        l: &Layout,
+        text: &str,
+    ) -> (ratatui::buffer::Cell, ratatui::buffer::Cell) {
+        ws.sync_layout(l);
+        let rect = l.rect(Region::FleetChanges).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(l.area.width, l.area.height)).unwrap();
+        terminal
+            .draw(|frame| crate::panels::fleet::render::lower(frame, rect, ws))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        for y in rect.top()..rect.bottom() {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            if let Some(at) = row.find(text) {
+                let x = row[..at].chars().count() as u16;
+                let last = x + text.len() as u16 - 1;
+                return (buffer[(x, y)].clone(), buffer[(last, y)].clone());
+            }
+        }
+        panic!("{text} が描かれていない");
+    }
+
+    #[test]
+    fn 左下の右の_diff_は割れる幅でも割れない幅でも新しい側の塗りで字を塗り_行の背景は残す() {
+        use crate::panels::fleet::changes::Painted;
+        use ratatui::style::{Color, Style};
+        let head = Color::Rgb(1, 2, 3);
+        let tail = Color::Rgb(4, 5, 6);
+        for (width, split) in [(160, true), (145, false)] {
+            let (mut ws, _svc, _) = fleet_with_tree();
+            let l = layout(&ws, Rect::new(0, 0, width, 40));
+            ws.sync_layout(&l);
+            land_changes(&mut ws, "/r/app", &["a.rs"]);
+            // 割れない幅の区画いっぱいの diff は、左下がキーボードを持つ間だけ出る。
+            ws.focus = Focus::FleetChanges;
+            let theme_id = syntax_theme_id(&ws.config);
+            let (add, add_bg) = (ws.theme.diff_add, ws.theme.diff_add_bg);
+            let changes = &mut ws.panels.fleet.changes;
+            assert_eq!(changes.split(), split, "幅 {width}");
+            changes.open_body();
+            let read = changes
+                .take_new_side_read(&theme_id)
+                .expect("新しい側を読まない");
+            let (first, _) = cells_of(&mut ws, &l, "a.rs line 1");
+            assert_eq!(first.fg, add, "対照: 塗りが届く前は差分の色 (幅 {width})");
+            let rows = (1..=40)
+                .map(|n| {
+                    vec![
+                        (Style::default().fg(head), "a.rs ".to_string()),
+                        (Style::default().fg(tail), format!("line {n}")),
+                    ]
+                })
+                .collect();
+            let painted = Painted::Fresh {
+                key: 1,
+                theme_id,
+                rows,
+            };
+            ws.panels.fleet.changes.install_new_side(&read, Ok(painted));
+            let (first, last) = cells_of(&mut ws, &l, "a.rs line 1");
+            assert_eq!((first.fg, first.bg), (head, add_bg), "幅 {width}");
+            assert_eq!(last.fg, tail, "幅 {width}");
+        }
     }
 
     #[test]

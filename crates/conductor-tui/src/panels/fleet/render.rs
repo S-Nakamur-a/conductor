@@ -19,7 +19,7 @@ use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Workt
 use crate::effect::Effect;
 use crate::modal::Confirm;
 use crate::panels::explorer::git_changes;
-use crate::panels::viewer::render::digit_count;
+use crate::panels::viewer::render::{digit_count, syntax_for, unified_line};
 use crate::review::ReviewState;
 use crate::workspace::{Focus, Workspace};
 
@@ -825,8 +825,10 @@ fn change_body(
             lines.push(hint("Binary or empty file".into()))
         }
         Body::Diff { entries, digits } => {
+            let highlighted = branch.syntax();
             lines.extend(entries.iter().skip(scroll).take(rows).map(|entry| {
-                crate::panels::viewer::render::unified_line(entry, theme, *digits, width, 0, None)
+                let syntax = syntax_for(highlighted, entry.new_line_no());
+                unified_line(entry, theme, *digits, width, 0, syntax)
             }))
         }
         Body::Reading => lines.push(hint("reading\u{2026}".into())),

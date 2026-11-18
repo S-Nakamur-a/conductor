@@ -207,9 +207,7 @@ fn render_code_block(
 ) -> Vec<Line<'static>> {
     let inner = width.saturating_sub(2).max(1);
     let code_bg = theme.code_bg;
-    let syntax = lang
-        .and_then(|l| syntax_set.find_syntax_by_token(l))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    let syntax = crate::panels::viewer::syntax::code_syntax(syntax_set, lang);
     let mut highlighter = HighlightLines::new(syntax, syntect_theme);
     let fallback = Style::default().fg(theme.fg).bg(code_bg);
 

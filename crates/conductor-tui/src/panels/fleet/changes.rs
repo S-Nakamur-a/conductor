@@ -3,19 +3,38 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use conductor_core::diff_state::{DiffSource, DiffState};
 use conductor_core::git_engine::GitStatusMap;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 
 use crate::list::Viewport;
 use crate::panels::explorer::git_changes::GitChanges;
+use crate::panels::viewer::content;
 use crate::panels::viewer::diff::{DiffPane, Entry};
 use crate::panels::viewer::render::digit_count;
+use crate::panels::viewer::syntax::{Painter, cache_key};
 
 /// 同じ dir を読み直すまでの間。前の結果が届いてから数える。
 pub const REFRESH: Duration = Duration::from_secs(5);
+/// 構文色を塗るのに使ってよい時間。過ぎたら色なしのまま、同じ本文では塗り直さない。
+const PAINT_BUDGET: Duration = Duration::from_secs(2);
+/// syntect は 1 行の途中で止められず、1 行で何分もかかることがある。待つのはここまで。
+const PAINT_WAIT: Duration = Duration::from_millis(2_500);
+/// 塗っているスレッドの席。見切った塗りは止められないので、走り終えるまで次を始めない。
+static PAINT_SLOT: AtomicBool = AtomicBool::new(false);
+
+struct SlotGuard(&'static AtomicBool);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 const TREE_WIDTH: u16 = 30;
 /// 右の diff にこれだけ取れないなら割らず、ツリーと diff を入れ替えて出す。
@@ -105,6 +124,103 @@ struct FileRead {
     asked: bool,
 }
 
+/// 右の diff の構文色を付けるための、新しい側の読み。known は前に塗った本文の指紋。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewSideRead {
+    pub dir: PathBuf,
+    pub path: String,
+    pub seq: u64,
+    pub known: Option<u64>,
+}
+
+impl NewSideRead {
+    /// worker で走る。本文もテーマも前と同じなら塗り直さない。
+    pub fn paint(&self, painter: &Painter, tab_width: usize) -> Result<Painted, String> {
+        let slot = Slot {
+            seat: &PAINT_SLOT,
+            budget: PAINT_BUDGET,
+            wait: PAINT_WAIT,
+            start: None,
+        };
+        self.paint_in(painter, tab_width, slot)
+    }
+
+    fn paint_in(&self, painter: &Painter, tab_width: usize, slot: Slot) -> Result<Painted, String> {
+        let lines = content::read_lines(&self.dir, &self.path, tab_width)?;
+        let theme_id = painter.theme_id().to_string();
+        let key = cache_key(&theme_id, Some(&self.path), &lines);
+        if self.known == Some(key) {
+            return Ok(Painted::Unchanged);
+        }
+        let taken = slot
+            .seat
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed);
+        if taken.is_err() {
+            return Ok(Painted::Busy);
+        }
+        let guard = SlotGuard(slot.seat);
+        let (tx, rx) = mpsc::channel();
+        let (painter, path) = (painter.clone(), self.path.clone());
+        std::thread::spawn(move || {
+            let _guard = guard;
+            if let Some(start) = slot.start {
+                let _ = start.recv();
+            }
+            let _ = tx.send(painter.highlight_within(Some(&path), &lines, slot.budget));
+        });
+        match rx.recv_timeout(slot.wait) {
+            Ok(rows) => Ok(Painted::Fresh {
+                key,
+                theme_id,
+                rows: rows.unwrap_or_default(),
+            }),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(Painted::Fresh {
+                key,
+                theme_id,
+                rows: Vec::new(),
+            }),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err("塗りが途中で落ちた".into()),
+        }
+    }
+}
+
+struct Slot {
+    seat: &'static AtomicBool,
+    budget: Duration,
+    wait: Duration,
+    /// テストが塗り始めを止めておく受け口。
+    start: Option<mpsc::Receiver<()>>,
+}
+
+/// 新しい側の読みの結果。
+#[derive(Debug)]
+pub enum Painted {
+    Unchanged,
+    /// 見切った塗りがまだ走っている。前の塗りを残し、次の diff の読み直しで試し直す。
+    Busy,
+    Fresh {
+        key: u64,
+        theme_id: String,
+        /// 期限内や待てる間に塗りきれなければ空。
+        rows: Vec<Vec<(Style, String)>>,
+    },
+}
+
+/// 右の diff に出しているファイルの構文色。塗った行は読み直しの間も持ち越す。
+#[derive(Debug)]
+struct NewSide {
+    dir: PathBuf,
+    path: String,
+    seq: u64,
+    /// 次の poll で読みを投げる。投げ中に立てば、届いた後にもう一度読む。
+    wanted: bool,
+    /// 席が空かずに返った。テーマ違いでも、次の diff の読み直しまで読まない。
+    busy: bool,
+    key: Option<u64>,
+    theme_id: String,
+    rows: Vec<Vec<(Style, String)>>,
+}
+
 /// 右に描くもの。
 #[derive(Debug, Default)]
 pub enum Body {
@@ -152,6 +268,10 @@ pub struct BranchChanges {
     pending: Option<Pending>,
     file: Option<FileRead>,
     file_seq: u64,
+    new_side: Option<NewSide>,
+    new_side_seq: u64,
+    /// 投げている新しい側の読みの seq。届くまで次を投げない。
+    painting: Option<u64>,
     body: Body,
     /// 右の diff に使える行数。見出しの 1 行は除く。
     body_height: usize,
@@ -182,11 +302,16 @@ impl BranchChanges {
         self.reading = self.reads;
     }
 
-    /// 投げた結果は捨てられる。全体の読みは頼み直す。
+    /// 投げた結果は捨てられる。全体の読みと新しい側の読みは頼み直す。
     pub fn forget_in_flight(&mut self) {
         self.fetching = false;
         if let Some(read) = &mut self.file {
             read.asked = false;
+        }
+        if self.painting.take().is_some()
+            && let Some(side) = &mut self.new_side
+        {
+            side.wanted = true;
         }
     }
 
@@ -364,6 +489,65 @@ impl BranchChanges {
         self.clamp_scroll();
     }
 
+    /// 新しい側の読みが要るなら 1 回だけ渡す。塗ったテーマが今と違えば読み直す。
+    pub fn take_new_side_read(&mut self, theme_id: &str) -> Option<NewSideRead> {
+        if self.painting.is_some() {
+            return None;
+        }
+        let side = self.new_side.as_mut()?;
+        let stale_theme = !side.busy && side.key.is_some() && side.theme_id != theme_id;
+        if !side.wanted && !stale_theme {
+            return None;
+        }
+        self.new_side_seq += 1;
+        side.seq = self.new_side_seq;
+        side.wanted = false;
+        self.painting = Some(side.seq);
+        Some(NewSideRead {
+            dir: side.dir.clone(),
+            path: side.path.clone(),
+            seq: side.seq,
+            known: side.key,
+        })
+    }
+
+    /// 読めなければ色を落とす。前の塗りを残すと、綴りが同じ行に古い色が付く。
+    pub fn install_new_side(&mut self, read: &NewSideRead, painted: Result<Painted, String>) {
+        if self.painting == Some(read.seq) {
+            self.painting = None;
+        }
+        let Some(side) = self.new_side.as_mut().filter(|s| s.seq == read.seq) else {
+            return;
+        };
+        match painted {
+            Ok(Painted::Unchanged) => {}
+            Ok(Painted::Busy) => side.busy = true,
+            Ok(Painted::Fresh {
+                key,
+                theme_id,
+                rows,
+            }) => {
+                side.key = Some(key);
+                side.theme_id = theme_id;
+                side.rows = rows;
+            }
+            Err(_) => {
+                side.key = None;
+                side.rows.clear();
+            }
+        }
+    }
+
+    /// 右の diff の行ごとの構文トークン。新しい側の行番号で引く。
+    pub fn syntax(&self) -> &[Vec<(Style, String)>] {
+        match (&self.body, &self.new_side) {
+            (Body::Diff { .. }, Some(side)) if self.pick.path.as_ref() == Some(&side.path) => {
+                &side.rows
+            }
+            _ => &[],
+        }
+    }
+
     /// ツリーに行の無いファイルを出しているとき、そのパス。ツリーの先頭に仮の行で出す。
     pub fn provisional(&self) -> Option<&str> {
         let path = self.pick.path.as_deref().filter(|_| self.pick.whole)?;
@@ -496,6 +680,8 @@ impl BranchChanges {
             ..Pick::default()
         };
         self.body_open = !self.split;
+        // diff の頼みでは全体の読みの結果を必ず捨てるので、投げずに消す。
+        self.file = None;
         if whole {
             self.body = Body::Reading;
             self.read_file();
@@ -544,6 +730,7 @@ impl BranchChanges {
             if !kept {
                 self.body = Body::Reading;
             }
+            self.new_side = None;
             self.clamp_scroll();
             return;
         }
@@ -569,7 +756,39 @@ impl BranchChanges {
         if self.pick.path.is_none() {
             self.body_open = false;
         }
+        self.want_new_side();
         self.clamp_scroll();
+    }
+
+    /// 同じファイルなら塗りを残したまま読み直す。別のファイルなら前の色を残さない。
+    fn want_new_side(&mut self) {
+        let has_new_side = matches!(&self.body, Body::Diff { entries, .. }
+            if entries.iter().any(|e| matches!(e, Entry::Line { new_line_no: Some(_), .. })));
+        let target = (self.shown_dir().map(Path::to_path_buf))
+            .zip(self.pick.path.clone())
+            .filter(|_| has_new_side);
+        let Some((dir, path)) = target else {
+            self.new_side = None;
+            return;
+        };
+        match &mut self.new_side {
+            Some(side) if side.dir == dir && side.path == path => {
+                side.wanted = true;
+                side.busy = false;
+            }
+            _ => {
+                self.new_side = Some(NewSide {
+                    dir,
+                    path,
+                    seq: 0,
+                    wanted: true,
+                    busy: false,
+                    key: None,
+                    theme_id: String::new(),
+                    rows: Vec::new(),
+                })
+            }
+        }
     }
 
     fn clamp_scroll(&mut self) {
@@ -1281,5 +1500,510 @@ mod tests {
         changes.note_fetching();
         land(&mut changes, "/a", files(&[("a.rs", 3), ("new.rs", 4)]));
         assert_ne!(changes.selected_path(), Some("new.rs"));
+    }
+
+    fn token(c: u8) -> Style {
+        Style::default().fg(ratatui::style::Color::Rgb(c, c, c))
+    }
+
+    fn fresh(key: u64, theme_id: &str) -> Result<Painted, String> {
+        Ok(Painted::Fresh {
+            key,
+            theme_id: theme_id.into(),
+            rows: vec![vec![(token(key as u8), "x".into())]],
+        })
+    }
+
+    fn take(changes: &mut BranchChanges) -> NewSideRead {
+        changes
+            .take_new_side_read("t")
+            .expect("新しい側の読みを頼んでいない")
+    }
+
+    /// a.rs (3 行) と b.rs (40 行) が届き、a.rs を選んでいる。
+    fn picked_a() -> BranchChanges {
+        let changes = asked_long();
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        changes
+    }
+
+    fn painted_a() -> BranchChanges {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        changes.install_new_side(&read, fresh(7, "t"));
+        changes
+    }
+
+    fn removed(path: &str) -> FileDiff {
+        let mut file = changed(path, 2);
+        for line in &mut file.hunks[0].lines {
+            line.tag = DiffLineTag::Delete;
+            line.old_line_no = line.new_line_no.take();
+        }
+        file.status = FileStatus::Deleted;
+        file
+    }
+
+    #[test]
+    fn 選んだ_diff_のファイルの新しい側を読み_塗りが届けば構文トークンを返す() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        assert_eq!(
+            (read.dir.as_path(), read.path.as_str(), read.known),
+            (Path::new("/a"), "a.rs", None)
+        );
+        changes.install_new_side(&read, fresh(7, "t"));
+        assert_eq!(changes.syntax()[0][0].0, token(7));
+    }
+
+    #[test]
+    fn 塗りが届くまでは構文トークンを返さない() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        assert!(changes.syntax().is_empty());
+        changes.install_new_side(&read, fresh(7, "t"));
+        assert!(!changes.syntax().is_empty(), "届いた後も色が無い");
+    }
+
+    #[test]
+    fn 読めなければ色を落とし_前の塗りも持ち越さない() {
+        let mut changes = painted_a();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        let read = take(&mut changes);
+        changes.install_new_side(&read, Err("too large".into()));
+        assert!(changes.syntax().is_empty());
+    }
+
+    #[test]
+    fn 読み中に別のファイルへ移ったら前の読みの結果は据えず_次の読みを投げられる() {
+        let mut changes = picked_a();
+        let old = take(&mut changes);
+        changes.step_file(1);
+        assert_eq!(changes.take_new_side_read("t"), None, "投げ中に重ねた");
+        changes.install_new_side(&old, fresh(7, "t"));
+        assert!(changes.syntax().is_empty(), "a.rs の色を b.rs に付けた");
+        assert_eq!(take(&mut changes).path, "b.rs");
+    }
+
+    #[test]
+    fn 読み中に別の_worktree_へ移ったら結果は据えず_戻っても色は読み直すまで無い() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        land(&mut changes, "/b", files(&[("a.rs", 3)]));
+        changes.install_new_side(&read, fresh(7, "t"));
+        assert!(changes.syntax().is_empty());
+        assert_eq!(take(&mut changes).dir, dir("/b"));
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert!(changes.syntax().is_empty());
+    }
+
+    #[test]
+    fn 同じファイルの読み直しでは色を残し_指紋を添えて1回だけ読む() {
+        let mut changes = painted_a();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert_eq!(changes.syntax()[0][0].0, token(7), "読み直しで色が消えた");
+        let read = take(&mut changes);
+        assert_eq!(read.known, Some(7));
+        assert_eq!(changes.take_new_side_read("t"), None);
+        changes.install_new_side(&read, Ok(Painted::Unchanged));
+        assert_eq!(changes.syntax()[0][0].0, token(7));
+        assert_eq!(
+            changes.take_new_side_read("t"),
+            None,
+            "変わっていないのに読み続けた"
+        );
+    }
+
+    #[test]
+    fn 中身が変わって塗り直しが届けば置き換える() {
+        let mut changes = painted_a();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        let read = take(&mut changes);
+        changes.install_new_side(&read, fresh(9, "t"));
+        assert_eq!(changes.syntax()[0][0].0, token(9));
+    }
+
+    #[test]
+    fn 別のファイルへ移ると前の色をすぐ消し新しいファイルを読む() {
+        let mut changes = painted_a();
+        changes.step_file(1);
+        assert!(changes.syntax().is_empty());
+        let read = take(&mut changes);
+        assert_eq!((read.path.as_str(), read.known), ("b.rs", None));
+    }
+
+    #[test]
+    fn 同じファイルを選び直しても読みを頼まない() {
+        let mut changes = painted_a();
+        changes.step_file(0);
+        assert_eq!(changes.take_new_side_read("t"), None);
+        assert!(!changes.syntax().is_empty());
+    }
+
+    #[test]
+    fn ai_が_diff_で頼んだファイルも新しい側を読む() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        changes.install_new_side(&read, fresh(7, "t"));
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, true);
+        let read = take(&mut changes);
+        assert_eq!(read.path, "b.rs");
+        changes.install_new_side(&read, fresh(8, "t"));
+        assert_eq!(changes.syntax()[0][0].0, token(8));
+    }
+
+    #[test]
+    fn 全体を出している間は新しい側を読まず_閉じて_diff_に戻れば読む() {
+        let mut changes = painted_a();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        assert_eq!(changes.take_new_side_read("t"), None);
+        assert!(changes.syntax().is_empty());
+        let (_, path, _) = changes.take_file_read().expect("全体の読みを頼んでいない");
+        assert_eq!(path, "plain.rs");
+        changes.close_asked(Path::new("/a"), "plain.rs");
+        assert_eq!(take(&mut changes).path, "a.rs");
+    }
+
+    #[test]
+    fn 全体の頼みのすぐ後に_diff_を頼まれたら全体の読みを消し新しい側を読む() {
+        let mut changes = picked_a();
+        changes.open_asked("p", Path::new("/a"), "plain.rs".into(), None, false);
+        changes.open_asked("p", Path::new("/a"), "b.rs".into(), None, true);
+        assert_eq!(changes.take_file_read(), None);
+        changes.forget_in_flight();
+        assert_eq!(
+            changes.take_file_read(),
+            None,
+            "捨てる全体の読みを投げ直した"
+        );
+        assert_eq!(take(&mut changes).path, "b.rs");
+    }
+
+    #[test]
+    fn 新しい側の行が無い_diff_では読まない() {
+        let mut changes = sized();
+        let mut diff = files(&[]);
+        diff.files = vec![removed("gone.rs"), changed("a.rs", 1)];
+        diff.rebuild_display_list();
+        land(&mut changes, "/a", diff);
+        let read = take(&mut changes);
+        assert_eq!(read.path, "a.rs", "対照: 新しい側があれば読む");
+        changes.install_new_side(&read, fresh(7, "t"));
+        changes.step_file(1);
+        assert_eq!(changes.selected_path(), Some("gone.rs"));
+        assert_eq!(changes.take_new_side_read("t"), None);
+        assert!(changes.syntax().is_empty());
+    }
+
+    #[test]
+    fn repo_を切り替えて読みが捨てられたら頼み直す() {
+        let mut changes = picked_a();
+        take(&mut changes);
+        changes.forget_in_flight();
+        assert_eq!(take(&mut changes).path, "a.rs");
+    }
+
+    #[test]
+    fn テーマが変わったら指紋を添えて塗り直しを頼む() {
+        let mut changes = painted_a();
+        assert_eq!(changes.take_new_side_read("t"), None);
+        let read = changes
+            .take_new_side_read("other")
+            .expect("テーマが変わっても読み直さない");
+        changes.install_new_side(&read, fresh(3, "other"));
+        assert_eq!(changes.syntax()[0][0].0, token(3));
+        assert_eq!(changes.take_new_side_read("other"), None);
+    }
+
+    #[test]
+    fn 読みが投げ中の間に_diff_が届いても重ねず_届いた後に1本だけ投げ直す() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert_eq!(changes.take_new_side_read("t"), None);
+        changes.install_new_side(&read, fresh(7, "t"));
+        let again = take(&mut changes);
+        assert_eq!(again.known, Some(7));
+        assert_eq!(changes.take_new_side_read("t"), None);
+    }
+
+    fn painter() -> Painter {
+        crate::panels::viewer::syntax::Highlighter::new(&conductor_core::config::Config::default())
+            .painter()
+    }
+
+    fn read_of(root: &Path, path: &str, known: Option<u64>) -> NewSideRead {
+        NewSideRead {
+            dir: root.to_path_buf(),
+            path: path.into(),
+            seq: 1,
+            known,
+        }
+    }
+
+    #[test]
+    fn 新しい側をファイルの行数ぶん塗り_同じ本文とテーマなら塗り直さない() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("a.rs"),
+            "fn main() {\n    let s = \"x\";\n}\n",
+        )
+        .unwrap();
+        let painter = painter();
+        let Ok(Painted::Fresh { key, rows, .. }) =
+            read_of(root.path(), "a.rs", None).paint_in(&painter, 4, alone())
+        else {
+            panic!("塗れなかった");
+        };
+        assert_eq!(rows.len(), 3);
+        assert!(rows[1].len() > 1, "1 行 1 トークンのまま: {:?}", rows[1]);
+        assert!(matches!(
+            read_of(root.path(), "a.rs", Some(key)).paint_in(&painter, 4, alone()),
+            Ok(Painted::Unchanged)
+        ));
+        std::fs::write(root.path().join("a.rs"), "fn main() {}\n").unwrap();
+        assert!(matches!(
+            read_of(root.path(), "a.rs", Some(key)).paint_in(&painter, 4, alone()),
+            Ok(Painted::Fresh { .. })
+        ));
+    }
+
+    #[test]
+    fn 拡張子を知らないファイルは1行1トークンで塗る() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("notes.zzz"),
+            "fn main() { let s = \"x\"; }\n",
+        )
+        .unwrap();
+        let Ok(Painted::Fresh { rows, .. }) =
+            read_of(root.path(), "notes.zzz", None).paint_in(&painter(), 4, alone())
+        else {
+            panic!("塗れなかった");
+        };
+        assert_eq!(rows[0].len(), 1, "{:?}", rows[0]);
+    }
+
+    #[test]
+    fn 新しい側が読めなければ理由を返す() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            read_of(root.path(), "gone.rs", None)
+                .paint_in(&painter(), 4, alone())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn 塗りが期限を過ぎたら色なしにし_同じ本文では塗り直さない() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.rs"), "fn main() {}\n").unwrap();
+        let painter = painter();
+        let Ok(Painted::Fresh { key, rows, .. }) = read_of(root.path(), "a.rs", None).paint_in(
+            &painter,
+            4,
+            slot(&DEADLINE_SEAT, Duration::ZERO, None),
+        ) else {
+            panic!("読めなかった");
+        };
+        assert!(rows.is_empty(), "期限を過ぎても塗った");
+        assert!(matches!(
+            read_of(root.path(), "a.rs", Some(key)).paint_in(&painter, 4, alone()),
+            Ok(Painted::Unchanged)
+        ));
+        let Ok(Painted::Fresh { rows, .. }) =
+            read_of(root.path(), "a.rs", None).paint_in(&painter, 4, alone())
+        else {
+            panic!("読めなかった");
+        };
+        assert!(!rows.is_empty(), "対照: 期限内なら塗る");
+    }
+
+    #[test]
+    fn 最初の読みが読めなければテーマが違っても読み直さず_次の_diff_で読む() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        changes.install_new_side(&read, Err("not utf-8".into()));
+        assert_eq!(changes.take_new_side_read("other"), None);
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert!(changes.take_new_side_read("t").is_some());
+    }
+
+    #[test]
+    fn 別のファイルを挟んで同じファイルに戻っても前の読みの結果は据えない() {
+        let mut changes = picked_a();
+        let first = take(&mut changes);
+        changes.step_file(1);
+        changes.step_file(-1);
+        assert_eq!(changes.selected_path(), Some("a.rs"));
+        changes.install_new_side(&first, fresh(7, "t"));
+        assert!(changes.syntax().is_empty());
+        let again = take(&mut changes);
+        assert_ne!(again.seq, first.seq);
+        changes.install_new_side(&again, fresh(8, "t"));
+        assert_eq!(changes.syntax()[0][0].0, token(8));
+    }
+
+    #[test]
+    fn 投げた後にテーマが変わったら前のテーマの塗りを据えたうえで塗り直しを頼む() {
+        let mut changes = picked_a();
+        let read = take(&mut changes);
+        changes.install_new_side(&read, fresh(7, "t"));
+        assert_eq!(changes.syntax()[0][0].0, token(7));
+        let again = changes
+            .take_new_side_read("other")
+            .expect("テーマが変わっても読み直さない");
+        assert_eq!(again.known, Some(7));
+    }
+
+    static DEADLINE_SEAT: AtomicBool = AtomicBool::new(false);
+    static ABANDON_SEAT: AtomicBool = AtomicBool::new(false);
+
+    /// 並列のテストが本番の席を取り合わないよう、呼ぶたびに別の席で塗る。
+    fn alone() -> Slot {
+        slot(
+            Box::leak(Box::new(AtomicBool::new(false))),
+            PAINT_BUDGET,
+            None,
+        )
+    }
+
+    fn slot(
+        seat: &'static AtomicBool,
+        budget: Duration,
+        start: Option<mpsc::Receiver<()>>,
+    ) -> Slot {
+        Slot {
+            seat,
+            budget,
+            wait: if start.is_some() {
+                Duration::ZERO
+            } else {
+                Duration::from_secs(60)
+            },
+            start,
+        }
+    }
+
+    #[test]
+    fn 待てる間に塗り終わらなければ色なしで返し_走り終えるまで次の塗りは始めない() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("a.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.path().join("b.rs"), "fn b() {}\n").unwrap();
+        let painter = painter();
+        let (release, start) = mpsc::channel();
+        let budget = Duration::from_secs(60);
+        let Ok(Painted::Fresh { key, rows, .. }) = read_of(root.path(), "a.rs", None).paint_in(
+            &painter,
+            4,
+            slot(&ABANDON_SEAT, budget, Some(start)),
+        ) else {
+            panic!("読めなかった");
+        };
+        assert!(rows.is_empty(), "見切ったのに色を返した");
+        assert!(
+            matches!(
+                read_of(root.path(), "a.rs", Some(key)).paint_in(
+                    &painter,
+                    4,
+                    slot(&ABANDON_SEAT, budget, None)
+                ),
+                Ok(Painted::Unchanged)
+            ),
+            "席が埋まっていても同じ本文は塗り直さない"
+        );
+        assert!(matches!(
+            read_of(root.path(), "b.rs", None).paint_in(
+                &painter,
+                4,
+                slot(&ABANDON_SEAT, budget, None)
+            ),
+            Ok(Painted::Busy)
+        ));
+        release.send(()).unwrap();
+        crate::testing::wait_for(|| !ABANDON_SEAT.load(Ordering::Acquire));
+        let Ok(Painted::Fresh { rows, .. }) = read_of(root.path(), "b.rs", None).paint_in(
+            &painter,
+            4,
+            slot(&ABANDON_SEAT, budget, None),
+        ) else {
+            panic!("席が空いても塗らない");
+        };
+        assert!(!rows.is_empty());
+    }
+
+    #[test]
+    fn 席が空かずに返ったら前の塗りを残し_テーマ違いでも次の_diff_まで読まない() {
+        let mut changes = painted_a();
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        let read = take(&mut changes);
+        changes.install_new_side(&read, Ok(Painted::Busy));
+        assert_eq!(
+            changes.syntax()[0][0].0,
+            token(7),
+            "席が埋まっていただけで色を落とした"
+        );
+        assert_eq!(
+            changes.take_new_side_read("other"),
+            None,
+            "poll のたびに読み直す"
+        );
+        land(&mut changes, "/a", files(&[("a.rs", 3), ("b.rs", 40)]));
+        assert!(changes.take_new_side_read("other").is_some());
+    }
+
+    #[test]
+    fn 閉じていないコメントを含む_minify_の行も待てる間に塗りきれる() {
+        let root = tempfile::tempdir().unwrap();
+        let line = "            || p instanceof AST_Conditional                   /* (false, true) ? (a = 10, b = 20) : (c = 30)\n";
+        std::fs::write(root.path().join("bundle.min.js"), line).unwrap();
+        let Ok(Painted::Fresh { rows, .. }) = read_of(root.path(), "bundle.min.js", None).paint_in(
+            &painter(),
+            4,
+            slot(
+                Box::leak(Box::new(AtomicBool::new(false))),
+                PAINT_BUDGET,
+                None,
+            ),
+        ) else {
+            panic!("読めなかった");
+        };
+        assert_eq!(rows.len(), 1, "塗りきれなかった");
+    }
+
+    const PLAIN_JS_STALL: &str = "function f(p) {\n  return p.a\n    || p.b /* (x, y) ? (a = 1) : (b = 2) */\n    || p.c;\n}\n";
+
+    fn paints_fully(root: &Path, name: &str, text: &str) -> usize {
+        std::fs::write(root.join(name), text).unwrap();
+        let seat = Box::leak(Box::new(AtomicBool::new(false)));
+        let Ok(Painted::Fresh { rows, .. }) =
+            read_of(root, name, None).paint_in(&painter(), 4, slot(seat, PAINT_BUDGET, None))
+        else {
+            panic!("読めなかった");
+        };
+        rows.len()
+    }
+
+    #[test]
+    fn 拡張子の無い_bun_のスクリプトも待てる間に塗りきれる() {
+        let root = tempfile::tempdir().unwrap();
+        let text = format!("#!/usr/bin/env bun\n{PLAIN_JS_STALL}");
+        assert_eq!(
+            paints_fully(root.path(), "release", &text),
+            6,
+            "塗りきれなかった"
+        );
+    }
+
+    #[test]
+    fn html_の_script_に入った_js_も待てる間に塗りきれる() {
+        let root = tempfile::tempdir().unwrap();
+        let text = format!("<html><body>\n<script>\n{PLAIN_JS_STALL}</script>\n</body></html>\n");
+        assert_eq!(
+            paints_fully(root.path(), "page.html", &text),
+            9,
+            "塗りきれなかった"
+        );
     }
 }

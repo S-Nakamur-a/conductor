@@ -598,6 +598,10 @@ impl Workspace {
                     .install_file(&dir, &path, seq, lines);
                 Vec::new()
             }
+            TaskResult::FleetNewSide { read, painted } => {
+                self.panels.fleet.changes.install_new_side(&read, painted);
+                Vec::new()
+            }
             TaskResult::FleetArtifacts { session, scan } => {
                 let fleet = &mut self.panels.fleet;
                 let target = fleet.selected_conversation().map(|c| c.id);
