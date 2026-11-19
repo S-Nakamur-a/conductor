@@ -92,7 +92,7 @@ $ARGUMENTS
 - 色はページが用意する class だけで付ける。`fill="#..."` や `stroke="black"` を書かない (ページの色の変数から外れる)。
   - 箱: `box` (地の色と線)、`soft` (薄い面)
   - 線: `edge` (矢印の線。fill は無い)、`dash` (点線)、`lane` (シーケンスの縦線)
-  - 文字: 何も付けなければ本文の色、`sub` (薄い小さな字)、`m` (等幅)
+  - 文字: 何も付けなければ本文の色、`sub` (薄い小さな字)、`m` (コードや数字。本文と別の書体で、数字の桁がそろう)
   - 意味の色: 線と枠に `new` / `gone` / `hold`、文字に `newt` / `gonet` / `holdt`
   - 矢印の頭は `<defs><marker>` に `<path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>` で作る。
     色付きの矢印には `class="newt"` などを付けた path の marker を別に作る。

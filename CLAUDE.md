@@ -11,11 +11,10 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 `cargo build` · `cargo run [-- <repo-path>]` · `cargo test --workspace` ·
 `cargo clippy --workspace` · `cargo check --workspace` · `make fmt`.
 Set `RUST_LOG=debug` for logging.
-The revidere and monstrare skills' scripts have their own tests, which CI does not run:
-`python3 -m unittest discover -s plugins/conductor/skills/revidere/scripts` and
-`python3 -m unittest discover -s plugins/conductor/skills/monstrare/scripts`
-(also under `/usr/bin/python3`, which is 3.9 on macOS). Run both after touching
-`revidere.py`: monstrare imports it.
+The revidere, monstrare and delineare skills' scripts have their own tests, which CI
+does not run: `python3 -m unittest discover -s plugins/conductor/skills/<skill>/scripts`
+for each of the three (also under `/usr/bin/python3`, which is 3.9 on macOS). Run all
+three after touching `revidere.py`: the other two import it.
 
 **Always pass `--workspace`** — bare `cargo test` / `cargo clippy` only cover the
 root `conductor` package, which is a five-line `main.rs`; everything else is in
@@ -264,6 +263,13 @@ API too — the page's look included: `SHARED_CSS` (the `:root` colour variables
 page's base styles and the diff excerpt, light only) and `FIGURE_CSS` (the SVG classes)
 live in `revidere.py`. Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so
 the session list's revidere marks never count it.
+
+**delineare** (`plugins/conductor/skills/delineare/`) is the one before the code: the
+session writes an implementation plan (scope, premises, what it checked and how, what it
+makes and skips, steps each with how to verify them) and `scripts/delineare.py` checks its
+shape and renders it with `SHARED_CSS` / `FIGURE_CSS`, importing `revidere.py` the same
+way monstrare does (its helpers are its API too). Its work directory is
+`$TMPDIR/delineare-*` with `plan.html`, so the revidere marks never count it either.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 

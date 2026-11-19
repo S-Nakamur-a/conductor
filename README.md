@@ -33,7 +33,7 @@ Then, in a Claude Code session:
 ```
 
 That sets up the MCP server (review comment DB and change summaries) and the
-`/address-conductor-comment`, `/explain-comment`, `/revidere` and `/monstrare` skills.
+`/address-conductor-comment`, `/explain-comment`, `/revidere`, `/monstrare` and `/delineare` skills.
 `/revidere` sorts the branch's changes into sections by importance, checks that no
 changed line is left unexplained (and
 shows any that are), and publishes the result as a review page (an Artifact) with
@@ -42,7 +42,9 @@ than reviewing every line: it groups the changes into themes, draws each one (a
 sequence, a decision tree, a before and after — whatever fits), and publishes a page
 with, if there is anything worth knowing, a short list of notes (what changed
 behaviour, what was not measured) -- whether the branch can be approved is left to
-`/revidere`.
+`/revidere`. `/delineare` comes before the code: it turns an implementation plan (scope,
+premises, what was checked, what is made and what is not, steps with how each is
+verified) into a page in the same style.
 
 ## Usage
 
