@@ -144,8 +144,10 @@ in any repository and in any window or terminal, one line each, under the worktr
 (shown by its branch) of the repository it runs in, with the ones waiting for you (a
 question or a permission) repeated at the top. Every worktree of the repository is
 listed, those with no session too, and a repository stays listed until the window
-closes once a session has run in it, or once this window opened it. Sessions in a plain
-terminal are listed together last. The line above the list counts the sessions in each
+closes once a session has run in it, or once this window opened it. A session whose
+directory no longer exists (its worktree was deleted while it kept running) gets a
+heading of its own, marked `(削除済み)`. Sessions in a plain terminal are listed
+together last. The line above the list counts the sessions in each
 state, and at its right end shows the 5h and 7d usage limits with the time left until
 each resets — one pair per `[[claude.accounts]]` that has one, after its name in its
 color; a Claude running under a config dir not listed there is left out, when accounts
