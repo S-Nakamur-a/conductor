@@ -788,7 +788,7 @@ def verdict(sections: list[dict], complete: bool) -> str:
         head = '<span class="chip lgtm">LGTM</span><p class="note">どの節にも懸念は無い。</p>'
     if not held:
         return head
-    return head + f'<span class="chip warnchip">止めないもの {len(held)}</span><ul class="notes">{"".join(held)}</ul>'
+    return head + f'<span class="chip held">止めないもの {len(held)}</span><ul class="notes">{"".join(held)}</ul>'
 
 
 def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> str:
@@ -868,6 +868,13 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
         banner.append(f'<p class="note">{esc(meta.get("github_note") or "GitHub のリポジトリと判別できない")}ので、コードへのリンクは無い。</p>')
 
     dirty_note = "（未コミットの変更を含む）" if meta["dirty"] else ""
+    explained = cov["classified"]
+    stats = (
+        f'<div><dt>ファイル</dt><dd>{len(files)}</dd></div>'
+        f'<div><dt>変更位置</dt><dd>{cov["total"]}</dd></div>'
+        f'<div><dt>節</dt><dd>{len(sections)}</dd></div>'
+        f'<div class="{"ok" if is_complete(cov) else "ng"}"><dt>説明済み</dt><dd>{explained}/{cov["total"]}</dd></div>'
+    )
     title = f"{meta['branch']} のレビュー"
     return PAGE.format(
         title=esc(title),
@@ -879,6 +886,7 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
         total=cov["total"],
         files=len(files),
         banner="".join(banner),
+        stats=stats,
         verdict=verdict(sections, is_complete(cov)),
         overview=overview,
         toc="".join(toc),
@@ -890,29 +898,86 @@ def render(meta: dict, files: list[dict], ledger: list[tuple], review: dict) -> 
 
 
 SHARED_CSS = """\
+:root {
+  --bg: oklch(0.975 0.006 250); --surface: #ffffff; --sunken: oklch(0.965 0.007 250);
+  --fg: oklch(0.21 0.02 258); --muted: oklch(0.46 0.024 252); --faint: oklch(0.58 0.02 250);
+  --line: oklch(0.90 0.012 250); --line-soft: oklch(0.94 0.009 250); --line-strong: oklch(0.78 0.018 250);
+  --accent: oklch(0.56 0.19 257); --accent-strong: oklch(0.42 0.17 260); --accent-soft: oklch(0.965 0.02 255); --accent-tint: oklch(0.91 0.05 255);
+  --ok: oklch(0.55 0.14 158); --ok-bg: oklch(0.965 0.03 158); --ok-fg: oklch(0.42 0.11 158);
+  --bad: oklch(0.56 0.2 25); --bad-bg: oklch(0.965 0.02 22); --bad-fg: oklch(0.47 0.17 25);
+  --warn: oklch(0.72 0.15 70); --warn-bg: oklch(0.975 0.035 88); --warn-fg: oklch(0.50 0.12 60);
+  --info-bg: oklch(0.97 0.02 225); --info-fg: oklch(0.45 0.10 230);
+  --add-bg: oklch(0.965 0.035 158); --add-fg: oklch(0.38 0.10 158); --del-bg: oklch(0.965 0.025 22); --del-fg: oklch(0.45 0.15 25);
+  --tint: var(--accent-soft); --new: var(--ok); --gone: var(--bad); --hold: var(--warn);
+  --sans: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --mono: "BIZ UDGothic", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --shadow: 0 1px 2px oklch(0.3 0.04 258 / .06), 0 0 0 1px oklch(0.3 0.04 258 / .035);
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.8; letter-spacing: .02em; -webkit-font-smoothing: antialiased; }
+main { max-width: 960px; margin: 0 auto; padding: 40px max(20px, env(safe-area-inset-right, 0px)) 80px max(20px, env(safe-area-inset-left, 0px)); display: grid; gap: 36px; }
+h1, h2, h3 { margin: 0; text-wrap: balance; line-height: 1.4; }
+h1 { font-size: 28px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 600; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px; }
+code, .path, .fn { font-family: inherit; font-size: .92em; letter-spacing: 0; }
+.ln, .code { font-family: var(--mono); font-size: .85em; letter-spacing: 0; }
+.meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.meta code { color: var(--fg); }
+.banner { margin: 0; padding: 10px 14px; background: var(--warn-bg); color: var(--warn-fg); border-radius: var(--r-md); font-weight: 500; font-size: 14px; }
+.banner a { color: inherit; text-decoration: underline; }
+.note, .muted { color: var(--muted); }
+.note { margin: 0; font-size: 13px; }
+.warn { color: var(--warn-fg); font-size: 13px; margin: 0; }
 .md { white-space: pre-wrap; min-width: 0; overflow-wrap: anywhere; }
 .md.rendered { white-space: normal; }
 .md.rendered > :first-child { margin-top: 0; } .md.rendered > :last-child { margin-bottom: 0; }
 .md.inline { display: inline; } .md.inline.rendered p { display: inline; }
-.md pre { overflow-x: auto; padding: 8px; background: var(--bg); border-radius: 4px; }
-.hunk { margin: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; min-width: 0; }
-.hunk figcaption, .filechange { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 6px 10px;
-  background: var(--bg); font-size: .85rem; border-bottom: 1px solid var(--line); }
-.filechange { border: 1px solid var(--line); border-radius: 4px; }
-.links { margin-left: auto; display: flex; gap: 12px; }
-.gh { white-space: nowrap; } .nolink { color: var(--muted); font-size: .8rem; }
+.md p { margin: 0 0 .6em; }
+.md code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; }
+.md pre { overflow-x: auto; padding: 10px 12px; background: var(--sunken); border-radius: var(--r-sm); }
+.hunk { margin: 0; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; min-width: 0; background: var(--surface); }
+.hunk figcaption, .filechange { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 7px 12px; background: var(--sunken); font-size: 13px; border-bottom: 1px solid var(--line); }
+.filechange { border: 1px solid var(--line); border-radius: var(--r-md); }
+.links { margin-left: auto; display: flex; gap: 10px; }
+.gh { white-space: nowrap; font-size: 12px; font-weight: 600; }
+.nolink { color: var(--faint); font-size: 11.5px; background: var(--line-soft); padding: 0 7px; border-radius: 4px; }
 .fn { color: var(--muted); }
 .scroll { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font-size: .8rem; line-height: 1.5; }
-td { padding: 0 8px; vertical-align: top; }
-.ln { color: var(--muted); text-align: right; user-select: none; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.65; }
+td { padding: 0 10px; vertical-align: top; }
+.ln { color: var(--faint); text-align: right; user-select: none; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .code { white-space: pre; }
-.sign { user-select: none; display: inline-block; width: 1.2em; color: var(--muted); }
+.sign { user-select: none; display: inline-block; width: 1.2em; color: var(--faint); }
 tr.add { background: var(--add-bg); color: var(--add-fg); }
 tr.del { background: var(--del-bg); color: var(--del-fg); }
+tr.add .sign, tr.del .sign { color: inherit; }
 tr.other { opacity: .45; }
 tr.dup td.code { box-shadow: inset 3px 0 0 var(--warn); }
-tr.gap td { color: var(--muted); text-align: center; }
+tr.gap td { color: var(--faint); text-align: center; background: var(--sunken); font-size: 11px; }
+"""
+
+FIGURE_CSS = """\
+figure.pic { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.fig { overflow-x: auto; background: var(--sunken); border-radius: var(--r-md); padding: 20px; }
+.fig svg { max-width: 100%; height: auto; display: block; color: var(--fg); margin: 0 auto; }
+.fig svg text { font-family: var(--sans); font-size: 12.5px; fill: currentColor; letter-spacing: .02em; }
+.fig svg .m { font-variant-numeric: tabular-nums; font-size: 11.5px; letter-spacing: 0; }
+.fig svg .sub { fill: var(--muted); font-size: 11px; }
+.fig svg .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
+.fig svg .soft { fill: var(--tint); stroke: var(--accent-tint); stroke-width: 1.2; }
+.fig svg .edge { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.fig svg .dash { stroke-dasharray: 5 4; }
+.fig svg .new { stroke: var(--new); stroke-width: 1.6; } .fig svg .newt { fill: var(--ok-fg); }
+.fig svg .gone { stroke: var(--gone); } .fig svg .gonet { fill: var(--bad-fg); }
+.fig svg .hold { stroke: var(--hold); stroke-width: 1.6; } .fig svg .holdt { fill: var(--warn-fg); }
+.fig svg .box.new { fill: var(--ok-bg); } .fig svg .box.gone { fill: var(--bad-bg); } .fig svg .box.hold { fill: var(--warn-bg); }
+.fig svg .lane { stroke: var(--line-strong); stroke-dasharray: 3 4; }
+.fig svg marker path { fill: var(--muted); } .fig svg marker path.newt { fill: var(--new); } .fig svg marker path.holdt { fill: var(--hold); }
+.pic figcaption { color: var(--muted); font-size: 13.5px; max-width: 72ch; }
 """
 
 MD_SCRIPT = """\
@@ -932,85 +997,75 @@ if (window.marked && window.DOMPurify) {
 PAGE = """<title>{title}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDGothic:wght@400;700&family=BIZ+UDPGothic:wght@400;700&display=swap">
 <style>
-:root {{
-  --bg: #f6f7f9; --surface: #ffffff; --fg: #1d2330; --muted: #5d6676; --line: #dde1e8;
-  --accent: #2b55c7; --core: #b3261e; --ripple: #b06a00; --follow: #2f7d74; --minor: #7a8291;
-  --add-bg: #e6f4ea; --add-fg: #135c2a; --del-bg: #fbe9e9; --del-fg: #8f1d1d; --focus: #fff4c2; --warn: #9a4b00;
-  --sans: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-}}
-@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{
-  --bg: #12151b; --surface: #1a1e26; --fg: #e3e7ee; --muted: #9aa3b2; --line: #2c323d;
-  --accent: #8aa8ff; --core: #ff8a80; --ripple: #f0b35a; --follow: #6cc6b9; --minor: #9aa3b2;
-  --add-bg: #15301f; --add-fg: #9ee0b0; --del-bg: #3a1a1c; --del-fg: #ffb3b3; --focus: #3a3418; --warn: #f0b35a;
-  color-scheme: dark; }} }}
-:root[data-theme="dark"] {{
-  --bg: #12151b; --surface: #1a1e26; --fg: #e3e7ee; --muted: #9aa3b2; --line: #2c323d;
-  --accent: #8aa8ff; --core: #ff8a80; --ripple: #f0b35a; --follow: #6cc6b9; --minor: #9aa3b2;
-  --add-bg: #15301f; --add-fg: #9ee0b0; --del-bg: #3a1a1c; --del-fg: #ffb3b3; --focus: #3a3418; --warn: #f0b35a;
-  color-scheme: dark; }}
-body {{ background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.7; }}
-main {{ max-width: 960px; margin: 0 auto; padding-block: 24px 64px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  display: grid; gap: 32px; }}
-h1 {{ font-size: 1.5rem; margin: 0; text-wrap: balance; }}
-h2 {{ font-size: 1.1rem; margin: 0 0 12px; letter-spacing: .04em; color: var(--muted); }}
-h3 {{ font-size: 1.05rem; margin: 0; text-wrap: balance; }}
-a {{ color: var(--accent); }}
-code, .path, .fn, .ln, .code {{ font-family: var(--mono); font-size: .85em; }}
-.meta {{ color: var(--muted); font-size: .9rem; display: flex; flex-wrap: wrap; gap: 4px 16px; }}
-.banner {{ margin: 0; padding: 10px 14px; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; }}
-.note, .muted {{ color: var(--muted); }}
-.note {{ margin: 0; font-size: .9rem; }}
-.warn {{ color: var(--warn); font-size: .9rem; margin: 0; }}
-dl {{ margin: 0; }}
-.ov {{ display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }}
-.ov dt {{ color: var(--muted); font-size: .85rem; letter-spacing: .08em; padding-top: 2px; }}
-.ov dd {{ margin: 0; min-width: 0; }}
-.toc {{ list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }}
-.toc a {{ display: flex; gap: 10px; align-items: baseline; text-decoration: none; color: var(--fg); }}
-.toc a:hover h3, .toc a:hover {{ color: var(--accent); }}
-.chip {{ flex: none; font-size: .72rem; font-weight: 700; letter-spacing: .06em; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }}
-.chip.core {{ color: var(--core); }} .chip.ripple {{ color: var(--ripple); }} .chip.follow {{ color: var(--follow); }}
-.chip.minor {{ color: var(--minor); }} .chip.warnchip {{ color: var(--warn); }}
-.chip.lgtm {{ color: var(--bg); background: var(--follow); border-color: var(--follow); }}
-.chip.concern {{ color: var(--bg); background: var(--core); border-color: var(--core); }}
-.verdict {{ display: grid; gap: 8px; justify-items: start; }}
-.verdict .chip {{ font-size: .95rem; padding: 2px 14px; }}
-.concerns {{ margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }}
-.verdict .concerns {{ justify-self: stretch; }}
-.verdict .concerns a {{ font-weight: 700; margin-right: .5em; }}
-.sec .concerns {{ color: var(--core); }}
-.notes {{ margin: 0; padding-left: 1.4em; display: grid; gap: 6px; color: var(--warn); }}
-.verdict .notes {{ justify-self: stretch; }}
-.verdict .notes a {{ font-weight: 700; margin-right: .5em; }}
-.sec {{ background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--minor); border-radius: 6px;
-  padding: 16px; display: grid; gap: 12px; min-width: 0; scroll-margin-top: 16px; }}
-.sec.core {{ border-left-color: var(--core); }} .sec.ripple {{ border-left-color: var(--ripple); }}
-.sec.follow {{ border-left-color: var(--follow); }} .sec.orphan {{ border-left-color: var(--warn); }}
-.sec header {{ display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }}
-.sections {{ display: grid; gap: 20px; }}
-.why {{ display: grid; grid-template-columns: 3em minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: .92rem; }}
-.label {{ font-size: .8rem; letter-spacing: .08em; padding-top: 2px; }}
-.rels {{ list-style: none; margin: 0; padding: 0; font-size: .9rem; display: grid; gap: 4px; }}
-.rels .primary {{ font-weight: 700; }}
-.rels .md {{ margin-left: .5em; color: var(--muted); font-weight: 400; }}
 {shared_css}
-.impacts {{ display: grid; gap: 12px; }}
-.impact {{ background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; }}
-.impact header {{ display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }}
-.impact dl {{ display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: 6px 12px; }}
-.impact dt {{ color: var(--muted); font-size: .85rem; }} .impact dd {{ margin: 0; min-width: 0; }}
-.conf {{ font-size: .75rem; color: var(--muted); border: 1px solid var(--line); padding: 0 8px; border-radius: 999px; }}
-.conf.fact {{ color: var(--follow); border-color: var(--follow); }}
-@media (max-width: 520px) {{ .ov, .impact dl, .why {{ grid-template-columns: minmax(0, 1fr); gap: 2px; }} .links {{ margin-left: 0; }} }}
+main > section > h2, nav > h2, .verdict h2 {{ font-size: 13px; font-weight: 600; letter-spacing: .08em; color: var(--muted); margin: 0 0 12px; }}
+.top {{ display: grid; gap: 12px; }}
+.stats {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 0; }}
+.stats div {{ display: grid; gap: 0; background: var(--surface); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 8px 14px; min-width: 104px; }}
+.stats dt {{ font-size: 11.5px; color: var(--muted); }}
+.stats dd {{ margin: 0; font-family: var(--mono); font-size: 20px; font-weight: 600; letter-spacing: 0; }}
+.stats .ok dd {{ color: var(--ok-fg); }} .stats .ng dd {{ color: var(--warn-fg); }}
+dl {{ margin: 0; }}
+section > dl {{ background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 4px 22px; }}
+.ov {{ display: grid; grid-template-columns: 6em minmax(0, 1fr); gap: 16px; padding: 12px 0; border-top: 1px solid var(--line-soft); }}
+.ov:first-child {{ border-top: 0; }}
+.ov dt {{ color: var(--accent-strong); font-size: 13px; font-weight: 600; letter-spacing: .06em; padding-top: 2px; }}
+.ov dd {{ margin: 0; min-width: 0; }}
+.toc {{ list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); counter-reset: toc; }}
+.toc li {{ counter-increment: toc; }}
+.toc a {{ display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-radius: var(--r-sm); color: var(--fg); }}
+.toc a::before {{ content: counter(toc, decimal-leading-zero); font-family: var(--mono); font-size: 12px; color: var(--faint); width: 2em; flex: none; }}
+.toc a:hover {{ background: var(--sunken); color: var(--accent-strong); text-decoration: none; }}
+.chip {{ flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; padding: 0 9px; border-radius: 999px; border: 1px solid transparent; line-height: 1; white-space: nowrap; }}
+.chip.core {{ background: var(--accent); color: #fff; }}
+.chip.ripple {{ background: var(--accent-tint); color: var(--accent-strong); }}
+.chip.follow {{ color: var(--muted); border-color: var(--line-strong); }}
+.chip.minor {{ background: var(--line-soft); color: var(--faint); }}
+.chip.lgtm {{ background: var(--ok-bg); color: var(--ok-fg); }}
+.chip.lgtm::before {{ content: "✓"; }}
+.chip.concern {{ background: var(--bad); color: #fff; }}
+.chip.concern::before {{ content: "!"; font-family: var(--mono); }}
+.chip.warnchip {{ background: var(--warn-bg); color: var(--warn-fg); }}
+.chip.held {{ background: var(--info-bg); color: var(--info-fg); }}
+.verdict {{ display: grid; gap: 12px; justify-items: start; background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 20px 22px; }}
+.verdict h2 {{ margin: 0; }}
+.verdict > .chip {{ height: 30px; font-size: 14px; padding: 0 14px; }}
+.concerns {{ margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }}
+.concerns li::marker {{ color: var(--bad); }}
+.verdict .concerns, .verdict .notes {{ justify-self: stretch; }}
+.verdict .concerns a, .verdict .notes a {{ font-weight: 600; margin-right: .6em; }}
+.sec .concerns {{ color: var(--bad-fg); background: var(--bad-bg); border-radius: var(--r-md); padding: 10px 14px 10px 2.1em; font-size: 14px; }}
+.notes {{ margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }}
+.notes li::marker {{ color: var(--info-fg); }}
+.sec .notes {{ color: var(--info-fg); background: var(--info-bg); border-radius: var(--r-md); padding: 10px 14px 10px 2.1em; font-size: 14px; }}
+.sections {{ display: grid; gap: 18px; }}
+.sec {{ background: var(--surface); border: 1px solid transparent; border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 20px 22px; display: grid; gap: 14px; min-width: 0; scroll-margin-top: 16px; }}
+.sec.core {{ border-color: var(--accent-tint); }}
+.sec.orphan {{ border-color: var(--warn); }}
+.sec header {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
+.sec header h3 {{ margin-left: 4px; }}
+.why {{ display: grid; grid-template-columns: 3.2em minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: 13.5px; background: var(--sunken); border-radius: var(--r-md); padding: 10px 14px; }}
+.label {{ font-size: 12px; font-weight: 600; letter-spacing: .06em; padding-top: 1px; color: var(--faint); }}
+.rels {{ list-style: none; margin: 0; padding: 0; font-size: 13.5px; display: grid; gap: 4px; }}
+.rels .primary {{ font-weight: 600; }}
+.rels .md {{ margin-left: .5em; color: var(--muted); font-weight: 400; }}
+.impacts {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }}
+.impact {{ background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 18px 20px; display: grid; gap: 10px; align-content: start; }}
+.impact header {{ display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }}
+.impact dl {{ display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 6px 12px; font-size: 14px; }}
+.impact dt {{ color: var(--muted); font-size: 12.5px; padding-top: 2px; }}
+.impact dd {{ margin: 0; min-width: 0; }}
+.conf {{ font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; color: var(--muted); border: 1px dashed var(--line-strong); }}
+.conf.fact {{ background: var(--accent-soft); color: var(--accent-strong); border: 1px solid var(--accent-tint); }}
+@media (max-width: 560px) {{ .ov, .impact dl, .why {{ grid-template-columns: minmax(0, 1fr); gap: 2px; }} .links {{ margin-left: 0; }} }}
 </style>
 <main>
-<header style="display:grid;gap:8px">
+<header class="top">
 <h1>{branch} のレビュー</h1>
 <div class="meta"><span>{base_ref} (<code>{base}</code>) から作業ツリーまで{dirty}</span><span>HEAD <code>{head}</code></span><span>{files} ファイル / 変更位置 {total}</span></div>
+<dl class="stats">{stats}</dl>
 {banner}
 </header>
 <section class="verdict"><h2>判定</h2>{verdict}</section>
