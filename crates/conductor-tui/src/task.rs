@@ -1548,11 +1548,13 @@ fn fleet_status(
             ))
         })
         .collect();
+    let missing_dirs = dirs.iter().filter(|d| !d.exists()).cloned().collect();
     crate::panels::fleet::FleetStatus {
         live,
         summaries,
         trees,
         placement,
+        missing_dirs,
         usage: statusline::read(
             &statusline::dir(),
             &env.account_dirs,

@@ -216,6 +216,8 @@ pub struct FleetStatus {
     pub trees: Vec<RepoTree>,
     /// セッションの working_dir → それを含む worktree のパス。
     pub placement: HashMap<PathBuf, PathBuf>,
+    /// 作業ディレクトリがもう存在しないセッションの dir (見出しに「削除済み」を付ける)。
+    pub missing_dirs: HashSet<PathBuf>,
     pub usage: Usage,
     pub reviews: HashMap<PathBuf, Review>,
 }
@@ -242,6 +244,7 @@ pub struct FleetPanel {
     seen: HashMap<RowKey, SystemTime>,
     trees: Vec<RepoTree>,
     placement: HashMap<PathBuf, PathBuf>,
+    missing_dirs: HashSet<PathBuf>,
     usage: Usage,
     reviews: HashMap<PathBuf, Review>,
     review_requested: HashSet<PathBuf>,
@@ -698,6 +701,7 @@ impl FleetPanel {
             .extend(status.trees.iter().map(|t| t.root.clone()));
         self.trees = status.trees;
         self.placement = status.placement;
+        self.missing_dirs = status.missing_dirs;
         self.usage = status.usage;
         self.reviews = status.reviews;
         self.set_own(own);
@@ -853,13 +857,18 @@ impl FleetPanel {
             {
                 Some(group) => group.nodes[0].rows.push(row),
                 None => {
-                    let name = dir_name(&row.working_dir);
+                    let label = dir_name(&row.working_dir);
+                    let name = if self.missing_dirs.contains(&row.working_dir) {
+                        format!("{label} (削除済み)")
+                    } else {
+                        label.clone()
+                    };
                     groups.push(Group {
                         root: Some(row.working_dir.clone()),
                         nodes: vec![Node {
                             worktree: Some(Worktree {
                                 path: row.working_dir.clone(),
-                                label: name.clone(),
+                                label,
                                 in_tree: false,
                             }),
                             rows: vec![row],
