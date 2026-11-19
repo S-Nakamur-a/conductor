@@ -317,14 +317,14 @@ Invariants. Breaking any of these turns a weak answer into a confident one:
 
 Two SCIP traps that typed access will not save you from:
 
-- **`signature_documentation` is not what the scip crate says it is.** scip 0.9
+- **`signature_documentation` is not what the scip crate says it is.** scip 0.9 / 0.10
   generates a `Signature` with the text at field 2; rust-analyzer and scip-go
   write the older spelling, a `Document` with the text at field 5. Typed access
   compiles and returns an empty string forever, so `store::signature_text` reads
   both. scip-typescript writes none — its declaration is a ```` ```ts ```` fence
   at `documentation[0]`, lifted out by `store::fenced_declaration`.
 - **`kind`'s numbers are not the crate's.** The enum was renumbered (function is
-  17 in scip 0.9, 24 in what the producers write), but the producers agree with
+  17 in scip 0.9 and 0.10, 24 in what the producers write), but the producers agree with
   *each other*, so `store/kind.rs` is one table with no tool name in it. Do not
   route these through `scip::types::Kind`, and do not reintroduce a per-tool
   table: scip-typescript writes no `kind` at all, and a tool-keyed table would

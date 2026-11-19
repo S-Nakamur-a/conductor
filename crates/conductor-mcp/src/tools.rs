@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{ErrorData, ServerHandler, tool, tool_handler, tool_router};
 
 use conductor_core::cc_hook::{self, Notification, UiRequest};
@@ -515,8 +515,8 @@ impl McpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new("conductor", self.inner.version.clone());
         info.instructions = Some(

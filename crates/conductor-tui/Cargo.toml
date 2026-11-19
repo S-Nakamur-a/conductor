@@ -22,7 +22,7 @@ unicode-segmentation = "1"
 # PTY 画面の読み出し。PtyStore が渡す Parser を描画時に直接ロックする。
 vt100 = { path = "../vt100" }
 # panic ログの置き場と時刻。
-dirs = "6"
+dirs = "7"
 chrono = "0.4"
 # Viewer の構文ハイライト。
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
@@ -32,13 +32,13 @@ syntect-tui = "3.0.6"
 # トランスクリプトの tool_use は生の JSON を持つ。分類はそれを見て決める。
 serde_json = "1"
 # 折りたたみ範囲の算出。
-tree-sitter = "0.26"
+tree-sitter = "0.27"
 # 変更ファイル一覧の色分けが status のビットを直接読む。
 git2 = { version = "0.20", features = ["vendored-openssl"] }
 # PR ページを既定のブラウザで開く。
 open = "5"
 # 区画内選択を OSC 52 で端末のクリップボードへ渡す。
-base64 = "0.22"
+base64 = "0.23"
 # 画像プレビュー。aa-media が吐く ANSI を vt100 に通して行にする。
 aa-media = { git = "https://github.com/S-Nakamur-a/aa-media.git", rev = "a54ac2b" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
@@ -46,5 +46,5 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 [dev-dependencies]
 tempfile = "3"
 toml = "1"
-scip = "0.9"
+scip = "0.10"
 protobuf = "3.7"
