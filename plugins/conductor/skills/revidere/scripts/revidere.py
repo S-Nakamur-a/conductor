@@ -911,6 +911,7 @@ SHARED_CSS = """\
   --tint: var(--accent-soft); --new: var(--ok); --gone: var(--bad); --hold: var(--warn);
   --sans: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   --mono: "BIZ UDGothic", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --code: "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
   --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
   --shadow: 0 1px 2px oklch(0.3 0.04 258 / .06), 0 0 0 1px oklch(0.3 0.04 258 / .035);
   color-scheme: light;
@@ -923,7 +924,7 @@ h1 { font-size: 28px; font-weight: 700; }
 h3 { font-size: 16px; font-weight: 600; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 3px; }
-code, .path, .fn { font-family: inherit; font-size: .92em; letter-spacing: 0; }
+code, .path, .fn { font-family: var(--code); font-size: .92em; letter-spacing: 0; }
 .ln, .code { font-family: var(--mono); font-size: .85em; letter-spacing: 0; }
 .meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .meta code { color: var(--fg); }
@@ -965,7 +966,7 @@ figure.pic { margin: 0; display: grid; gap: 10px; min-width: 0; }
 .fig { overflow-x: auto; background: var(--sunken); border-radius: var(--r-md); padding: 20px; }
 .fig svg { max-width: 100%; height: auto; display: block; color: var(--fg); margin: 0 auto; }
 .fig svg text { font-family: var(--sans); font-size: 12.5px; fill: currentColor; letter-spacing: .02em; }
-.fig svg .m { font-variant-numeric: tabular-nums; font-size: 11.5px; letter-spacing: 0; }
+.fig svg .m { font-family: var(--code); font-variant-numeric: tabular-nums; font-size: 11.5px; letter-spacing: 0; }
 .fig svg .sub { fill: var(--muted); font-size: 11px; }
 .fig svg .box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2; }
 .fig svg .soft { fill: var(--tint); stroke: var(--accent-tint); stroke-width: 1.2; }

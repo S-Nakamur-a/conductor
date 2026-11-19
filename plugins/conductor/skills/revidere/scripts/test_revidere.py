@@ -938,6 +938,13 @@ class SharedCssTest(unittest.TestCase):
         self.assertIn("<style>\n{shared_css}\n", rv.PAGE)
         self.assertNotIn("prefers-color-scheme: dark", rv.SHARED_CSS + rv.PAGE)
 
+    def test_コードとパスと図の等幅の字は本文の書体を使わない(self):
+        root = rv.SHARED_CSS.split(":root {")[1].split("}")[0]
+        code_font = root.split("--code:")[1].split(";")[0]
+        self.assertNotIn("BIZ UDPGothic", code_font)
+        self.assertIn("code, .path, .fn { font-family: var(--code);", rv.SHARED_CSS)
+        self.assertIn(".fig svg .m { font-family: var(--code);", rv.FIGURE_CSS)
+
 
 if __name__ == "__main__":
     unittest.main()
