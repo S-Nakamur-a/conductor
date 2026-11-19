@@ -104,6 +104,7 @@ class Prepare(DelineareTest):
 
     def test_コミットが無いリポジトリでもbranchとHEADを空にして作る(self):
         meta = self.meta(self.prepare())
+        self.assertIsNone(meta["branch"])
         self.assertIsNone(meta["head_oid"])
         self.assertEqual(meta["repo"], "repo")
 
@@ -198,7 +199,7 @@ class Render(DelineareTest):
         self.assertEqual(page.count("<b>確かめ方</b>"), 4)
         self.assertIn(SVG, page)
 
-    def test_省略できる欄を省くかnullにすると描くときもその塊が出ない(self):
+    def test_省略できる欄を省きopenとfilesをnullにしても描けてその塊が出ない(self):
         plan = minimal()
         plan["open"] = None
         plan["steps"][0]["files"] = None
