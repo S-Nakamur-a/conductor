@@ -267,7 +267,8 @@ the session list's revidere marks never count it.
 **delineare** (`plugins/conductor/skills/delineare/`) is the one before the code: the
 session writes an implementation plan (scope, premises, what it checked and how, what it
 makes and skips, steps each with how to verify them) and `scripts/delineare.py` checks its
-shape and renders it with the same `SHARED_CSS` / `FIGURE_CSS`. Its work directory is
+shape and renders it with `SHARED_CSS` / `FIGURE_CSS`, importing `revidere.py` the same
+way monstrare does (its helpers are its API too). Its work directory is
 `$TMPDIR/delineare-*` with `plan.html`, so the revidere marks never count it either.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
