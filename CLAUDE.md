@@ -260,8 +260,10 @@ rather than reviewing: the session draws an SVG overview and one or more per the
 checks only that every changed file belongs to some theme, then renders the page. It
 borrows the git, diff, excerpt and link code from `revidere.py` by import (through
 `realpath`, so a symlinked skill dir still finds it), which makes revidere's helpers its
-API too. Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so the session
-list's revidere marks never count it.
+API too — the page's look included: `SHARED_CSS` (the `:root` colour variables, the
+page's base styles and the diff excerpt, light only) and `FIGURE_CSS` (the SVG classes)
+live in `revidere.py`. Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so
+the session list's revidere marks never count it.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 

@@ -252,6 +252,7 @@ def render(meta: dict, files: list[dict], focus: list[set], story: dict) -> str:
         notes=notes_html(story),
         map=map_html(files, story, missing),
         shared_css=rv.SHARED_CSS,
+        figure_css=rv.FIGURE_CSS,
         md_script=rv.MD_SCRIPT,
     )
 
@@ -263,77 +264,40 @@ PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDGothic:wght@400;700&family=BIZ+UDPGothic:wght@400;700&display=swap">
 <style>
-:root {{
-  --bg: #f4f5f8; --surface: #ffffff; --fg: #1c2230; --muted: #5f6878; --line: #d9dde6;
-  --accent: #3346c4; --new: #0f7b5f; --gone: #b4322a; --hold: #a15c00; --tint: #eef1fd; --warn: #9a4b00;
-  --add-bg: #e6f4ea; --add-fg: #135c2a; --del-bg: #fbe9e9; --del-fg: #8f1d1d;
-  --sans: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  color-scheme: light;
-}}
-@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{
-  --bg: #11141b; --surface: #191d26; --fg: #e4e8ef; --muted: #9ba4b4; --line: #2d3340;
-  --accent: #93a3ff; --new: #5fd0ad; --gone: #ff8f86; --hold: #f2b45c; --tint: #1f2540; --warn: #f0b35a;
-  --add-bg: #15301f; --add-fg: #9ee0b0; --del-bg: #3a1a1c; --del-fg: #ffb3b3;
-  color-scheme: dark; }} }}
-:root[data-theme="dark"] {{
-  --bg: #11141b; --surface: #191d26; --fg: #e4e8ef; --muted: #9ba4b4; --line: #2d3340;
-  --accent: #93a3ff; --new: #5fd0ad; --gone: #ff8f86; --hold: #f2b45c; --tint: #1f2540; --warn: #f0b35a;
-  --add-bg: #15301f; --add-fg: #9ee0b0; --del-bg: #3a1a1c; --del-fg: #ffb3b3;
-  color-scheme: dark; }}
-* {{ box-sizing: border-box; }}
-body {{ margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); line-height: 1.75; }}
-main {{ max-width: 980px; margin: 0 auto; padding: 32px max(16px, env(safe-area-inset-right, 0px)) 80px max(16px, env(safe-area-inset-left, 0px));
-  display: grid; gap: 28px; }}
-h1, h2, h3 {{ text-wrap: balance; line-height: 1.35; margin: 0; }}
-h1 {{ font-size: 1.75rem; }} h2 {{ font-size: 1.25rem; }} h3 {{ font-size: 1rem; }}
-a {{ color: var(--accent); }}
-code, .path, .fn, .ln, .code, .num, .n {{ font-family: var(--mono); font-size: .85em; }}
-.meta {{ color: var(--muted); font-size: .88rem; display: flex; flex-wrap: wrap; gap: 4px 16px; }}
-.lede {{ font-size: 1.08rem; max-width: 68ch; }}
-.banner {{ margin: 0; padding: 10px 14px; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; }}
-.banner a {{ color: inherit; }}
-.note {{ margin: 0; font-size: .9rem; color: var(--muted); }}
-.card {{ background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px; display: grid; gap: 14px; min-width: 0; scroll-margin-top: 16px; }}
-.head {{ display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }}
-.num {{ color: var(--accent); font-weight: 600; font-size: 1rem; }}
-.kind {{ font-size: .75rem; border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; color: var(--muted); }}
-figure.pic {{ margin: 0; display: grid; gap: 8px; min-width: 0; }}
-.fig {{ overflow-x: auto; }}
-.fig svg {{ max-width: 100%; height: auto; display: block; color: var(--fg); }}
-.fig svg text {{ font-family: var(--sans); font-size: 12.5px; fill: currentColor; }}
-.fig svg .m {{ font-family: var(--mono); font-size: 11.5px; }}
-.fig svg .sub {{ fill: var(--muted); font-size: 11px; }}
-.fig svg .box {{ fill: var(--surface); stroke: currentColor; stroke-width: 1.2; }}
-.fig svg .soft {{ fill: var(--tint); stroke: var(--line); }}
-.fig svg .edge {{ fill: none; stroke: currentColor; stroke-width: 1.3; }}
-.fig svg .dash {{ stroke-dasharray: 5 4; }}
-.fig svg .new {{ stroke: var(--new); }} .fig svg .newt {{ fill: var(--new); }}
-.fig svg .gone {{ stroke: var(--gone); }} .fig svg .gonet {{ fill: var(--gone); }}
-.fig svg .hold {{ stroke: var(--hold); }} .fig svg .holdt {{ fill: var(--hold); }}
-.fig svg .lane {{ stroke: var(--line); stroke-dasharray: 3 4; }}
-.pic figcaption {{ color: var(--muted); font-size: .88rem; max-width: 72ch; }}
+{shared_css}
+main {{ gap: 28px; }}
+h1 {{ font-size: 30px; }}
+.lede {{ font-size: 17px; max-width: 64ch; }}
+.card {{ background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 26px; display: grid; gap: 16px; min-width: 0; scroll-margin-top: 16px; }}
+.head {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
+.head h2 {{ font-size: 20px; font-weight: 700; }}
+.num {{ font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; color: var(--accent-strong); background: var(--accent-soft); padding: 2px 8px; border-radius: var(--r-sm); letter-spacing: 0; }}
+.kind {{ font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }}
 .pair {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
-.pair > div {{ border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; align-content: start; }}
-.pair ul, .notes {{ margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }}
-.tag {{ font-size: .75rem; font-weight: 700; }}
-.before .tag {{ color: var(--gone); }} .after .tag {{ color: var(--new); }}
-.files {{ display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: .85rem; }}
-.how {{ font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }}
-.map {{ display: grid; gap: 6px; font-size: .85rem; }}
-.map .row {{ display: grid; grid-template-columns: minmax(0, 18em) 7em minmax(0, 1fr) 7em; gap: 10px; align-items: center; }}
+.pair > div {{ border-radius: var(--r-md); padding: 14px 16px; display: grid; gap: 8px; align-content: start; }}
+.before {{ background: var(--sunken); }}
+.after {{ background: var(--surface); border: 1.5px solid var(--ok); }}
+.pair ul, ul.notes {{ margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }}
+.tag {{ justify-self: start; font-size: 11.5px; font-weight: 700; padding: 1px 10px; border-radius: 999px; }}
+.before .tag {{ background: var(--line-soft); color: var(--muted); }}
+.after .tag {{ background: var(--ok-bg); color: var(--ok-fg); }}
+.files {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+.files .path {{ background: var(--sunken); color: var(--muted); padding: 1px 8px; border-radius: 4px; font-size: 12px; }}
+.map {{ display: grid; gap: 8px; font-size: 13px; }}
+.map .row {{ display: grid; grid-template-columns: minmax(0, 18em) 7em minmax(0, 1fr) 7em; gap: 12px; align-items: center; }}
 .map .path {{ overflow-wrap: anywhere; }}
 .marks {{ display: flex; gap: 4px; flex-wrap: wrap; }}
-.mark {{ font-family: var(--mono); font-size: .75rem; border: 1px solid var(--accent); border-radius: 4px; padding: 0 5px; text-decoration: none; }}
-.mark.none {{ color: var(--warn); border-color: var(--warn); font-family: var(--sans); }}
-.bar {{ height: 10px; border-radius: 3px; display: flex; overflow: hidden; background: var(--bg); }}
+.mark {{ font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 600; background: var(--accent-soft); color: var(--accent-strong); border-radius: 4px; padding: 0 6px; }}
+.mark:hover {{ text-decoration: none; background: var(--accent-tint); }}
+.mark.none {{ background: var(--warn-bg); color: var(--warn-fg); font-family: var(--sans); }}
+.bar {{ height: 8px; border-radius: 4px; display: flex; overflow: hidden; background: var(--line-soft); }}
 .bar i {{ display: block; height: 100%; }} .bar .a {{ background: var(--new); }} .bar .d {{ background: var(--gone); }}
-.n {{ color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }}
-{shared_css}
-@media (max-width: 640px) {{ .pair {{ grid-template-columns: 1fr; }}
-  .map .row {{ grid-template-columns: minmax(0, 1fr) auto; }} .map .bar {{ grid-column: 1 / -1; }} }}
+.n {{ color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; }}
+@media (max-width: 640px) {{ .pair {{ grid-template-columns: 1fr; }} .map .row {{ grid-template-columns: minmax(0, 1fr) auto; }} .map .bar {{ grid-column: 1 / -1; }} }}
+{figure_css}
+.how {{ font-size: 11px; font-weight: 600; color: var(--muted); background: var(--line-soft); border-radius: 4px; padding: 1px 7px; margin-left: 8px; white-space: nowrap; letter-spacing: .04em; }}
 </style>
 </head>
 <body>

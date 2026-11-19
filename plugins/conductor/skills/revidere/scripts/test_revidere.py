@@ -821,6 +821,33 @@ class RenderPage(RepoTest):
         self.assertNotIn("LGTM", verdict)
         self.assertIn("判定できない", verdict)
 
+    def test_冒頭の説明済みの数は説明もれがあれば注意の色になる(self):
+        self.r.write("a.txt", "a\nb\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("a.txt", "new", 1)])])
+        self.assertIn('<div class="ng"><dt>説明済み</dt><dd>1/2</dd></div>', self.render(d))
+
+    def test_冒頭の説明済みの数は全部説明できていれば通った色になる(self):
+        page, _ = self.notes_page(section("x", [rng("a.txt", "new", 1, 2)]))
+        self.assertIn('<div class="ok"><dt>説明済み</dt><dd>2/2</dd></div>', page)
+
+    def test_冒頭の説明済みの数は台帳に無い位置を指すと満点でも注意の色になる(self):
+        page, _ = self.notes_page(section("x", [rng("a.txt", "new", 1, 2), rng("a.txt", "new", 9)]))
+        self.assertIn('<div class="ng"><dt>説明済み</dt><dd>2/2</dd></div>', page)
+
+    def test_冒頭の説明済みの数は2節が取り合った位置を数えない(self):
+        page, _ = self.notes_page(
+            section("x", [rng("a.txt", "new", 1, 2)]), section("y", [rng("a.txt", "new", 2)], importance="minor")
+        )
+        self.assertIn('<div class="ng"><dt>説明済み</dt><dd>1/2</dd></div>', page)
+
+    def test_説明もれと止めないものが両方あれば判定に両方の札が出る(self):
+        core = section("x", [rng("a.txt", "new", 1)])
+        core["notes"] = ["止めない"]
+        _, verdict = self.notes_page(core)
+        self.assertIn('<span class="chip warnchip">判定できない</span>', verdict)
+        self.assertIn('<span class="chip held">止めないもの 1</span>', verdict)
+
     def notes_page(self, *sections):
         self.r.write("a.txt", "a\nb\n")
         d, _ = self.r.prepare()
@@ -883,7 +910,8 @@ class RenderPage(RepoTest):
         self.assertIn("止める", concerns)
         self.assertNotIn("止めない", concerns)
         self.assertIn("止めない", held)
-        self.assertRegex(page, r"\.notes \{[^}]*color: var\(--warn\)")
+        self.assertRegex(page, r"\.sec \.notes \{[^}]*color: var\(--info-fg\)")
+        self.assertRegex(page, r"\.sec \.concerns \{[^}]*color: var\(--bad-fg\)")
 
     def test_止めないものが空配列なら無いときと同じ(self):
         core = section("x", [rng("a.txt", "new", 1, 2)])
@@ -898,6 +926,17 @@ class RenderPage(RepoTest):
         self.assertEqual(code, 0, err)
         with open(out.strip(), encoding="utf-8") as fh:
             return fh.read()
+
+
+class SharedCssTest(unittest.TestCase):
+    def test_SHARED_CSS_に_root_と色の変数がある(self):
+        root = rv.SHARED_CSS.split(":root {")[1].split("}")[0]
+        for token in ("--accent:", "--ok:", "--bad:", "--warn:", "--add-bg:", "--sans:", "--mono:"):
+            self.assertIn(token, root)
+
+    def test_PAGE_は_style_の先頭で_SHARED_CSS_を埋める(self):
+        self.assertIn("<style>\n{shared_css}\n", rv.PAGE)
+        self.assertNotIn("prefers-color-scheme: dark", rv.SHARED_CSS + rv.PAGE)
 
 
 if __name__ == "__main__":

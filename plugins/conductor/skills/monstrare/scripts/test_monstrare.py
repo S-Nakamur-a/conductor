@@ -333,12 +333,20 @@ class Render(MonstrareTest):
         page = self.render(d, story_of([theme("A", ["a.py", "new.txt"], excerpts=[rg])]))
         self.assertIn(f"https://github.com/o/r/blob/{head}/a.py?plain=1#L5", page)
 
-    def test_ダークの2か所にも図の色のトークンがある(self):
+    def test_図の色のトークンがページの先頭の_root_にある(self):
         page = self.render(self.d, story_of([theme("A", ["a.py", "new.txt"])]))
-        blocks = page.split("@media (prefers-color-scheme: dark)")[1].split(':root[data-theme="dark"]')
-        for block in blocks:
-            for token in ("--new:", "--gone:", "--hold:", "--tint:", "--add-bg:"):
-                self.assertIn(token, block.split("}")[0])
+        root = page.split("<style>")[1].split(":root {")[1].split("}")[0]
+        for token in ("--new:", "--gone:", "--hold:", "--tint:", "--add-bg:"):
+            self.assertIn(token, root)
+        self.assertNotIn("prefers-color-scheme: dark", page)
+
+    def test_図の線と箱の色のclassがページのstyleにある(self):
+        page = self.render(self.d, story_of([theme("A", ["a.py", "new.txt"])]))
+        style = page.split("<style>")[1].split("</style>")[0]
+        for rule in (".fig svg .new {", ".fig svg .box.gone {", ".fig svg .lane {", ".how {"):
+            self.assertIn(rule, style)
+        self.assertNotIn("{figure_css}", page)
+        self.assertNotIn("{{", style)
 
     def test_バイナリだけの変更でも地図が描ける(self):
         r = self.r
