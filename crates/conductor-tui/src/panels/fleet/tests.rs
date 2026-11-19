@@ -2273,6 +2273,29 @@ mod tree {
     }
 
     #[test]
+    fn 消えたディレクトリのセッションは見出しに削除済みと付き_worktree_の行は名前のまま() {
+        let mut fleet = FleetPanel::default();
+        fleet.apply(
+            FleetStatus {
+                live: vec![
+                    live(7, "/r/removed", "s7", Status::Idle, Owner::Conductor),
+                    live(8, "/r/plain", "s8", Status::Idle, Owner::Conductor),
+                ],
+                missing_dirs: [PathBuf::from("/r/removed")].into(),
+                ..Default::default()
+            },
+            Vec::new(),
+            None,
+            false,
+            at(200),
+        );
+        let (_, groups) = fleet.groups();
+        let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, ["plain", "removed (削除済み)"]);
+        assert_eq!(shape(&fleet), ["plain", "  Pid(8)", "removed", "  Pid(7)"]);
+    }
+
+    #[test]
     fn セッション行を選ぶとその_worktree_と_repo_が操作の対象になる() {
         let mut fleet = app();
         fleet.selected = Some(Selected::Session(RowKey::Pid(8), false));
