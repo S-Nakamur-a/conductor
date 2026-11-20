@@ -673,6 +673,45 @@ def link_html(meta, f, side, start=0, end=0, label="GitHub") -> str:
     return f'<span class="nolink">{esc(why)}</span>' if why else ""
 
 
+LANGUAGE_BY_NAME = {
+    "Gemfile": "ruby", "Rakefile": "ruby", "config.ru": "ruby",
+    "Dockerfile": "dockerfile", "Containerfile": "dockerfile",
+    "Makefile": "makefile",
+}
+LANGUAGE_BY_EXT = {
+    ".rb": "ruby", ".rake": "ruby", ".gemspec": "ruby",
+    ".go": "go", ".rs": "rust", ".py": "python", ".sql": "sql",
+    ".toml": "toml", ".yml": "yaml", ".yaml": "yaml", ".ini": "ini",
+    ".dockerfile": "dockerfile",
+    ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript", ".json": "json",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".md": "markdown", ".css": "css", ".scss": "scss", ".html": "xml", ".xml": "xml",
+    ".java": "java", ".kt": "kotlin", ".swift": "swift", ".c": "c", ".h": "c",
+    ".cpp": "cpp", ".cc": "cpp", ".cs": "csharp", ".php": "php", ".lua": "lua",
+}
+
+
+def language_of(path: str) -> str | None:
+    """highlight.js の言語名。分からなければ None (色を付けない)。"""
+    name = path.rsplit("/", 1)[-1]
+    if name in LANGUAGE_BY_NAME:
+        return LANGUAGE_BY_NAME[name]
+    if name.startswith("Dockerfile."):
+        return "dockerfile"
+    return LANGUAGE_BY_EXT.get(os.path.splitext(name)[1].lower())
+
+
+def code_text(body: str) -> str:
+    # HTML は CR を改行に読み替えるので、残すとブラウザで行を繋いで色を付けるときに行がずれる。
+    return body.rstrip("\r").replace("\r", "␍")
+
+
+def lang_attr(path: str) -> str:
+    lang = language_of(path)
+    return f' data-lang="{esc(lang)}"' if lang else ""
+
+
 def excerpt(f: dict, h: dict, focus: set, conflicts: set, meta: dict) -> str:
     lines = h["lines"]
 
@@ -704,7 +743,7 @@ def excerpt(f: dict, h: dict, focus: set, conflicts: set, meta: dict) -> str:
             cls += " dup"
         rows.append(
             f'<tr class="{cls}"><td class="ln">{old_no or ""}</td><td class="ln">{new_no or ""}</td>'
-            f"<td class=\"code\"><span class=\"sign\">{esc(tag)}</span>{esc(body)}</td></tr>"
+            f'<td class="code"><span class="sign">{esc(tag)}</span><span class="src">{esc(code_text(body))}</span></td></tr>'
         )
     if last < len(lines) - 1:
         rows.append(gap)
@@ -720,7 +759,7 @@ def excerpt(f: dict, h: dict, focus: set, conflicts: set, meta: dict) -> str:
         head += f' <span class="fn">{esc(h["header"])}</span>'
     return (
         f'<figure class="hunk"><figcaption>{head}<span class="links">{" ".join(x for x in links if x)}</span></figcaption>'
-        f'<div class="scroll"><table>{"".join(rows)}</table></div></figure>'
+        f'<div class="scroll"><table{lang_attr(f["path"])}>{"".join(rows)}</table></div></figure>'
     )
 
 
@@ -959,6 +998,14 @@ tr.add .sign, tr.del .sign { color: inherit; }
 tr.other { opacity: .45; }
 tr.dup td.code { box-shadow: inset 3px 0 0 var(--warn); }
 tr.gap td { color: var(--faint); text-align: center; background: var(--sunken); font-size: 11px; }
+.hljs-keyword, .hljs-selector-tag, .hljs-meta .hljs-keyword { color: oklch(0.45 0.19 320); }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-char { color: oklch(0.43 0.12 215); }
+.hljs-comment, .hljs-quote { color: var(--faint); font-style: italic; }
+.hljs-number, .hljs-literal { color: oklch(0.48 0.14 55); }
+.hljs-title, .hljs-section { color: oklch(0.44 0.16 265); }
+.hljs-type, .hljs-built_in, .hljs-title.class_ { color: oklch(0.44 0.11 175); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-params { color: oklch(0.45 0.11 85); }
+.hljs-meta { color: var(--muted); }
 """
 
 FIGURE_CSS = """\
@@ -989,6 +1036,60 @@ if (window.marked && window.DOMPurify) {
   for (const el of document.querySelectorAll("[data-md]")) {
     el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
     el.classList.add("rendered");
+  }
+}
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js" integrity="sha384-H3wUmCndJNBOuIIzcLSr2zLLZYs8PYuw6qKyENk7THEnYQJvOMDBu42P9XsJSRKw" crossorigin="anonymous"></script>
+<script>
+// 複数行の文字列やコメントの途中の行も塗るため、表の行を新側と旧側の列に繋いで 1 回で塗り、結果を行で切って戻す。
+function revidereSplitLines(html) {
+  const lines = [], open = [];
+  let cur = "", m;
+  const re = /(<span[^>]*>)|(<\\/span>)|(\\n)|([^<\\n]+)/g;
+  while ((m = re.exec(html))) {
+    if (m[1]) { open.push(m[1]); cur += m[1]; }
+    else if (m[2]) { open.pop(); cur += m[2]; }
+    else if (m[3]) { lines.push(cur + "</span>".repeat(open.length)); cur = open.join(""); }
+    else cur += m[4];
+  }
+  lines.push(cur);
+  return lines;
+}
+function revidereRuns(table) {
+  const runs = [];
+  let fresh = [], stale = [];
+  const flush = () => { runs.push(fresh, stale); fresh = []; stale = []; };
+  for (const tr of table.rows) {
+    if (tr.classList.contains("gap")) { flush(); continue; }
+    const el = tr.querySelector(".src");
+    if (!el) continue;
+    if (tr.classList.contains("del")) stale.push({ el, paint: true });
+    else {
+      fresh.push({ el, paint: true });
+      if (tr.classList.contains("ctx")) stale.push({ el, paint: false });
+    }
+  }
+  flush();
+  return runs.filter((run) => run.length);
+}
+if (window.hljs) {
+  for (const table of document.querySelectorAll("table[data-lang]")) {
+    const language = table.dataset.lang;
+    if (!hljs.getLanguage(language)) continue;
+    try {
+      const paint = (code) => revidereSplitLines(hljs.highlight(code, { language, ignoreIllegals: true }).value);
+      for (const run of revidereRuns(table)) {
+        // 末尾に足した空行がまだ span の中なら、表示範囲が文字列などの途中から始まったか途中で終わっていて
+        // 繋いで塗ると中と外が反転する。
+        let lines = paint(run.map((x) => x.el.textContent).join("\\n") + "\\n");
+        if (lines.pop().startsWith("<span")) lines = run.map((x) => paint(x.el.textContent)[0]);
+        if (lines.length !== run.length) continue;
+        run.forEach((x, i) => { if (x.paint) x.el.innerHTML = lines[i]; });
+      }
+    } catch (e) {
+      console.warn("revidere: 色を付けられない表がある", e);
+    }
   }
 }
 </script>
