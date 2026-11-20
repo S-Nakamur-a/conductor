@@ -1054,7 +1054,6 @@ pub enum Button {
     Smart,
 }
 
-/// 行のボタン。
 pub fn buttons(slot: &Slot) -> &'static [Button] {
     match slot {
         Slot::Repo(Some(_)) => &[Button::Smart],
