@@ -11,10 +11,6 @@ Conductor is a terminal-based Git workspace and code review TUI written in Rust.
 `cargo build` · `cargo run [-- <repo-path>]` · `cargo test --workspace` ·
 `cargo clippy --workspace` · `cargo check --workspace` · `make fmt`.
 Set `RUST_LOG=debug` for logging.
-The revidere, monstrare and delineare skills' scripts have their own tests, which CI
-does not run: `python3 -m unittest discover -s plugins/conductor/skills/<skill>/scripts`
-for each of the three (also under `/usr/bin/python3`, which is 3.9 on macOS). Run all
-three after touching `revidere.py`: the other two import it.
 
 **Always pass `--workspace`** — bare `cargo test` / `cargo clippy` only cover the
 root `conductor` package, which is a five-line `main.rs`; everything else is in
@@ -230,50 +226,6 @@ the third:
 - **The shape of the text** (`link::find`): file paths, which nothing marks, and output
   from programs that write no OSC 8. Rows are joined by the terminal's wrap in a shell
   and by the session's log in a Claude panel.
-
-### Review analyser (`plugins/conductor/skills/revidere/`)
-
-revidere is a Claude Code skill, not part of the binary: the session that calls it
-writes the review, `scripts/revidere.py` builds the ledger, checks that no changed
-line is left unexplained and renders the page, and the page goes out as an
-Artifact. It used to be a crate driven by the window; it left because the review
-needs an agentic model reading the repository, which a session already is. The
-procedure and the review rules live in its `SKILL.md`.
-
-The session list still reads what the skill leaves behind, so the script's work
-directory is a contract: `conductor_core::revidere_records` counts a
-`$TMPDIR/revidere-*` that holds both `meta.json` (its `root`, `branch` and `head_oid`)
-and `review.html`, and marks a worktree current when `head_oid` is its HEAD on the same
-branch, stale when only other commits of that branch were read. Renaming either file or
-those keys in `revidere.py` makes the marks disappear without an error, and a window
-whose `$TMPDIR` differs from the Claude that ran the skill never sees them — on macOS
-that includes a window with no `$TMPDIR` at all, since Rust then reads the per-user
-`/var/folders` directory while Python writes to `/tmp`. Clicking a mark opens the
-`artifact_url` that `revidere.py published` adds to `meta.json`; renaming that key keeps
-the marks but makes every one say it has no link. The list's revidere button
-starts Claude with `/conductor:revidere` as its first argument rather than typing it in
-(the reason is on `Conversation`).
-
-**monstrare** (`plugins/conductor/skills/monstrare/`) is its sibling for understanding
-rather than reviewing: the session draws an SVG overview and one or more per theme that changes behaviour, and `scripts/monstrare.py`
-checks only that every changed file belongs to some theme, then renders the page. It
-borrows the git, diff, excerpt and link code from `revidere.py` by import (through
-`realpath`, so a symlinked skill dir still finds it), which makes revidere's helpers its
-API too — the page's look included: `SHARED_CSS` (the `:root` colour variables, the
-page's base styles and the diff excerpt, light only) and `FIGURE_CSS` (the SVG classes)
-live in `revidere.py`. The syntax colours are drawn in the browser by `MD_SCRIPT` from what
-`excerpt()` writes, with no error when that shape changes (monstrare's page included): renaming
-`data-lang` or `.src` drops the colours, renaming `del` mixes the two sides, renaming `ctx` drops
-the shared lines from the old side's run, and renaming `gap` joins rows across a gap.
-Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so
-the session list's revidere marks never count it.
-
-**delineare** (`plugins/conductor/skills/delineare/`) is the one before the code: the
-session writes an implementation plan (scope, premises, what it checked and how, what it
-makes and skips, steps each with how to verify them) and `scripts/delineare.py` checks its
-shape and renders it with `SHARED_CSS` / `FIGURE_CSS`, importing `revidere.py` the same
-way monstrare does (its helpers are its API too). Its work directory is
-`$TMPDIR/delineare-*` with `plan.html`, so the revidere marks never count it either.
 
 ### Code index (`crates/sheaf-core`, `crates/conductor-core/src/semantic_index/`)
 
