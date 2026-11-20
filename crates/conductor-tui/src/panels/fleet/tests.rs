@@ -3864,15 +3864,18 @@ mod launch {
     }
 
     #[test]
-    fn plus_の左隣の桁を連打しても確認は出ず_行の二度押しになる() {
-        let mut ws = many_worktrees(3);
-        for _ in 0..2 {
-            assert!(press_at(&mut ws, 5, 2).is_empty());
+    fn 昔の_r_ボタンの桁を連打しても確認は出ず行を選ぶだけ() {
+        for x in 4..=6 {
+            let mut ws = many_worktrees(3);
+            for _ in 0..2 {
+                assert!(press_at(&mut ws, x, 2).is_empty(), "x={x}");
+            }
+            assert_eq!(
+                ws.panels.fleet.selected_dir(),
+                Some(PathBuf::from("/r/app-01")),
+                "x={x}"
+            );
         }
-        assert_eq!(
-            ws.panels.fleet.selected_dir(),
-            Some(PathBuf::from("/r/app-01"))
-        );
     }
 
     fn badge_of(ws: &Workspace, label: &str) -> (String, Option<ratatui::style::Color>) {
