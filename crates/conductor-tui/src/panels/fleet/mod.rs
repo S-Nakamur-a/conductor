@@ -19,7 +19,6 @@ use conductor_core::claude_sessions::registry::{LiveSession, Owner, Status, Wait
 use conductor_core::config::Config;
 use conductor_core::git_engine::{Head, WorktreeHead};
 use conductor_core::keymap::Action;
-use conductor_core::revidere_records::Review;
 
 use crate::click::ClickTracker;
 use crate::effect::Effect;
@@ -120,8 +119,6 @@ pub struct Node {
 pub struct Worktree {
     pub path: PathBuf,
     pub label: String,
-    /// git の worktree 一覧に載っている。載らないのは、木を引けなかった dir の仮の行。
-    pub in_tree: bool,
 }
 
 /// 一覧で j / k が止まるもの。並びは描画と同じ。
@@ -219,12 +216,9 @@ pub struct FleetStatus {
     /// 作業ディレクトリがもう存在しないセッションの dir (見出しに「削除済み」を付ける)。
     pub missing_dirs: HashSet<PathBuf>,
     pub usage: Usage,
-    pub reviews: HashMap<PathBuf, Review>,
 }
 
 const OUTSIDE_GROUP: &str = "外の端末";
-
-const REVIDERE_COMMAND: &str = "/conductor:revidere";
 
 /// 一覧の左下に映すもの。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -246,7 +240,6 @@ pub struct FleetPanel {
     placement: HashMap<PathBuf, PathBuf>,
     missing_dirs: HashSet<PathBuf>,
     usage: Usage,
-    reviews: HashMap<PathBuf, Review>,
     review_requested: HashSet<PathBuf>,
     /// 一度木に出た repo は、セッションが無くなっても窓を閉じるまで出し続ける。そこへ起動できるように。
     kept_roots: BTreeSet<PathBuf>,
@@ -262,7 +255,6 @@ pub struct FleetPanel {
     opening_page: bool,
     came_from: Option<Focus>,
     row_clicks: ClickTracker<(u16, Option<usize>, Option<Selected>)>,
-    mark_clicks: ClickTracker<u16>,
     blank_clicks: ClickTracker<PathBuf>,
     pub changes: changes::BranchChanges,
     pub artifacts: artifacts::SessionArtifacts,
@@ -451,10 +443,6 @@ impl FleetPanel {
         &self.usage
     }
 
-    pub fn review_of(&self, worktree: &Path) -> Option<&Review> {
-        self.reviews.get(worktree)
-    }
-
     pub fn is_review_requested(&self, worktree: &Path) -> bool {
         self.review_requested.contains(worktree)
     }
@@ -568,23 +556,6 @@ impl FleetPanel {
                     Some(at),
                 )))]
             }
-            (render::Button::Revidere, render::Slot::Worktree(w)) => {
-                let launch = Effect::NewClaudeIn {
-                    dir: w.path.clone(),
-                    chrome: false,
-                    account: None,
-                    startup_prompt: Some(REVIDERE_COMMAND.to_string()),
-                };
-                vec![Effect::PushModal(Modal::Confirm(
-                    Confirm::ask(
-                        format!("Run {REVIDERE_COMMAND} on {}?", w.label),
-                        vec![launch],
-                    )
-                    .title("Run revidere")
-                    .detail(w.path.display().to_string()),
-                ))]
-            }
-            (render::Button::Mark, render::Slot::Worktree(w)) => self.open_review(&w.path, at),
             (render::Button::Smart, render::Slot::Repo(Some(root))) => {
                 vec![Effect::FleetSmartPrompt(root.clone())]
             }
@@ -616,11 +587,7 @@ impl FleetPanel {
             return effects;
         }
         self.last_marker = None;
-        let button = press.button.filter(|(button, slot)| match (button, slot) {
-            (render::Button::Mark, render::Slot::Worktree(w)) => self.reviews.contains_key(&w.path),
-            _ => true,
-        });
-        if let Some((button, slot)) = button {
+        if let Some((button, slot)) = press.button {
             self.row_clicks = ClickTracker::default();
             return self.click_button(button, slot, at, config);
         }
@@ -659,26 +626,6 @@ impl FleetPanel {
         vec![Effect::PushModal(Modal::Popup(popup))]
     }
 
-    /// 下区画の Artifact と同じく、連打で何枚も開かないようにする。
-    fn open_review(&mut self, worktree: &Path, at: (u16, u16)) -> Vec<Effect> {
-        if self.mark_clicks.is_double(at.1) {
-            return Vec::new();
-        }
-        let Some(review) = self.reviews.get(worktree) else {
-            return Vec::new();
-        };
-        let Some(url) = review.url.clone() else {
-            return vec![Effect::Status(
-                StatusLevel::Warning,
-                "This review has no artifact link recorded.".into(),
-            )];
-        };
-        if !self.artifacts.start_opening() {
-            return Vec::new();
-        }
-        vec![Effect::Spawn(crate::task::Task::OpenArtifact { url })]
-    }
-
     pub fn defer_focus(&mut self, focus: Focus) {
         self.came_from = Some(focus);
     }
@@ -703,7 +650,6 @@ impl FleetPanel {
         self.placement = status.placement;
         self.missing_dirs = status.missing_dirs;
         self.usage = status.usage;
-        self.reviews = status.reviews;
         self.set_own(own);
         if listing {
             self.mark_selected(now);
@@ -828,7 +774,6 @@ impl FleetPanel {
                         worktree: Some(Worktree {
                             path: w.path.clone(),
                             label: w.head.label(),
-                            in_tree: true,
                         }),
                         rows: Vec::new(),
                     })
@@ -869,7 +814,6 @@ impl FleetPanel {
                             worktree: Some(Worktree {
                                 path: row.working_dir.clone(),
                                 label,
-                                in_tree: false,
                             }),
                             rows: vec![row],
                         }],
@@ -1616,7 +1560,6 @@ pub fn launch_choices(dir: &Path, smart: Option<PathBuf>, config: &Config) -> Ch
                     dir: dir.to_path_buf(),
                     chrome,
                     account: account.map(str::to_string),
-                    startup_prompt: None,
                 };
                 (format!("Claude Code{name}{suffix}"), effect)
             })

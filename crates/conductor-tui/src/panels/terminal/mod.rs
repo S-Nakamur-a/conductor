@@ -97,16 +97,13 @@ pub struct ClaudeArgs<'a> {
     pub account: Option<&'a str>,
     /// resume する会話を走らせた config dir。手で選んでいなければこのアカウントで起こす。
     pub ran_in: Option<&'a Path>,
-    /// 新しい会話の最初のプロンプト。resume と一緒に渡すと使われない。
-    pub startup_prompt: Option<&'a str>,
 }
 
 impl ClaudeArgs<'_> {
     fn conversation(&self) -> Conversation<'_> {
-        match (self.resume, self.startup_prompt) {
-            (Some(id), _) => Conversation::Resume(id),
-            (None, Some(prompt)) => Conversation::NewWith(prompt),
-            (None, None) => Conversation::New,
+        match self.resume {
+            Some(id) => Conversation::Resume(id),
+            None => Conversation::New,
         }
     }
 }
@@ -1322,23 +1319,14 @@ mod tests {
     use ratatui::layout::Rect;
 
     #[test]
-    fn 最初のプロンプトは新しい会話にだけ付き_resume_と一緒なら使わない() {
-        let args = |resume, startup_prompt| ClaudeArgs {
+    fn resume_があれば再開し_無ければ新しい会話() {
+        let args = |resume| ClaudeArgs {
             resume,
-            startup_prompt,
             ..ClaudeArgs::default()
         };
-        assert!(matches!(args(None, None).conversation(), Conversation::New));
+        assert!(matches!(args(None).conversation(), Conversation::New));
         assert!(matches!(
-            args(None, Some("/x")).conversation(),
-            Conversation::NewWith("/x")
-        ));
-        assert!(matches!(
-            args(Some("id"), None).conversation(),
-            Conversation::Resume("id")
-        ));
-        assert!(matches!(
-            args(Some("id"), Some("/x")).conversation(),
+            args(Some("id")).conversation(),
             Conversation::Resume("id")
         ));
     }
