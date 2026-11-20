@@ -271,6 +271,13 @@ class Render(MonstrareTest):
         self.assertIn("line5", page)
         self.assertNotIn("changed15", page)
 
+    def test_抜粋の表に言語が付き色付けのスクリプトが載る(self):
+        rg = {"path": "a.py", "side": "new", "start": 5}
+        page = self.render(self.d, story_of([theme("A", ["a.py", "new.txt"], excerpts=[rg])]))
+        self.assertIn('<table data-lang="python">', page)
+        self.assertIn('<span class="src">changed5</span>', page)
+        self.assertIn("highlight.js/11.9.0/highlight.min.js", page)
+
     def test_知っておくとよいことの欄は中身があるときだけ出て合否は出さない(self):
         page = self.render(self.d, story_of([theme("A", ["a.py", "new.txt"])]))
         self.assertNotIn("知っておくとよいこと", page)

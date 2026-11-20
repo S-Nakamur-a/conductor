@@ -743,6 +743,31 @@ class RenderPage(RepoTest):
         self.r.commit()
         self.assertEqual(self.render(d), first)
 
+    def test_抜粋の表に言語が付き_本文は符号と別のspanに入る(self):
+        self.r.write("app/user.rb", "class User\nend\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("app/user.rb", "new", 1, 2)])])
+        page = self.render(d)
+        self.assertIn('<table data-lang="ruby">', page)
+        self.assertIn('<span class="sign">+</span><span class="src">class User</span>', page)
+
+    def test_言語の分からないファイルの表には言語を付けない(self):
+        self.r.write("notes.txt", "a\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("notes.txt", "new", 1)])])
+        page = self.render(d)
+        self.assertIn("<table><tr", page)
+        self.assertNotIn("<table data-lang", page)
+
+    def test_CRは抜粋の本文に残さない(self):
+        self.r.write("w.py", b"a = 1\r\nb\rc\r\n")
+        d, _ = self.r.prepare()
+        write_review(d, [section("x", [rng("w.py", "new", 1, 2)])])
+        page = self.render(d)
+        self.assertIn('<span class="src">a = 1</span>', page)
+        self.assertIn('<span class="src">b␍c</span>', page)
+        self.assertNotIn("\r", page)
+
     def test_壊れたreview_jsonならHTMLを書かない(self):
         self.r.write("a.txt", "a\n")
         d, _ = self.r.prepare()
@@ -944,6 +969,50 @@ class SharedCssTest(unittest.TestCase):
         self.assertNotIn("BIZ UDPGothic", code_font)
         self.assertIn("code, .path, .fn { font-family: var(--code);", rv.SHARED_CSS)
         self.assertIn(".fig svg .m { font-family: var(--code);", rv.FIGURE_CSS)
+
+
+class LanguageOf(unittest.TestCase):
+    def test_拡張子とファイル名から言語が決まる(self):
+        cases = {
+            "app/models/user.rb": "ruby",
+            "Gemfile": "ruby",
+            "lib/tasks/a.rake": "ruby",
+            "main.go": "go",
+            "src/lib.rs": "rust",
+            "a.py": "python",
+            "db/q.sql": "sql",
+            "Cargo.toml": "toml",
+            ".github/workflows/ci.yml": "yaml",
+            "docker/Dockerfile": "dockerfile",
+            "Dockerfile.dev": "dockerfile",
+            "Containerfile": "dockerfile",
+            "A.RB": "ruby",
+        }
+        for path, lang in cases.items():
+            self.assertEqual(rv.language_of(path), lang, path)
+
+    def test_分からなければ言語は無い(self):
+        for path in ("notes.txt", "LICENSE", "a.unknownext"):
+            self.assertIsNone(rv.language_of(path), path)
+
+
+class HighlightScript(unittest.TestCase):
+    def test_色付けはmarkedの後に版とSRIを固定して読み込む(self):
+        s = rv.MD_SCRIPT
+        core = "highlight.js/11.9.0/highlight.min.js"
+        docker = "highlight.js/11.9.0/languages/dockerfile.min.js"
+        self.assertLess(s.index("marked.parse"), s.index(core))
+        self.assertLess(s.index(core), s.index(docker))
+        for name in (core, docker):
+            tag = s.split(name)[1].split(">")[0]
+            self.assertIn('integrity="sha384-', tag)
+
+    def test_色付けは言語の登録と行数を確かめ_表ごとに例外を捕まえる(self):
+        s = rv.MD_SCRIPT
+        self.assertIn("if (!hljs.getLanguage(language)) continue;", s)
+        self.assertIn("if (lines.length !== run.length) continue;", s)
+        self.assertIn('if (lines.pop().startsWith("<span")) lines = run.map(', s)
+        self.assertIn("} catch (e) {", s)
 
 
 if __name__ == "__main__":

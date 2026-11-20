@@ -261,7 +261,11 @@ borrows the git, diff, excerpt and link code from `revidere.py` by import (throu
 `realpath`, so a symlinked skill dir still finds it), which makes revidere's helpers its
 API too — the page's look included: `SHARED_CSS` (the `:root` colour variables, the
 page's base styles and the diff excerpt, light only) and `FIGURE_CSS` (the SVG classes)
-live in `revidere.py`. Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so
+live in `revidere.py`. The syntax colours are drawn in the browser by `MD_SCRIPT` from what
+`excerpt()` writes, with no error when that shape changes (monstrare's page included): renaming
+`data-lang` or `.src` drops the colours, renaming `del` mixes the two sides, renaming `ctx` drops
+the shared lines from the old side's run, and renaming `gap` joins rows across a gap.
+Its work directory is `$TMPDIR/monstrare-*` with `story.html`, so
 the session list's revidere marks never count it.
 
 **delineare** (`plugins/conductor/skills/delineare/`) is the one before the code: the
