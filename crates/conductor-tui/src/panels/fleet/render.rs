@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use conductor_core::cc_hook::statusline::{Limit, Usage};
@@ -13,7 +13,6 @@ use unicode_width::UnicodeWidthStr;
 
 use conductor_core::icons::{self, IconSet};
 use conductor_core::keymap::Action;
-use conductor_core::revidere_records::Mark;
 
 use super::{Ask, FleetPanel, Inspection, Lower, Place, Row, RowKey, State, Worktree};
 use crate::effect::Effect;
@@ -278,7 +277,7 @@ pub fn compose(ws: &Workspace, rect: Rect) -> Option<Composed> {
                             true => Foldable::Open,
                             false => Foldable::Folded(hidden_counts(theme, node.rows.iter())),
                         }),
-                        badge_of(fleet, &worktree.path),
+                        fleet.is_review_requested(&worktree.path),
                         inner.width,
                         selected.then_some(focused),
                     ));
@@ -1040,8 +1039,8 @@ fn countdown_text(secs: i64) -> String {
     }
 }
 
-/// 本文の右端に右から並ぶボタン。当たり判定は [buttons] を読み、描画 (worktree_line /
-/// repo_header) は同じ並びで直書きしている。
+/// 本文の右端のボタン。当たり判定は [buttons] を読み、描画 (worktree_line / repo_header) は
+/// 同じ位置に直書きしている。
 pub const NEW_BUTTON: &str = "[+]";
 pub const SMART_BUTTON: &str = "[✧]";
 const BUTTON_WIDTH: u16 = 3;
@@ -1053,16 +1052,12 @@ const LEAD_WIDTH: u16 = 2;
 pub enum Button {
     New,
     Smart,
-    Revidere,
-    /// revidere の印。印がある行でだけ押せる。
-    Mark,
 }
 
-/// 行のボタンを右端から順に。
+/// 行のボタン。
 pub fn buttons(slot: &Slot) -> &'static [Button] {
     match slot {
         Slot::Repo(Some(_)) => &[Button::Smart],
-        Slot::Worktree(w) if w.in_tree => &[Button::New, Button::Revidere, Button::Mark],
         Slot::Worktree(_) => &[Button::New],
         Slot::Repo(None) | Slot::Session(_) | Slot::Other => &[],
     }
@@ -1074,7 +1069,7 @@ pub fn button_column(composed: &Composed, x: u16) -> Option<usize> {
     (from_right < MOST_BUTTONS).then_some(from_right)
 }
 
-const MOST_BUTTONS: usize = 3;
+const MOST_BUTTONS: usize = 1;
 
 pub fn button_hit(composed: &Composed, x: u16, y: u16) -> Option<(Button, &Slot)> {
     let slot = slot_at(composed, x, y)?;
@@ -1236,20 +1231,6 @@ fn tag(place: Place) -> &'static str {
     }
 }
 
-enum Badge {
-    Review(Mark),
-    Requested,
-}
-
-fn badge_of(fleet: &FleetPanel, worktree: &Path) -> Option<Badge> {
-    match fleet.review_of(worktree) {
-        Some(review) => Some(Badge::Review(review.mark)),
-        None => fleet
-            .is_review_requested(worktree)
-            .then_some(Badge::Requested),
-    }
-}
-
 enum Foldable {
     Open,
     Folded(Vec<Span<'static>>),
@@ -1260,7 +1241,7 @@ fn worktree_line(
     icons: IconSet,
     worktree: &Worktree,
     fold: Option<Foldable>,
-    badge: Option<Badge>,
+    review_requested: bool,
     width: u16,
     selection: Option<bool>,
 ) -> Line<'static> {
@@ -1272,22 +1253,15 @@ fn worktree_line(
         }
         None => ("  ".to_string(), Vec::new()),
     };
-    let (badge, badge_fg) = match badge {
-        Some(Badge::Review(Mark::Current)) => (icons::REVIDERE_CURRENT.get(icons), theme.success),
-        Some(Badge::Review(Mark::Stale)) => (icons::REVIDERE_STALE.get(icons), theme.warning),
-        Some(Badge::Requested) => (icons::REVIEW_REQUESTED.get(icons), theme.accent),
-        None => (" ", theme.hint),
-    };
-    let revidere = if worktree.in_tree {
-        format!("[{}]", icons::REVIDERE.get(icons))
-    } else {
-        "   ".to_string()
+    let (badge, badge_fg) = match review_requested {
+        true => (icons::REVIEW_REQUESTED.get(icons), theme.accent),
+        false => (" ", theme.hint),
     };
     let hidden_width = match spans_width(&hidden) {
         0 => 0,
         w => w + 1,
     };
-    let room = usize::from(width.saturating_sub(2 * BUTTON_WIDTH + 5 + MARKER_WIDTH))
+    let room = usize::from(width.saturating_sub(BUTTON_WIDTH + 5 + MARKER_WIDTH))
         .saturating_sub(hidden_width);
     let label = clip(&worktree.label, room);
     let pad = room.saturating_sub(label.width());
@@ -1305,7 +1279,6 @@ fn worktree_line(
         Span::raw(" ".repeat(pad + 1)),
         Span::styled(badge, Style::default().fg(badge_fg)),
         Span::raw(" "),
-        Span::styled(revidere, Style::default().fg(theme.fg)),
         Span::styled(NEW_BUTTON, Style::default().fg(theme.accent)),
     ]);
     Line::from(spans).style(self::selection(theme, selection.unwrap_or(false), selected))

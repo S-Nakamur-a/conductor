@@ -36,15 +36,11 @@ pub enum Launch<'a> {
     },
 }
 
-/// 最初のプロンプトを起動後に流し込むと、未信頼の dir では既定が「No, exit」の trust
-/// ダイアログに Enter が当たって Claude が終わるので、位置引数で渡す。
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Conversation<'a> {
     /// 新しい id を `--session-id` で強制する。
     #[default]
     New,
-    /// New に、最初のプロンプトを最後の位置引数として足す。
-    NewWith(&'a str),
     /// 既存の id を `--resume` で保つ。
     Resume(&'a str),
 }
@@ -170,7 +166,7 @@ pub(super) fn build_command(
                     cmd.arg(id);
                     (*id).to_string()
                 }
-                Conversation::New | Conversation::NewWith(_) => {
+                Conversation::New => {
                     let id = Uuid::new_v4().to_string();
                     cmd.arg("--session-id");
                     cmd.arg(&id);
@@ -206,9 +202,6 @@ pub(super) fn build_command(
                 // 書けなくてもパネルは動かす。/clear を追えず、起動時の session id のまま残る。
                 Some(Err(e)) => log::warn!("could not install the Claude session hook: {e}"),
                 None => {}
-            }
-            if let Conversation::NewWith(prompt) = conversation {
-                cmd.arg(prompt);
             }
             (cmd, Some(session_id))
         }

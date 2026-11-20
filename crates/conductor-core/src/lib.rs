@@ -21,7 +21,6 @@ pub mod ai_caller;
 pub mod grep_search;
 pub mod instance_lock;
 pub mod pr_intake;
-pub mod revidere_records;
 pub mod review_publish;
 pub mod runnable;
 pub mod semantic_index;

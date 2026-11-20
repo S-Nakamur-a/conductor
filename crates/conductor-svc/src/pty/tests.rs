@@ -296,7 +296,7 @@ fn chromeを頼んだセッションだけがchromeフラグを渡す() {
 }
 
 #[test]
-fn 最初のプロンプトは新しい会話の最後の位置引数で渡し_再開では渡さない() {
+fn 新しい会話は_session_id_で起こし_再開は_resume_で起こす() {
     let repo = tempfile::tempdir().unwrap();
     let argv = |conversation| {
         let launch = Launch::ClaudeCode {
@@ -314,14 +314,10 @@ fn 最初のプロンプトは新しい会話の最後の位置引数で渡し_�
             .collect::<Vec<_>>()
     };
 
-    let with = argv(Conversation::NewWith("/conductor:revidere"));
-    assert_eq!(with.last().unwrap(), "/conductor:revidere");
-    assert!(with.iter().any(|a| a == "--session-id"));
-    assert!(with.iter().any(|a| a == "--settings"));
-
-    let plain = argv(Conversation::New);
-    assert_eq!(plain.len(), with.len() - 1);
-    assert!(!plain.iter().any(|a| a == "/conductor:revidere"));
+    let new = argv(Conversation::New);
+    assert!(new.iter().any(|a| a == "--session-id"));
+    assert!(new.iter().any(|a| a == "--settings"));
+    assert!(!new.iter().any(|a| a == "--resume"));
 
     let resumed = argv(Conversation::Resume("abc"));
     assert!(resumed.windows(2).any(|w| w == ["--resume", "abc"]));

@@ -85,7 +85,6 @@ pub enum Effect {
         dir: PathBuf,
         chrome: bool,
         account: Option<String>,
-        startup_prompt: Option<String>,
     },
     /// 一覧で畳んだものを書き残す。書き先の無い窓 (テスト) では何もしない。
     SaveFleetFold(crate::panels::fleet::fold::Fold),
@@ -242,14 +241,12 @@ pub fn apply(ws: &mut Workspace, svc: &mut Services<TaskResult>, effects: Vec<Ef
                 dir,
                 chrome,
                 account,
-                startup_prompt,
             } => queue.extend(new_claude_in(
                 ws,
                 &dir,
                 ClaudeArgs {
                     chrome,
                     account: account.as_deref(),
-                    startup_prompt: startup_prompt.as_deref(),
                     ..ClaudeArgs::default()
                 },
             )),

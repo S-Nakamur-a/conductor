@@ -115,8 +115,8 @@ pub const DEFAULT_CONFIG: &str = r#"# Conductor configuration file
 [review]
 # Repositories watched for pull requests that request your review (directly, not through a
 # team). Whichever repository the window has open, they are checked once a minute, and each
-# time at most one PR across all of them, the first without a worktree, is checked out; run
-# /revidere there for the AI review. Write the main worktree's path. Takes effect on restart.
+# time at most one PR across all of them, the first without a worktree, is checked out.
+# Write the main worktree's path. Takes effect on restart.
 # auto_review_repos = ["~/src/my-repo"]
 
 [updates]

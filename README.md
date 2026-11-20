@@ -33,18 +33,7 @@ Then, in a Claude Code session:
 ```
 
 That sets up the MCP server (review comment DB and change summaries) and the
-`/address-conductor-comment`, `/explain-comment`, `/revidere`, `/monstrare` and `/delineare` skills.
-`/revidere` sorts the branch's changes into sections by importance, checks that no
-changed line is left unexplained (and
-shows any that are), and publishes the result as a review page (an Artifact) with
-diff excerpts and links to GitHub. `/monstrare` is for understanding a change rather
-than reviewing every line: it groups the changes into themes, draws each one (a
-sequence, a decision tree, a before and after — whatever fits), and publishes a page
-with, if there is anything worth knowing, a short list of notes (what changed
-behaviour, what was not measured) -- whether the branch can be approved is left to
-`/revidere`. `/delineare` comes before the code: it turns an implementation plan (scope,
-premises, what was checked, what is made and what is not, steps with how each is
-verified) into a page in the same style.
+`/address-conductor-comment`, `/explain-comment` and `/write-tour` skills.
 
 ## Usage
 
@@ -242,20 +231,9 @@ Worktree moves down after them, and a session otherwise starts as the account wh
 Worktree's AI command follows the same rule for its repository. The result of a Smart Worktree
 started before switching to another repository still arrives.
 
-The checklist button left of `[+]` asks, then starts Claude in that worktree running
-`/conductor:revidere`. The mark left of it says whether a revidere page exists for the
-worktree: a green check when one read the commit checked out now, a yellow clock when the
-only ones read another commit of the same branch. Without a Nerd Font they are `[R]`,
-`✓` and `↻`. The marks come from
-the work directories revidere leaves under `$TMPDIR`, so a page made elsewhere, or one
-whose directory has been cleaned away, is not counted. Clicking the mark opens the newest
-published page of the kind it shows: one that read the commit checked out now if there is
-any, otherwise one that read an older commit. A link is recorded only by a revidere run from
-plugin 0.11.0 on, once it has published the page; when the kind shown has no recorded link,
-the mark says so instead. With no revidere page yet, a worktree whose pull request still
-requests your review (from `[review] auto_review_repos`, see
-[docs/reviewing-a-pr.md](docs/reviewing-a-pr.md)) shows a pull-request mark in the accent
-colour there (`!` without a Nerd Font); it goes once the review is dropped, and clicking it
+A worktree whose pull request still requests your review (from `[review] auto_review_repos`,
+see [docs/reviewing-a-pr.md](docs/reviewing-a-pr.md)) shows a pull-request mark in the accent
+colour left of `[+]` (`!` without a Nerd Font); it stays while the request does, and clicking it
 only selects the line.
 
 **g** opens the selected line's pull request in the browser: one whose head is the branch
@@ -371,8 +349,7 @@ keeps working while you review.
 worktree (via `gh`; an existing one is pulled up to date) and focuses the
 Explorer on its review comment list. From the Sessions list it goes into the
 repository of the selected line instead of the window's. *Review: Publish Comments to GitHub* posts your inline
-comments back to the PR. For an AI review of the branch, run the `/revidere` skill
-in a Claude Code session there: it publishes the review as an Artifact page.
+comments back to the PR.
 
 Full walkthrough, including the symbol-jump keys:
 [docs/reviewing-a-pr.md](docs/reviewing-a-pr.md).

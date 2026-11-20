@@ -263,16 +263,7 @@ pub const PANEL_TERMINAL: Glyph = Glyph::nerd_only("\u{ea85}");
 /// Tour の見出し。
 pub const PANEL_REVIEW: Glyph = Glyph::nerd_only("\u{eab3}");
 
-/// revidere を起こすボタン。Tour の見出しと同じ字形にしてレビューで揃える。
-pub const REVIDERE: Glyph = Glyph::new("\u{eab3}", "R");
-
-/// 今の commit を読んだ revidere がある。
-pub const REVIDERE_CURRENT: Glyph = Glyph::new("\u{eba4}", "\u{2713}");
-
-/// 同じブランチの、HEAD と違う commit を読んだ revidere だけがある。
-pub const REVIDERE_STALE: Glyph = Glyph::new("\u{ea82}", "\u{21bb}");
-
-/// 自分へのレビュー依頼が続いていて、revidere の記録がまだ無い。
+/// 自分へのレビュー依頼が続いている。
 pub const REVIEW_REQUESTED: Glyph = Glyph::new("\u{ea64}", "!");
 
 /// 別プロセスに grab されていて操作できないパネル。

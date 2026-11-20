@@ -5112,7 +5112,7 @@ needle here
         );
         assert!(matches!(
             one.last(),
-            Some(Effect::NewClaudeIn { dir, chrome: false, startup_prompt: None, .. }) if dir == &PathBuf::from("/r/app-b")
+            Some(Effect::NewClaudeIn { dir, chrome: false, .. }) if dir == &PathBuf::from("/r/app-b")
         ));
         assert_eq!(ws.panels.fleet.selected_worktree().unwrap().label, "main");
     }

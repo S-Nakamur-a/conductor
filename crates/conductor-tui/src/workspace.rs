@@ -966,7 +966,7 @@ impl Workspace {
                         .or_default()
                         .push(path);
                     parts.push(format!(
-                        "Review requested on {name} PR #{number}: checked out '{}'. Run /revidere there.",
+                        "Review requested on {name} PR #{number}: checked out '{}'.",
                         pr.meta.branch
                     ));
                     if in_window_repo {
@@ -1447,9 +1447,7 @@ mod tests {
             statuses(&effects),
             [(
                 StatusLevel::Info,
-                String::from(
-                    "Review requested on webshop PR #7: checked out 'feature/a'. Run /revidere there."
-                )
+                String::from("Review requested on webshop PR #7: checked out 'feature/a'.")
             )]
         );
         assert_eq!(effects.len(), 1, "{effects:?}");

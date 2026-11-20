@@ -54,7 +54,7 @@ const SAMPLE_FILE_NAMES: [&str; 44] = [
     "LICENSE",
 ];
 
-const UI_GLYPHS: [(&str, Glyph); 24] = [
+const UI_GLYPHS: [(&str, Glyph); 22] = [
     ("COMMENT", COMMENT),
     ("COMMENT_SPAN", COMMENT_SPAN),
     ("ADD_COMMENT", ADD_COMMENT),
@@ -76,9 +76,7 @@ const UI_GLYPHS: [(&str, Glyph); 24] = [
     ("MENU_SEARCH", MENU_SEARCH),
     ("MENU_TERMINAL", MENU_TERMINAL),
     ("MENU_HELP", MENU_HELP),
-    ("REVIDERE", REVIDERE),
-    ("REVIDERE_CURRENT", REVIDERE_CURRENT),
-    ("REVIDERE_STALE", REVIDERE_STALE),
+    ("REVIEW_REQUESTED", REVIEW_REQUESTED),
 ];
 
 struct Case {
